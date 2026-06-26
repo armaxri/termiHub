@@ -277,9 +277,9 @@ export async function loadConnectionsAndFolders(): Promise<ConnectionData> {
   return await invoke<ConnectionData>("load_connections_and_folders");
 }
 
-/** Save (add or update) a connection */
-export async function saveConnection(connection: SavedConnection): Promise<void> {
-  await invoke("save_connection", { connection });
+/** Save (add or update) a connection, returning its persisted (recomputed) id. */
+export async function saveConnection(connection: SavedConnection): Promise<string> {
+  return await invoke<string>("save_connection", { connection });
 }
 
 /** Delete a connection by ID, optionally from an external file */

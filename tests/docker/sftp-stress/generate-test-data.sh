@@ -61,6 +61,9 @@ mkdir -p "$LINKS/target-dir"
 echo "inside target dir" > "$LINKS/target-dir/inner.txt"
 ln -s "$LINKS/target-file.txt" "$LINKS/link-to-file"
 ln -s "$LINKS/target-dir" "$LINKS/link-to-dir"
+# Aliases consumed by the SFTP-STRESS-07/08 integration tests (#864).
+ln -s "$LINKS/target-file.txt" "$LINKS/valid-file-link"
+ln -s "$LINKS/target-dir" "$LINKS/valid-dir-link"
 ln -s "/nonexistent/path" "$LINKS/broken-link"
 # Circular symlink
 ln -s "$LINKS/circular-b" "$LINKS/circular-a"
@@ -90,6 +93,8 @@ SPECIAL="$BASE/special-names"
 mkdir -p "$SPECIAL"
 echo "spaces" > "$SPECIAL/file with spaces.txt"
 echo "unicode" > "$SPECIAL/ünïcödë-fïlé.txt"
+# Emoji (U+1F600) filename consumed by the SFTP-STRESS-11 integration test (#864).
+echo "emoji" > "$SPECIAL/😀_emoji.txt"
 echo "dots" > "$SPECIAL/...multiple.dots..."
 echo "dash" > "$SPECIAL/-starts-with-dash.txt"
 echo "long" > "$SPECIAL/$(printf 'a%.0s' {1..200}).txt"

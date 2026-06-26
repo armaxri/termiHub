@@ -812,4 +812,31 @@ describe("appStore — connections, folders, and special tabs", () => {
       expect((persisted.config.config as Record<string, unknown>).password).toBeUndefined();
     });
   });
+
+  describe("addConnection — optimistic id reconciliation (#863)", () => {
+    const mockPersist = vi.mocked(persistConnection);
+
+    it("reconciles the optimistic conn- id to the backend's persisted id", async () => {
+      // The backend recomputes the id from folder + name. Reconciling the
+      // in-memory entry as soon as the save returns keeps a credential stored
+      // during a connect that fires before the reload from being orphaned under
+      // the stale optimistic id.
+      mockPersist.mockResolvedValueOnce("host-alice");
+      // Hang the post-persist reload so reconciliation is observed in isolation
+      // (a completed reload would replace the list from disk regardless).
+      vi.mocked(loadConnections).mockReturnValueOnce(new Promise<never>(() => {}));
+
+      const conn = makeConnection({ id: "conn-987654", name: "Host Alice" });
+      useAppStore.getState().addConnection(conn);
+
+      // The optimistic id is present immediately (before the save resolves).
+      expect(useAppStore.getState().connections.map((c) => c.id)).toContain("conn-987654");
+
+      await vi.waitFor(() => {
+        const ids = useAppStore.getState().connections.map((c) => c.id);
+        expect(ids).toContain("host-alice");
+        expect(ids).not.toContain("conn-987654");
+      });
+    });
+  });
 });

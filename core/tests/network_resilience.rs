@@ -9,8 +9,10 @@
 //! Requires: `docker compose -f tests/docker/docker-compose.yml --profile fault up -d`
 //! Skips gracefully if containers are not running.
 //!
-//! **IMPORTANT**: These tests must run single-threaded (`--test-threads=1`)
-//! because they modify shared container state via `docker exec`.
+//! **IMPORTANT**: These tests modify shared container state via `docker exec`
+//! (the proxy's `tc` qdisc), so they must not run concurrently with each other.
+//! They are serialized in-source with `#[serial(network_fault)]`, which keeps the
+//! suite parallel-safe regardless of `--test-threads`.
 
 mod common;
 
@@ -19,11 +21,13 @@ use std::time::{Duration, Instant};
 use common::{
     apply_fault, require_docker, ssh_exec, ssh_password_config, FaultGuard, PORT_NETWORK_FAULT,
 };
+use serial_test::serial;
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 // ── NET-FAULT-01: 500ms latency ─────────────────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_01_high_latency() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -57,6 +61,7 @@ async fn net_fault_01_high_latency() {
 // ── NET-FAULT-02: 2000ms extreme latency ────────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_02_extreme_latency() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -88,6 +93,7 @@ async fn net_fault_02_extreme_latency() {
 // ── NET-FAULT-03: 10% packet loss ───────────────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_03_moderate_packet_loss() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -114,6 +120,7 @@ async fn net_fault_03_moderate_packet_loss() {
 // ── NET-FAULT-04: 50% severe packet loss ────────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_04_severe_packet_loss() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -147,6 +154,7 @@ async fn net_fault_04_severe_packet_loss() {
 // ── NET-FAULT-05: 56kbps bandwidth throttle ─────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_05_dialup_throttle() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -173,6 +181,7 @@ async fn net_fault_05_dialup_throttle() {
 // ── NET-FAULT-06: 1Mbps bandwidth throttle ──────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_06_1mbps_throttle() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -198,6 +207,7 @@ async fn net_fault_06_1mbps_throttle() {
 // ── NET-FAULT-07: Full disconnect (100% loss) ───────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_07_full_disconnect() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -222,6 +232,7 @@ async fn net_fault_07_full_disconnect() {
 // ── NET-FAULT-08: Disconnect + recovery ─────────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_08_disconnect_and_recovery() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -253,6 +264,7 @@ async fn net_fault_08_disconnect_and_recovery() {
 // ── NET-FAULT-09: Jitter simulation ─────────────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_09_jitter() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
@@ -279,6 +291,7 @@ async fn net_fault_09_jitter() {
 // ── NET-FAULT-10: Packet corruption ─────────────────────────────────
 
 #[tokio::test]
+#[serial(network_fault)]
 async fn net_fault_10_packet_corruption() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();

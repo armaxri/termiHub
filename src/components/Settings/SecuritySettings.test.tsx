@@ -94,6 +94,38 @@ describe("SecuritySettings", () => {
     expect(query("change-master-password-btn")).toBeNull();
   });
 
+  it("change-password dialog exposes stable testids for the harness", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+
+    render();
+    const btn = query("change-master-password-btn") as HTMLElement;
+    await act(async () => {
+      btn.click();
+    });
+
+    expect(query("change-master-password-current")).not.toBeNull();
+    expect(query("change-master-password-new")).not.toBeNull();
+    expect(query("change-master-password-confirm")).not.toBeNull();
+    expect(query("change-master-password-confirm-btn")).not.toBeNull();
+  });
+
+  it("switch-to-none confirm dialog exposes a stable confirm testid", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+
+    render();
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    expect(query("confirm-switch-dialog")).not.toBeNull();
+    expect(query("confirm-switch-confirm-btn")).not.toBeNull();
+  });
+
   it("activating master password mode calls only switch_credential_store, not setup_master_password", async () => {
     // Regression test: previously setupMasterPassword was called before switchCredentialStore,
     // which failed with "Credential store is not in master password mode" because the backend

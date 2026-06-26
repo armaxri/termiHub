@@ -267,6 +267,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   className="settings-panel__btn settings-panel__btn--primary"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
+                  data-testid="confirm-switch-confirm-btn"
                 >
                   {switching ? "Switching…" : "Confirm"}
                 </button>
@@ -338,12 +339,14 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     value={currentPasswordInput}
                     onChange={(e) => setCurrentPasswordInput(e.target.value)}
                     autoFocus
+                    data-testid="change-master-password-current"
                   />
                   <PasswordInput
                     className="settings-panel__inline-dialog-input"
                     placeholder="New password"
                     value={changeNewPassword}
                     onChange={(e) => setChangeNewPassword(e.target.value)}
+                    data-testid="change-master-password-new"
                   />
                   <PasswordInput
                     className="settings-panel__inline-dialog-input"
@@ -353,6 +356,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleChangePassword();
                     }}
+                    data-testid="change-master-password-confirm"
                   />
                   {changePasswordError && (
                     <p className="settings-panel__inline-dialog-error">{changePasswordError}</p>
@@ -361,6 +365,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     <button
                       className="settings-panel__btn settings-panel__btn--primary"
                       onClick={handleChangePassword}
+                      data-testid="change-master-password-confirm-btn"
                     >
                       Change
                     </button>

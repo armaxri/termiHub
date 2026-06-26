@@ -62,12 +62,14 @@ pub fn load_connections_and_folders(
     })
 }
 
-/// Save (add or update) a connection, routing to the correct file based on `sourceFile`.
+/// Save (add or update) a connection, routing to the correct file based on
+/// `sourceFile`. Returns the connection's **persisted** id (recomputed from
+/// folder + name), so the frontend can reconcile its optimistic `conn-<ts>` id.
 #[tauri::command]
 pub fn save_connection(
     connection: SavedConnection,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     debug!(id = %connection.id, name = %connection.name, "Saving connection");
     manager
         .save_connection_routed(connection)
