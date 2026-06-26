@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! SSH Authentication Integration Tests (SSH-AUTH-01 through SSH-AUTH-15).
 //!
 //! Tests termiHub's SSH authentication handling against Docker containers:

@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! Regression test for #406: agent binary must be invoked with a full path
 //! in non-interactive SSH exec channels.
 //!
