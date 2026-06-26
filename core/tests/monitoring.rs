@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! Monitoring Integration Tests (MON-01 through MON-04).
 //!
 //! Tests termiHub's SSH monitoring provider against Docker containers.

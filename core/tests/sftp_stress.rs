@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! SFTP Stress Integration Tests (SFTP-STRESS-01 through SFTP-STRESS-16).
 //!
 //! Tests termiHub's SFTP file browser against the pre-populated

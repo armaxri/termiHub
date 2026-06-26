@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! SSH Compatibility Integration Tests (SSH-COMPAT-01, SSH-COMPAT-02).
 //!
 //! Tests termiHub's SSH backend against a legacy OpenSSH 7.x server to verify

@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! Network Resilience Integration Tests (NET-FAULT-01 through NET-FAULT-10).
 //!
 //! Tests termiHub's SSH backend under adverse network conditions by
