@@ -4,6 +4,7 @@ import {
   buildDefaults,
   isFieldVisible,
   findPasswordPromptInfo,
+  findKeyPassphrasePromptInfo,
   filterRuntimeOptions,
   filterCredentialFields,
 } from "./schemaDefaults";
@@ -250,6 +251,53 @@ describe("findPasswordPromptInfo", () => {
       ],
     };
     const result = findPasswordPromptInfo(schema, { host: "h", username: "u" });
+    expect(result).toEqual({
+      hostKey: "host",
+      usernameKey: "username",
+      passwordKey: "password",
+    });
+  });
+});
+
+describe("findKeyPassphrasePromptInfo", () => {
+  it("returns prompt info for key auth when savePassword is opted in (#879)", () => {
+    const settings = {
+      authMethod: "key",
+      savePassword: true,
+      host: "example.com",
+      username: "admin",
+    };
+    const result = findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings);
+    expect(result).toEqual({
+      hostKey: "host",
+      usernameKey: "username",
+      passwordKey: "password",
+    });
+  });
+
+  it("returns null for key auth when savePassword is not set", () => {
+    const settings = { authMethod: "key", host: "example.com", username: "admin" };
+    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings)).toBeNull();
+  });
+
+  it("returns null for password auth (handled by findPasswordPromptInfo)", () => {
+    const settings = { authMethod: "password", savePassword: true };
+    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings)).toBeNull();
+  });
+
+  it("returns null for agent auth", () => {
+    const settings = { authMethod: "agent", savePassword: true };
+    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings)).toBeNull();
+  });
+
+  it("falls back to default field keys when the schema omits them", () => {
+    const schema: SettingsSchema = {
+      groups: [{ key: "conn", label: "Connection", fields: [textField("foo")] }],
+    };
+    const result = findKeyPassphrasePromptInfo(schema, {
+      authMethod: "key",
+      savePassword: true,
+    });
     expect(result).toEqual({
       hostKey: "host",
       usernameKey: "username",
