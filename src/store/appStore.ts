@@ -802,6 +802,21 @@ export function _resetConnectionReloadSeq(): void {
 export const useAppStore = create<AppState>((set, get) => {
   // Reload connections from the backend, applying the result only if this
   // reload was initiated more recently than the last applied one.
+  /**
+   * Reconcile an in-memory connection's optimistic id with the **persisted** id
+   * the backend returns from a save. The editor assigns `conn-<ts>` and the
+   * backend recomputes a name-derived id, so a connect firing before the reload
+   * would otherwise store a credential under the stale id and orphan it (#863,
+   * #875). A no-op when the id is unchanged or the backend returned nothing.
+   */
+  function reconcileConnectionId(prevId: string, persistedId: string | undefined): void {
+    if (!persistedId || persistedId === prevId) return;
+    frontendLog("connection_sync", `reconciling ${prevId} → ${persistedId}`);
+    set((state) => ({
+      connections: state.connections.map((c) => (c.id === prevId ? { ...c, id: persistedId } : c)),
+    }));
+  }
+
   function applyConnectionReload(): Promise<void> {
     const mySeq = ++_connReloadSeq;
     frontendLog("connection_sync", `reload initiated (seq=${mySeq})`);
@@ -2478,21 +2493,7 @@ export const useAppStore = create<AppState>((set, get) => {
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
         .then((persistedId) => {
-          // The backend recomputes the id from folder + name, so it can differ
-          // from the optimistic `conn-<ts>` id. Reconcile the in-memory entry
-          // immediately so a connect that fires before the reload stores its
-          // credential under the persisted id rather than orphaning it (#863).
-          if (persistedId && persistedId !== connection.id) {
-            frontendLog(
-              "connection_sync",
-              `addConnection: reconciling ${connection.id} → ${persistedId}`
-            );
-            set((state) => ({
-              connections: state.connections.map((c) =>
-                c.id === connection.id ? { ...c, id: persistedId } : c
-              ),
-            }));
-          }
+          reconcileConnectionId(connection.id, persistedId);
           return applyConnectionReload();
         })
         .catch((err) => console.error("Failed to persist new connection:", err));
@@ -2504,7 +2505,12 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       frontendLog("connection_sync", `updateConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
-        .then(() => applyConnectionReload())
+        .then((persistedId) => {
+          // A rename changes the name-derived persisted id; reconcile so a connect
+          // before the reload stores its credential under the new id (#875).
+          reconcileConnectionId(connection.id, persistedId);
+          return applyConnectionReload();
+        })
         .catch((err) => console.error("Failed to persist connection update:", err));
     },
 

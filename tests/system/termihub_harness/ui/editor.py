@@ -22,6 +22,7 @@ Suites combine this with :class:`~termihub_harness.ui.FilesUi` (to open the file
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any, Optional
 
 from ..bridge import BridgeError
@@ -38,6 +39,8 @@ class EditorUi(HarnessMixin):
     STATUS_EOL = "status-bar-eol"
     STATUS_LANGUAGE = "status-bar-language"
     LANG_SEARCH = "lang-menu-search"
+    #: The Monaco hidden input, tagged in FileEditor so pressKey can target it.
+    INPUT = "editor-input"
 
     if TYPE_CHECKING:  # provided by FilesUi / TabsUi, with which suites combine this
         def wait_for_file_row(self, name: str, *, timeout: float = ...) -> None: ...
@@ -131,3 +134,30 @@ class EditorUi(HarnessMixin):
         item = f"lang-{language_id}"
         self.wait(lambda: self.driver.exists(item), what=f"the {item} language option")
         self.driver.click(item)
+
+    # -- keyboard (drives Monaco via the tagged hidden input) --------------------
+    def focus_editor(self) -> None:
+        """Focus Monaco's hidden input so subsequent key presses reach the editor."""
+        self.driver.click(self.INPUT)
+
+    def move_cursor(self, key: str, *, times: int = 1) -> None:
+        """Press an arrow key ``times`` times on the editor (e.g. ``"ArrowDown"``).
+
+        Plain arrows are platform-agnostic and move the caret, which drives
+        ``onDidChangeCursorPosition`` → ``editorStatus`` — no chord/modifier and so
+        no per-OS keybinding difference.
+        """
+        for _ in range(times):
+            self.driver.press_key(key, self.INPUT)
+
+    def save_via_keybinding(self) -> None:
+        """Save through Monaco's **Save** keybinding (``Cmd+S`` on macOS, else ``Ctrl+S``).
+
+        The action is registered with ``CtrlCmd | KeyS``, which resolves to the
+        platform's primary modifier — so the chord matches what a user presses on
+        this OS, exercising the keybinding path the toolbar button bypasses.
+        """
+        if sys.platform == "darwin":
+            self.driver.press_key("s", self.INPUT, meta=True)
+        else:
+            self.driver.press_key("s", self.INPUT, ctrl=True)

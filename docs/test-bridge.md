@@ -141,7 +141,7 @@ unmount.
 | `select`              | Choose a native `<select>` option (native setter + `change`)   |
 | `contextMenu`         | Open an element's right-click menu (`contextmenu` event)       |
 | `resizeWindow`        | Resize the app window (Tauri `setSize` → xterm fit → PTY size) |
-| `pressKey`            | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
+| `pressKey`            | Dispatch a key + optional modifiers (`Ctrl+S`, `ArrowDown`)    |
 | `terminalInput`       | Send a command into a terminal **session** (see below)         |
 | `scrollTerminal`      | Scroll a terminal's viewport by lines / to the bottom          |
 | `drag`                | Drag an element by a pixel delta (resize handles)              |
@@ -225,6 +225,24 @@ await driver.scrollTerminal({ toBottom: true }); // re-arm auto-scroll
 
 The scenario runner (#800) exposes these as the `scrollTerminal` step and the
 `terminalAtBottom` check (`{ assert: "terminalAtBottom", atBottom?, tolerance? }`).
+
+### Keyboard chords (`pressKey` modifiers)
+
+`pressKey` takes optional `ctrl` / `meta` / `shift` / `alt` flags for chords like
+`Ctrl+S` or `Ctrl+End`. Crucially, the dispatched event also carries a real legacy
+**`keyCode`** (the deprecated numeric, set via `Object.defineProperty` since it is
+read-only and absent from `KeyboardEventInit`): a synthetic event leaves it `0`,
+and Monaco's `StandardKeyboardEvent` reads `e.keyCode` to resolve keybindings — so
+without it, `Ctrl+S` would resolve to `Unknown` and do nothing. With it, keybinding
+-driven editors respond as they do to real input. This is what lets a test target
+Monaco's hidden input (tagged `editor-input` by `FileEditor`) to drive **cursor
+movement** (`ArrowDown` updates `editorStatus.line`) and the **Save keybinding**
+(`Cmd+S`/`Ctrl+S` clears the dirty flag).
+
+```ts
+await driver.pressKey("ArrowDown", "editor-input"); // caret moves; Ln/Col updates
+await driver.pressKey("s", "editor-input", { meta: true }); // Cmd+S → save
+```
 
 ### Dragging (`drag`) and computed styles (`getComputedStyle`)
 
@@ -362,21 +380,21 @@ if (!result.passed) {
 
 ### Steps
 
-| Step                                                      | Effect                                            |
-| --------------------------------------------------------- | ------------------------------------------------- |
-| `{ action: "click", testId }`                             | Press the control                                 |
-| `{ action: "doubleClick", testId }`                       | Double-click to activate (open conn / dir / file) |
-| `{ action: "resizeWindow", width, height }`               | Resize the app window (logical px) via Tauri      |
-| `{ action: "type", testId, text }`                        | Set an input/textarea value                       |
-| `{ action: "select", testId, value }`                     | Choose a native `<select>` option                 |
-| `{ action: "contextMenu", testId }`                       | Open the element's right-click context menu       |
-| `{ action: "pressKey", key, testId? }`                    | Dispatch a key (`keydown`+`keyup`)                |
-| `{ action: "drag", testId, dx, dy? }`                     | Drag an element by a pixel delta                  |
-| `{ action: "dragTo", fromTestId, toTestId }`              | Drag one element onto another                     |
-| `{ action: "terminalInput", text, tabId? }`               | Send a command into a terminal session            |
-| `{ action: "scrollTerminal", lines?, toBottom?, tabId? }` | Scroll a terminal's viewport (lines / to bottom)  |
-| `{ action: "waitFor", testId, timeoutMs?, intervalMs? }`  | Poll until the element exists, or fail on timeout |
-| `{ action: "pause", ms }`                                 | Wait a fixed duration for output to settle        |
+| Step                                                               | Effect                                            |
+| ------------------------------------------------------------------ | ------------------------------------------------- |
+| `{ action: "click", testId }`                                      | Press the control                                 |
+| `{ action: "doubleClick", testId }`                                | Double-click to activate (open conn / dir / file) |
+| `{ action: "resizeWindow", width, height }`                        | Resize the app window (logical px) via Tauri      |
+| `{ action: "type", testId, text }`                                 | Set an input/textarea value                       |
+| `{ action: "select", testId, value }`                              | Choose a native `<select>` option                 |
+| `{ action: "contextMenu", testId }`                                | Open the element's right-click context menu       |
+| `{ action: "pressKey", key, testId?, ctrl?, meta?, shift?, alt? }` | Dispatch a key + optional modifiers               |
+| `{ action: "drag", testId, dx, dy? }`                              | Drag an element by a pixel delta                  |
+| `{ action: "dragTo", fromTestId, toTestId }`                       | Drag one element onto another                     |
+| `{ action: "terminalInput", text, tabId? }`                        | Send a command into a terminal session            |
+| `{ action: "scrollTerminal", lines?, toBottom?, tabId? }`          | Scroll a terminal's viewport (lines / to bottom)  |
+| `{ action: "waitFor", testId, timeoutMs?, intervalMs? }`           | Poll until the element exists, or fail on timeout |
+| `{ action: "pause", ms }`                                          | Wait a fixed duration for output to settle        |
 
 The first failing step aborts the rest (steps are sequential preconditions) and
 the checks are skipped.

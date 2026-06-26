@@ -839,4 +839,28 @@ describe("appStore — connections, folders, and special tabs", () => {
       });
     });
   });
+
+  describe("updateConnection — persisted id reconciliation on rename (#875)", () => {
+    const mockPersist = vi.mocked(persistConnection);
+
+    it("reconciles the in-memory id to the backend's persisted id after a rename", async () => {
+      // A rename changes the name-derived persisted id. Reconciling the in-memory
+      // entry as soon as the save returns keeps a credential stored during a
+      // connect that fires before the reload from being orphaned under the old id.
+      const existing = makeConnection({ id: "old-name", name: "Old Name" });
+      useAppStore.setState({ connections: [existing] });
+
+      mockPersist.mockResolvedValueOnce("new-name");
+      // Hang the reload so the reconciliation is observed in isolation.
+      vi.mocked(loadConnections).mockReturnValueOnce(new Promise<never>(() => {}));
+
+      useAppStore.getState().updateConnection({ ...existing, name: "New Name" });
+
+      await vi.waitFor(() => {
+        const ids = useAppStore.getState().connections.map((c) => c.id);
+        expect(ids).toContain("new-name");
+        expect(ids).not.toContain("old-name");
+      });
+    });
+  });
 });

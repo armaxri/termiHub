@@ -209,6 +209,14 @@ export interface PressKeyCommand {
   action: "pressKey";
   key: string;
   testId?: string;
+  /** Hold Ctrl during the press (e.g. `Ctrl+S`, `Ctrl+End`). */
+  ctrl?: boolean;
+  /** Hold Meta/Command during the press. */
+  meta?: boolean;
+  /** Hold Shift during the press. */
+  shift?: boolean;
+  /** Hold Alt/Option during the press. */
+  alt?: boolean;
 }
 
 /**

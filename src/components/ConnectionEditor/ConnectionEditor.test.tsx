@@ -355,6 +355,59 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     // Key auth: password field hidden → findPasswordPromptInfo returns null → no dialog
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
+
+  /** Click Save & Connect, then answer the password prompt with the given save flag. */
+  async function saveConnectThenAnswerPrompt(connId: string, save: boolean): Promise<void> {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      if (cmd === "save_connection") return Promise.resolve("ssh-pw-conn");
+      if (cmd === "store_credential") return Promise.resolve(null);
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(connId);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+    await act(async () => {
+      useAppStore.getState().submitPassword("typed-secret", save);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  it("stores the entered password when the prompt's Save box is checked (#874)", async () => {
+    await saveConnectThenAnswerPrompt(SSH_CONN_PASSWORD.id, true);
+
+    const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    expect(storeCalls).toHaveLength(1);
+    expect(storeCalls[0][1]).toMatchObject({
+      connectionId: "ssh-pw-conn",
+      credentialType: "password",
+      value: "typed-secret",
+    });
+  });
+
+  it("does not store the password when the prompt's Save box is unchecked (#874)", async () => {
+    await saveConnectThenAnswerPrompt(SSH_CONN_PASSWORD.id, false);
+
+    const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
+    expect(storeCalls).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

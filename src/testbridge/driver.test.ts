@@ -116,6 +116,22 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "pressKey", key: "Enter", testId: "field" }]);
   });
 
+  it("maps pressKey modifiers through (e.g. Ctrl+S)", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).pressKey("s", "editor-input", { ctrl: true });
+    expect(sent).toEqual([
+      {
+        action: "pressKey",
+        key: "s",
+        testId: "editor-input",
+        ctrl: true,
+        meta: undefined,
+        shift: undefined,
+        alt: undefined,
+      },
+    ]);
+  });
+
   it("unwraps the value of a query command", async () => {
     const { transport } = scriptedTransport({
       getText: { ok: true, action: "getText", value: "Connected" },

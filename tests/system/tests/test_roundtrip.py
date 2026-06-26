@@ -64,6 +64,29 @@ def test_extended_interaction_verbs_round_trip(bridge):
         assert handler.recorded["doubleClicks"] == ["file-row-notes.txt"]
 
 
+def test_press_key_modifiers_round_trip(bridge):
+    # A custom handler that echoes the whole pressKey command, so the modifier
+    # flags can be asserted (dispatcher_like only records the bare key).
+    received = []
+
+    def capture(command):
+        if command["action"] == "pressKey":
+            received.append(command)
+        return {"ok": True, "action": command["action"]}
+
+    with FakeApp(bridge.port, capture):
+        driver = bridge.wait_for_app(timeout=5)
+        driver.press_key("s", "editor-input", ctrl=True)
+        driver.press_key("End", ctrl=True, shift=True)
+
+    assert received[0]["key"] == "s"
+    assert received[0]["testId"] == "editor-input"
+    assert received[0]["ctrl"] is True
+    assert received[0]["meta"] is False
+    assert received[1]["key"] == "End"
+    assert received[1]["ctrl"] is True and received[1]["shift"] is True
+
+
 def test_terminal_scroll_round_trip(bridge):
     handler = dispatcher_like(viewport={"viewportY": 5, "baseY": 42})
     with FakeApp(bridge.port, handler):
