@@ -1,4 +1,4 @@
-import type { BridgeCommand, BridgeResponse } from "./protocol";
+import type { BridgeCommand, BridgeResponse, TerminalViewport } from "./protocol";
 
 /**
  * Transport that carries a {@link BridgeCommand} to the running app and returns
@@ -46,6 +46,22 @@ export interface GetComputedStyleOptions {
   testId?: string;
 }
 
+/** Options for {@link Driver.scrollTerminal}. */
+export interface ScrollTerminalOptions {
+  /** Scroll this specific tab instead of the active one. */
+  tabId?: string;
+  /** Signed line delta (negative = up into scrollback); ignored when `toBottom`. */
+  lines?: number;
+  /** Jump straight to the bottom (resumes auto-scroll), ignoring `lines`. */
+  toBottom?: boolean;
+}
+
+/** Options for {@link Driver.getTerminalViewport}. */
+export interface GetTerminalViewportOptions {
+  /** Read this specific tab instead of the active one. */
+  tabId?: string;
+}
+
 /**
  * The abstraction test authors and coding agents program against.
  *
@@ -58,7 +74,10 @@ export interface GetComputedStyleOptions {
 export interface Driver {
   /** Press the control carrying the given `data-testid`. */
   click(testId: string): Promise<void>;
-  /** Double-click the control carrying the given `data-testid` (e.g. sidebar connect). */
+  /**
+   * Double-click the element with the given `data-testid` — the "activate"
+   * gesture for opening a connection, entering a directory, or opening a file.
+   */
   doubleClick(testId: string): Promise<void>;
   /** Resize the application window to `width` × `height` logical pixels (Tauri). */
   resizeWindow(width: number, height: number): Promise<void>;
@@ -98,6 +117,19 @@ export interface Driver {
   drag(testId: string, dx: number, dy?: number): Promise<void>;
   /** Read the reconstructed text of a terminal (active tab unless specified). */
   readTerminal(options?: ReadTerminalOptions): Promise<string>;
+  /**
+   * Scroll a terminal's viewport by `options.lines` logical lines (negative = up
+   * into scrollback) or to the bottom when `options.toBottom` is set. Fires the
+   * same `onScroll` event a wheel gesture would, so the auto-scroll guard (#504)
+   * observes it. Active tab unless `options.tabId` is given.
+   */
+  scrollTerminal(options?: ScrollTerminalOptions): Promise<void>;
+  /**
+   * Read a terminal's `{ viewportY, baseY }` scroll position. `viewportY < baseY`
+   * means scrolled up into scrollback; equal means pinned to the bottom. Active
+   * tab unless `options.tabId` is given.
+   */
+  getTerminalViewport(options?: GetTerminalViewportOptions): Promise<TerminalViewport>;
   /** Read a slice of app state, optionally by dot-path. */
   getState(path?: string): Promise<unknown>;
 }
@@ -202,6 +234,22 @@ export class InAppBridgeDriver implements Driver {
       action: "readTerminal",
       tabId: options.tabId,
       joinFullWidthRows: options.joinFullWidthRows,
+    });
+  }
+
+  async scrollTerminal(options: ScrollTerminalOptions = {}): Promise<void> {
+    await this.send({
+      action: "scrollTerminal",
+      tabId: options.tabId,
+      lines: options.lines,
+      toBottom: options.toBottom,
+    });
+  }
+
+  async getTerminalViewport(options: GetTerminalViewportOptions = {}): Promise<TerminalViewport> {
+    return this.send<TerminalViewport>({
+      action: "getTerminalViewport",
+      tabId: options.tabId,
     });
   }
 

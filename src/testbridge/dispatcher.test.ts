@@ -13,6 +13,8 @@ function setup(
   const deps: BridgeDeps = {
     root: container,
     readTerminal: () => undefined,
+    scrollTerminal: () => false,
+    getTerminalViewport: () => undefined,
     getActiveTabId: () => undefined,
     getState: () => ({}),
     sendTerminalInput: async () => false,
@@ -510,6 +512,83 @@ describe("dispatchCommand", () => {
     it("fails when the requested terminal is not registered", async () => {
       const { deps } = setup(`<div></div>`, { readTerminal: () => undefined });
       const res = await dispatchCommand({ action: "readTerminal", tabId: "ghost" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ghost");
+    });
+  });
+
+  describe("scrollTerminal", () => {
+    it("scrolls the active terminal by a signed line delta", async () => {
+      const scroll = vi.fn(() => true);
+      const { deps } = setup(`<div></div>`, {
+        getActiveTabId: () => "tab-1",
+        scrollTerminal: scroll,
+      });
+      const res = await dispatchCommand({ action: "scrollTerminal", lines: -2000 }, deps);
+      expect(res).toEqual({ ok: true, action: "scrollTerminal" });
+      expect(scroll).toHaveBeenCalledWith("tab-1", -2000, false);
+    });
+
+    it("jumps to the bottom and defaults a missing line delta to 0", async () => {
+      const scroll = vi.fn(() => true);
+      const { deps } = setup(`<div></div>`, { scrollTerminal: scroll });
+      const res = await dispatchCommand(
+        { action: "scrollTerminal", toBottom: true, tabId: "tab-9" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "scrollTerminal" });
+      expect(scroll).toHaveBeenCalledWith("tab-9", 0, true);
+    });
+
+    it("fails when there is no active terminal", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "scrollTerminal", lines: 1 }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/no .*terminal/i);
+    });
+
+    it("fails when the requested terminal is not registered", async () => {
+      const { deps } = setup(`<div></div>`, { scrollTerminal: () => false });
+      const res = await dispatchCommand({ action: "scrollTerminal", tabId: "ghost" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ghost");
+    });
+  });
+
+  describe("getTerminalViewport", () => {
+    it("reads the active terminal's viewport position", async () => {
+      const { deps } = setup(`<div></div>`, {
+        getActiveTabId: () => "tab-1",
+        getTerminalViewport: (tabId) =>
+          tabId === "tab-1" ? { viewportY: 5, baseY: 42 } : undefined,
+      });
+      const res = await dispatchCommand({ action: "getTerminalViewport" }, deps);
+      expect(res).toEqual({
+        ok: true,
+        action: "getTerminalViewport",
+        value: { viewportY: 5, baseY: 42 },
+      });
+    });
+
+    it("reads an explicit tabId", async () => {
+      const { deps } = setup(`<div></div>`, {
+        getTerminalViewport: (tabId) =>
+          tabId === "tab-9" ? { viewportY: 0, baseY: 0 } : undefined,
+      });
+      const res = await dispatchCommand({ action: "getTerminalViewport", tabId: "tab-9" }, deps);
+      expect(res.value).toEqual({ viewportY: 0, baseY: 0 });
+    });
+
+    it("fails when there is no active terminal", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "getTerminalViewport" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/no .*terminal/i);
+    });
+
+    it("fails when the requested terminal is not registered", async () => {
+      const { deps } = setup(`<div></div>`, { getTerminalViewport: () => undefined });
+      const res = await dispatchCommand({ action: "getTerminalViewport", tabId: "ghost" }, deps);
       expect(res.ok).toBe(false);
       expect(res.error).toContain("ghost");
     });

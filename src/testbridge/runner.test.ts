@@ -3,9 +3,12 @@ import { runScenario, type RunOptions } from "./runner";
 import type {
   Driver,
   GetComputedStyleOptions,
+  GetTerminalViewportOptions,
   ReadTerminalOptions,
+  ScrollTerminalOptions,
   TerminalInputOptions,
 } from "./driver";
+import type { TerminalViewport } from "./protocol";
 import { BridgeError } from "./driver";
 import type { Scenario } from "./scenario";
 
@@ -31,6 +34,9 @@ class FakeDriver implements Driver {
   terminalText = "";
   hasTerminal = true;
   readTerminalCalls = 0;
+  scrolls: Array<{ lines?: number; toBottom?: boolean; tabId?: string }> = [];
+  /** Viewport returned by `getTerminalViewport`; mutate to model scroll state. */
+  viewport: TerminalViewport = { viewportY: 0, baseY: 0 };
   state: Record<string, unknown> = {};
   /** Optional override so tests can model `exists` changing over time. */
   existsImpl?: (testId: string) => boolean;
@@ -112,6 +118,16 @@ class FakeDriver implements Driver {
     this.readTerminalCalls++;
     if (!this.hasTerminal) throw new BridgeError("readTerminal", "no active terminal");
     return this.terminalText;
+  }
+
+  async scrollTerminal(options: ScrollTerminalOptions = {}): Promise<void> {
+    if (!this.hasTerminal) throw new BridgeError("scrollTerminal", "no active terminal");
+    this.scrolls.push({ lines: options.lines, toBottom: options.toBottom, tabId: options.tabId });
+  }
+
+  async getTerminalViewport(_options?: GetTerminalViewportOptions): Promise<TerminalViewport> {
+    if (!this.hasTerminal) throw new BridgeError("getTerminalViewport", "no active terminal");
+    return this.viewport;
   }
 
   async getState(path?: string): Promise<unknown> {

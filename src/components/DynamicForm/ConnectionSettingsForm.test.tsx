@@ -146,6 +146,8 @@ describe("ConnectionSettingsForm", () => {
     const deps: BridgeDeps = {
       root: container,
       readTerminal: () => undefined,
+      scrollTerminal: () => false,
+      getTerminalViewport: () => undefined,
       getActiveTabId: () => undefined,
       getState: () => ({}),
       sendTerminalInput: async () => false,
