@@ -434,6 +434,47 @@ describe("dispatchCommand", () => {
       expect(res.ok).toBe(false);
       expect(res.error).toContain("ghost");
     });
+
+    it("carries modifier flags on the dispatched event (e.g. Ctrl+S)", async () => {
+      const { deps, container } = setup(`<input data-testid="field" />`);
+      const input = container.querySelector("input")!;
+      let seen: KeyboardEvent | undefined;
+      input.addEventListener("keydown", (e) => (seen = e as KeyboardEvent));
+
+      const res = await dispatchCommand(
+        { action: "pressKey", key: "s", testId: "field", ctrl: true, shift: true },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "pressKey" });
+      expect(seen?.ctrlKey).toBe(true);
+      expect(seen?.shiftKey).toBe(true);
+      expect(seen?.metaKey).toBe(false);
+      expect(seen?.altKey).toBe(false);
+    });
+
+    it("gives the event a real legacy keyCode + code so Monaco can resolve it", async () => {
+      const { deps, container } = setup(`<input data-testid="field" />`);
+      const input = container.querySelector("input")!;
+      let seen: KeyboardEvent | undefined;
+      input.addEventListener("keydown", (e) => (seen = e as KeyboardEvent));
+
+      await dispatchCommand({ action: "pressKey", key: "End", testId: "field", ctrl: true }, deps);
+      // A synthetic event leaves keyCode 0; the dispatcher restores the legacy
+      // numeric (End = 35) that Monaco's StandardKeyboardEvent reads.
+      expect(seen?.keyCode).toBe(35);
+      expect(seen?.code).toBe("End");
+    });
+
+    it("derives keyCode + code for a letter key", async () => {
+      const { deps, container } = setup(`<input data-testid="field" />`);
+      const input = container.querySelector("input")!;
+      let seen: KeyboardEvent | undefined;
+      input.addEventListener("keydown", (e) => (seen = e as KeyboardEvent));
+
+      await dispatchCommand({ action: "pressKey", key: "s", testId: "field" }, deps);
+      expect(seen?.keyCode).toBe(83);
+      expect(seen?.code).toBe("KeyS");
+    });
   });
 
   describe("terminalInput", () => {

@@ -125,7 +125,12 @@ async function runStep(
       await driver.contextMenu(step.testId);
       return;
     case "pressKey":
-      await driver.pressKey(step.key, step.testId);
+      await driver.pressKey(step.key, step.testId, {
+        ctrl: step.ctrl,
+        meta: step.meta,
+        shift: step.shift,
+        alt: step.alt,
+      });
       return;
     case "drag":
       await driver.drag(step.testId, step.dx, step.dy);

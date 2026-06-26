@@ -156,9 +156,33 @@ class Driver:
         """Open the right-click context menu of the element with ``test_id``."""
         self._call({"action": "contextMenu", "testId": test_id})
 
-    def press_key(self, key: str, test_id: Optional[str] = None) -> None:
-        """Press ``key`` on ``test_id`` (or the focused element), e.g. ``"Escape"``."""
-        self._call({"action": "pressKey", "key": key, "testId": test_id})
+    def press_key(
+        self,
+        key: str,
+        test_id: Optional[str] = None,
+        *,
+        ctrl: bool = False,
+        meta: bool = False,
+        shift: bool = False,
+        alt: bool = False,
+    ) -> None:
+        """Press ``key`` on ``test_id`` (or the focused element), e.g. ``"Escape"``.
+
+        Pass modifier flags for chords like ``Ctrl+S`` / ``Ctrl+End``. The
+        dispatched event carries a real legacy ``keyCode``, so keybinding-driven
+        editors (Monaco) respond as they do to real input.
+        """
+        self._call(
+            {
+                "action": "pressKey",
+                "key": key,
+                "testId": test_id,
+                "ctrl": ctrl,
+                "meta": meta,
+                "shift": shift,
+                "alt": alt,
+            }
+        )
 
     def drag_to(self, from_test_id: str, to_test_id: str) -> None:
         """Drag one element onto another (pointer-based, e.g. @dnd-kit reorder)."""

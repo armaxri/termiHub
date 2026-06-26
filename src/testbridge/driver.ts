@@ -40,6 +40,14 @@ export interface ReadTerminalOptions {
   joinFullWidthRows?: boolean;
 }
 
+/** Modifier keys held during a {@link Driver.pressKey} chord. */
+export interface KeyModifiers {
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+}
+
 /** Options for {@link Driver.getComputedStyle}. */
 export interface GetComputedStyleOptions {
   /** Read this element instead of the document root (theme CSS variables). */
@@ -87,8 +95,13 @@ export interface Driver {
   select(testId: string, value: string): Promise<void>;
   /** Open the right-click context menu of the element with the given `data-testid`. */
   contextMenu(testId: string): Promise<void>;
-  /** Press a key on `testId` (or the focused element when omitted), e.g. `"Escape"`. */
-  pressKey(key: string, testId?: string): Promise<void>;
+  /**
+   * Press a key on `testId` (or the focused element when omitted), e.g.
+   * `"Escape"`. Pass `modifiers` for chords like `Ctrl+S` / `Ctrl+End` — the
+   * dispatched event carries a real legacy `keyCode`, so keybinding-driven
+   * editors (Monaco) respond as they do to real input.
+   */
+  pressKey(key: string, testId?: string, modifiers?: KeyModifiers): Promise<void>;
   /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
   dragTo(fromTestId: string, toTestId: string): Promise<void>;
   /**
@@ -193,8 +206,16 @@ export class InAppBridgeDriver implements Driver {
     await this.send({ action: "contextMenu", testId });
   }
 
-  async pressKey(key: string, testId?: string): Promise<void> {
-    await this.send({ action: "pressKey", key, testId });
+  async pressKey(key: string, testId?: string, modifiers: KeyModifiers = {}): Promise<void> {
+    await this.send({
+      action: "pressKey",
+      key,
+      testId,
+      ctrl: modifiers.ctrl,
+      meta: modifiers.meta,
+      shift: modifiers.shift,
+      alt: modifiers.alt,
+    });
   }
 
   async dragTo(fromTestId: string, toTestId: string): Promise<void> {
