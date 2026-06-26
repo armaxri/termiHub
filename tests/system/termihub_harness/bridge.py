@@ -125,12 +125,14 @@ class Driver:
         self._call({"action": "click", "testId": test_id})
 
     def double_click(self, test_id: str) -> None:
-        """Double-click the element with ``test_id``.
+        """Double-click the element with ``test_id`` — the "activate" gesture.
 
-        Some flows are only reachable via a real double-click — notably connecting
-        a saved connection from the sidebar (``ConnectionList``'s ``onDoubleClick``),
-        the only path that raises the SSH key-passphrase prompt. Dispatches the
-        full sequence a real double-click produces (two click rounds + ``dblclick``).
+        Opens a connection's session from the sidebar (``ConnectionList``'s
+        ``onDoubleClick`` — the only path that raises the SSH key-passphrase
+        prompt), enters a directory in the file browser, or opens a file in the
+        editor. A single :meth:`click` cannot reach ``onDoubleClick`` handlers;
+        this dispatches the full sequence a real double-click produces (two click
+        rounds + ``dblclick``).
         """
         self._call({"action": "doubleClick", "testId": test_id})
 
@@ -218,6 +220,35 @@ class Driver:
                 "joinFullWidthRows": join_full_width_rows,
             }
         )
+
+    def scroll_terminal(
+        self, lines: int = 0, *, to_bottom: bool = False, tab_id: Optional[str] = None
+    ) -> None:
+        """Scroll a terminal's viewport by ``lines`` (negative = up) or to the bottom.
+
+        An xterm terminal renders to a canvas, so a synthetic wheel event cannot
+        move it reliably. This routes through xterm's own scroll, firing the same
+        ``onScroll`` a mouse wheel would — which is what the auto-scroll guard
+        (#504) keys off. Active tab unless ``tab_id`` is given.
+        """
+        self._call(
+            {
+                "action": "scrollTerminal",
+                "lines": lines,
+                "toBottom": to_bottom,
+                "tabId": tab_id,
+            }
+        )
+
+    def terminal_viewport(self, tab_id: Optional[str] = None) -> dict[str, int]:
+        """Read a terminal's ``{"viewportY", "baseY"}`` scroll position.
+
+        ``viewportY < baseY`` means the user has scrolled up into the scrollback
+        (auto-scroll suppressed); equal means pinned to the bottom. Lets a test
+        assert auto-scroll behavior without scraping the GPU canvas. Active tab
+        unless ``tab_id`` is given.
+        """
+        return self._call({"action": "getTerminalViewport", "tabId": tab_id})
 
     def get_state(self, path: Optional[str] = None) -> Any:
         return self._call({"action": "getState", "path": path})

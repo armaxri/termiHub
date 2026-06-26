@@ -30,6 +30,22 @@ interface TerminalRegistryContextType {
    * on displayed terminal output without scraping the GPU canvas.
    */
   getTerminalContent: (tabId: string, joinFullWidthRows?: boolean) => string | undefined;
+  /**
+   * Scroll a terminal's viewport by `lines` logical lines (negative = up into
+   * scrollback), or jump to the bottom when `toBottom` is true. Routes through
+   * xterm's own scroll so the same `onScroll` event a wheel gesture fires also
+   * fires here (the auto-scroll guard keys off it). Returns `true` when a
+   * terminal was registered for the tab, `false` otherwise. Used by the test
+   * bridge to exercise auto-scroll without synthesizing canvas wheel events.
+   */
+  scrollTerminal: (tabId: string, lines: number, toBottom?: boolean) => boolean;
+  /**
+   * Read a terminal's viewport scroll position as `{ viewportY, baseY }`, or
+   * `undefined` when no terminal is registered for the tab. `viewportY < baseY`
+   * means scrolled up into scrollback; equal means pinned to the bottom. Used by
+   * the test bridge to assert auto-scroll behavior without scraping the canvas.
+   */
+  getTerminalViewport: (tabId: string) => { viewportY: number; baseY: number } | undefined;
   /** Save terminal buffer content to a file via native save dialog. */
   saveTerminalToFile: (tabId: string) => Promise<void>;
   /** Copy terminal buffer content to the clipboard. */
@@ -165,6 +181,27 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       const xterm = xtermRegistryRef.current.get(tabId);
       if (!xterm) return undefined;
       return bufferToLogicalLines(xterm.buffer.active, xterm.cols, joinFullWidthRows);
+    },
+    []
+  );
+
+  const scrollTerminal = useCallback((tabId: string, lines: number, toBottom = false): boolean => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (!xterm) return false;
+    if (toBottom) {
+      xterm.scrollToBottom();
+    } else {
+      xterm.scrollLines(lines);
+    }
+    return true;
+  }, []);
+
+  const getTerminalViewport = useCallback(
+    (tabId: string): { viewportY: number; baseY: number } | undefined => {
+      const xterm = xtermRegistryRef.current.get(tabId);
+      if (!xterm) return undefined;
+      const buf = xterm.buffer.active;
+      return { viewportY: buf.viewportY, baseY: buf.baseY };
     },
     []
   );
@@ -321,6 +358,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       fitTerminal,
       clearTerminal,
       getTerminalContent,
+      scrollTerminal,
+      getTerminalViewport,
       saveTerminalToFile,
       copyTerminalToClipboard,
       openTerminalInEditor,
@@ -345,6 +384,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       fitTerminal,
       clearTerminal,
       getTerminalContent,
+      scrollTerminal,
+      getTerminalViewport,
       saveTerminalToFile,
       copyTerminalToClipboard,
       openTerminalInEditor,

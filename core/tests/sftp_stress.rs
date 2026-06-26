@@ -204,7 +204,6 @@ async fn sftp_stress_06_deep_tree() {
 // ── SFTP-STRESS-07: Follow valid file symlink ───────────────────────
 
 #[tokio::test]
-#[ignore = "fixture gap: sftp-stress container missing symlink files (#864)"]
 async fn sftp_stress_07_valid_file_symlink() {
     require_docker!(PORT_SFTP_STRESS);
 
@@ -227,7 +226,6 @@ async fn sftp_stress_07_valid_file_symlink() {
 // ── SFTP-STRESS-08: Follow valid directory symlink ──────────────────
 
 #[tokio::test]
-#[ignore = "fixture gap: sftp-stress container missing symlink dirs (#864)"]
 async fn sftp_stress_08_valid_dir_symlink() {
     require_docker!(PORT_SFTP_STRESS);
 
@@ -293,7 +291,6 @@ async fn sftp_stress_10_circular_symlinks() {
 // ── SFTP-STRESS-11: Unicode filename ────────────────────────────────
 
 #[tokio::test]
-#[ignore = "fixture gap: sftp-stress container missing unicode-named file (#864)"]
 async fn sftp_stress_11_unicode_filename() {
     require_docker!(PORT_SFTP_STRESS);
 

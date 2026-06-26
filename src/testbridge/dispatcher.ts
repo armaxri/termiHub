@@ -16,6 +16,16 @@ export interface BridgeDeps {
    * terminal is registered for `tabId`.
    */
   readTerminal: (tabId: string, joinFullWidthRows: boolean) => string | undefined;
+  /**
+   * Scroll a terminal's viewport by `lines` (negative = up) or to the bottom,
+   * resolving to `true` when a terminal exists for `tabId`, `false` otherwise.
+   */
+  scrollTerminal: (tabId: string, lines: number, toBottom: boolean) => boolean;
+  /**
+   * Read a terminal's `{ viewportY, baseY }` scroll position, or `undefined`
+   * when no terminal is registered for `tabId`.
+   */
+  getTerminalViewport: (tabId: string) => { viewportY: number; baseY: number } | undefined;
   /** The currently active terminal tab id, or `undefined` when none is focused. */
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
@@ -383,6 +393,25 @@ export async function dispatchCommand(
         return fail("readTerminal", `no terminal registered for tab "${tabId}"`);
       }
       return ok("readTerminal", content);
+    }
+
+    case "scrollTerminal": {
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("scrollTerminal", "no active terminal to scroll");
+      const scrolled = deps.scrollTerminal(tabId, command.lines ?? 0, command.toBottom ?? false);
+      return scrolled
+        ? ok("scrollTerminal")
+        : fail("scrollTerminal", `no terminal registered for tab "${tabId}"`);
+    }
+
+    case "getTerminalViewport": {
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("getTerminalViewport", "no active terminal to read");
+      const viewport = deps.getTerminalViewport(tabId);
+      if (viewport === undefined) {
+        return fail("getTerminalViewport", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("getTerminalViewport", viewport);
     }
 
     case "getState": {
