@@ -342,7 +342,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   if (error) {
     return (
       <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
-        <div className="file-editor__error">
+        <div className="file-editor__error" data-testid="file-editor-error">
           <AlertCircle size={20} />
           <span>Failed to load file: {error}</span>
         </div>
