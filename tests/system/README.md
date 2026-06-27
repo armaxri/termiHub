@@ -147,6 +147,29 @@ cd tests/system
 ./.venv/bin/python -m pytest -m integration -v -s
 ```
 
+### Faster loop: build a debug app
+
+The harness resolves the app binary in order: **`TERMIHUB_TEST_APP_BINARY`**
+override → **release** (`pnpm tauri build`) → **debug** (`pnpm tauri build
+--debug`). A debug build is much faster to rebuild, so the
+frontend-change → run loop is far tighter:
+
+```sh
+pnpm tauri build --debug                 # quicker than a release build
+cd tests/system && ./pytest.sh -m integration -k sftp_infra -x -s
+```
+
+Point at an arbitrary binary (e.g. a bundle in a non-standard location) with
+`TERMIHUB_TEST_APP_BINARY=/path/to/termihub`.
+
+### Failure artifacts
+
+When an **integration** test fails, the harness writes a diagnostic bundle to
+`tests/system/artifacts/<nodeid>/` (git-ignored) — `state.json` (the store
+snapshot), `terminal.txt` (the terminal buffer), and `app.log` (the captured app
+stdout/stderr). This makes a CI or headless failure debuggable after the app has
+been torn down. The path is printed at the end of the failing test.
+
 ## Useful flags
 
 | Flag      | Effect                                                   |
