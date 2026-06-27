@@ -6,9 +6,16 @@ tests. Enabled by the ``CredentialStoreUi`` mixin (#851), which drives the
 Settings → Security panel and the status-bar lock indicator the way a user does.
 
 Covered:
+- the indicator is hidden in ``none`` mode and shown in master-password mode,
 - master-password mode persists across an app restart (and re-locks),
+- a wrong master password surfaces an error and clears the field (store stays
+  locked), and Skip dismisses the dialog without unlocking,
 - a saved password is reused on reconnect (no second prompt),
 - a locked store raises the unlock dialog before a connect proceeds.
+
+Extends the original WebdriverIO ``credential-store.test.js`` (#838): that suite
+ran most of its scenarios only when the host machine happened to be in
+master-password mode, whereas the harness drives the store into that mode itself.
 
 The password-auth SSH container (port 2201) backs the connect-based scenarios.
 """
@@ -48,6 +55,57 @@ class TestCredentialStore(
     SidebarUi,
     SystemTest,
 ):
+    def test_indicator_hidden_in_none_mode(self):
+        # Runs first, before any store is set up: the app launches in "none" mode,
+        # where the status-bar credential indicator must not render (it is a
+        # master-password-only control). Asserts the current mode is none too.
+        status = self.wait(self.credential_store_status, what="the credential status")
+        assert status["mode"] == "none"
+        assert not self.credential_indicator_present()
+
+    def test_indicator_shown_in_master_password_mode(self):
+        # Once a master-password store is active the indicator renders and reports a
+        # lock state. (setup is a no-op if an earlier test already set it up.)
+        self.setup_master_password_store(MASTER_PASSWORD)
+        self.wait(self.credential_indicator_present, what="the credential indicator")
+        assert "lock" in self.driver.get_text("credential-store-indicator").lower()
+
+    def test_wrong_master_password_shows_error_and_clears(self):
+        # A wrong password at the unlock dialog surfaces an error and clears the
+        # field for a retry, leaving the store locked. Then unlock properly so the
+        # following tests start from an unlocked store.
+        self.setup_master_password_store(MASTER_PASSWORD)
+        self.lock_credential_store()
+        self.open_unlock_dialog()
+
+        self.driver.type("unlock-dialog-input", "definitely-the-wrong-password")
+        self.driver.click("unlock-dialog-unlock")
+        self.wait(
+            lambda: self.driver.exists("unlock-dialog-error"),
+            what="the wrong-password error",
+        )
+        assert self.driver.get_value("unlock-dialog-input") == ""
+        assert self.credential_store_locked()
+
+        self.handle_unlock_dialog(MASTER_PASSWORD)
+        assert self.credential_store_unlocked_master_password()
+
+    def test_skip_unlock_keeps_store_locked(self):
+        # Clicking Skip dismisses the unlock dialog but leaves the store locked.
+        # Restore an unlocked store afterward for the later change-password test.
+        self.setup_master_password_store(MASTER_PASSWORD)
+        self.lock_credential_store()
+        self.open_unlock_dialog()
+
+        self.driver.click("unlock-dialog-skip")
+        self.wait(
+            lambda: not self.driver.exists("unlock-dialog-input"),
+            what="the unlock dialog to close",
+        )
+        assert self.credential_store_locked()
+
+        self.unlock_credential_store(MASTER_PASSWORD)
+
     def test_master_password_mode_persists_and_relocks_across_restart(self):
         # Switching to a master-password store writes the mode to settings and the
         # vault to disk; both must survive a restart. The store starts locked after
