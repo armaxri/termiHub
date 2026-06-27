@@ -28,24 +28,55 @@ import psutil
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _app_binary_suffix() -> str:
+    """The per-platform path of the app binary *within* a ``target/<profile>`` dir."""
+    system = platform.system()
+    if system == "Darwin":
+        return "bundle/macos/termiHub.app/Contents/MacOS/termiHub"
+    if system == "Windows":
+        return "termihub.exe"
+    return "termihub"
+
+
+def app_binary_candidates() -> list[Path]:
+    """Built-app binary paths to try, in priority order: **release**, then **debug**."""
+    suffix = _app_binary_suffix()
+    return [
+        REPO_ROOT / "target/release" / suffix,
+        REPO_ROOT / "target/debug" / suffix,
+    ]
+
+
 def app_binary_path() -> Path:
     """Path to the built desktop app binary for the current platform.
 
-    Mirrors the per-platform paths in ``wdio.conf.js``. Raises if the app has not
-    been built (``pnpm tauri build``).
+    Resolution order, so the fast local loop just works:
+
+    1. ``TERMIHUB_TEST_APP_BINARY`` — an explicit path override (any profile).
+    2. the **release** build (``pnpm tauri build``).
+    3. the **debug** build (``pnpm tauri build --debug``) — much faster to
+       rebuild, which tightens the frontend-change → run loop.
+
+    Raises :class:`FileNotFoundError` (which the integration fixtures turn into a
+    skip) when none of these exist.
     """
-    system = platform.system()
-    if system == "Darwin":
-        path = REPO_ROOT / "target/release/bundle/macos/termiHub.app/Contents/MacOS/termiHub"
-    elif system == "Windows":
-        path = REPO_ROOT / "target/release/termihub.exe"
-    else:
-        path = REPO_ROOT / "target/release/termihub"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"built app not found at {path} — run `pnpm tauri build` first"
-        )
-    return path
+    override = os.environ.get("TERMIHUB_TEST_APP_BINARY")
+    if override:
+        path = Path(override)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"TERMIHUB_TEST_APP_BINARY points to a missing file: {path}"
+            )
+        return path
+    candidates = app_binary_candidates()
+    for path in candidates:
+        if path.exists():
+            return path
+    looked = ", ".join(str(p) for p in candidates)
+    raise FileNotFoundError(
+        "built app not found — run `pnpm tauri build` (release) or "
+        f"`pnpm tauri build --debug` (faster). Looked in: {looked}"
+    )
 
 
 def agent_binary_path() -> Path:
