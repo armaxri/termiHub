@@ -81,6 +81,7 @@ export function ExportDialog() {
                 name="export-mode"
                 checked={mode === "plain"}
                 onChange={() => setMode("plain")}
+                data-testid="export-mode-plain"
               />
               Without credentials
             </label>
@@ -90,6 +91,7 @@ export function ExportDialog() {
                 name="export-mode"
                 checked={mode === "encrypted"}
                 onChange={() => setMode("encrypted")}
+                data-testid="export-mode-encrypted"
               />
               With credentials (encrypted)
             </label>
@@ -97,7 +99,7 @@ export function ExportDialog() {
 
           {mode === "encrypted" && (
             <div className="export-dialog__password-section">
-              <p className="export-dialog__warning">
+              <p className="export-dialog__warning" data-testid="export-warning">
                 Credentials will be encrypted with AES-256-GCM. You will need this password to
                 import them on another machine.
               </p>
@@ -116,7 +118,11 @@ export function ExportDialog() {
                 placeholder="Confirm password"
                 data-testid="export-confirm-password"
               />
-              {passwordError && <p className="export-dialog__error">{passwordError}</p>}
+              {passwordError && (
+                <p className="export-dialog__error" data-testid="export-password-error">
+                  {passwordError}
+                </p>
+              )}
             </div>
           )}
 
