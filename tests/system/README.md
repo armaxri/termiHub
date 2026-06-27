@@ -10,6 +10,10 @@ over the bridge protocol (issue #801). The bridge command vocabulary is the
 contract, kept in parity with the TypeScript dispatcher (`src/testbridge/`). See
 [`docs/test-bridge.md`](../../docs/test-bridge.md) for the protocol.
 
+> For the **run / implement / analyze iteration loop** and the tooling
+> improvement roadmap, see
+> [`docs/system-test-local-workflow.md`](../../docs/system-test-local-workflow.md).
+
 ## Layout
 
 | Path                               | Responsibility                                                           |
