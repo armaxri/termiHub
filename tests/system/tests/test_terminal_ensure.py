@@ -10,38 +10,28 @@ has already printed its prompt into the new terminal's own tab.
 
 from __future__ import annotations
 
-import time
 from typing import Any, Optional
 
-from termihub_harness import TerminalUi
+from termihub_harness import SystemTest, TerminalUi
 from termihub_harness.bridge import BridgeError
-
-NEW_TERMINAL = "terminal-view-new-terminal"
+from termihub_harness.ui.terminal import NEW_TERMINAL
 
 
 class _Term(TerminalUi):
-    """``TerminalUi`` bound to a stub driver with a fast, real poll loop.
+    """``TerminalUi`` bound to a stub driver, with a short-timeout poll loop.
 
-    Mirrors ``SystemTest.wait`` (poll-until-truthy, ``BridgeError`` tolerated as
-    "not ready yet") but with a short timeout, so a regression that would hang
-    the real 20 s wait fails in milliseconds here instead.
+    Reuses the real ``SystemTest.wait`` (poll-until-truthy, ``BridgeError``
+    tolerated as "not ready yet") but with a short timeout, so a regression that
+    would hang the real 20 s wait fails in milliseconds here instead. ``wait``
+    only touches ``self`` through the predicate, so calling it unbound on the stub
+    works without the app/bridge lifecycle these machinery tests avoid.
     """
 
     def __init__(self, driver: Any) -> None:
         self.driver = driver
 
     def wait(self, predicate, *, timeout: float = 1.0, interval: float = 0.005, what="condition"):
-        deadline = time.monotonic() + timeout
-        last_error: Optional[BridgeError] = None
-        while time.monotonic() < deadline:
-            try:
-                result = predicate()
-                if result:
-                    return result
-            except BridgeError as exc:
-                last_error = exc
-            time.sleep(interval)
-        raise AssertionError(f"timed out waiting for {what} (last error: {last_error})")
+        return SystemTest.wait(self, predicate, timeout=timeout, interval=interval, what=what)
 
 
 class _ColdStartDriver:
@@ -63,7 +53,7 @@ class _ColdStartDriver:
             return {"type": "leaf", "id": "p1", "tabs": [{"id": "term-1", "title": "zsh"}]}
         raise BridgeError("getState", f"unhandled path {path!r}")
 
-    def read_terminal(self, tab_id: Optional[str] = None, join_full_width_rows: bool = False) -> str:
+    def read_terminal(self, tab_id=None, join_full_width_rows=False) -> str:
         if tab_id is None:
             return ""  # the active tab is the wrong/empty one during the race
         if tab_id == "term-1":
@@ -87,7 +77,7 @@ class _EmptyThenTerminalDriver:
             return {"type": "leaf", "id": "p1", "tabs": tabs}
         raise BridgeError("getState", f"unhandled path {path!r}")
 
-    def read_terminal(self, tab_id: Optional[str] = None, join_full_width_rows: bool = False) -> str:
+    def read_terminal(self, tab_id=None, join_full_width_rows=False) -> str:
         if tab_id == "term-1" and self.clicks:
             return "user@host:~$ "
         raise BridgeError("readTerminal", f'no terminal registered for "{tab_id}"')

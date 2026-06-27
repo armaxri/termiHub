@@ -66,14 +66,14 @@ class TerminalUi(HarnessMixin):
         terminal can briefly not be the active tab, so reading the active tab
         (``read_terminal()`` with no id) sees an empty/other buffer and times out
         even though the shell has already started (#867). Accepting a prompt on
-        any terminal tab sidesteps that focus race.
+        any terminal tab sidesteps that focus race. A non-empty buffer already
+        implies a terminal exists, so a single wait covers both conditions.
         """
         if not self._terminal_buffers():
             self.driver.click(NEW_TERMINAL)
-        self.wait(lambda: bool(self._terminal_buffers()), what="a terminal to exist")
         self.wait(
             lambda: any(buf.strip() for buf in self._terminal_buffers()),
-            what="the shell prompt",
+            what="a terminal with a shell prompt",
         )
 
     def run_command(self, command: str) -> None:
