@@ -41,6 +41,7 @@ from .lookups import (
     find_folder,
     folder_toggle_testid,
     folders,
+    iter_tabs,
 )
 from .monitoring import MonitoringUi
 from .passwordprompt import PasswordPromptUi
@@ -72,4 +73,5 @@ __all__ = [
     "connection_item_testid",
     "folder_toggle_testid",
     "file_row_testid",
+    "iter_tabs",
 ]
