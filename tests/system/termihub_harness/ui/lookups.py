@@ -47,6 +47,30 @@ def find_folder(driver: Driver, name: str) -> Optional[dict[str, Any]]:
     return next((f for f in folders(driver) if f.get("name") == name), None)
 
 
+def iter_tabs(root: Any) -> list[dict[str, Any]]:
+    """Flatten every tab dict in a panel tree (depth-first, in tree order).
+
+    The app exposes its layout via ``getState("rootPanel")`` — a tree of split
+    nodes (``children``) and ``leaf`` panels (``tabs``). This walks it into a flat
+    tab list shared by the tab and terminal helpers, so neither re-implements the
+    traversal. A non-dict / unexpected node is skipped rather than raising, so a
+    partially-built tree (mid-restart) yields whatever tabs it already has.
+    """
+    tabs: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "leaf":
+            tabs.extend(tab for tab in (node.get("tabs") or []) if isinstance(tab, dict))
+        else:
+            for child in node.get("children") or []:
+                walk(child)
+
+    walk(root)
+    return tabs
+
+
 def connection_item_testid(connection_id: str) -> str:
     """The ``data-testid`` of the sidebar item for a connection id."""
     return f"connection-item-{connection_id}"
