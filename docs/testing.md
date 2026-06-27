@@ -803,36 +803,38 @@ When adding new manual tests, add the YAML definition to the appropriate file in
 
 Mapping of manual test IDs that have been automated to their E2E test files:
 
-| Manual Test IDs                | E2E Test File                                                   |
-| ------------------------------ | --------------------------------------------------------------- |
-| MT-LOCAL-01, 07                | `tests/system/tests/test_local_shell.py`                        |
-| MT-LOCAL-09, 10                | `tests/system/tests/test_cross_platform.py`                     |
-| MT-LOCAL-02, 04, 06, 11–20     | `infrastructure/windows-shells.test.js`                         |
-| MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                   |
-| MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                     |
-| MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                           |
-| SERIAL-01, 05 + custom path    | `tests/system/tests/test_serial.py`                             |
-| MT-SER-09 (live serial I/O)    | _manual_ (no host socat echo fixture in harness yet, #859)      |
-| TELNET-01–03                   | `tests/system/tests/test_telnet.py`                             |
-| MT-TAB-01–05, 15, 18           | `tests/system/tests/test_tab_management.py`                     |
-| MT-TAB-08–14, 19–21            | `tests/system/tests/test_tab_horizontal_scroll.py`              |
-| MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`           |
-| MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                               |
-| MT-CONN-20–22, 31              | `tests/system/tests/test_external_files.py`                     |
-| MT-FB-01, 02                   | `tests/system/tests/test_file_browser_local.py`                 |
-| MT-FB-03, 06, 13, 17, 19       | `infrastructure/sftp-extended.test.js`                          |
-| MT-FB-05, 11, 18               | `tests/system/tests/test_file_browser_local.py`                 |
-| EDITOR-01/STATUS/INDENT/LANG   | `tests/system/tests/test_editor.py`                             |
-| #504 (terminal auto-scroll)    | `tests/system/tests/test_terminal_auto_scroll.py`               |
-| MT-UI-06–08                    | `tests/system/tests/test_ui_state.py`                           |
-| MT-UI-17, 18, 20               | _manual_ (OS window resize / dev favicon — not bridge-drivable) |
-| MT-UI-21                       | `tests/system/tests/test_sidebar_sections.py`                   |
-| MT-UI-22–25                    | _manual_ (separator size/cursor, overflow scroll — visual)      |
-| MT-AGENT-01–03, 05, 06, 08     | `infrastructure/remote-agent.test.js`                           |
-| MT-CRED-04–08                  | `credential-store.test.js`, `credential-store-infra.test.js`    |
-| MT-RECOVERY-01–12              | `infrastructure/config-recovery.test.js`                        |
-| MT-XPLAT-01, 02                | `tests/system/tests/test_cross_platform.py`                     |
-| MT-SVC-01, 02, 03              | `embedded-services.test.js`                                     |
-| MT-SVC-04, 05 (transfer)       | `embedded-services.test.js` (SVC-12, SVC-13 via curl)           |
-| MT-NET-01–09                   | `network-tools.test.js`                                         |
-| MT-NET-10, 12, 13, 14, 17, 18  | `network-tools-live.test.js` (requires `network` profile)       |
+| Manual Test IDs                 | E2E Test File                                                                      |
+| ------------------------------- | ---------------------------------------------------------------------------------- |
+| MT-LOCAL-01, 07                 | `tests/system/tests/test_local_shell.py`                                           |
+| MT-LOCAL-09, 10                 | `tests/system/tests/test_cross_platform.py`                                        |
+| MT-LOCAL-02, 04, 06, 11–20      | `infrastructure/windows-shells.test.js`                                            |
+| MT-SSH-04–06, 10–12, 20–33, 35  | `infrastructure/ssh*.test.js`                                                      |
+| MT-SSH-19 (X11 backward-compat) | `tests/system/tests/test_connection_forms.py`                                      |
+| MT-SSH-08 (agent-auth warning)  | _dropped_ (`agent` is no longer a selectable SSH auth method)                      |
+| MT-SSH-13, 17, 34               | `infrastructure/ssh-extended.test.js`                                              |
+| SERIAL-01, 05 + custom path     | `tests/system/tests/test_serial.py`                                                |
+| MT-SER-09 (live serial I/O)     | _manual_ (no host socat echo fixture in harness yet, #859)                         |
+| TELNET-01–03                    | `tests/system/tests/test_telnet.py`                                                |
+| MT-TAB-01–05, 15, 18            | `tests/system/tests/test_tab_management.py`                                        |
+| MT-TAB-08–14, 19–21             | `tests/system/tests/test_tab_horizontal_scroll.py`                                 |
+| MT-CONN-02–07, 25–30            | `test_connection_crud.py`, `test_connection_forms.py`, `test_connection_editor.py` |
+| MT-CONN-10–11, 13               | `tests/system/tests/test_export_import.py`                                         |
+| MT-CONN-12, 14–16 (enc. import) | _manual_ (import opens a native OS file picker)                                    |
+| MT-CONN-20–22, 31               | `tests/system/tests/test_external_files.py`                                        |
+| MT-FB-01, 02                    | `tests/system/tests/test_file_browser_local.py`                                    |
+| MT-FB-03, 06, 13, 17, 19        | `infrastructure/sftp-extended.test.js`                                             |
+| MT-FB-05, 11, 18                | `tests/system/tests/test_file_browser_local.py`                                    |
+| EDITOR-01/STATUS/INDENT/LANG    | `tests/system/tests/test_editor.py`                                                |
+| #504 (terminal auto-scroll)     | `tests/system/tests/test_terminal_auto_scroll.py`                                  |
+| MT-UI-06–08                     | `tests/system/tests/test_ui_state.py`                                              |
+| MT-UI-17, 18, 20                | _manual_ (OS window resize / dev favicon — not bridge-drivable)                    |
+| MT-UI-21                        | `tests/system/tests/test_sidebar_sections.py`                                      |
+| MT-UI-22–25                     | _manual_ (separator size/cursor, overflow scroll — visual)                         |
+| MT-AGENT-01–03, 05, 06, 08      | `infrastructure/remote-agent.test.js`                                              |
+| MT-CRED-04–08                   | `tests/system/tests/test_credential_store.py`, `credential-store-infra.test.js`    |
+| MT-RECOVERY-01–12               | `infrastructure/config-recovery.test.js`                                           |
+| MT-XPLAT-01, 02                 | `tests/system/tests/test_cross_platform.py`                                        |
+| MT-SVC-01, 02, 03               | `embedded-services.test.js`                                                        |
+| MT-SVC-04, 05 (transfer)        | `embedded-services.test.js` (SVC-12, SVC-13 via curl)                              |
+| MT-NET-01–09                    | `network-tools.test.js`                                                            |
+| MT-NET-10, 12, 13, 14, 17, 18   | `network-tools-live.test.js` (requires `network` profile)                          |
