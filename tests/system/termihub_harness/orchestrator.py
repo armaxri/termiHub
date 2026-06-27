@@ -18,10 +18,12 @@ import platform
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 
 import psutil
 
@@ -139,27 +141,97 @@ class AppInstance:
         self._config_dir = config_dir or Path(tempfile.mkdtemp(prefix="termihub-app-config-"))
         self._process: Optional[subprocess.Popen] = None
         self._bridge_port: Optional[int] = None
+        #: Captured app stdout/stderr — copied into the failure-artifact bundle.
+        self._log_path = self._config_dir / "app.log"
+        self._log_file: Optional[IO[str]] = None
+        self._pump: Optional[threading.Thread] = None
 
     @property
     def config_dir(self) -> Path:
         return self._config_dir
 
+    @property
+    def log_path(self) -> Path:
+        """Path of the file the app's stdout/stderr is captured to."""
+        return self._log_path
+
+    def read_log(self) -> str:
+        """The captured app log so far (empty string if nothing was captured)."""
+        try:
+            return self._log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
     def start(self, bridge_port: int) -> "AppInstance":
-        """Launch the app pointed at the bridge server on ``bridge_port``."""
+        """Launch the app pointed at the bridge server on ``bridge_port``.
+
+        The app's merged stdout/stderr is **captured** to :attr:`log_path` (for
+        the failure-artifact bundle) while still being echoed live, so ``-s`` runs
+        keep showing the app booting and the failure bundle has the logs too.
+        """
         if self._process is not None and self._process.poll() is None:
             raise RuntimeError("app is already running")
         self._bridge_port = bridge_port
         env = dict(os.environ)
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
-        self._process = subprocess.Popen([str(self._binary)], env=env)
+        # Append so the log survives a restart() (same config dir, same file).
+        self._log_file = open(self._log_path, "a", encoding="utf-8", errors="replace")
+        self._process = subprocess.Popen(
+            [str(self._binary)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        self._pump = threading.Thread(target=self._pump_output, daemon=True)
+        self._pump.start()
         return self
 
+    def _pump_output(self) -> None:
+        """Tee the child's merged output to the log file and to live stdout.
+
+        Runs on a daemon thread for the process's lifetime; ``stop()`` closes the
+        pipe (EOF) and joins it. All writes are guarded so a closed pytest capture
+        buffer on teardown can never crash the run.
+        """
+        process = self._process
+        if process is None or process.stdout is None:
+            return
+        for line in process.stdout:
+            log_file = self._log_file
+            if log_file is not None:
+                try:
+                    log_file.write(line)
+                    log_file.flush()
+                except (OSError, ValueError):
+                    pass
+            try:  # echo for -s / on-failure capture; never fatal
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            except (OSError, ValueError):
+                pass
+
     def stop(self) -> None:
-        """Kill the app process tree."""
+        """Kill the app process tree and stop log capture."""
         if self._process is not None:
             _terminate_tree(self._process)
+            if self._process.stdout is not None:
+                try:
+                    self._process.stdout.close()  # EOF so the pump thread exits
+                except OSError:
+                    pass
             self._process = None
+        if self._pump is not None:
+            self._pump.join(timeout=2.0)
+            self._pump = None
+        if self._log_file is not None:
+            try:
+                self._log_file.close()
+            except OSError:
+                pass
+            self._log_file = None
 
     def restart(self) -> None:
         """Kill and relaunch against the same bridge port and config dir."""
