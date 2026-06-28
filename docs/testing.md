@@ -757,9 +757,9 @@ E2E test coverage: **10 WebdriverIO files** (6 in `tests/e2e/`, 4 in `tests/e2e/
 ### Test Environment Setup
 
 - Build the release app with `pnpm tauri build`
-- For SSH/Telnet/serial testing: Docker containers from `tests/docker/` (see [tests/docker/README.md](../tests/docker/README.md))
+- For SSH/Telnet testing: Docker containers from `tests/docker/` (see [tests/docker/README.md](../tests/docker/README.md))
 - Pre-generated SSH test keys in `tests/fixtures/ssh-keys/`
-- For serial port tests: virtual serial ports via `socat` (see `tests/docker/serial-echo/`)
+- For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
 ### Guided Manual Test Runner
