@@ -12,6 +12,8 @@ they are robust to ``/tmp`` ↔ ``/private/tmp`` symlinks and to home-dir paths
 that differ per platform.
 """
 
+import sys
+
 import pytest
 
 from termihub_harness import (
@@ -26,6 +28,15 @@ from termihub_harness import (
 )
 
 pytestmark = pytest.mark.integration
+
+# The starting-directory and pwd checks below use POSIX `test`/`pwd` syntax and
+# Unix paths (`/tmp`, `$HOME`-rooted, `/`-prefixed). A Windows-safe variant needs
+# platform-specific dirs and PowerShell conditionals — a deeper effort tracked in
+# #902 — so skip these on Windows (the unified suite #804 must not hard-fail).
+skip_on_windows = pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="POSIX-only pwd/starting-directory checks; cross-platform variant tracked in #902",
+)
 
 
 class TestLocalShell(
@@ -66,6 +77,7 @@ class TestLocalShell(
         self.driver.click(self.EDITOR_CANCEL)
 
     # ── Configurable starting directory (PR #148) ───────────────────────────
+    @skip_on_windows
     @pytest.mark.parametrize(
         "purpose, start_dir, pwd_check",
         [
@@ -83,6 +95,7 @@ class TestLocalShell(
         self.run_command(f"{pwd_check} && echo START_DIR_OK")
         assert "START_DIR_OK" in self.wait_for_output("START_DIR_OK")
 
+    @skip_on_windows
     def test_starting_directory_applied_when_editing_a_connection(self):
         self.close_all_tabs()
         name = unique_name("dir-edit")
@@ -101,12 +114,14 @@ class TestLocalShell(
         assert "EDIT_DIR_OK" in self.wait_for_output("EDIT_DIR_OK")
 
     # ── New tabs open in the home directory (PR #66) ────────────────────────
+    @skip_on_windows
     def test_new_terminal_starts_in_home(self):
         self.close_all_tabs()
         self.ensure_terminal()
         self.run_command('[ "$(pwd)" = "$HOME" ] && echo NEW_TAB_HOME_OK')
         assert "NEW_TAB_HOME_OK" in self.wait_for_output("NEW_TAB_HOME_OK")
 
+    @skip_on_windows
     def test_file_browser_shows_home_for_a_new_shell(self):
         self.close_all_tabs()
         self.ensure_terminal()
