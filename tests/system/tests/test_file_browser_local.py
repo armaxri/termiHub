@@ -116,6 +116,44 @@ class TestFileBrowserLocal(
         assert "tmp" in self.wait_for_path_contains("tmp")
         self.switch_to_connections_sidebar()
 
+    def test_browser_follows_cwd_when_switching_between_two_shells(self):
+        # PR #39 two-shell coverage (#873): the browser re-targets the *active*
+        # terminal tab's cwd when you switch between two local shells sitting in
+        # different directories. Distinct dirs (/tmp, /etc) give distinctive path
+        # substrings — and each survives the macOS /private symlink resolution.
+        # Every assertion waits for the displayed path to settle, so it never
+        # races zsh's OSC 7 cwd emission (the timing that left this unported).
+        self.restart_app()
+        self.ensure_terminal()
+        tab1 = self.tab_ids()[0]
+        self.open_file_browser()
+        # Shell 1 → /tmp (hide the browser, cd, reveal it — the proven recipe).
+        self.switch_to_connections_sidebar()
+        self.run_command("cd /tmp")
+        self.switch_to_files_sidebar()
+        self.wait_for_path_contains("tmp")
+        # A second shell → /etc, opened from the terminal toolbar.
+        before = self.tab_ids()
+        self.switch_to_connections_sidebar()
+        self.driver.click("terminal-view-new-terminal")
+        self.wait(lambda: len(self.tab_ids()) == len(before) + 1, what="a second terminal tab")
+        tab2 = next(t for t in self.tab_ids() if t not in before)
+        # The new terminal is active; wait for its own shell prompt, then cd it.
+        self.wait(
+            lambda: self.driver.read_terminal(tab2).strip() != "",
+            what="the second shell's prompt",
+        )
+        self.run_command("cd /etc")
+        self.switch_to_files_sidebar()
+        assert "etc" in self.wait_for_path_contains("etc")
+        # Switching the active tab back to shell 1 re-targets the browser to /tmp …
+        self.switch_to_tab(tab1)
+        assert "tmp" in self.wait_for_path_contains("tmp")
+        # … and forward to shell 2 back to /etc.
+        self.switch_to_tab(tab2)
+        assert "etc" in self.wait_for_path_contains("etc")
+        self.switch_to_connections_sidebar()
+
     # ── New File / New Folder inline inputs (PR #58) ────────────────────────
     def test_new_folder_button_reveals_its_input(self):
         self._fresh_home_browser()
