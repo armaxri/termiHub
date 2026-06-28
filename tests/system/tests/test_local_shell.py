@@ -24,6 +24,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.markers import skip_on_windows
 
 pytestmark = pytest.mark.integration
 
@@ -66,6 +67,7 @@ class TestLocalShell(
         self.driver.click(self.EDITOR_CANCEL)
 
     # ── Configurable starting directory (PR #148) ───────────────────────────
+    @skip_on_windows
     @pytest.mark.parametrize(
         "purpose, start_dir, pwd_check",
         [
@@ -83,6 +85,7 @@ class TestLocalShell(
         self.run_command(f"{pwd_check} && echo START_DIR_OK")
         assert "START_DIR_OK" in self.wait_for_output("START_DIR_OK")
 
+    @skip_on_windows
     def test_starting_directory_applied_when_editing_a_connection(self):
         self.close_all_tabs()
         name = unique_name("dir-edit")
@@ -101,12 +104,14 @@ class TestLocalShell(
         assert "EDIT_DIR_OK" in self.wait_for_output("EDIT_DIR_OK")
 
     # ── New tabs open in the home directory (PR #66) ────────────────────────
+    @skip_on_windows
     def test_new_terminal_starts_in_home(self):
         self.close_all_tabs()
         self.ensure_terminal()
         self.run_command('[ "$(pwd)" = "$HOME" ] && echo NEW_TAB_HOME_OK')
         assert "NEW_TAB_HOME_OK" in self.wait_for_output("NEW_TAB_HOME_OK")
 
+    @skip_on_windows
     def test_file_browser_shows_home_for_a_new_shell(self):
         self.close_all_tabs()
         self.ensure_terminal()
