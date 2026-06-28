@@ -7,9 +7,9 @@ Where the old WebdriverIO tests could only assert "the xterm container still
 exists" (they couldn't read the GPU canvas), the bridge reads the reconstructed
 terminal text, so these assert the **actual** behavior: that ``pwd`` lands in the
 configured directory, that input is delivered, and that the shell exits. Starting
--directory checks use a shell-level marker (``[ "$(pwd)" = ... ] && echo OK``) so
-they are robust to ``/tmp`` ↔ ``/private/tmp`` symlinks and to home-dir paths
-that differ per platform.
+-directory and home checks use a shell-level marker built by ``ShellCommands``
+(POSIX ``[ "$(pwd)" = … ] && echo OK`` or the PowerShell equivalent), so they run
+cross-platform and survive the ``/tmp`` ↔ ``/private/tmp`` symlink (#902).
 """
 
 import pytest
@@ -18,19 +18,32 @@ from termihub_harness import (
     ConnectionsUi,
     FilesUi,
     LayoutUi,
+    ShellFsUi,
     SidebarUi,
     SystemTest,
     TabsUi,
     TerminalUi,
     unique_name,
 )
-from termihub_harness.markers import skip_on_windows
+from termihub_harness.shell import ShellCommands, is_absolute_path
 
 pytestmark = pytest.mark.integration
 
+# Starting-directory cases for test_starting_directory_is_applied, built for the
+# host's shell: one absolute directory plus the home-resolving start values, each
+# paired with the marker command that confirms the shell landed there.
+_SH = ShellCommands.for_host()
+_STARTING_DIR_CASES = [
+    ("dir-abs", _SH.starting_dir(), _SH.starting_dir_pwd_marker("START_DIR_OK")),
+    *[
+        (f"dir-home-{i}", value, _SH.home_pwd_marker("START_DIR_OK"))
+        for i, value in enumerate(_SH.home_start_values())
+    ],
+]
+
 
 class TestLocalShell(
-    TerminalUi, TabsUi, LayoutUi, SidebarUi, FilesUi, ConnectionsUi, SystemTest
+    TerminalUi, TabsUi, LayoutUi, SidebarUi, FilesUi, ShellFsUi, ConnectionsUi, SystemTest
 ):
     # ── LOCAL-02 / baseline: spawn + run commands ───────────────────────────
     def test_connecting_opens_an_active_terminal_tab(self):
@@ -67,25 +80,15 @@ class TestLocalShell(
         self.driver.click(self.EDITOR_CANCEL)
 
     # ── Configurable starting directory (PR #148) ───────────────────────────
-    @skip_on_windows
-    @pytest.mark.parametrize(
-        "purpose, start_dir, pwd_check",
-        [
-            # /tmp is a symlink to /private/tmp on macOS, so accept either.
-            ("dir-tmp", "/tmp", '[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ]'),
-            # ~ and ${env:HOME} are expanded by the backend before launch.
-            ("dir-tilde", "~", '[ "$(pwd)" = "$HOME" ]'),
-            ("dir-env", "${env:HOME}", '[ "$(pwd)" = "$HOME" ]'),
-        ],
-    )
+    @pytest.mark.parametrize("purpose, start_dir, pwd_check", _STARTING_DIR_CASES)
     def test_starting_directory_is_applied(self, purpose, start_dir, pwd_check):
         self.close_all_tabs()
         name = unique_name(purpose)
         self.create_local_connection(name, starting_directory=start_dir, connect=True)
-        self.run_command(f"{pwd_check} && echo START_DIR_OK")
+        # pwd_check already echoes START_DIR_OK only when the cwd matches.
+        self.run_command(pwd_check)
         assert "START_DIR_OK" in self.wait_for_output("START_DIR_OK")
 
-    @skip_on_windows
     def test_starting_directory_applied_when_editing_a_connection(self):
         self.close_all_tabs()
         name = unique_name("dir-edit")
@@ -96,28 +99,26 @@ class TestLocalShell(
             lambda: self.driver.exists("field-startingDirectory"),
             what="the editor starting-directory field",
         )
-        self.driver.type("field-startingDirectory", "/tmp")
+        self.driver.type("field-startingDirectory", self.shell.starting_dir())
         self.driver.click(self.EDITOR_SAVE)
         self.switch_to_connections_sidebar()
         self.connect_connection(name)
-        self.run_command('[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ] && echo EDIT_DIR_OK')
+        self.run_command(self.shell.starting_dir_pwd_marker("EDIT_DIR_OK"))
         assert "EDIT_DIR_OK" in self.wait_for_output("EDIT_DIR_OK")
 
     # ── New tabs open in the home directory (PR #66) ────────────────────────
-    @skip_on_windows
     def test_new_terminal_starts_in_home(self):
         self.close_all_tabs()
         self.ensure_terminal()
-        self.run_command('[ "$(pwd)" = "$HOME" ] && echo NEW_TAB_HOME_OK')
+        self.run_command(self.shell.home_pwd_marker("NEW_TAB_HOME_OK"))
         assert "NEW_TAB_HOME_OK" in self.wait_for_output("NEW_TAB_HOME_OK")
 
-    @skip_on_windows
     def test_file_browser_shows_home_for_a_new_shell(self):
         self.close_all_tabs()
         self.ensure_terminal()
         path = self.open_file_browser()
         # The local browser follows the shell's CWD: an absolute home-like path.
-        assert path.startswith("/")
+        assert is_absolute_path(path)
         self.switch_to_connections_sidebar()
 
     # ── Terminal input on new connections (PR #198) ─────────────────────────
