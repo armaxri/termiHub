@@ -86,11 +86,8 @@ class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
     # ── CONN-04: create folder via toolbar ─────────────────────────────────────
     def test_create_folder(self):
         folder = unique_name("folder")
-        self.driver.click(self.NEW_FOLDER)
-        self.wait(lambda: self.driver.exists(self.FOLDER_NAME_INPUT), what="the folder input")
-        self.driver.type(self.FOLDER_NAME_INPUT, folder)
-        self.driver.click(self.FOLDER_CONFIRM)
-        self.wait(lambda: self.find_folder(folder) is not None, what="the folder to be created")
+        self.create_folder(folder)
+        assert self.find_folder(folder) is not None
 
     # ── CONN-10: duplicate via context menu ────────────────────────────────────
     def test_duplicate_connection(self):

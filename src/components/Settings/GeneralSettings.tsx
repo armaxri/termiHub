@@ -57,6 +57,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               value={settings.defaultUser ?? ""}
               onChange={(e) => onChange({ ...settings, defaultUser: e.target.value || undefined })}
               placeholder="e.g. admin"
+              data-testid="settings-default-user"
             />
             <span className="settings-form__hint">
               Default username pre-filled for new SSH connections.
