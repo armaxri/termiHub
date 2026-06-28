@@ -21,7 +21,7 @@ import datetime
 import json
 import os
 import platform as _platform
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -197,18 +197,6 @@ class ManualRecord:
     note: Optional[str] = None
     screenshot: Optional[str] = None
 
-    def to_dict(self) -> dict:
-        return {
-            "nodeid": self.nodeid,
-            "kind": self.kind,
-            "instruction": self.instruction,
-            "expected": self.expected,
-            "status": self.status,
-            "timestamp": self.timestamp,
-            "note": self.note,
-            "screenshot": self.screenshot,
-        }
-
 
 @dataclass
 class ManualSession:
@@ -236,7 +224,13 @@ def build_manual_report(
     completed_at: datetime.datetime,
     selected_platform: Optional[str] = None,
 ) -> dict:
-    """Build the JSON report object (schema aligned with ``scripts/test-manual.py``)."""
+    """Build the JSON report object.
+
+    Shares the ``version`` / ``session`` / ``environment`` / ``summary`` /
+    ``results`` shape and the ``tests/reports/`` filename convention with
+    ``scripts/test-manual.py`` so release sign-off keeps working; the per-record
+    fields differ (one record per operator interaction, not per YAML item).
+    """
     plat = selected_platform or detect_platform()
     return {
         "version": "1",
@@ -255,7 +249,7 @@ def build_manual_report(
             "os_version": detect_os_version(),
         },
         "summary": _counts(records),
-        "results": [rec.to_dict() for rec in records],
+        "results": [asdict(rec) for rec in records],
     }
 
 

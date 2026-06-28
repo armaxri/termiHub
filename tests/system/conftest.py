@@ -86,11 +86,14 @@ def pytest_collection_modifyitems(config, items):
 
     Done at collection time (not in a fixture) so a skipped guided test never
     pays the cost of launching the real app — the skip marker is evaluated before
-    any class-scoped app fixture runs.
+    any class-scoped app fixture runs. A test scopes itself to platforms via the
+    marker, e.g. ``@pytest.mark.manual(platforms=["macos", "windows"])``; omitting
+    ``platforms`` runs it everywhere.
     """
     enabled = bool(config.getoption("manual"))
     interactive = sys.stdin.isatty()
     selected = config.getoption("manual_platform") or detect_platform()
+    config._manual_platform = selected  # reused by pytest_sessionfinish
     for item in items:
         marker = item.get_closest_marker("manual")
         if marker is None:
@@ -117,7 +120,7 @@ def pytest_sessionfinish(session, exitstatus):
         ARTIFACT_ROOT.parents[1] / "reports",
         started_at=config._manual_started,
         completed_at=datetime.datetime.now(datetime.timezone.utc),
-        selected_platform=config.getoption("manual_platform") or detect_platform(),
+        selected_platform=getattr(config, "_manual_platform", None) or detect_platform(),
     )
     if path is not None:
         print(f"\n[manual] wrote guided-manual report to {path}")
