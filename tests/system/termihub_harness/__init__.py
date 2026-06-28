@@ -29,6 +29,15 @@ from .fixtures import (
     container_runtime,
     wait_for_port,
 )
+from .manual import (
+    ManualPrompter,
+    ManualRecord,
+    ManualResult,
+    ManualSession,
+    build_manual_report,
+    manual_skip_reason,
+    write_manual_report,
+)
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .systemtest import SystemTest, unique_name
 from .ui import (
@@ -37,6 +46,7 @@ from .ui import (
     EditorUi,
     FilesUi,
     LayoutUi,
+    ManualUi,
     MonitoringUi,
     PasswordPromptUi,
     SettingsUi,
@@ -77,6 +87,14 @@ __all__ = [
     "FilesUi",
     "EditorUi",
     "SettingsUi",
+    "ManualUi",
+    "ManualPrompter",
+    "ManualResult",
+    "ManualRecord",
+    "ManualSession",
+    "manual_skip_reason",
+    "build_manual_report",
+    "write_manual_report",
     "ShellFsUi",
     "connections",
     "find_connection",
