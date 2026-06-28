@@ -260,14 +260,13 @@ describe("findPasswordPromptInfo", () => {
 });
 
 describe("findKeyPassphrasePromptInfo", () => {
-  it("returns prompt info for key auth when savePassword is opted in (#879)", () => {
+  it("returns prompt info for key auth when the key is encrypted (#885)", () => {
     const settings = {
       authMethod: "key",
-      savePassword: true,
       host: "example.com",
       username: "admin",
     };
-    const result = findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings);
+    const result = findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings, true);
     expect(result).toEqual({
       hostKey: "host",
       usernameKey: "username",
@@ -275,29 +274,31 @@ describe("findKeyPassphrasePromptInfo", () => {
     });
   });
 
-  it("returns null for key auth when savePassword is not set", () => {
-    const settings = { authMethod: "key", host: "example.com", username: "admin" };
-    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings)).toBeNull();
+  it("prompts for an encrypted key even when savePassword is off (#885)", () => {
+    const settings = { authMethod: "key", savePassword: false, host: "h", username: "u" };
+    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings, true)).not.toBeNull();
+  });
+
+  it("returns null for an unencrypted key even when savePassword is on (#885)", () => {
+    const settings = { authMethod: "key", savePassword: true, host: "h", username: "u" };
+    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings, false)).toBeNull();
   });
 
   it("returns null for password auth (handled by findPasswordPromptInfo)", () => {
-    const settings = { authMethod: "password", savePassword: true };
-    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings)).toBeNull();
+    const settings = { authMethod: "password" };
+    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings, true)).toBeNull();
   });
 
   it("returns null for agent auth", () => {
-    const settings = { authMethod: "agent", savePassword: true };
-    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings)).toBeNull();
+    const settings = { authMethod: "agent" };
+    expect(findKeyPassphrasePromptInfo(SSH_LIKE_SCHEMA, settings, true)).toBeNull();
   });
 
   it("falls back to default field keys when the schema omits them", () => {
     const schema: SettingsSchema = {
       groups: [{ key: "conn", label: "Connection", fields: [textField("foo")] }],
     };
-    const result = findKeyPassphrasePromptInfo(schema, {
-      authMethod: "key",
-      savePassword: true,
-    });
+    const result = findKeyPassphrasePromptInfo(schema, { authMethod: "key" }, true);
     expect(result).toEqual({
       hostKey: "host",
       usernameKey: "username",
