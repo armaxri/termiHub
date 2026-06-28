@@ -28,7 +28,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
-from termihub_harness.markers import skip_on_windows
+from termihub_harness.shell import is_absolute_path
 
 pytestmark = pytest.mark.integration
 
@@ -54,10 +54,9 @@ class TestFileBrowserLocal(
         assert self.driver.exists(self.REFRESH)
         self.switch_to_connections_sidebar()
 
-    @skip_on_windows
     def test_shows_an_absolute_current_path(self):
         path = self._fresh_home_browser()
-        assert path.startswith("/")
+        assert is_absolute_path(path)
         self.switch_to_connections_sidebar()
 
     def test_lists_entries_from_the_current_directory(self):
@@ -88,58 +87,60 @@ class TestFileBrowserLocal(
         self.remove_home_tree(test_dir)
         self.switch_to_connections_sidebar()
 
-    @skip_on_windows
     def test_navigating_up_then_back_restores_the_directory(self):
         start = self._fresh_home_browser()
-        basename = start.rstrip("/").rsplit("/", 1)[-1]
+        # Cross-platform basename — the displayed path uses "/" or "\".
+        basename = start.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
         self.navigate_up()
         restored = self.enter_directory(basename)
         assert restored == start
         self.switch_to_connections_sidebar()
 
-    # ── CWD-aware browsing (PR #39) — exercises OSC 7 cwd-following ──────────
-    @skip_on_windows
+    # ── CWD-aware browsing (PR #39) — exercises shell cwd-following ──────────
     def test_browser_follows_cd_in_the_terminal(self):
+        target, needle = self.shell.scratch_dirs()[0]
         self.restart_app()
         self.ensure_terminal()
         self.open_file_browser()
         self.switch_to_connections_sidebar()  # return focus to the terminal
-        self.run_command("cd /tmp")
+        self.run_command(f"cd {target}")
         self.switch_to_files_sidebar()
-        assert "tmp" in self.wait_for_path_contains("tmp")
+        assert needle in self.wait_for_path_contains(needle)
         self.switch_to_connections_sidebar()
 
-    @skip_on_windows
     def test_cwd_survives_a_sidebar_view_round_trip(self):
+        target, needle = self.shell.scratch_dirs()[0]
         self.restart_app()
         self.ensure_terminal()
-        self.run_command("cd /tmp")
+        self.run_command(f"cd {target}")
         self.switch_to_files_sidebar()
-        self.wait_for_path_contains("tmp")
+        self.wait_for_path_contains(needle)
         # Switch away to connections and back to files; the path must be retained.
         self.switch_to_connections_sidebar()
         self.switch_to_files_sidebar()
-        assert "tmp" in self.wait_for_path_contains("tmp")
+        assert needle in self.wait_for_path_contains(needle)
         self.switch_to_connections_sidebar()
 
-    @skip_on_windows
     def test_browser_follows_cwd_when_switching_between_two_shells(self):
         # PR #39 two-shell coverage (#873): the browser re-targets the *active*
         # terminal tab's cwd when you switch between two local shells sitting in
-        # different directories. Distinct dirs (/tmp, /etc) give distinctive path
-        # substrings — and each survives the macOS /private symlink resolution.
+        # different directories. ``ShellCommands.scratch_dirs`` supplies two
+        # distinct dirs + path substrings per platform (#902), each surviving the
+        # macOS /private symlink and the Windows backslash→slash normalization.
         # Every assertion waits for the displayed path to settle, so it never
-        # races zsh's OSC 7 cwd emission (the timing that left this unported).
+        # races the shell's OSC 7 / OSC 9;9 cwd emission (the timing that left
+        # this unported).
+        (target_a, needle_a), (target_b, needle_b) = self.shell.scratch_dirs()
         self.restart_app()
         self.ensure_terminal()
         tab1 = self.tab_ids()[0]
         self.open_file_browser()
-        # Shell 1 → /tmp (hide the browser, cd, reveal it — the proven recipe).
+        # Shell 1 → dir A (hide the browser, cd, reveal it — the proven recipe).
         self.switch_to_connections_sidebar()
-        self.run_command("cd /tmp")
+        self.run_command(f"cd {target_a}")
         self.switch_to_files_sidebar()
-        self.wait_for_path_contains("tmp")
-        # A second shell → /etc, opened from the terminal toolbar.
+        self.wait_for_path_contains(needle_a)
+        # A second shell → dir B, opened from the terminal toolbar.
         before = self.tab_ids()
         self.switch_to_connections_sidebar()
         self.driver.click("terminal-view-new-terminal")
@@ -150,15 +151,15 @@ class TestFileBrowserLocal(
             lambda: self.driver.read_terminal(tab2).strip() != "",
             what="the second shell's prompt",
         )
-        self.run_command("cd /etc")
+        self.run_command(f"cd {target_b}")
         self.switch_to_files_sidebar()
-        assert "etc" in self.wait_for_path_contains("etc")
-        # Switching the active tab back to shell 1 re-targets the browser to /tmp …
+        assert needle_b in self.wait_for_path_contains(needle_b)
+        # Switching the active tab back to shell 1 re-targets the browser to dir A …
         self.switch_to_tab(tab1)
-        assert "tmp" in self.wait_for_path_contains("tmp")
-        # … and forward to shell 2 back to /etc.
+        assert needle_a in self.wait_for_path_contains(needle_a)
+        # … and forward to shell 2 back to dir B.
         self.switch_to_tab(tab2)
-        assert "etc" in self.wait_for_path_contains("etc")
+        assert needle_b in self.wait_for_path_contains(needle_b)
         self.switch_to_connections_sidebar()
 
     # ── New File / New Folder inline inputs (PR #58) ────────────────────────

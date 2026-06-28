@@ -622,7 +622,7 @@ All Rust integration tests use the `require_docker!` macro which checks TCP port
 
 The local UI system suites author and clean up files **through the terminal**, and on Windows the local-shell backend defaults to **PowerShell** (no `printf`/`rm -f`/`touch`). File authoring/cleanup therefore goes through `ShellCommands` / `ShellFsUi` (`tests/system/termihub_harness/shell.py`), which emits the POSIX **or** PowerShell command for the host's default shell — so `test_editor.py` and the file-authoring half of `test_file_browser_local.py` run on every platform.
 
-The remaining checks that assume Unix paths or POSIX `pwd`/`test` syntax (the `cd /tmp` cwd-following tests, `[ "$(pwd)" = … ]` starting-directory checks, and `path.startswith("/")` assertions in `test_local_shell.py` / `test_file_browser_local.py`) are marked `@skip_on_windows` and **skip cleanly on Windows** so the unified suite (#804) does not hard-fail. Making those cross-platform is tracked in **#902**.
+The cwd/`pwd`/path checks are cross-platform too (#902): `ShellCommands` builds the `pwd`-equality markers (POSIX `[ "$(pwd)" = … ]` vs PowerShell `if ((Get-Location).Path -eq …)`), supplies per-platform scratch directories for the cwd-following tests (`/tmp`,`/etc` vs `$env:TEMP`,`$env:WINDIR`) and starting-directory values, and `is_absolute_path()` accepts a POSIX root, a Windows drive, or a UNC path — so `test_local_shell.py` and the cwd-aware `test_file_browser_local.py` tests run on every platform with no `@skip_on_windows` gate.
 
 ### Parallel Dev Instances (agent-deploy test)
 
