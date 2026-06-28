@@ -12,8 +12,10 @@ its hidden input — tagged ``editor-input`` — via the bridge's ``pressKey`` v
 whose synthetic events carry a real legacy ``keyCode`` so Monaco resolves them
 (#866).
 
-Not ported (kept as a manual test in docs/testing.md): the binary/non-UTF-8
-graceful-error path (needs a non-UTF-8 file the bridge cannot author).
+The binary/non-UTF-8 graceful-error path (EDITOR-01) is covered too: a non-UTF-8
+file authored from the terminal is opened through the browser, and the editor is
+asserted to surface ``FileEditor``'s ``file-editor__error`` panel rather than
+crash (#881) — the last editor case that had remained a manual test.
 """
 
 import pytest
@@ -58,6 +60,29 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, SystemTest):
         self.open_file_browser()
         self.open_file_in_editor(name, via=via)
         return name
+
+    # ── EDITOR-01: binary / non-UTF-8 graceful error (#881) ─────────────────
+    def test_binary_file_surfaces_a_graceful_error(self):
+        """A non-UTF-8 file opens to the editor error panel, not a crash.
+
+        ``localReadFile`` decodes the file as UTF-8, so an undecodable byte
+        sequence makes the load fail. ``FileEditor`` must catch that and render
+        its ``file-editor__error`` panel — the app stays alive and no editor
+        status mounts. The file is authored from the terminal with ``printf``
+        (``\\xff`` is never valid in UTF-8), exactly the path the original
+        ``editor.test.js`` could not drive.
+        """
+        self.restart_app()
+        self.ensure_terminal()
+        self.run_command('rm -f "$HOME"/e2e_ed_*')
+        name = f"e2e_ed_{unique_name('f')}.bin"
+        # \xff\xfe\x00\x01 — a BOM-like header that is not valid UTF-8.
+        self.run_command(f"printf '\\xff\\xfe\\x00\\x01' > \"$HOME/{name}\"")
+        self.open_file_browser()
+        self.open_file_expecting_error(name)
+        assert self.driver.exists(self.ERROR)
+        # The editor never mounted for the undecodable file → no status bar.
+        assert self.editor_status() is None
 
     # ── EDITOR-01: open / dirty / save (PR #54) ─────────────────────────────
     @pytest.mark.parametrize("via", ["menu", "double"])

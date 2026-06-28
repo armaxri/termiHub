@@ -2,6 +2,12 @@
 
 import pytest
 
+from termihub_harness.artifacts import (
+    ARTIFACT_ROOT,
+    sanitize_nodeid,
+    write_failure_artifacts,
+)
+
 from termihub_harness import (
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
@@ -129,3 +135,31 @@ def telnet_fixtures():
     return _ensure_services(
         [(TELNET_HOST, TELNET_SERVICE, TELNET_PORT)], label="telnet"
     )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """On an integration test *failure*, write a failure-artifact bundle.
+
+    Snapshots the live app state (store + terminal buffer) and the captured app
+    log into ``tests/system/artifacts/<nodeid>/`` so a failure is diagnosable
+    after teardown — essential for CI / headless agent runs where no one watched
+    the window. A no-op for passing tests and for non-integration tests (which
+    have no app/driver to capture). Capture itself never raises (see
+    :func:`write_failure_artifacts`), so it cannot mask the real failure.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call" or not report.failed:
+        return
+    instance = getattr(item, "instance", None)
+    if instance is None:
+        return  # function-style tests manage their own driver/app locally
+    driver = getattr(instance, "driver", None)
+    app = getattr(instance, "app", None)
+    if driver is None and app is None:
+        return  # not an integration suite — nothing app-side to capture
+    dest = write_failure_artifacts(
+        ARTIFACT_ROOT / sanitize_nodeid(item.nodeid), driver, app
+    )
+    print(f"\n[artifacts] wrote failure bundle to {dest}")
