@@ -96,6 +96,26 @@ fixtures); and forwards every other argument to `pytest.sh`. Use `--` to forward
 a token that looks like a runner flag (e.g. `-- --debug`). Fixtures need a
 running container runtime (`CONTAINER_CMD=podman` to force Podman).
 
+## Confirming a `data-testid` — the catalog
+
+Stale or dynamic selectors are the #1 authoring error when porting a test. Before
+guessing, check [`testid-catalog.md`](testid-catalog.md) — a generated index of
+**every** `data-testid` the app renders, scanned from `src/**`:
+
+- **Literal** ids match exactly (`connection-editor-save`).
+- **Dynamic** ids show a `*` glob for the interpolated part — a row keyed by name
+  renders `file-row-*`, a prefixed action renders `*-download`. Build the real id
+  from the static part (`file-row-${entry.name}` → `file-row-myfile.txt`).
+- **Indirect** ids are passed in by a prop at the call site; the real id is
+  defined where the component is used, not at the `data-testid`.
+
+Regenerate it after adding or renaming ids (CI fails otherwise):
+
+```sh
+python scripts/build-testid-catalog.py            # rewrite the catalog
+python scripts/build-testid-catalog.py --check     # what CI runs
+```
+
 ## Setup (manual, if you prefer)
 
 ```sh

@@ -2,25 +2,26 @@
 
 Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS) and `.cmd` (Windows) variant. All scripts can be run from anywhere in the repo.
 
-| Script                | What it does                                                                                                                                                          |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setup`               | Install all dependencies and do an initial build                                                                                                                      |
-| `dev`                 | Start the app in dev mode with hot-reload; accepts an optional port argument (default 1420)                                                                           |
-| `build`               | Build the app for production (creates platform installer); on macOS also cross-compiles agent for Linux x86_64 + aarch64                                              |
-| `test`                | Run all unit tests (frontend + backend + agent)                                                                                                                       |
-| `check`               | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                                                                   |
-| `format`              | Auto-fix all formatting issues (Prettier + cargo fmt)                                                                                                                 |
-| `clean`               | Remove all build artifacts for a fresh start                                                                                                                          |
-| `test-system`         | Start Docker infra + virtual serial ports and run system-level E2E tests                                                                                              |
-| `test-system-py`      | One-command runner for the Python **bridge** harness — builds the app if missing/stale (`--debug`), brings up `--fixtures`, forwards args to `tests/system/pytest.sh` |
-| `test-system-mac`     | macOS system test orchestration: Docker containers, unit tests, Rust integration tests (no E2E)                                                                       |
-| `test-system-linux`   | Linux system test orchestration: Docker containers, unit tests, integration tests, E2E tests                                                                          |
-| `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker or Podman, unit tests, integration tests, E2E                                                              |
-| `setup-agent-cross`   | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                                                                |
-| `build-agents`        | Build the remote agent: Linux targets via cross-rs (musl), or macOS/Windows targets natively (`--native`)                                                             |
-| `release-check`       | Validate release readiness — version consistency, changelog, tests, quality checks, git state, branch, and code markers                                               |
-| `smoke-test`          | Post-install smoke test — launches the built app, verifies basic UI functionality, and confirms clean shutdown                                                        |
-| `test-manual.py`      | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports                                            |
+| Script                    | What it does                                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setup`                   | Install all dependencies and do an initial build                                                                                                                                                  |
+| `dev`                     | Start the app in dev mode with hot-reload; accepts an optional port argument (default 1420)                                                                                                       |
+| `build`                   | Build the app for production (creates platform installer); on macOS also cross-compiles agent for Linux x86_64 + aarch64                                                                          |
+| `test`                    | Run all unit tests (frontend + backend + agent)                                                                                                                                                   |
+| `check`                   | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                                                                                               |
+| `format`                  | Auto-fix all formatting issues (Prettier + cargo fmt)                                                                                                                                             |
+| `clean`                   | Remove all build artifacts for a fresh start                                                                                                                                                      |
+| `test-system`             | Start Docker infra + virtual serial ports and run system-level E2E tests                                                                                                                          |
+| `test-system-py`          | One-command runner for the Python **bridge** harness — builds the app if missing/stale (`--debug`), brings up `--fixtures`, forwards args to `tests/system/pytest.sh`                             |
+| `test-system-mac`         | macOS system test orchestration: Docker containers, unit tests, Rust integration tests (no E2E)                                                                                                   |
+| `test-system-linux`       | Linux system test orchestration: Docker containers, unit tests, integration tests, E2E tests                                                                                                      |
+| `test-system-windows`     | Windows system test orchestration via WSL/Git Bash: Docker or Podman, unit tests, integration tests, E2E                                                                                          |
+| `setup-agent-cross`       | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                                                                                            |
+| `build-agents`            | Build the remote agent: Linux targets via cross-rs (musl), or macOS/Windows targets natively (`--native`)                                                                                         |
+| `release-check`           | Validate release readiness — version consistency, changelog, tests, quality checks, git state, branch, and code markers                                                                           |
+| `smoke-test`              | Post-install smoke test — launches the built app, verifies basic UI functionality, and confirms clean shutdown                                                                                    |
+| `test-manual.py`          | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports                                                                        |
+| `build-testid-catalog.py` | Scan `src/**` for every `data-testid` into a checked-in catalog (`tests/system/testid-catalog.md`) so test authors confirm a selector without reading components; `--check` gates freshness in CI |
 
 ## Typical workflow
 
@@ -85,6 +86,11 @@ python scripts/test-manual.py --category ssh      # Run SSH tests only
 python scripts/test-manual.py --test MT-LOCAL-03  # Run a single test
 python scripts/test-manual.py --keep-infra        # Keep Docker containers after session
 python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume previous session
+
+# data-testid catalog (for system-test authors)
+python scripts/build-testid-catalog.py            # Regenerate tests/system/testid-catalog.md
+python scripts/build-testid-catalog.py --check    # Verify it is up to date (CI gate)
+python scripts/build-testid-catalog.py --stdout   # Print without writing
 
 # Post-install smoke test
 ./scripts/smoke-test.sh ./src-tauri/target/release/termihub       # Linux
