@@ -820,7 +820,8 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                               |
 | MT-CONN-20–22, 31              | `tests/system/tests/test_external_files.py`                     |
 | MT-FB-01, 02                   | `tests/system/tests/test_file_browser_local.py`                 |
-| MT-FB-03, 06, 13, 17, 19       | `infrastructure/sftp-extended.test.js`                          |
+| MT-FB-03, 13, 19               | `tests/system/tests/test_sftp_infra.py`                         |
+| MT-FB-06, 17                   | _manual_ (serial not bridge-selectable; SFTP fault injection)   |
 | MT-FB-05, 11, 18               | `tests/system/tests/test_file_browser_local.py`                 |
 | EDITOR-01/STATUS/INDENT/LANG   | `tests/system/tests/test_editor.py`                             |
 | #504 (terminal auto-scroll)    | `tests/system/tests/test_terminal_auto_scroll.py`               |
