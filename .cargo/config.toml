@@ -1,0 +1,20 @@
+# Cargo configuration (workspace level)
+# https://doc.rust-lang.org/cargo/reference/config.html
+#
+# Network hardening against transient crates.io download failures.
+# CI intermittently failed while downloading crates with:
+#   download of <crate> failed
+#   curl failed [16] Error in the HTTP2 framing layer
+# This is a well-known transient class against static.crates.io. Forcing
+# HTTP/1.1 (disabling multiplexing) is the targeted fix for the HTTP/2
+# framing error; the retry bump helps the general transient-failure case.
+# Committed at the repo level so local builds get the same hardening as CI.
+# See https://github.com/armaxri/termiHub/issues/897
+
+[http]
+# Force HTTP/1.1 — avoids "[16] Error in the HTTP2 framing layer".
+multiplexing = false
+
+[net]
+# Bump download retries (cargo default is 3).
+retry = 5
