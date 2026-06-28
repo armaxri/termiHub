@@ -41,7 +41,6 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
 
     # The folder <select> the editor used to render (removed by PR #146).
     EDITOR_FOLDER = "connection-editor-folder-select"
-    EDITOR_TYPE = "connection-editor-type-select"
     EDITOR_COLOR = "connection-editor-color-picker"
 
     @pytest.fixture(autouse=True)
@@ -60,10 +59,6 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
             what="the connections sidebar",
         )
         yield
-
-    def _field_visible(self, key: str) -> bool:
-        """Whether the ``DynamicForm`` field with schema ``key`` is rendered."""
-        return self.driver.exists(f"field-{key}")
 
     # ── Common fields ──────────────────────────────────────────────────────────
     def test_common_fields_present(self):
@@ -97,7 +92,7 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
 
     def test_shell_dropdown_has_options(self):
         self.open_new_connection_editor()
-        self.wait(lambda: self._field_visible("shell"), what="the shell field")
+        self.wait(lambda: self.field_visible("shell"), what="the shell field")
         # get_text on a <select> returns its option labels concatenated; a
         # platform always has at least one shell, so the text is non-empty.
         assert self.driver.get_text("field-shell").strip() != ""
@@ -105,16 +100,16 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
     def test_shell_dropdown_labels_default(self):
         # PR #140: the system default shell option is labelled "(default)".
         self.open_new_connection_editor()
-        self.wait(lambda: self._field_visible("shell"), what="the shell field")
+        self.wait(lambda: self.field_visible("shell"), what="the shell field")
         assert "(default)" in self.driver.get_text("field-shell")
 
     # ── SSH form fields ────────────────────────────────────────────────────────
     def test_ssh_fields_visible(self):
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
-        self.wait(lambda: self._field_visible("host"), what="the SSH fields")
+        self.wait(lambda: self.field_visible("host"), what="the SSH fields")
         for key in ("host", "port", "username", "authMethod", "enableX11Forwarding"):
-            assert self._field_visible(key), f"expected field-{key} to render for SSH"
+            assert self.field_visible(key), f"expected field-{key} to render for SSH"
 
     def test_ssh_password_auth_has_no_password_field(self):
         # PR #38: the SSH password is prompted at connect time, not stored in the
@@ -122,14 +117,14 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         # field is filtered out of the schema entirely (schemaDefaults).
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
-        self.wait(lambda: self._field_visible("authMethod"), what="the SSH fields")
+        self.wait(lambda: self.field_visible("authMethod"), what="the SSH fields")
         self.driver.select("field-authMethod", "password")
-        assert not self._field_visible("password")
+        assert not self.field_visible("password")
 
     def test_ssh_default_port_is_22(self):
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
-        self.wait(lambda: self._field_visible("port"), what="the SSH port field")
+        self.wait(lambda: self.field_visible("port"), what="the SSH port field")
         assert self.driver.get_value("field-port") == "22"
 
     # ── MT-SSH-19: X11 backward compatibility ──────────────────────────────────
@@ -137,7 +132,7 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
         self.wait(
-            lambda: self._field_visible("enableX11Forwarding"),
+            lambda: self.field_visible("enableX11Forwarding"),
             what="the X11-forwarding field",
         )
         name = unique_name("x11-default")
@@ -154,20 +149,19 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
     def test_serial_fields_visible(self):
         self.open_new_connection_editor()
         self.select_connection_type("serial")
-        self.wait(lambda: self._field_visible("baudRate"), what="the serial fields")
+        self.wait(lambda: self.field_visible("baudRate"), what="the serial fields")
         for key in ("baudRate", "dataBits", "stopBits", "parity", "flowControl"):
-            assert self._field_visible(key), f"expected field-{key} to render for serial"
+            assert self.field_visible(key), f"expected field-{key} to render for serial"
 
     # ── Telnet form fields ─────────────────────────────────────────────────────
     def test_telnet_fields_visible(self):
         self.open_new_connection_editor()
         self.select_connection_type("telnet")
-        self.wait(lambda: self._field_visible("host"), what="the telnet fields")
-        assert self._field_visible("host")
-        assert self._field_visible("port")
+        self.wait(lambda: self.field_visible("host"), what="the telnet fields")
+        assert self.field_visible("port")
 
     def test_telnet_default_port_is_23(self):
         self.open_new_connection_editor()
         self.select_connection_type("telnet")
-        self.wait(lambda: self._field_visible("port"), what="the telnet port field")
+        self.wait(lambda: self.field_visible("port"), what="the telnet port field")
         assert self.driver.get_value("field-port") == "23"

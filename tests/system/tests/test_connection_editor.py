@@ -43,6 +43,7 @@ from termihub_harness import (
     SidebarUi,
     SystemTest,
     TabsUi,
+    folder_toggle_testid,
     unique_name,
 )
 from termihub_harness.bridge import BridgeError
@@ -57,9 +58,6 @@ class TestConnectionEditor(
 ):
     """One app for the whole suite; methods run in order and share its state."""
 
-    KEY_INPUT = "field-keyPath-key-path-input"
-    KEY_BROWSE = "field-keyPath-key-path-browse"
-
     @pytest.fixture(autouse=True)
     def _editor_suite(self):
         """Per-test: clean tab slate + sidebar up; mirrors the old ``afterEach``."""
@@ -72,9 +70,6 @@ class TestConnectionEditor(
         )
         yield
 
-    def _field_visible(self, key: str) -> bool:
-        return self.driver.exists(f"field-{key}")
-
     def _settings_value(self, path: str):
         """Read a settings store path, treating an unset (unresolved) path as None.
 
@@ -86,13 +81,6 @@ class TestConnectionEditor(
             return self.driver.get_state(path)
         except BridgeError:
             return None
-
-    def _create_folder(self, name: str) -> dict:
-        self.driver.click(self.NEW_FOLDER)
-        self.wait(lambda: self.driver.exists(self.FOLDER_NAME_INPUT), what="the folder input")
-        self.driver.type(self.FOLDER_NAME_INPUT, name)
-        self.driver.click(self.FOLDER_CONFIRM)
-        return self.wait(lambda: self.find_folder(name), what="the created folder")
 
     def _set_general_defaults(self, *, user: str, key_path: str) -> None:
         """Set Settings → General default user + SSH key, waiting for the save.
@@ -123,12 +111,12 @@ class TestConnectionEditor(
     def _open_ssh_editor(self) -> None:
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
-        self.wait(lambda: self._field_visible("host"), what="the SSH fields")
+        self.wait(lambda: self.field_visible("host"), what="the SSH fields")
 
     # ── PR #146: folder placement via the folder context menu ──────────────────
     def test_new_connection_in_folder_via_context_menu(self):
-        folder = self._create_folder(unique_name("ctx-folder"))
-        self.driver.context_menu(f"folder-toggle-{folder['id']}")
+        folder = self.create_folder(unique_name("ctx-folder"))
+        self.driver.context_menu(folder_toggle_testid(folder["id"]))
         self.wait(
             lambda: self.driver.exists("context-folder-new-connection"),
             what="the folder context menu",
@@ -144,8 +132,8 @@ class TestConnectionEditor(
         assert conn["folderId"] == folder["id"]
 
     def test_connection_stays_in_folder_after_edit(self):
-        folder = self._create_folder(unique_name("edit-folder"))
-        self.driver.context_menu(f"folder-toggle-{folder['id']}")
+        folder = self.create_folder(unique_name("edit-folder"))
+        self.driver.context_menu(folder_toggle_testid(folder["id"]))
         self.wait(
             lambda: self.driver.exists("context-folder-new-connection"),
             what="the folder context menu",
@@ -172,9 +160,11 @@ class TestConnectionEditor(
     def test_key_path_is_combobox_with_browse(self):
         self._open_ssh_editor()
         self.driver.select("field-authMethod", "key")
-        self.wait(lambda: self.driver.exists(self.KEY_INPUT), what="the key-path combobox")
-        assert self.driver.get_attribute(self.KEY_INPUT, "role") == "combobox"
-        assert self.driver.exists(self.KEY_BROWSE)
+        self.wait(
+            lambda: self.driver.exists(self.KEY_PATH_INPUT), what="the key-path combobox"
+        )
+        assert self.driver.get_attribute(self.KEY_PATH_INPUT, "role") == "combobox"
+        assert self.driver.exists(self.KEY_PATH_BROWSE)
 
     # ── PR #362: schema-driven dynamic field visibility ────────────────────────
     def test_auth_toggle_shows_and_hides_key_path(self):
@@ -215,8 +205,8 @@ class TestConnectionEditor(
         self._open_ssh_editor()
         assert self.driver.get_value("field-username") == "admin"
         assert self.driver.get_value("field-authMethod") == "key"
-        self.wait(lambda: self.driver.exists(self.KEY_INPUT), what="the key-path field")
-        assert self.driver.get_value(self.KEY_INPUT) == DEFAULT_KEY
+        self.wait(lambda: self.driver.exists(self.KEY_PATH_INPUT), what="the key-path field")
+        assert self.driver.get_value(self.KEY_PATH_INPUT) == DEFAULT_KEY
 
     @pytest.mark.skip(reason="default user/key not applied to new connections (#889)")
     def test_default_user_only_keeps_password_auth(self):

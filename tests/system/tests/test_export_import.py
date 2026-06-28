@@ -83,8 +83,7 @@ class TestExportImport(SystemTest):
     # ── EXP-ENC-02 / MT-CONN-10: encrypted mode reveals fields + warning ───────
     def test_encrypted_mode_shows_fields_and_warning(self):
         self._open_export_dialog()
-        self._select_encrypted()
-        assert self.driver.exists(self.PASSWORD)
+        self._select_encrypted()  # waits for PASSWORD to render
         assert self.driver.exists(self.CONFIRM)
         assert self.driver.exists(self.WARNING)
         assert "encrypted" in self.driver.get_text(self.WARNING).lower()

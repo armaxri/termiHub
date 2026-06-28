@@ -27,10 +27,16 @@ class ConnectionsUi(HarnessMixin):
     FOLDER_NAME_INPUT = "inline-folder-name-input"
     FOLDER_CONFIRM = "inline-folder-confirm"
     EDITOR_NAME = "connection-editor-name-input"
+    EDITOR_TYPE = "connection-editor-type-select"
     EDITOR_SAVE = "connection-editor-save"
     EDITOR_SAVE_CONNECT = "connection-editor-save-connect"
     EDITOR_CANCEL = "connection-editor-cancel"
     EDITOR_NAME_ERROR = "connection-editor-name-error"
+
+    # The SSH key-path field renders a KeyPathInput combobox (browse + key
+    # autocomplete), so its input/browse testids carry the KeyPathInput suffix.
+    KEY_PATH_INPUT = "field-keyPath-key-path-input"
+    KEY_PATH_BROWSE = "field-keyPath-key-path-browse"
 
     # Connection context-menu item testids.
     CTX_EDIT = "context-connection-edit"
@@ -73,6 +79,25 @@ class ConnectionsUi(HarnessMixin):
     def editor_open(self) -> bool:
         """Whether the connection editor name field is currently present."""
         return self.driver.exists(self.EDITOR_NAME)
+
+    def field_visible(self, key: str) -> bool:
+        """Whether the ``DynamicForm`` field with schema ``key`` is rendered.
+
+        The editor renders type-specific fields as ``field-<schemaKey>`` from the
+        backend schema, so this resolves a schema key to its presence in the DOM.
+        """
+        return self.driver.exists(f"field-{key}")
+
+    def create_folder(self, name: str) -> dict[str, Any]:
+        """Create a connection folder via the sidebar toolbar, returning it."""
+        self.driver.click(self.NEW_FOLDER)
+        self.wait(
+            lambda: self.driver.exists(self.FOLDER_NAME_INPUT),
+            what="the folder name input",
+        )
+        self.driver.type(self.FOLDER_NAME_INPUT, name)
+        self.driver.click(self.FOLDER_CONFIRM)
+        return self.wait(lambda: self.find_folder(name), what=f"folder {name!r}")
 
     def open_new_connection_editor(self) -> None:
         """Open a fresh connection editor and wait for its name field."""
@@ -191,11 +216,11 @@ class ConnectionsUi(HarnessMixin):
             # The keyPath field renders a KeyPathInput (with browse + key
             # autocomplete), so its input testid is the KeyPathInput one, not a
             # plain ``field-keyPath``.
-            key_input = "field-keyPath-key-path-input"
             self.wait(
-                lambda: self.driver.exists(key_input), what="the SSH key-path field"
+                lambda: self.driver.exists(self.KEY_PATH_INPUT),
+                what="the SSH key-path field",
             )
-            self.driver.type(key_input, str(key_path))
+            self.driver.type(self.KEY_PATH_INPUT, str(key_path))
         if save_password:
             # The "Save credentials" toggle is a checkbox; a click flips it on so
             # key auth prompts for (and would store) the key passphrase.
