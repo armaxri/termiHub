@@ -155,7 +155,7 @@ Rules of thumb:
 Concrete harness changes that would make the loop above faster and less blind,
 roughly in priority order. None require new test content — they are tooling.
 
-### P1 — Support a fast debug build (biggest loop win)
+### P1 — Support a fast debug build (biggest loop win) ✅ done (#891)
 
 `orchestrator.app_binary_path()` is hardcoded to `target/release/…`, so the only
 runnable artifact is a **full release build** — minutes per frontend change.
@@ -168,7 +168,7 @@ runnable artifact is a **full release build** — minutes per frontend change.
 **Impact:** turns the slow back-edge ("frontend testid change → rebuild") from
 minutes into tens of seconds. **Effort:** small.
 
-### P2 — Capture failure artifacts automatically
+### P2 — Capture failure artifacts automatically ✅ done (#891)
 
 The app subprocess inherits stdio and nothing is persisted, so a failure in CI
 (or a headless agent run) leaves little to debug.
@@ -181,13 +181,22 @@ The app subprocess inherits stdio and nothing is persisted, so a failure in CI
 **Impact:** failures become diagnosable from the artifact alone — essential for
 CI and for tests authored without a local run. **Effort:** small–medium.
 
-### P3 — A one-command runner for the Python harness
+### P3 — A one-command runner for the Python harness ✅ done (#898)
 
 There is no top-level entry point for the **bridge** harness (the existing
-`scripts/test-system.sh` drives the legacy `tauri-driver` flow). Add
-`scripts/test-system-py.sh` (+ `.cmd`) that: builds the app if missing/stale
-(honoring `--debug`), brings up only the requested fixtures, then forwards args
-to `pytest.sh`. One command instead of the three-step dance.
+`scripts/test-system.sh` drives the legacy `tauri-driver` flow).
+**[`scripts/test-system-py.sh`](../scripts/test-system-py.sh)** (+ `.cmd`)
+builds the app if missing/stale (honoring `--debug`), brings up only the
+requested `--fixtures`, then forwards args to `pytest.sh` — one command instead
+of the three-step dance:
+
+```sh
+./scripts/test-system-py.sh --debug -k sftp_infra -x -s
+```
+
+`--dry-run` prints the resolved plan (profile, build action, fixtures, forwarded
+args) without side effects. See
+[`tests/system/README.md`](../tests/system/README.md#one-command--scriptstest-system-pysh).
 
 **Impact:** removes setup friction and the "did I rebuild?" foot-gun.
 **Effort:** small.

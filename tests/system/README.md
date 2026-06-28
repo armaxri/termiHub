@@ -66,6 +66,36 @@ no-op once the venv exists, and accepts `PYTHON=/path/to/python3` (or
 `set PYTHON=py` on Windows) to pick the base interpreter for the venv. Every
 `./.venv/bin/python -m pytest …` command below can be written as `./pytest.sh …`.
 
+## One command — `scripts/test-system-py.sh`
+
+`pytest.sh` only runs pytest; an **integration** test additionally needs the app
+**built** and its Docker **fixtures up**. The repo-level
+**[`scripts/test-system-py.sh`](../../scripts/test-system-py.sh)** (+ `.cmd`)
+wraps all three steps so you run one command instead of the build → fixtures →
+pytest dance:
+
+```sh
+# Build a debug app if needed, then run one suite, stop on first fail, stream logs
+./scripts/test-system-py.sh --debug -k sftp_infra -x -s
+
+# Bring up only the SSH fixtures, then run the SSH integration tests
+./scripts/test-system-py.sh --fixtures "ssh-password ssh-keys" -m integration -k ssh
+
+# Skip the build (reuse the existing binary), run only the fast machinery suite
+./scripts/test-system-py.sh --skip-build -m "not integration"
+
+# Just print the resolved plan (profile, build action, fixtures, pytest args)
+./scripts/test-system-py.sh --dry-run --debug -k ssh
+```
+
+It builds only when the binary is **missing or stale** (a source file is newer),
+honoring `--debug` for the fast loop (see [Faster loop](#faster-loop-build-a-debug-app));
+pins the harness to the profile it built via `TERMIHUB_TEST_APP_BINARY`; brings
+up only the `--fixtures` you name (left running, like the harness's own
+fixtures); and forwards every other argument to `pytest.sh`. Use `--` to forward
+a token that looks like a runner flag (e.g. `-- --debug`). Fixtures need a
+running container runtime (`CONTAINER_CMD=podman` to force Podman).
+
 ## Setup (manual, if you prefer)
 
 ```sh
