@@ -21,6 +21,7 @@ separate, deeper concern tracked in their own follow-up.
 
 from __future__ import annotations
 
+import re
 import sys
 
 
@@ -115,3 +116,55 @@ class ShellCommands:
             return f"Remove-Item -Force -ErrorAction SilentlyContinue {self._home(pattern)}"
         # Quote $HOME but leave the glob unquoted so the shell expands it.
         return f'rm -f "$HOME"/{pattern}'
+
+    # ── directory / cwd checks (#902) ───────────────────────────────────────────
+    def home_pwd_marker(self, marker: str) -> str:
+        """Echo ``marker`` only when the shell's cwd is the home directory.
+
+        POSIX uses ``test``; PowerShell compares ``Get-Location`` to ``$HOME``
+        (its string ``-eq`` is case-insensitive, matching Windows path semantics).
+        """
+        if self._windows:
+            return f'if ((Get-Location).Path -eq $HOME) {{ "{marker}" }}'
+        return f'[ "$(pwd)" = "$HOME" ] && echo {marker}'
+
+    def starting_dir(self) -> str:
+        """An absolute directory the backend can use as a connection start dir."""
+        return "C:\\Windows" if self._windows else "/tmp"
+
+    def starting_dir_pwd_marker(self, marker: str) -> str:
+        """Echo ``marker`` only when the shell's cwd is :meth:`starting_dir`."""
+        if self._windows:
+            return f'if ((Get-Location).Path -eq "C:\\Windows") {{ "{marker}" }}'
+        # /tmp is a symlink to /private/tmp on macOS, so accept either.
+        return f'[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ] && echo {marker}'
+
+    def home_start_values(self) -> list[str]:
+        """Connection start-dir values the backend resolves to the home directory."""
+        return ["~", "${env:USERPROFILE}"] if self._windows else ["~", "${env:HOME}"]
+
+    def scratch_dirs(self) -> list[tuple[str, str]]:
+        """Two distinct ``(cd target, displayed-path substring)`` directories.
+
+        The cwd-following tests ``cd`` to each and assert the file browser's path
+        contains the substring. Both shells accept ``cd <target>``; the substrings
+        survive the macOS ``/private`` symlink and the Windows backslash→slash
+        normalization (#555).
+        """
+        if self._windows:
+            return [("$env:TEMP", "Temp"), ("$env:WINDIR", "Windows")]
+        return [("/tmp", "tmp"), ("/etc", "etc")]
+
+
+def is_absolute_path(path: str) -> bool:
+    """Whether ``path`` is absolute on either POSIX or Windows.
+
+    The file browser shows a host-native path, so an assertion on its shape must
+    accept a POSIX root (``/…``), a Windows drive (``C:\\…`` / ``C:/…``), or a UNC
+    path (``\\\\server\\share``) — regardless of the host running the test.
+    """
+    return (
+        path.startswith("/")
+        or bool(re.match(r"^[A-Za-z]:[\\/]", path))
+        or path.startswith("\\\\")
+    )

@@ -9,7 +9,7 @@ output is asserted for shape and is exercised for real on Windows CI (#804).
 
 from __future__ import annotations
 
-from termihub_harness.shell import ShellCommands
+from termihub_harness.shell import ShellCommands, is_absolute_path
 
 POSIX = ShellCommands(windows=False)
 WINDOWS = ShellCommands(windows=True)
@@ -92,3 +92,42 @@ def test_for_host_selects_branch_by_platform(monkeypatch):
     assert ShellCommands.for_host().write_empty("f") == WINDOWS.write_empty("f")
     monkeypatch.setattr(shell_mod.sys, "platform", "darwin")
     assert ShellCommands.for_host().write_empty("f") == POSIX.write_empty("f")
+
+
+# ── directory / cwd builders (#902) ─────────────────────────────────────────────
+def test_posix_pwd_and_dir_helpers():
+    assert POSIX.home_pwd_marker("OK") == '[ "$(pwd)" = "$HOME" ] && echo OK'
+    assert POSIX.starting_dir() == "/tmp"
+    assert POSIX.starting_dir_pwd_marker("OK") == (
+        '[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ] && echo OK'
+    )
+    assert POSIX.home_start_values() == ["~", "${env:HOME}"]
+    assert POSIX.scratch_dirs() == [("/tmp", "tmp"), ("/etc", "etc")]
+
+
+def test_windows_pwd_and_dir_helpers():
+    assert WINDOWS.home_pwd_marker("OK") == 'if ((Get-Location).Path -eq $HOME) { "OK" }'
+    assert WINDOWS.starting_dir() == "C:\\Windows"
+    assert WINDOWS.starting_dir_pwd_marker("OK") == (
+        'if ((Get-Location).Path -eq "C:\\Windows") { "OK" }'
+    )
+    assert WINDOWS.home_start_values() == ["~", "${env:USERPROFILE}"]
+    assert WINDOWS.scratch_dirs() == [("$env:TEMP", "Temp"), ("$env:WINDIR", "Windows")]
+
+
+def test_scratch_dirs_are_two_distinct_directories():
+    for builder in (POSIX, WINDOWS):
+        dirs = builder.scratch_dirs()
+        assert len(dirs) == 2
+        assert dirs[0][0] != dirs[1][0] and dirs[0][1] != dirs[1][1]
+
+
+def test_is_absolute_path_accepts_posix_windows_and_unc():
+    assert is_absolute_path("/tmp")
+    assert is_absolute_path("/Users/arne")
+    assert is_absolute_path("C:\\Windows")
+    assert is_absolute_path("C:/Windows")
+    assert is_absolute_path("\\\\server\\share")
+    assert not is_absolute_path("relative/path")
+    assert not is_absolute_path("tmp")
+    assert not is_absolute_path("")
