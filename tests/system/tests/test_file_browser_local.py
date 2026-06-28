@@ -16,8 +16,6 @@ context-menu styling parity and other pure-visual checks; the rename inline-inpu
 flow (covered indirectly — delete exercises the same context-menu refresh path).
 """
 
-import sys
-
 import pytest
 
 from termihub_harness import (
@@ -30,17 +28,9 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.markers import skip_on_windows
 
 pytestmark = pytest.mark.integration
-
-# The cwd-following and absolute-path checks below assume POSIX shell idioms
-# (``cd /tmp``, ``/``-rooted paths). Authoring/cleanup is cross-platform via
-# ShellFsUi, but a Windows-safe cwd/path variant is a deeper effort tracked in
-# #902 — skip these on Windows so the unified suite (#804) does not hard-fail.
-skip_on_windows = pytest.mark.skipif(
-    sys.platform.startswith("win"),
-    reason="POSIX-only cwd/path-format checks; cross-platform variant tracked in #902",
-)
 
 
 class TestFileBrowserLocal(

@@ -46,22 +46,22 @@ class ShellFsUi(HarnessMixin):
         """Write raw ``data`` (e.g. a non-UTF-8 file) to ``name`` in home."""
         self.run_command(self.shell.write_bytes(name, data))
 
-    def touch_home(self, rel: str) -> None:
-        """Create an empty file at home-relative ``rel`` if it does not exist."""
-        self.run_command(self.shell.touch(rel))
+    def touch_home(self, name: str) -> None:
+        """Create an empty file at home-relative ``name`` if it does not exist."""
+        self.run_command(self.shell.touch(name))
 
-    def make_home_dir(self, rel: str) -> None:
-        """Create directory ``rel`` (and parents) under home."""
-        self.run_command(self.shell.mkdir(rel))
+    def make_home_dir(self, name: str) -> None:
+        """Create directory ``name`` (and parents) under home."""
+        self.run_command(self.shell.mkdir(name))
 
     # -- clean up ----------------------------------------------------------------
-    def remove_home(self, rel: str) -> None:
-        """Delete file ``rel`` under home (no error if absent)."""
-        self.run_command(self.shell.remove(rel))
+    def remove_home(self, name: str) -> None:
+        """Delete file ``name`` under home (no error if absent)."""
+        self.run_command(self.shell.remove(name))
 
-    def remove_home_tree(self, rel: str) -> None:
-        """Recursively delete ``rel`` under home (no error if absent)."""
-        self.run_command(self.shell.remove_tree(rel))
+    def remove_home_tree(self, name: str) -> None:
+        """Recursively delete ``name`` under home (no error if absent)."""
+        self.run_command(self.shell.remove_tree(name))
 
     def remove_home_glob(self, pattern: str) -> None:
         """Delete home entries matching ``pattern`` (e.g. ``e2e_ed_*``)."""

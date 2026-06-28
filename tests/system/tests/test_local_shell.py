@@ -12,8 +12,6 @@ they are robust to ``/tmp`` ↔ ``/private/tmp`` symlinks and to home-dir paths
 that differ per platform.
 """
 
-import sys
-
 import pytest
 
 from termihub_harness import (
@@ -26,17 +24,9 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.markers import skip_on_windows
 
 pytestmark = pytest.mark.integration
-
-# The starting-directory and pwd checks below use POSIX `test`/`pwd` syntax and
-# Unix paths (`/tmp`, `$HOME`-rooted, `/`-prefixed). A Windows-safe variant needs
-# platform-specific dirs and PowerShell conditionals — a deeper effort tracked in
-# #902 — so skip these on Windows (the unified suite #804 must not hard-fail).
-skip_on_windows = pytest.mark.skipif(
-    sys.platform.startswith("win"),
-    reason="POSIX-only pwd/starting-directory checks; cross-platform variant tracked in #902",
-)
 
 
 class TestLocalShell(
