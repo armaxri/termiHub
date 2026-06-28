@@ -181,6 +181,20 @@ pub async fn validate_ssh_key(path: String) -> crate::utils::ssh_key_validate::S
     })
 }
 
+/// Whether an SSH private key file is passphrase-encrypted (#885).
+///
+/// Lets the connect paths decide whether to prompt for a key passphrase based
+/// on the key's actual encryption instead of the "Save password" flag. On any
+/// read error the caller should treat the result as "uncertain" and prompt.
+#[tauri::command]
+pub async fn is_ssh_key_encrypted(path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::utils::ssh_key_validate::is_ssh_key_encrypted(&path)
+    })
+    .await
+    .map_err(|e| format!("Encryption-detection task failed: {e}"))?
+}
+
 // --- Session-based file browsing commands ---
 
 /// List directory contents via a session's file browser capability.
