@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::Path;
 
+use russh::keys::ssh_key::PrivateKey;
 use serde::Serialize;
+
+use crate::utils::expand::expand_config_value;
 
 /// Maximum bytes to read from the file for format detection.
 const MAX_READ_BYTES: usize = 1024;
@@ -154,10 +157,64 @@ pub fn validate_ssh_key(path: &str) -> SshKeyValidation {
     }
 }
 
+/// Determine whether an SSH private key file is passphrase-encrypted.
+///
+/// Used to decide whether to prompt for a key passphrase at connect time
+/// based on the key's *actual* encryption rather than the "Save password"
+/// flag (#885). Detection is read-only and format-aware:
+///
+/// - Traditional OpenSSL PEM (`Proc-Type: 4,ENCRYPTED`, used by encrypted
+///   `RSA`/`EC`/`DSA PRIVATE KEY` blocks) and explicitly-labelled encrypted
+///   PKCS#8 (`BEGIN ENCRYPTED PRIVATE KEY`) carry the fact in their headers.
+/// - OpenSSH-format keys are parsed with the `ssh-key` crate, whose
+///   [`PrivateKey::is_encrypted`] reads the cipher name authoritatively (an
+///   unencrypted key uses the cipher `none`).
+/// - Anything else without an encryption header (an unencrypted legacy PEM or
+///   PKCS#8 key, or a non-key file) is reported as not encrypted.
+///
+/// An empty path resolves to the SSH default (`~/.ssh/id_rsa`), mirroring the
+/// connect path. Returns `Err` when the file cannot be read so callers can
+/// treat that as "uncertain" and prompt anyway — an encrypted key must never
+/// fail to connect silently.
+pub fn is_ssh_key_encrypted(path: &str) -> Result<bool, String> {
+    let key_path = if path.trim().is_empty() {
+        "~/.ssh/id_rsa"
+    } else {
+        path
+    };
+    let expanded = expand_config_value(key_path);
+    let contents =
+        fs::read_to_string(&expanded).map_err(|e| format!("Cannot read key file: {e}"))?;
+
+    // Traditional OpenSSL PEM encryption (RSA/EC/DSA): Proc-Type + DEK-Info.
+    if contents.contains("Proc-Type:") && contents.contains("ENCRYPTED") {
+        return Ok(true);
+    }
+    // Explicitly-labelled encrypted PKCS#8.
+    if contents.contains("BEGIN ENCRYPTED PRIVATE KEY") {
+        return Ok(true);
+    }
+    // OpenSSH format: the cipher name is authoritative ("none" => unencrypted).
+    if let Ok(key) = PrivateKey::from_openssh(contents.trim()) {
+        return Ok(key.is_encrypted());
+    }
+    // Unencrypted legacy PEM / PKCS#8 (no encryption header), or a non-key file.
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    /// Absolute path to a checked-in SSH key fixture (workspace `tests/fixtures`).
+    fn fixture(name: &str) -> String {
+        format!(
+            "{}/../tests/fixtures/ssh-keys/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        )
+    }
 
     fn write_temp(content: &[u8]) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().unwrap();
@@ -367,5 +424,63 @@ mod tests {
         let result = validate_ssh_key(f.path().to_str().unwrap());
         assert_eq!(result.status, ValidationStatus::Warning);
         assert!(result.message.contains("Not a recognized"));
+    }
+
+    // --- is_ssh_key_encrypted (#885) ---
+
+    #[test]
+    fn encryption_openssh_passphrase_key_is_encrypted() {
+        // OpenSSH-format key created with a passphrase (cipher aes256-ctr).
+        assert_eq!(
+            is_ssh_key_encrypted(&fixture("ed25519_passphrase")),
+            Ok(true)
+        );
+        assert_eq!(
+            is_ssh_key_encrypted(&fixture("rsa_2048_passphrase")),
+            Ok(true)
+        );
+        assert_eq!(
+            is_ssh_key_encrypted(&fixture("ecdsa_256_passphrase")),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn encryption_openssh_unencrypted_key_is_not_encrypted() {
+        // OpenSSH-format key with no passphrase (cipher "none").
+        assert_eq!(is_ssh_key_encrypted(&fixture("ed25519")), Ok(false));
+        assert_eq!(is_ssh_key_encrypted(&fixture("rsa_2048")), Ok(false));
+        assert_eq!(is_ssh_key_encrypted(&fixture("ecdsa_256")), Ok(false));
+    }
+
+    #[test]
+    fn encryption_legacy_pem_proc_type_is_encrypted() {
+        // Traditional OpenSSL PEM encryption header (RSA/EC/DSA).
+        let content = b"-----BEGIN RSA PRIVATE KEY-----\n\
+                        Proc-Type: 4,ENCRYPTED\n\
+                        DEK-Info: AES-128-CBC,0123456789ABCDEF0123456789ABCDEF\n\n\
+                        c29tZWJhc2U2NGNpcGhlcnRleHQ=\n\
+                        -----END RSA PRIVATE KEY-----\n";
+        let f = write_temp(content);
+        assert_eq!(is_ssh_key_encrypted(f.path().to_str().unwrap()), Ok(true));
+    }
+
+    #[test]
+    fn encryption_pkcs8_encrypted_label_is_encrypted() {
+        let content = b"-----BEGIN ENCRYPTED PRIVATE KEY-----\nYmFzZTY0\n-----END ENCRYPTED PRIVATE KEY-----\n";
+        let f = write_temp(content);
+        assert_eq!(is_ssh_key_encrypted(f.path().to_str().unwrap()), Ok(true));
+    }
+
+    #[test]
+    fn encryption_unencrypted_pkcs8_label_is_not_encrypted() {
+        let content = b"-----BEGIN PRIVATE KEY-----\nYmFzZTY0\n-----END PRIVATE KEY-----\n";
+        let f = write_temp(content);
+        assert_eq!(is_ssh_key_encrypted(f.path().to_str().unwrap()), Ok(false));
+    }
+
+    #[test]
+    fn encryption_missing_file_returns_err() {
+        assert!(is_ssh_key_encrypted("/nonexistent/path/to/key").is_err());
     }
 }

@@ -10,7 +10,12 @@ import {
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
-import { listAvailableShells, resolveCredential, storeCredential } from "@/services/api";
+import {
+  listAvailableShells,
+  resolveCredential,
+  storeCredential,
+  isSshKeyEncrypted,
+} from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import type { ConnectionTypeInfo } from "@/services/api";
@@ -703,7 +708,18 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // covers passphrase-protected keys (#879).
     const schema = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
     if (schema) {
-      const keyPrompt = findKeyPassphrasePromptInfo(schema, connSettings);
+      // For key auth, prompt based on the key's actual encryption rather than
+      // the savePassword flag (#885): a passphrase-protected key must be
+      // unlocked even when the user didn't opt to save the passphrase, and an
+      // unencrypted key must never trigger a spurious prompt. If the file can't
+      // be read, default to prompting so an encrypted key never fails silently.
+      let keyEncrypted = false;
+      if (connSettings.authMethod === "key") {
+        keyEncrypted = await isSshKeyEncrypted((connSettings.keyPath as string) ?? "").catch(
+          () => true
+        );
+      }
+      const keyPrompt = findKeyPassphrasePromptInfo(schema, connSettings, keyEncrypted);
       const promptInfo = findPasswordPromptInfo(schema, connSettings) ?? keyPrompt;
       const credentialType: "password" | "key_passphrase" = keyPrompt
         ? "key_passphrase"

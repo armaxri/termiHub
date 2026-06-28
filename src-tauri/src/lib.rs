@@ -402,6 +402,7 @@ pub fn run() {
             commands::session::check_podman_available,
             commands::session::list_podman_images,
             commands::session::validate_ssh_key,
+            commands::session::is_ssh_key_encrypted,
             // Session-based file browsing
             commands::session::session_list_files,
             commands::session::session_read_file,

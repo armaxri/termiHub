@@ -235,6 +235,18 @@ export async function validateSshKey(path: string): Promise<SshKeyValidation> {
   return await invoke<SshKeyValidation>("validate_ssh_key", { path });
 }
 
+/**
+ * Whether an SSH private key file is passphrase-encrypted.
+ *
+ * Used to decide whether to prompt for a key passphrase at connect time based
+ * on the key's actual encryption rather than the "Save password" flag (#885).
+ * Rejects when the file cannot be read — callers should then prompt anyway so
+ * an encrypted key never fails to connect silently.
+ */
+export async function isSshKeyEncrypted(path: string): Promise<boolean> {
+  return await invoke<boolean>("is_ssh_key_encrypted", { path });
+}
+
 /** Check if Docker is available on the local system. */
 export async function checkDockerAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_docker_available");

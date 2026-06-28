@@ -35,6 +35,7 @@ import {
   createTerminal,
   removeCredential,
   storeCredential,
+  isSshKeyEncrypted,
   type AgentDefinitionInfo,
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
@@ -369,6 +370,29 @@ export function ConnectionList() {
         const authMethod = cfg.authMethod as string;
         const savePassword = cfg.savePassword as boolean | undefined;
 
+        // For key auth, decide whether a passphrase is needed from the key's
+        // actual encryption rather than the savePassword flag (#885): a
+        // passphrase-protected key must be unlocked even when savePassword is
+        // off, and an unencrypted key must never prompt. If the file can't be
+        // read, default to "encrypted" so an encrypted key never fails silently.
+        let keyEncrypted = false;
+        if (authMethod === "key") {
+          keyEncrypted = await isSshKeyEncrypted((cfg.keyPath as string) ?? "").catch(() => true);
+        }
+        // Password auth always needs a credential; key auth only when encrypted.
+        const needsCredential = authMethod === "password" || (authMethod === "key" && keyEncrypted);
+        if (!needsCredential) {
+          addTab(
+            connection.name,
+            connection.config.type,
+            config,
+            undefined,
+            undefined,
+            connection.terminalOptions
+          );
+          return;
+        }
+
         // Before attempting credential resolution, check whether the credential store
         // is locked. If it is, we can't read the stored credential and SSH would fall
         // back to interactive password prompts. Prompt for unlock first and wait —
@@ -445,9 +469,11 @@ export function ConnectionList() {
               frontendLog("connection_list", `Failed to store credential: ${err}`);
             });
           }
-        } else if (authMethod === "key" && savePassword) {
-          // Key auth with passphrase storage opted in but no passphrase stored yet —
-          // prompt for the passphrase so the backend can unlock the key.
+        } else if (authMethod === "key") {
+          // Key auth with an encrypted key (guaranteed by the needsCredential
+          // gate above) and no stored passphrase yet — prompt so the backend can
+          // unlock the key, regardless of savePassword (#885). Whether the
+          // passphrase is then stored still follows the prompt's Save box.
           const host = cfg.host as string;
           const username = (cfg.username as string) ?? "";
           const passphrase = await requestPassword(host, username);

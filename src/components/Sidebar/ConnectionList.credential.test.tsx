@@ -3,10 +3,11 @@
  *
  * The dialog must appear in exactly two cases:
  *   1. authMethod="password" with no stored credential (or stale one)
- *   2. authMethod="key" + savePassword=true with no stored passphrase
+ *   2. authMethod="key" with an *encrypted* key and no stored passphrase —
+ *      independent of the savePassword flag (#885)
  *
- * All other cases (valid stored credential, key without savePassword, agent
- * auth, non-SSH connection types) must NOT show a dialog.
+ * All other cases (valid stored credential, unencrypted key, agent auth,
+ * non-SSH connection types) must NOT show a dialog.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -14,7 +15,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
-import { resolveCredential, storeCredential } from "@/services/api";
+import { resolveCredential, storeCredential, isSshKeyEncrypted } from "@/services/api";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -22,6 +23,8 @@ vi.mock("@/services/api", () => ({
   removeCredential: vi.fn(),
   storeCredential: vi.fn(() => Promise.resolve()),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
+  // Default: key files are encrypted. Tests override per-case.
+  isSshKeyEncrypted: vi.fn(() => Promise.resolve(true)),
 }));
 
 vi.mock("@/utils/frontendLog", () => ({
@@ -35,6 +38,7 @@ vi.mock("./AgentNode", () => ({
 
 const mockedResolveCredential = vi.mocked(resolveCredential);
 const mockedStoreCredential = vi.mocked(storeCredential);
+const mockedIsSshKeyEncrypted = vi.mocked(isSshKeyEncrypted);
 
 function makeSshConn(id: string, authMethod: string, savePassword?: boolean): SavedConnection {
   return {
@@ -85,6 +89,7 @@ beforeEach(() => {
   root = createRoot(container);
   vi.clearAllMocks();
   mockedResolveCredential.mockResolvedValue(null);
+  mockedIsSshKeyEncrypted.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -120,10 +125,10 @@ describe("ConnectionList — password dialog conditions", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
-  it("shows dialog for key auth + savePassword when no passphrase is stored", async () => {
-    // Regression: previously key+savePassword+no-stored-passphrase silently
-    // fell through to connect without the passphrase, causing auth failure.
-    // Now it must prompt so the user can provide (and optionally save) it.
+  it("shows dialog for an encrypted key when no passphrase is stored", async () => {
+    // Regression: a passphrase-protected key with no stored passphrase must
+    // prompt so the user can provide (and optionally save) it, otherwise the
+    // backend fails to unlock the key.
     const conn = makeSshConn("key-no-pass", "key", true);
     render([conn]);
     await act(async () => {
@@ -135,7 +140,21 @@ describe("ConnectionList — password dialog conditions", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
   });
 
-  it("does not show dialog for key auth + savePassword when passphrase is stored", async () => {
+  it("shows dialog for an encrypted key even when savePassword is off (#885)", async () => {
+    // The core #885 fix: prompting is driven by the key's actual encryption, not
+    // the savePassword flag — so an encrypted key must prompt even with save off.
+    const conn = makeSshConn("key-enc-no-save", "key", false);
+    render([conn]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await clickConnectButton(conn.id);
+
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("does not show dialog for an encrypted key when passphrase is stored", async () => {
     mockedResolveCredential.mockResolvedValue("stored-passphrase");
     const conn = makeSshConn("key-with-pass", "key", true);
     render([conn]);
@@ -148,8 +167,11 @@ describe("ConnectionList — password dialog conditions", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
-  it("does not show dialog for key auth without savePassword", async () => {
-    const conn = makeSshConn("key-no-save", "key", false);
+  it("does not show dialog for an unencrypted key even with savePassword on (#885)", async () => {
+    // No spurious prompt: an unencrypted key needs no passphrase regardless of
+    // the savePassword flag.
+    mockedIsSshKeyEncrypted.mockResolvedValue(false);
+    const conn = makeSshConn("key-unencrypted", "key", true);
     render([conn]);
     await act(async () => {
       await Promise.resolve();
