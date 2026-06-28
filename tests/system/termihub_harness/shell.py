@@ -14,9 +14,9 @@ which both POSIX shells and PowerShell expand), the one directory a fresh shell
 reliably shows. The POSIX output is pinned to the exact pre-#886 commands so a
 Linux/macOS run is unchanged.
 
-Only the file-authoring verbs the suites actually use live here; shell-conditional
-``pwd`` checks and platform-specific directories (``/tmp`` vs ``$env:TEMP``) are a
-separate, deeper concern tracked in their own follow-up.
+The file-authoring verbs and the directory / ``pwd`` checks the suites use both
+live here (#886, #902) — all keyed off the same host-shell choice. ``$HOME`` and
+the scratch directories are the only locations these touch.
 """
 
 from __future__ import annotations
@@ -136,8 +136,10 @@ class ShellCommands:
         """Echo ``marker`` only when the shell's cwd is :meth:`starting_dir`."""
         if self._windows:
             return f'if ((Get-Location).Path -eq "C:\\Windows") {{ "{marker}" }}'
-        # /tmp is a symlink to /private/tmp on macOS, so accept either.
-        return f'[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ] && echo {marker}'
+        # /tmp is a symlink to /private/tmp on macOS, so accept either. The braces
+        # group the alternation so the precedence reads explicitly as
+        # ``(A || B) && echo`` rather than relying on shell left-associativity.
+        return f'{{ [ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ]; }} && echo {marker}'
 
     def home_start_values(self) -> list[str]:
         """Connection start-dir values the backend resolves to the home directory."""

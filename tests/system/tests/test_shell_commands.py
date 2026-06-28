@@ -99,7 +99,7 @@ def test_posix_pwd_and_dir_helpers():
     assert POSIX.home_pwd_marker("OK") == '[ "$(pwd)" = "$HOME" ] && echo OK'
     assert POSIX.starting_dir() == "/tmp"
     assert POSIX.starting_dir_pwd_marker("OK") == (
-        '[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ] && echo OK'
+        '{ [ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ]; } && echo OK'
     )
     assert POSIX.home_start_values() == ["~", "${env:HOME}"]
     assert POSIX.scratch_dirs() == [("/tmp", "tmp"), ("/etc", "etc")]
