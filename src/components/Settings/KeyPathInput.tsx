@@ -1,7 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSshKeyFiles, SshKeyFile } from "@/hooks/useSshKeyFiles";
+import { validateSshKey, SshKeyValidation } from "@/services/api";
 import "./KeyPathInput.css";
+
+/** Debounce (ms) before validating a typed key path against the backend. */
+const VALIDATION_DEBOUNCE_MS = 300;
 
 interface KeyPathInputProps {
   value: string;
@@ -15,9 +19,28 @@ export function KeyPathInput({ value, onChange, placeholder, testIdPrefix }: Key
   const { keyFiles, sshDirPath } = useSshKeyFiles();
   const [isOpen, setIsOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
+  const [validation, setValidation] = useState<SshKeyValidation | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+
+  // Inline key-file validation (PR #204): debounce a backend check of the typed
+  // path and surface a hint (public key / PuTTY PPK / unrecognized / not found /
+  // valid OpenSSH-or-PEM key) before a connection is attempted. The keyPath
+  // field is only shown for key auth, so validating whenever it has a value is
+  // appropriate. An empty path is "no key selected yet" — no call, no hint.
+  useEffect(() => {
+    if (value.trim() === "") {
+      setValidation(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      validateSshKey(value)
+        .then(setValidation)
+        .catch(() => setValidation(null));
+    }, VALIDATION_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [value]);
 
   const filtered = useMemo(() => {
     if (!value) return keyFiles;
@@ -116,59 +139,69 @@ export function KeyPathInput({ value, onChange, placeholder, testIdPrefix }: Key
   const prefix = testIdPrefix ? `${testIdPrefix}-` : "";
 
   return (
-    <div className="key-path-input" ref={wrapperRef} onBlur={handleBlur}>
-      <input
-        ref={inputRef}
-        type="text"
-        className="key-path-input__field"
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value);
-          if (!isOpen && keyFiles.length > 0) setIsOpen(true);
-        }}
-        onFocus={handleFocus}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        role="combobox"
-        aria-expanded={isOpen}
-        aria-autocomplete="list"
-        data-testid={`${prefix}key-path-input`}
-      />
-      <button
-        type="button"
-        className="settings-form__list-browse"
-        onClick={handleBrowse}
-        title="Browse"
-        data-testid={`${prefix}key-path-browse`}
-      >
-        ...
-      </button>
-      {isOpen && filtered.length > 0 && (
-        <ul
-          className="key-path-input__dropdown"
-          ref={listRef}
-          role="listbox"
-          data-testid={`${prefix}key-path-dropdown`}
+    <>
+      <div className="key-path-input" ref={wrapperRef} onBlur={handleBlur}>
+        <input
+          ref={inputRef}
+          type="text"
+          className="key-path-input__field"
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            if (!isOpen && keyFiles.length > 0) setIsOpen(true);
+          }}
+          onFocus={handleFocus}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          role="combobox"
+          aria-expanded={isOpen}
+          aria-autocomplete="list"
+          data-testid={`${prefix}key-path-input`}
+        />
+        <button
+          type="button"
+          className="settings-form__list-browse"
+          onClick={handleBrowse}
+          title="Browse"
+          data-testid={`${prefix}key-path-browse`}
         >
-          {filtered.map((file, i) => (
-            <li
-              key={file.path}
-              className={`key-path-input__option${i === highlightIndex ? " key-path-input__option--highlighted" : ""}`}
-              role="option"
-              aria-selected={i === highlightIndex}
-              onMouseDown={(e) => {
-                e.preventDefault(); // Prevent blur before click registers
-                acceptItem(file);
-              }}
-              onMouseEnter={() => setHighlightIndex(i)}
-              data-testid={`${prefix}key-path-option-${i}`}
-            >
-              {file.name}
-              <span className="key-path-input__option-path">{file.path}</span>
-            </li>
-          ))}
-        </ul>
+          ...
+        </button>
+        {isOpen && filtered.length > 0 && (
+          <ul
+            className="key-path-input__dropdown"
+            ref={listRef}
+            role="listbox"
+            data-testid={`${prefix}key-path-dropdown`}
+          >
+            {filtered.map((file, i) => (
+              <li
+                key={file.path}
+                className={`key-path-input__option${i === highlightIndex ? " key-path-input__option--highlighted" : ""}`}
+                role="option"
+                aria-selected={i === highlightIndex}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // Prevent blur before click registers
+                  acceptItem(file);
+                }}
+                onMouseEnter={() => setHighlightIndex(i)}
+                data-testid={`${prefix}key-path-option-${i}`}
+              >
+                {file.name}
+                <span className="key-path-input__option-path">{file.path}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {validation && validation.message && (
+        <p
+          className={`settings-form__hint settings-form__hint--${validation.status}`}
+          data-testid={`${prefix}key-path-validation`}
+        >
+          {validation.message}
+        </p>
       )}
-    </div>
+    </>
   );
 }
