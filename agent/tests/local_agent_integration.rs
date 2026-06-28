@@ -208,9 +208,7 @@ fn agent_starts_and_accepts_connections() {
 fn agent_responds_to_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
-    stream
-        .set_read_timeout(Some(RPC_READ_TIMEOUT))
-        .unwrap();
+    stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
     let response = rpc(
         &mut stream,
@@ -232,9 +230,7 @@ fn agent_responds_to_initialize() {
 fn agent_returns_error_for_unknown_method_before_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
-    stream
-        .set_read_timeout(Some(RPC_READ_TIMEOUT))
-        .unwrap();
+    stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
     let response = rpc(
         &mut stream,
@@ -258,9 +254,7 @@ fn agent_handles_multiple_sequential_connections() {
 
     for i in 0..3 {
         let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
-        stream
-            .set_read_timeout(Some(RPC_READ_TIMEOUT))
-            .unwrap();
+        stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
         let response = rpc(
             &mut stream,
