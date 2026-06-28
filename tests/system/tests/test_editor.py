@@ -23,6 +23,7 @@ import pytest
 from termihub_harness import (
     EditorUi,
     FilesUi,
+    ShellFsUi,
     SidebarUi,
     SystemTest,
     TabsUi,
@@ -33,7 +34,7 @@ from termihub_harness import (
 pytestmark = pytest.mark.integration
 
 
-class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, SystemTest):
+class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, SystemTest):
     def _open_editor(self, *, ext: str = ".ts", multiline: bool = True, via: str = "menu") -> str:
         """Fresh terminal → create a file in $HOME → open it in the editor.
 
@@ -53,10 +54,12 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, SystemTest):
         # Remove any files left by earlier tests/runs so $HOME's listing stays
         # small — a bloated home directory slows every later browser refresh
         # (the file list is not virtualized).
-        self.run_command('rm -f "$HOME"/e2e_ed_*')
+        self.remove_home_glob("e2e_ed_*")
         name = f"e2e_ed_{unique_name('f')}{ext}"
-        body = r"line one\nline two\nline three\n" if multiline else ""
-        self.run_command(f'printf "{body}" > "$HOME/{name}"')
+        if multiline:
+            self.write_home_file(name, "line one\nline two\nline three\n")
+        else:
+            self.write_home_file_empty(name)
         self.open_file_browser()
         self.open_file_in_editor(name, via=via)
         return name
@@ -68,16 +71,16 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, SystemTest):
         ``localReadFile`` decodes the file as UTF-8, so an undecodable byte
         sequence makes the load fail. ``FileEditor`` must catch that and render
         its ``file-editor__error`` panel — the app stays alive and no editor
-        status mounts. The file is authored from the terminal with ``printf``
-        (``\\xff`` is never valid in UTF-8), exactly the path the original
-        ``editor.test.js`` could not drive.
+        status mounts. The file is authored from the terminal via the
+        cross-platform shell helper (``\\xff`` is never valid in UTF-8), exactly
+        the path the original ``editor.test.js`` could not drive.
         """
         self.restart_app()
         self.ensure_terminal()
-        self.run_command('rm -f "$HOME"/e2e_ed_*')
+        self.remove_home_glob("e2e_ed_*")
         name = f"e2e_ed_{unique_name('f')}.bin"
         # \xff\xfe\x00\x01 — a BOM-like header that is not valid UTF-8.
-        self.run_command(f"printf '\\xff\\xfe\\x00\\x01' > \"$HOME/{name}\"")
+        self.write_home_bytes(name, b"\xff\xfe\x00\x01")
         self.open_file_browser()
         self.open_file_expecting_error(name)
         assert self.driver.exists(self.ERROR)

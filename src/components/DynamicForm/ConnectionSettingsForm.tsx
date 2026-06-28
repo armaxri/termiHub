@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useForm, useWatch, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { SettingsSchema } from "@/types/schema";
 import { isFieldVisible } from "@/utils/schemaDefaults";
+import { parseHostPort } from "@/utils/parseHostPort";
 import { settingsSchemaToZod } from "./settingsSchemaToZod";
 import { DynamicField } from "./DynamicField";
 
@@ -40,11 +41,32 @@ export function ConnectionSettingsForm({
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
 
-  const { control, watch, reset } = useForm<Record<string, unknown>>({
+  const { control, watch, reset, setValue } = useForm<Record<string, unknown>>({
     defaultValues: settings,
     resolver: zodResolver(zodSchema),
     mode: "onChange",
   });
+
+  // Whether this schema has a sibling `port` field — gates the host:port split.
+  const hasPortField = useMemo(
+    () => schema.groups.some((g) => g.fields.some((f) => f.key === "port")),
+    [schema]
+  );
+
+  // Auto-extract `host:port` typed into the Host field on blur (PR #195 / #895).
+  // `192.168.0.2:2222` → host `192.168.0.2` + port `2222`; `[::1]:22` → IPv6
+  // host + port; a bare host or bare IPv6 is left untouched.
+  const handleFieldBlur = useCallback(
+    (fieldKey: string, value: unknown) => {
+      if (fieldKey !== "host" || !hasPortField) return;
+      if (typeof value !== "string") return;
+      const { host, port } = parseHostPort(value);
+      if (port === null) return;
+      setValue("host", host, { shouldValidate: true, shouldDirty: true });
+      setValue("port", port, { shouldValidate: true, shouldDirty: true });
+    },
+    [hasPortField, setValue]
+  );
 
   // Reset the form when the connection type changes (schema groups differ).
   // isResetting suppresses the watch callback that reset fires synchronously,
@@ -99,6 +121,7 @@ export function ConnectionSettingsForm({
                     field={field}
                     value={rhfField.value}
                     onChange={rhfField.onChange}
+                    onBlur={() => handleFieldBlur(field.key, rhfField.value)}
                     error={fieldState.error?.message}
                     credentialSaved={
                       credentialSavedHint && field.fieldType.type === "password" && !rhfField.value

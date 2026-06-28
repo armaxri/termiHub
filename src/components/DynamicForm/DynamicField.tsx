@@ -10,6 +10,12 @@ interface DynamicFieldProps {
   field: SettingsField;
   value: unknown;
   onChange: (value: unknown) => void;
+  /**
+   * Called when the field loses focus. Currently only wired for text fields
+   * (used by the connection form to auto-extract `host:port` from the Host
+   * field on blur — see `ConnectionSettingsForm`).
+   */
+  onBlur?: () => void;
   /** Validation error message to display inline below the field. */
   error?: string;
   /** When true, shows a "Password saved in credential store" hint below password fields. */
@@ -33,13 +39,14 @@ export function DynamicField({
   field,
   value,
   onChange,
+  onBlur,
   error,
   credentialSaved,
   availablePorts,
 }: DynamicFieldProps) {
   return (
     <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
-      {renderFieldInput(field, field.fieldType, value, onChange, availablePorts)}
+      {renderFieldInput(field, field.fieldType, value, onChange, availablePorts, onBlur)}
       {error && (
         <p
           className="settings-form__hint settings-form__hint--error"
@@ -66,11 +73,12 @@ function renderFieldInput(
   fieldType: FieldType,
   value: unknown,
   onChange: (v: unknown) => void,
-  availablePorts?: string[]
+  availablePorts?: string[],
+  onBlur?: () => void
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
-      return <TextField field={field} value={value} onChange={onChange} />;
+      return <TextField field={field} value={value} onChange={onChange} onBlur={onBlur} />;
     case "password":
       return <PasswordField field={field} value={value} onChange={onChange} />;
     case "number":
@@ -111,7 +119,7 @@ interface FieldProps {
   onChange: (v: unknown) => void;
 }
 
-function TextField({ field, value, onChange }: FieldProps) {
+function TextField({ field, value, onChange, onBlur }: FieldProps & { onBlur?: () => void }) {
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
@@ -119,6 +127,7 @@ function TextField({ field, value, onChange }: FieldProps) {
         type="text"
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
+        onBlur={onBlur}
         placeholder={field.placeholder}
         data-testid={`field-${field.key}`}
       />

@@ -46,6 +46,7 @@ from .lookups import (
 from .monitoring import MonitoringUi
 from .passwordprompt import PasswordPromptUi
 from .settings import SettingsUi
+from .shell_fs import ShellFsUi
 from .sftp import SftpUi
 from .sidebar import SidebarUi
 from .ssh import SshUi
@@ -66,6 +67,7 @@ __all__ = [
     "FilesUi",
     "EditorUi",
     "SettingsUi",
+    "ShellFsUi",
     "connections",
     "find_connection",
     "folders",
