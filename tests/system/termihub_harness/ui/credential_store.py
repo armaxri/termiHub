@@ -94,10 +94,29 @@ class CredentialStoreUi(HarnessMixin):
         )
         self.switch_to_connections_sidebar()
 
+    def credential_indicator_present(self) -> bool:
+        """Whether the status-bar credential indicator is in the DOM.
+
+        Only master-password mode renders it; ``none``/keychain modes hide it.
+        """
+        return self.driver.exists(INDICATOR)
+
     def _click_indicator(self) -> None:
         """Click the status-bar lock indicator (lock when unlocked, open dialog when locked)."""
         self.wait(lambda: self.driver.exists(INDICATOR), what="the credential indicator")
         self.driver.click(INDICATOR)
+
+    def open_unlock_dialog(self) -> None:
+        """Open the unlock dialog from a locked store, without unlocking it.
+
+        Clicks the locked status-bar indicator and waits for the dialog's input,
+        so a test can drive the dialog directly (e.g. a wrong-password or Skip
+        flow). Use :meth:`unlock_credential_store` when you just want it unlocked.
+        """
+        self._click_indicator()
+        self.wait(
+            lambda: self.driver.exists("unlock-dialog-input"), what="the unlock dialog"
+        )
 
     def lock_credential_store(self) -> None:
         """Lock an unlocked master-password store via the status-bar indicator."""
