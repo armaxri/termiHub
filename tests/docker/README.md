@@ -34,31 +34,30 @@ podman compose -f tests/docker/docker-compose.yml up -d
 
 ### SSH Containers
 
-| Container | Port | Auth | Purpose |
-|-----------|------|------|---------|
-| `ssh-password` | 2201 | `testuser`/`testpass` | Standard password auth (OpenSSH latest) |
-| `ssh-legacy` | 2202 | password + keys | Legacy OpenSSH 7.x compatibility |
-| `ssh-keys` | 2203 | key only | All key types (RSA, Ed25519, ECDSA) |
-| `ssh-jumphost-bastion` | 2204 | key only | ProxyJump bastion (2-hop chain entry) |
-| `ssh-jumphost-target` | internal | key only | ProxyJump target (reachable only via bastion) |
-| `ssh-restricted` | 2205 | `testuser`/`testpass` | Restricted shell (rbash) |
-| `ssh-banner` | 2206 | `testuser`/`testpass` | Pre-auth banner + MOTD |
-| `ssh-tunnel-target` | 2207 | password + keys | Internal HTTP/echo servers for tunnel testing |
-| `ssh-x11` | 2208 | password + keys | X11 forwarding with xterm/xclock/xeyes |
+| Container              | Port     | Auth                  | Purpose                                       |
+| ---------------------- | -------- | --------------------- | --------------------------------------------- |
+| `ssh-password`         | 2201     | `testuser`/`testpass` | Standard password auth (OpenSSH latest)       |
+| `ssh-legacy`           | 2202     | password + keys       | Legacy OpenSSH 7.x compatibility              |
+| `ssh-keys`             | 2203     | key only              | All key types (RSA, Ed25519, ECDSA)           |
+| `ssh-jumphost-bastion` | 2204     | key only              | ProxyJump bastion (2-hop chain entry)         |
+| `ssh-jumphost-target`  | internal | key only              | ProxyJump target (reachable only via bastion) |
+| `ssh-restricted`       | 2205     | `testuser`/`testpass` | Restricted shell (rbash)                      |
+| `ssh-banner`           | 2206     | `testuser`/`testpass` | Pre-auth banner + MOTD                        |
+| `ssh-tunnel-target`    | 2207     | password + keys       | Internal HTTP/echo servers for tunnel testing |
+| `ssh-x11`              | 2208     | password + keys       | X11 forwarding with xterm/xclock/xeyes        |
 
 ### Other Protocols
 
-| Container | Port | Purpose |
-|-----------|------|---------|
+| Container       | Port | Purpose                           |
+| --------------- | ---- | --------------------------------- |
 | `telnet-server` | 2301 | Telnet with `testuser`/`testpass` |
-| `serial-echo` | volume | Virtual serial ports with echo servers |
 
 ### Profile Containers
 
-| Container | Port | Profile | Purpose |
-|-----------|------|---------|---------|
-| `network-fault-proxy` | 2209 | `fault` | tc/netem network fault injection |
-| `sftp-stress` | 2210 | `stress` | Pre-populated SFTP stress test data |
+| Container             | Port | Profile  | Purpose                             |
+| --------------------- | ---- | -------- | ----------------------------------- |
+| `network-fault-proxy` | 2209 | `fault`  | tc/netem network fault injection    |
+| `sftp-stress`         | 2210 | `stress` | Pre-populated SFTP stress test data |
 
 ## Networks
 
