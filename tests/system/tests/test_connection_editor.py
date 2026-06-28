@@ -9,9 +9,10 @@ visibility (auth-method toggles the key-path field; every type renders a setting
 form).
 
 The Settings → General **defaults pre-filling new SSH connections** (PR #201) is
-ported but **skipped pending #889** — that behavior currently regressed (the
-default user / SSH key are not applied to new connections), so the two tests
-encode the intended behavior and will activate once #889 is fixed.
+covered and passing. The #889 "regression" was a harness race in
+``_set_general_defaults`` (it waited on the immediate ``settings`` slice and
+closed the tab before the debounced persist committed, so the unsaved-changes
+"just close" discarded the values); waiting on ``savedSettings`` fixed it.
 
 Large parts of the original targeted UI that has since changed or been removed,
 so they are dropped by design (each old test was written defensively — it
@@ -85,9 +86,16 @@ class TestConnectionEditor(
     def _set_general_defaults(self, *, user: str, key_path: str) -> None:
         """Set Settings → General default user + SSH key, waiting for the save.
 
-        Settings persist to the Zustand store (debounced), so the helper waits for
-        the values to land before returning to the connection sidebar — a new
-        editor reads them synchronously on open.
+        The settings panel writes typed values to the live ``settings`` store
+        slice immediately but only commits the **persisted** snapshot
+        (``savedSettings``) after a short debounce. Closing the tab before that
+        debounce fires leaves the tab *dirty*, and ``close_all_tabs`` answers the
+        unsaved-changes dialog with "just close" — which **discards** the change,
+        reverting ``settings`` back to ``savedSettings``.
+
+        So the helper waits on ``savedSettings`` (not the immediate ``settings``
+        slice): once the persisted snapshot matches, the tab is clean and the
+        close keeps the values, which a new editor then reads on open.
         """
         self.open_settings_category("general")
         self.wait(
@@ -97,11 +105,11 @@ class TestConnectionEditor(
         self.driver.type("settings-default-user", user)
         self.driver.type("general-settings-key-path-input", key_path)
         self.wait(
-            lambda: self._settings_value("settings.defaultUser") == (user or None),
+            lambda: self._settings_value("savedSettings.defaultUser") == (user or None),
             what="the default user to persist",
         )
         self.wait(
-            lambda: self._settings_value("settings.defaultSshKeyPath")
+            lambda: self._settings_value("savedSettings.defaultSshKeyPath")
             == (key_path or None),
             what="the default SSH key to persist",
         )
@@ -194,12 +202,11 @@ class TestConnectionEditor(
             self.close_all_tabs()
 
     # ── PR #201: Settings → General defaults pre-fill new connections ──────────
-    # NOTE: applying the General default user / SSH key to a *new* connection is
-    # currently broken (#889) — the editor's live settings hold the values but
-    # they never reach the new connection's defaults. These two tests encode the
-    # intended PR #201 behavior and are skipped until #889 is fixed; the helper
-    # they use (_set_general_defaults) is exercised by them once un-skipped.
-    @pytest.mark.skip(reason="default user/key not applied to new connections (#889)")
+    # `buildTypeDefaults` applies the General default user / SSH key to a new SSH
+    # connection. The #889 "regression" was a harness race: `_set_general_defaults`
+    # waited on the immediate `settings` slice and closed the tab before the
+    # debounced persist committed, so the unsaved-changes "just close" discarded
+    # the values. Waiting on `savedSettings` (see the helper) fixed it.
     def test_defaults_prefill_new_ssh_connection(self):
         self._set_general_defaults(user="admin", key_path=DEFAULT_KEY)
         self._open_ssh_editor()
@@ -208,12 +215,16 @@ class TestConnectionEditor(
         self.wait(lambda: self.driver.exists(self.KEY_PATH_INPUT), what="the key-path field")
         assert self.driver.get_value(self.KEY_PATH_INPUT) == DEFAULT_KEY
 
-    @pytest.mark.skip(reason="default user/key not applied to new connections (#889)")
-    def test_default_user_only_keeps_password_auth(self):
+    def test_default_user_only_keeps_schema_default_auth(self):
+        # Setting only a default *user* (no default key) applies the username but
+        # leaves the auth method at the SSH schema's own default. Only a default
+        # *key path* flips a password default to key auth (buildTypeDefaults).
+        # The schema default is now "key" (it was "password" under the original
+        # PR #201 config, before connection types became schema-driven).
         self._set_general_defaults(user="onlyuser", key_path="")
         self._open_ssh_editor()
         assert self.driver.get_value("field-username") == "onlyuser"
-        assert self.driver.get_value("field-authMethod") == "password"
+        assert self.driver.get_value("field-authMethod") == "key"
 
     def test_edit_loads_saved_values(self):
         # Editing an existing connection loads its own saved values into the form
