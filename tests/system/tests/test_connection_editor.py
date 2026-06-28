@@ -4,9 +4,9 @@
 Ports the still-present, deterministic behavior the old suite covered: creating
 a connection inside a folder via the folder context menu (and keeping it there
 after an edit), editing an existing connection loading its saved values, the SSH
-key-path combobox + browse button, and the schema-driven dynamic field
-visibility (auth-method toggles the key-path field; every type renders a settings
-form).
+key-path combobox + browse button, the inline key-file validation hint (PR #204,
+restored in #896), and the schema-driven dynamic field visibility (auth-method
+toggles the key-path field; every type renders a settings form).
 
 The Settings → General **defaults pre-filling new SSH connections** (PR #201) is
 covered and passing. The #889 "regression" was a harness race in
@@ -19,8 +19,6 @@ so they are dropped by design (each old test was written defensively — it
 ``return``ed early when its element was absent — so it had become a silent
 no-op):
 
-* **SSH key-file validation hints (PR #204)** — the validation-hint element and
-  its "public key" / "OpenSSH" / "not found" copy no longer exist in ``src``.
 * **Auto-extract host:port (PR #195)** — ``src/utils/parseHostPort.ts`` exists
   but is not wired into the editor (no call site), so typing ``host:port`` no
   longer splits the port out.
@@ -173,6 +171,40 @@ class TestConnectionEditor(
         )
         assert self.driver.get_attribute(self.KEY_PATH_INPUT, "role") == "combobox"
         assert self.driver.exists(self.KEY_PATH_BROWSE)
+
+    # ── PR #204 / #896: inline SSH key-file validation hint ─────────────────────
+    KEY_PATH_VALIDATION = "field-keyPath-key-path-validation"
+
+    def test_key_path_validation_hint(self):
+        # The key-path field validates the selected file on the local machine and
+        # shows an inline hint: an error for a missing file, a warning for a file
+        # that is not a recognized private key, and nothing for an empty path.
+        self._open_ssh_editor()
+        self.driver.select("field-authMethod", "key")
+        self.wait(lambda: self.driver.exists(self.KEY_PATH_INPUT), what="the key-path field")
+
+        # Missing file → error hint.
+        self.driver.type(self.KEY_PATH_INPUT, "/definitely/not/here/missing_key")
+        self.wait(
+            lambda: self.driver.exists(self.KEY_PATH_VALIDATION),
+            what="the missing-file validation hint",
+        )
+        assert "File not found." in self.driver.get_text(self.KEY_PATH_VALIDATION)
+
+        # Existing non-key file → "not recognized" warning (/etc/hosts is present
+        # on the Linux/macOS runners and is not a private key).
+        self.driver.type(self.KEY_PATH_INPUT, "/etc/hosts")
+        self.wait(
+            lambda: "Not a recognized" in self.driver.get_text(self.KEY_PATH_VALIDATION),
+            what="the unrecognized-format validation hint",
+        )
+
+        # Cleared path → hint disappears (empty path is silently valid).
+        self.driver.type(self.KEY_PATH_INPUT, "")
+        self.wait(
+            lambda: not self.driver.exists(self.KEY_PATH_VALIDATION),
+            what="the validation hint to clear for an empty path",
+        )
 
     # ── PR #362: schema-driven dynamic field visibility ────────────────────────
     def test_auth_toggle_shows_and_hides_key_path(self):
