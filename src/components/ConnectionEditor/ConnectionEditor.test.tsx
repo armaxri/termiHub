@@ -327,12 +327,13 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
   });
 
-  it("prompts for the key passphrase on key auth when none is stored (#879)", async () => {
-    // SSH_CONN_KEY uses key auth with savePassword=true. The password field is
-    // hidden for key auth, so findPasswordPromptInfo returns null — but a
-    // passphrase-protected key still needs a passphrase prompt. Previously Save
-    // & Connect silently skipped it and the backend failed to unlock the key.
+  it("prompts for the key passphrase on key auth when the key is encrypted (#879/#885)", async () => {
+    // SSH_CONN_KEY uses key auth. The password field is hidden for key auth, so
+    // findPasswordPromptInfo returns null — but a passphrase-protected key still
+    // needs a passphrase prompt. The prompt now fires because the key is
+    // encrypted (is_ssh_key_encrypted → true), independent of savePassword.
     mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(true);
       if (cmd === "resolve_credential") return Promise.resolve(null);
       if (cmd === "save_connection") return Promise.resolve();
       if (cmd === "load_connections_and_folders")
@@ -362,6 +363,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
 
   it("does not prompt for key auth when a passphrase is already stored (#879)", async () => {
     mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(true);
       if (cmd === "resolve_credential") return Promise.resolve("stored-passphrase");
       if (cmd === "save_connection") return Promise.resolve();
       if (cmd === "load_connections_and_folders")
@@ -389,6 +391,35 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
+  it("does not prompt for an unencrypted key even when savePassword is on (#885)", async () => {
+    // SSH_CONN_KEY has savePassword=true, but the key is unencrypted, so no
+    // passphrase is needed — the prompt must not appear (no spurious prompt).
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(false);
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(SSH_CONN_KEY.id);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+  });
+
   /**
    * Click Save & Connect, then answer the credential prompt with the given save
    * flag. Parameterized over the connection (password vs key auth), the id the
@@ -401,6 +432,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     save: boolean;
   }): Promise<void> {
     mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "is_ssh_key_encrypted") return Promise.resolve(true);
       if (cmd === "resolve_credential") return Promise.resolve(null);
       if (cmd === "save_connection") return Promise.resolve(opts.persistedId);
       if (cmd === "store_credential") return Promise.resolve(null);
