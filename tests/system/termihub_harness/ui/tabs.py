@@ -11,6 +11,7 @@ import time
 from typing import Any, Optional
 
 from .base import HarnessMixin
+from .lookups import iter_tabs
 
 
 class TabsUi(HarnessMixin):
@@ -18,19 +19,7 @@ class TabsUi(HarnessMixin):
 
     def _all_tabs(self) -> list[dict[str, Any]]:
         """Every open tab in the active tab group (walks the panel tree)."""
-        tabs: list[dict[str, Any]] = []
-
-        def walk(node: Any) -> None:
-            if not isinstance(node, dict):
-                return
-            if node.get("type") == "leaf":
-                tabs.extend(node.get("tabs") or [])
-            else:
-                for child in node.get("children") or []:
-                    walk(child)
-
-        walk(self.driver.get_state("rootPanel"))
-        return tabs
+        return iter_tabs(self.driver.get_state("rootPanel"))
 
     def tab_ids(self) -> list[str]:
         """All tab ids across every panel, in tree order."""
