@@ -119,7 +119,7 @@ describe("Terminal Creation Flow", () => {
 pnpm test:e2e
 
 # Run specific test file
-pnpm test:e2e -- --spec tests/e2e/terminal-creation.test.js
+pnpm test:e2e -- --spec tests/e2e/network-tools.test.js
 
 # Run in headless mode (CI)
 pnpm test:e2e:ci
@@ -609,14 +609,20 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 | Network Resilience   | `core/tests/network_resilience.rs`                | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption                                                                                                                                                                                                                                                                                                        |
 | Monitoring           | `core/tests/monitoring.rs`                        | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                                                                                                                                                                                                                                                                                                                             |
 | Agent Deploy SFTP    | `src-tauri/src/utils/remote_exec.rs`              | 1     | ssh-password:2201                          | Uploads a file over SFTP and reads it back, exercising the agent auto-deploy `block_in_place` path from `spawn_blocking` (#828/#837). In the desktop crate: `cargo test -p termihub --lib agent_deploy`. Pinned to password auth; port via `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) — see [Parallel dev instances](#parallel-dev-instances-agent-deploy-test) |
-| SSH Banner (E2E)     | `tests/e2e/infrastructure/ssh-banner.test.js`     | 2     | ssh-banner:2206                            | Pre-auth banner UI display, MOTD display                                                                                                                                                                                                                                                                                                                              |
-| SSH Keys (E2E)       | `tests/e2e/infrastructure/ssh-keys.test.js`       | 1     | ssh-keys:2203                              | Key auth UI flow                                                                                                                                                                                                                                                                                                                                                      |
-| SSH Infra (system)   | `tests/system/tests/test_ssh.py`                  | 9     | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                                        |
+| SSH Banner (system)  | `tests/system/tests/test_ssh_banner.py`           | 2     | ssh-banner:2206                            | Pre-auth banner / MOTD display (ported from `ssh-banner.test.js`)                                                                                                                                                                                                                                                                                                     |
+| SSH Keys (system)    | `tests/system/tests/test_ssh_keys.py`             | 4     | ssh-keys:2203                              | Key-based auth flows (ported from `ssh-keys.test.js`)                                                                                                                                                                                                                                                                                                                 |
+| SSH Infra (system)   | `tests/system/tests/test_ssh.py`                  | 11    | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                                        |
 | Windows Shells (E2E) | `tests/e2e/infrastructure/windows-shells.test.js` | 5     | none                                       | PowerShell, cmd.exe, WSL (Windows-only)                                                                                                                                                                                                                                                                                                                               |
 
 ### Skip Behavior
 
 All Rust integration tests use the `require_docker!` macro which checks TCP port connectivity at runtime. If the required Docker container is not running, the test prints a message and returns early (no failure). This means you can run `cargo test` without Docker and only the tests requiring containers will be skipped.
+
+#### Python system-test harness — cross-platform shells (#886)
+
+The local UI system suites author and clean up files **through the terminal**, and on Windows the local-shell backend defaults to **PowerShell** (no `printf`/`rm -f`/`touch`). File authoring/cleanup therefore goes through `ShellCommands` / `ShellFsUi` (`tests/system/termihub_harness/shell.py`), which emits the POSIX **or** PowerShell command for the host's default shell — so `test_editor.py` and the file-authoring half of `test_file_browser_local.py` run on every platform.
+
+The remaining checks that assume Unix paths or POSIX `pwd`/`test` syntax (the `cd /tmp` cwd-following tests, `[ "$(pwd)" = … ]` starting-directory checks, and `path.startswith("/")` assertions in `test_local_shell.py` / `test_file_browser_local.py`) are marked `@skip_on_windows` and **skip cleanly on Windows** so the unified suite (#804) does not hard-fail. Making those cross-platform is tracked in **#902**.
 
 ### Parallel Dev Instances (agent-deploy test)
 
@@ -746,7 +752,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: **25 WebdriverIO files** (18 UI suite + 7 infrastructure suite), shrinking as suites port to the cross-platform Python bridge harness in `tests/system/` (epic #799).
+E2E test coverage: **10 WebdriverIO files** (6 in `tests/e2e/`, 4 in `tests/e2e/infrastructure/`) — the remainder still being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799).
 
 ### Test Environment Setup
 
@@ -808,10 +814,10 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-LOCAL-01, 07                 | `tests/system/tests/test_local_shell.py`                                           |
 | MT-LOCAL-09, 10                 | `tests/system/tests/test_cross_platform.py`                                        |
 | MT-LOCAL-02, 04, 06, 11–20      | `infrastructure/windows-shells.test.js`                                            |
-| MT-SSH-04–06, 10–12, 20–33, 35  | `infrastructure/ssh*.test.js`                                                      |
+| MT-SSH-04–06, 10–12, 20–33, 35  | `tests/system/tests/test_ssh*.py`                                                  |
 | MT-SSH-19 (X11 backward-compat) | `tests/system/tests/test_connection_forms.py`                                      |
 | MT-SSH-08 (agent-auth warning)  | _dropped_ (`agent` is no longer a selectable SSH auth method)                      |
-| MT-SSH-13, 17, 34               | `infrastructure/ssh-extended.test.js`                                              |
+| MT-SSH-13, 17, 34               | `tests/system/tests/test_ssh_extended.py`                                          |
 | SERIAL-01, 05 + custom path     | `tests/system/tests/test_serial.py`                                                |
 | MT-SER-09 (live serial I/O)     | _manual_ (no host socat echo fixture in harness yet, #859)                         |
 | TELNET-01–03                    | `tests/system/tests/test_telnet.py`                                                |

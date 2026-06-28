@@ -21,18 +21,20 @@ import pytest
 from termihub_harness import (
     ConnectionsUi,
     FilesUi,
+    ShellFsUi,
     SidebarUi,
     SystemTest,
     TabsUi,
     TerminalUi,
     unique_name,
 )
+from termihub_harness.markers import skip_on_windows
 
 pytestmark = pytest.mark.integration
 
 
 class TestFileBrowserLocal(
-    TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, SystemTest
+    TerminalUi, TabsUi, SidebarUi, FilesUi, ShellFsUi, ConnectionsUi, SystemTest
 ):
     def _fresh_home_browser(self) -> str:
         """Pristine app → terminal + Files sidebar showing home; return its path.
@@ -52,6 +54,7 @@ class TestFileBrowserLocal(
         assert self.driver.exists(self.REFRESH)
         self.switch_to_connections_sidebar()
 
+    @skip_on_windows
     def test_shows_an_absolute_current_path(self):
         path = self._fresh_home_browser()
         assert path.startswith("/")
@@ -60,9 +63,9 @@ class TestFileBrowserLocal(
     def test_lists_entries_from_the_current_directory(self):
         self._fresh_home_browser()
         sentinel = f"e2e_fb_{unique_name('entry')}.txt"
-        self.run_command(f'touch "$HOME/{sentinel}"')
+        self.touch_home(sentinel)
         self.wait_for_file_row(sentinel)
-        self.run_command(f'rm -f "$HOME/{sentinel}"')
+        self.remove_home(sentinel)
         self.switch_to_connections_sidebar()
 
     # ── MT-FB-02: Navigate directories ──────────────────────────────────────
@@ -76,15 +79,16 @@ class TestFileBrowserLocal(
     def test_double_click_enters_a_subdirectory(self):
         self._fresh_home_browser()
         test_dir = f"e2e_fb_{unique_name('dir')}"
-        self.run_command(f'mkdir -p "$HOME/{test_dir}"')
-        self.run_command(f'touch "$HOME/{test_dir}/inner.txt"')
+        self.make_home_dir(test_dir)
+        self.touch_home(f"{test_dir}/inner.txt")
 
         path = self.enter_directory(test_dir)
         assert test_dir in path
         self.wait_for_file_row("inner.txt")
-        self.run_command(f'rm -rf "$HOME/{test_dir}"')
+        self.remove_home_tree(test_dir)
         self.switch_to_connections_sidebar()
 
+    @skip_on_windows
     def test_navigating_up_then_back_restores_the_directory(self):
         start = self._fresh_home_browser()
         basename = start.rstrip("/").rsplit("/", 1)[-1]
@@ -94,6 +98,7 @@ class TestFileBrowserLocal(
         self.switch_to_connections_sidebar()
 
     # ── CWD-aware browsing (PR #39) — exercises OSC 7 cwd-following ──────────
+    @skip_on_windows
     def test_browser_follows_cd_in_the_terminal(self):
         self.restart_app()
         self.ensure_terminal()
@@ -104,6 +109,7 @@ class TestFileBrowserLocal(
         assert "tmp" in self.wait_for_path_contains("tmp")
         self.switch_to_connections_sidebar()
 
+    @skip_on_windows
     def test_cwd_survives_a_sidebar_view_round_trip(self):
         self.restart_app()
         self.ensure_terminal()
@@ -116,6 +122,7 @@ class TestFileBrowserLocal(
         assert "tmp" in self.wait_for_path_contains("tmp")
         self.switch_to_connections_sidebar()
 
+    @skip_on_windows
     def test_browser_follows_cwd_when_switching_between_two_shells(self):
         # PR #39 two-shell coverage (#873): the browser re-targets the *active*
         # terminal tab's cwd when you switch between two local shells sitting in

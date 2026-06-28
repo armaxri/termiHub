@@ -199,6 +199,115 @@ describe("ConnectionSettingsForm", () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ port: 2222 }));
   });
 
+  describe("host:port auto-extract on blur (PR #195 / #895)", () => {
+    const setHostValue = (hostInput: HTMLInputElement, value: string) => {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      nativeInputValueSetter?.call(hostInput, value);
+      hostInput.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    it("splits an IPv4 host:port into host and port when the host field blurs", async () => {
+      const onChange = vi.fn();
+      await act(async () => {
+        renderForm(SSH_SCHEMA, { authMethod: "key", port: 22, host: "" }, onChange);
+      });
+      const hostInput = query("field-host") as HTMLInputElement;
+      await act(async () => {
+        setHostValue(hostInput, "192.168.0.2:2222");
+      });
+      await act(async () => {
+        hostInput.dispatchEvent(new Event("focusout", { bubbles: true }));
+      });
+
+      const portInput = query("field-port") as HTMLInputElement;
+      expect(hostInput.value).toBe("192.168.0.2");
+      expect(portInput.value).toBe("2222");
+      expect(onChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ host: "192.168.0.2", port: 2222 })
+      );
+    });
+
+    it("splits a bracketed IPv6 host:port into host and port on blur", async () => {
+      const onChange = vi.fn();
+      await act(async () => {
+        renderForm(SSH_SCHEMA, { authMethod: "key", port: 22, host: "" }, onChange);
+      });
+      const hostInput = query("field-host") as HTMLInputElement;
+      await act(async () => {
+        setHostValue(hostInput, "[::1]:2022");
+      });
+      await act(async () => {
+        hostInput.dispatchEvent(new Event("focusout", { bubbles: true }));
+      });
+
+      const portInput = query("field-port") as HTMLInputElement;
+      expect(hostInput.value).toBe("::1");
+      expect(portInput.value).toBe("2022");
+    });
+
+    it("leaves a bare hostname unchanged and keeps the existing port on blur", async () => {
+      await act(async () => {
+        renderForm(SSH_SCHEMA, { authMethod: "key", port: 22, host: "" }, vi.fn());
+      });
+      const hostInput = query("field-host") as HTMLInputElement;
+      await act(async () => {
+        setHostValue(hostInput, "example.com");
+      });
+      await act(async () => {
+        hostInput.dispatchEvent(new Event("focusout", { bubbles: true }));
+      });
+
+      const portInput = query("field-port") as HTMLInputElement;
+      expect(hostInput.value).toBe("example.com");
+      expect(portInput.value).toBe("22");
+    });
+
+    it("leaves a bare IPv6 address intact on blur (no spurious split)", async () => {
+      await act(async () => {
+        renderForm(SSH_SCHEMA, { authMethod: "key", port: 22, host: "" }, vi.fn());
+      });
+      const hostInput = query("field-host") as HTMLInputElement;
+      await act(async () => {
+        setHostValue(hostInput, "::1");
+      });
+      await act(async () => {
+        hostInput.dispatchEvent(new Event("focusout", { bubbles: true }));
+      });
+
+      const portInput = query("field-port") as HTMLInputElement;
+      expect(hostInput.value).toBe("::1");
+      expect(portInput.value).toBe("22");
+    });
+
+    it("does not split when the schema has no port field", async () => {
+      // A schema with a host field but no sibling port must leave host untouched.
+      const schema: SettingsSchema = {
+        groups: [
+          {
+            key: "connection",
+            label: "Connection",
+            fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: true }],
+          },
+        ],
+      };
+      await act(async () => {
+        renderForm(schema, { host: "" }, vi.fn());
+      });
+      const hostInput = query("field-host") as HTMLInputElement;
+      await act(async () => {
+        setHostValue(hostInput, "192.168.0.2:2222");
+      });
+      await act(async () => {
+        hostInput.dispatchEvent(new Event("focusout", { bubbles: true }));
+      });
+
+      expect(hostInput.value).toBe("192.168.0.2:2222");
+    });
+  });
+
   it("renders empty schema without errors", () => {
     renderForm({ groups: [] }, {}, vi.fn());
     expect(query("connection-settings-form")).toBeTruthy();
