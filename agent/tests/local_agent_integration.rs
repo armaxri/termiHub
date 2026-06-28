@@ -30,6 +30,16 @@ fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
 }
 
+/// Read timeout for a single `initialize` / `connection.list` RPC round-trip.
+///
+/// Deliberately generous: on a loaded **Windows** CI runner the agent's cold
+/// start and first response can momentarily exceed a few seconds, which flaked
+/// these tests with `read_line failed: TimedOut (os error 10060)`. This matches
+/// the 30 s the readiness probe already allows (and the #847 daemon-connect
+/// bump). A higher ceiling never slows the passing path — the read returns as
+/// soon as the response arrives; it only widens the window before we give up.
+const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 // ── LocalAgent: process lifecycle manager ────────────────────────────────────
 
 /// Spawns a `termihub-agent --listen` process on a free port.
@@ -198,9 +208,7 @@ fn agent_starts_and_accepts_connections() {
 fn agent_responds_to_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
+    stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
     let response = rpc(
         &mut stream,
@@ -222,9 +230,7 @@ fn agent_responds_to_initialize() {
 fn agent_returns_error_for_unknown_method_before_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
+    stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
     let response = rpc(
         &mut stream,
@@ -248,9 +254,7 @@ fn agent_handles_multiple_sequential_connections() {
 
     for i in 0..3 {
         let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
+        stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
         let response = rpc(
             &mut stream,
