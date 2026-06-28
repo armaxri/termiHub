@@ -10,11 +10,12 @@ field and persisted.
 disconnect) still run as manual tests.** The port field is now an editable
 combobox, so the bridge *can* set a virtual socat PTY path (#854) — that is no
 longer the blocker. What's still missing is a **host-side socat echo fixture**
-wired into the harness: the app runs host-native, the `serial-echo` container's
-PTYs live in an isolated Docker volume it can't reach (#859), and the host
-virtual-serial setup currently lives only in `scripts/test-system.sh`. Until
-that fixture is part of the harness, live send/receive stays manual — see
-`docs/testing.md` → Infrastructure → Serial (`MT-SER-09`).
+wired into the harness: the app runs host-native, and the host virtual-serial
+setup currently lives only in `scripts/test-system.sh` (the unreachable
+in-container `serial-echo` fixture, whose PTYs lived in an isolated Docker
+volume the host app could not reach, was removed in #859). Until that fixture is
+part of the harness, live send/receive stays manual — see `docs/testing.md` →
+Infrastructure → Serial (`MT-SER-09`).
 """
 
 from __future__ import annotations

@@ -210,19 +210,6 @@ services:
       retries: 5
 
   # ============================================================
-  # Serial
-  # ============================================================
-
-  serial-echo:
-    build: ./serial-echo
-    container_name: termihub-serial
-    privileged: true
-    volumes:
-      - serial-ports:/tmp
-    networks:
-      - test-net
-
-  # ============================================================
   # Network Tools Live Test Target (profile: network)
   # ============================================================
 
@@ -300,7 +287,3 @@ networks:
     name: termihub-jumphost-net
     driver: bridge
     internal: true  # No external access — only bastion bridges to test-net
-
-volumes:
-  serial-ports:
-    name: termihub-serial-ports
