@@ -618,6 +618,12 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 
 All Rust integration tests use the `require_docker!` macro which checks TCP port connectivity at runtime. If the required Docker container is not running, the test prints a message and returns early (no failure). This means you can run `cargo test` without Docker and only the tests requiring containers will be skipped.
 
+#### Python system-test harness — cross-platform shells (#886)
+
+The local UI system suites author and clean up files **through the terminal**, and on Windows the local-shell backend defaults to **PowerShell** (no `printf`/`rm -f`/`touch`). File authoring/cleanup therefore goes through `ShellCommands` / `ShellFsUi` (`tests/system/termihub_harness/shell.py`), which emits the POSIX **or** PowerShell command for the host's default shell — so `test_editor.py` and the file-authoring half of `test_file_browser_local.py` run on every platform.
+
+The remaining checks that assume Unix paths or POSIX `pwd`/`test` syntax (the `cd /tmp` cwd-following tests, `[ "$(pwd)" = … ]` starting-directory checks, and `path.startswith("/")` assertions in `test_local_shell.py` / `test_file_browser_local.py`) are marked `@skip_on_windows` and **skip cleanly on Windows** so the unified suite (#804) does not hard-fail. Making those cross-platform is tracked in **#902**.
+
 ### Parallel Dev Instances (agent-deploy test)
 
 Several checkouts of termiHub can run side by side, each with its own gitignored
