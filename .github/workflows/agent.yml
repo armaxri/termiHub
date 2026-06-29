@@ -8,6 +8,11 @@ on:
       - 'core/**'
       - 'Cargo.toml'
 
+# Cancel an in-flight agent build when a newer commit lands on the same PR.
+concurrency:
+  group: agent-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-linux:
     name: Build (${{ matrix.target }})
