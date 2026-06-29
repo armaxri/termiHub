@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter, Manager};
-use termihub_core::backends::ssh::handler::SshSession;
+use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable as core_connect_cancellable;
+use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
+use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway;
+use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
 use tokio_util::sync::CancellationToken;
 
 use crate::terminal::backend::SshConfig;
@@ -15,12 +18,39 @@ use super::connecting::{ConnectingTracker, FinishOutcome};
 use super::dynamic_forward::DynamicForwarder;
 use super::local_forward::LocalForwarder;
 use super::remote_forward::RemoteForwarder;
-use super::session_pool::SshSessionPool;
 use super::storage::TunnelStorage;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_with_registry_cancellable;
+
+/// Drive an async future to completion on the current multi-threaded Tokio
+/// runtime from a synchronous context.
+///
+/// Same runtime-context requirement as the `ssh_auth` helpers (#828): call only
+/// from inside `spawn_blocking` or an async task. Used to bridge the synchronous
+/// tunnel build path to the async session-pool / jump-host connect APIs.
+fn block_on_runtime<F: std::future::Future>(fut: F) -> F::Output {
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
+}
+
+/// RAII holder for the pool references a tunnel's SSH session(s) depend on.
+///
+/// Dropping it returns the references to their pools, draining sessions no
+/// longer used by any tunnel or terminal.
+///
+/// The fields are never read — they are held purely so their `Drop` releases the
+/// pool reference when the tunnel is torn down (RAII).
+#[derive(Default)]
+#[allow(dead_code)]
+struct PooledSessionGuards {
+    /// Pooled endpoint session, shared by local/dynamic forwarders on the same
+    /// connection. `None` when the endpoint is reached through a jump host.
+    endpoint: Option<PooledRef<Arc<SshSession>>>,
+    /// Pooled jump-host gateway session shared across all connections that use
+    /// the same bastion. `None` for direct (non-jump) connections.
+    gateway: Option<PooledRef<Arc<SshGateway>>>,
+}
 
 /// An active tunnel with its forwarder.
 enum ActiveForwarder {
@@ -32,7 +62,9 @@ enum ActiveForwarder {
 /// An active tunnel instance.
 struct ActiveTunnel {
     forwarder: ActiveForwarder,
-    ssh_connection_id: String,
+    /// Pool references kept alive for the tunnel's lifetime; dropped on teardown
+    /// to release the shared endpoint / gateway sessions.
+    guards: PooledSessionGuards,
 }
 
 /// Central manager for SSH tunnels.
@@ -44,7 +76,10 @@ pub struct TunnelManager {
     storage: TunnelStorage,
     active_tunnels: Mutex<HashMap<String, ActiveTunnel>>,
     connecting: ConnectingTracker,
-    session_pool: Mutex<SshSessionPool>,
+    /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
+    /// same connection. Jump-host gateway sessions are pooled separately in the
+    /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
+    endpoint_pool: Arc<RefPool<Arc<SshSession>>>,
     app_handle: AppHandle,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
 }
@@ -64,7 +99,7 @@ impl TunnelManager {
             storage,
             active_tunnels: Mutex::new(HashMap::new()),
             connecting: ConnectingTracker::new(),
-            session_pool: Mutex::new(SshSessionPool::new()),
+            endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
         })
@@ -219,8 +254,8 @@ impl TunnelManager {
         // handshake). On failure, surface it as `error` status instead of
         // leaving the tunnel stuck in `connecting` (#829) — unless a Stop was
         // requested mid-connect, in which case it has already gone disconnected.
-        let forwarder = match self.build_forwarder(&config, cancel) {
-            Ok(f) => f,
+        let (forwarder, guards) = match self.build_forwarder(&config, cancel) {
+            Ok(built) => built,
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
                     FinishOutcome::Cancel => {
@@ -238,7 +273,7 @@ impl TunnelManager {
         // forwarder down rather than leaving an orphaned tunnel the user
         // thought they had stopped.
         if !matches!(self.connecting.finish(tunnel_id), FinishOutcome::Commit) {
-            self.teardown_forwarder(forwarder, &config.ssh_connection_id);
+            self.teardown_forwarder(forwarder, guards);
             self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
             tracing::info!("Tunnel {} start cancelled by stop request", tunnel_id);
             return Ok(());
@@ -250,13 +285,7 @@ impl TunnelManager {
                 .active_tunnels
                 .lock()
                 .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-            active.insert(
-                tunnel_id.to_string(),
-                ActiveTunnel {
-                    forwarder,
-                    ssh_connection_id: config.ssh_connection_id.clone(),
-                },
-            );
+            active.insert(tunnel_id.to_string(), ActiveTunnel { forwarder, guards });
         }
 
         // Emit connected status
@@ -268,96 +297,151 @@ impl TunnelManager {
 
     /// Build the forwarder for a tunnel config, performing the SSH handshake.
     ///
-    /// For local/dynamic tunnels a pooled session reference is taken; if the
-    /// forwarder then fails to start, the reference is released so the pool's
-    /// ref count does not leak.
+    /// Returns the forwarder together with the pool references it depends on
+    /// (endpoint and/or jump-host gateway). The references are returned rather
+    /// than released here: the caller stores them on the [`ActiveTunnel`] (RAII)
+    /// so they live exactly as long as the tunnel. If the forwarder fails to
+    /// start, the `?` propagation drops the guards and releases the references,
+    /// so the pool ref counts never leak.
     fn build_forwarder(
         &self,
         config: &TunnelConfig,
         cancel: CancellationToken,
-    ) -> Result<ActiveForwarder, TerminalError> {
+    ) -> Result<(ActiveForwarder, PooledSessionGuards), TerminalError> {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
-
         let conn_id = &config.ssh_connection_id;
+        let jumped = !ssh_config.proxy_jump.is_empty();
+
         match &config.tunnel_type {
             TunnelType::Local(local_config) => {
-                let session = self.pooled_session(conn_id, &ssh_config, cancel)?;
-                self.finish_pooled(
-                    conn_id,
-                    "local",
-                    LocalForwarder::start(local_config, session).map(ActiveForwarder::Local),
-                )
+                let (session, guards) =
+                    self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                let f = LocalForwarder::start(local_config, session).map_err(|e| {
+                    TerminalError::TunnelError(format!("Failed to start local forwarder: {}", e))
+                })?;
+                Ok((ActiveForwarder::Local(f), guards))
+            }
+            TunnelType::Dynamic(dynamic_config) => {
+                let (session, guards) =
+                    self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                let f = DynamicForwarder::start(dynamic_config, session).map_err(|e| {
+                    TerminalError::TunnelError(format!("Failed to start dynamic forwarder: {}", e))
+                })?;
+                Ok((ActiveForwarder::Dynamic(f), guards))
             }
             TunnelType::Remote(remote_config) => {
                 // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
                 // a dedicated connection rather than a pooled shared Arc<SshSession>.
-                let (session, registry) = connect_with_registry_cancellable(&ssh_config, cancel)
-                    .map_err(|e| {
-                        TerminalError::TunnelError(format!("SSH connect failed: {}", e))
-                    })?;
+                let (session, registry, guards) =
+                    self.acquire_dedicated(&ssh_config, cancel, jumped)?;
                 let f = RemoteForwarder::start(remote_config, session, registry).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start remote forwarder: {}", e))
                 })?;
-                Ok(ActiveForwarder::Remote(f))
-            }
-            TunnelType::Dynamic(dynamic_config) => {
-                let session = self.pooled_session(conn_id, &ssh_config, cancel)?;
-                self.finish_pooled(
-                    conn_id,
-                    "dynamic",
-                    DynamicForwarder::start(dynamic_config, session).map(ActiveForwarder::Dynamic),
-                )
+                Ok((ActiveForwarder::Remote(f), guards))
             }
         }
     }
 
-    /// Take a reference-counted SSH session from the pool, shared by local and
-    /// dynamic forwarders on the same connection.
-    fn pooled_session(
+    /// Acquire the SSH session a local/dynamic forwarder runs over.
+    ///
+    /// Without a jump host the session is pooled by connection id and shared with
+    /// the other local/dynamic forwarders on the same connection. With a jump
+    /// host the target is reached over a shared, pooled gateway session (held by
+    /// the returned guards) — the gateway is shared across connections, while the
+    /// per-tunnel endpoint session itself is dedicated.
+    fn acquire_endpoint(
         &self,
-        ssh_connection_id: &str,
+        conn_id: &str,
         ssh_config: &SshConfig,
         cancel: CancellationToken,
-    ) -> Result<Arc<SshSession>, TerminalError> {
-        let mut pool = self
-            .session_pool
-            .lock()
-            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-        Ok(pool.get_or_create(ssh_connection_id, ssh_config, cancel)?.0)
+        jumped: bool,
+    ) -> Result<(Arc<SshSession>, PooledSessionGuards), TerminalError> {
+        if jumped {
+            let (session, _registry, gateway) = self.connect_through_gateway(ssh_config, cancel)?;
+            Ok((
+                Arc::new(session),
+                PooledSessionGuards {
+                    endpoint: None,
+                    gateway: Some(gateway),
+                },
+            ))
+        } else {
+            let cfg = ssh_config.clone();
+            let endpoint = block_on_runtime(self.endpoint_pool.get_or_create(conn_id, || async move {
+                core_connect_cancellable(&cfg, Some(cancel))
+                    .await
+                    .map(|(session, _registry)| Arc::new(session))
+                    .map_err(|e| TerminalError::SshError(e.to_string()))
+            }))?;
+            let session = (*endpoint).clone();
+            Ok((
+                session,
+                PooledSessionGuards {
+                    endpoint: Some(endpoint),
+                    gateway: None,
+                },
+            ))
+        }
     }
 
-    /// Map the result of starting a pooled (local/dynamic) forwarder: on failure
-    /// release the pooled session reference so the pool ref count does not leak.
-    fn finish_pooled(
+    /// Acquire a dedicated (non-pooled) SSH session for a remote forwarder,
+    /// connecting through a shared pooled gateway when a jump host is configured.
+    fn acquire_dedicated(
         &self,
-        ssh_connection_id: &str,
-        label: &str,
-        result: Result<ActiveForwarder, std::io::Error>,
-    ) -> Result<ActiveForwarder, TerminalError> {
-        result.map_err(|e| {
-            self.release_session(ssh_connection_id);
-            TerminalError::TunnelError(format!("Failed to start {} forwarder: {}", label, e))
+        ssh_config: &SshConfig,
+        cancel: CancellationToken,
+        jumped: bool,
+    ) -> Result<(SshSession, ForwardedChannelRegistry, PooledSessionGuards), TerminalError> {
+        if jumped {
+            let (session, registry, gateway) = self.connect_through_gateway(ssh_config, cancel)?;
+            Ok((
+                session,
+                registry,
+                PooledSessionGuards {
+                    endpoint: None,
+                    gateway: Some(gateway),
+                },
+            ))
+        } else {
+            let (session, registry) = connect_with_registry_cancellable(ssh_config, cancel)
+                .map_err(|e| TerminalError::TunnelError(format!("SSH connect failed: {}", e)))?;
+            Ok((session, registry, PooledSessionGuards::default()))
+        }
+    }
+
+    /// Connect to the target through its pooled jump-host gateway, abortable via
+    /// `cancel` (#841) so a Stop during the handshake is honoured promptly.
+    fn connect_through_gateway(
+        &self,
+        ssh_config: &SshConfig,
+        cancel: CancellationToken,
+    ) -> Result<(SshSession, ForwardedChannelRegistry, PooledRef<Arc<SshGateway>>), TerminalError>
+    {
+        let cfg = ssh_config.clone();
+        block_on_runtime(async move {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    Err(TerminalError::TunnelError("SSH connect cancelled".to_string()))
+                }
+                res = connect_target_through_pooled_gateway(&cfg) => {
+                    res.map_err(|e| TerminalError::SshError(e.to_string()))
+                }
+            }
         })
     }
 
-    /// Stop a forwarder and release its pooled SSH session reference.
-    ///
-    /// Releasing is a no-op for remote forwards (they own a dedicated session
-    /// not held by the pool), so it is safe to call uniformly.
-    fn teardown_forwarder(&self, mut forwarder: ActiveForwarder, ssh_connection_id: &str) {
+    /// Stop a forwarder and release the pool references it held.
+    fn teardown_forwarder(&self, mut forwarder: ActiveForwarder, guards: PooledSessionGuards) {
         match &mut forwarder {
             ActiveForwarder::Local(f) => f.stop(),
             ActiveForwarder::Remote(f) => f.stop(),
             ActiveForwarder::Dynamic(f) => f.stop(),
         }
-        self.release_session(ssh_connection_id);
-    }
-
-    /// Release one pooled SSH session reference, ignoring a poisoned lock.
-    fn release_session(&self, ssh_connection_id: &str) {
-        if let Ok(mut pool) = self.session_pool.lock() {
-            pool.release(ssh_connection_id);
-        }
+        drop(forwarder);
+        // Dropping the guards releases the pooled endpoint / gateway references,
+        // draining sessions no longer used by any tunnel or terminal.
+        drop(guards);
     }
 
     /// Stop an active tunnel by ID.
@@ -371,11 +455,8 @@ impl TunnelManager {
         };
 
         if let Some(tunnel) = tunnel {
-            let ActiveTunnel {
-                forwarder,
-                ssh_connection_id,
-            } = tunnel;
-            self.teardown_forwarder(forwarder, &ssh_connection_id);
+            let ActiveTunnel { forwarder, guards } = tunnel;
+            self.teardown_forwarder(forwarder, guards);
             self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
             tracing::info!("Tunnel {} stopped", tunnel_id);
             return Ok(());
