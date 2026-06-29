@@ -1,8 +1,7 @@
-import { useCallback } from "react";
-import { ArrowLeftRight } from "lucide-react";
+import { useCallback, useMemo } from "react";
+import { ArrowLeftRight, Plus, Trash2, AlertTriangle } from "lucide-react";
 import type { JumpHostConfig } from "@/types/connection";
-import { KeyPathInput } from "@/components/Settings/KeyPathInput";
-import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { JumpHostEntry } from "./JumpHostEntry";
 import { JumpHostPathDisplay } from "./JumpHostPathDisplay";
 
 interface JumpHostSectionProps {
@@ -12,31 +11,41 @@ interface JumpHostSectionProps {
   targetHost: string | undefined;
   /** Emits the new chain, or `undefined` to remove jump-host config entirely. */
   onChange: (hops: JumpHostConfig[] | undefined) => void;
+  /** Blocking validation messages (save is prevented while present). */
+  errors?: string[];
+  /** Non-blocking advisories. */
+  warnings?: string[];
 }
 
-/** Auth methods offered for an inline jump host (mirrors the SSH auth schema). */
-const AUTH_OPTIONS = [
-  { value: "key", label: "SSH Key" },
-  { value: "password", label: "Password" },
-  { value: "agent", label: "SSH Agent" },
-] as const;
-
-/** A fresh inline hop, used when the user first enables a jump host. */
+/** A fresh inline hop, used when adding a hop. */
 function defaultHop(): JumpHostConfig {
   return { host: "", port: 22, username: "", authMethod: "key" };
+}
+
+/** Position label for a hop in a chain of `total` hops (outermost → innermost). */
+function positionLabel(index: number, total: number): string {
+  if (index === 0) return "outermost";
+  if (index === total - 1) return "innermost";
+  return "intermediate";
 }
 
 /**
  * "Jump Host" section of the SSH connection editor.
  *
- * Phase 2 (#923) supports a single inline hop (OpenSSH `-J` style): the target
- * is reached through one bastion configured directly here. Referencing a saved
- * connection and multi-hop chains land in a later phase; the underlying
- * `proxyJump` model is already an array, so this writes a one-element chain.
+ * Supports one or more inline hops (OpenSSH `-J` style), ordered outermost →
+ * innermost. A single hop renders as a plain field group; multiple hops render
+ * as numbered, removable cards. Referencing a saved connection as a hop is a
+ * later phase; this writes inline hops to the SSH config's `proxyJump` array.
  */
-export function JumpHostSection({ value, targetHost, onChange }: JumpHostSectionProps) {
-  const enabled = (value?.length ?? 0) > 0;
-  const hop = value?.[0];
+export function JumpHostSection({
+  value,
+  targetHost,
+  onChange,
+  errors = [],
+  warnings = [],
+}: JumpHostSectionProps) {
+  const hops = useMemo(() => value ?? [], [value]);
+  const enabled = hops.length > 0;
 
   const toggleEnabled = useCallback(
     (checked: boolean) => {
@@ -46,12 +55,25 @@ export function JumpHostSection({ value, targetHost, onChange }: JumpHostSection
   );
 
   const updateHop = useCallback(
-    (patch: Partial<JumpHostConfig>) => {
-      const base = value?.[0] ?? defaultHop();
-      onChange([{ ...base, ...patch }]);
+    (index: number, patch: Partial<JumpHostConfig>) => {
+      onChange(hops.map((h, i) => (i === index ? { ...h, ...patch } : h)));
     },
-    [onChange, value]
+    [onChange, hops]
   );
+
+  const addHop = useCallback(() => {
+    onChange([...hops, defaultHop()]);
+  }, [onChange, hops]);
+
+  const removeHop = useCallback(
+    (index: number) => {
+      const next = hops.filter((_, i) => i !== index);
+      onChange(next.length > 0 ? next : undefined);
+    },
+    [onChange, hops]
+  );
+
+  const multi = hops.length > 1;
 
   return (
     <div className="settings-panel__category" data-testid="jump-host-section">
@@ -70,89 +92,75 @@ export function JumpHostSection({ value, targetHost, onChange }: JumpHostSection
         </span>
       </label>
 
-      {enabled && hop && (
+      {enabled && (
         <>
-          <div className="settings-form__field">
-            <span className="settings-form__label">Host</span>
-            <input
-              type="text"
-              value={hop.host}
-              onChange={(e) => updateHop({ host: e.target.value })}
-              placeholder="bastion.example.com"
-              data-testid="jump-host-host"
-            />
-          </div>
-
-          <div className="settings-form__field">
-            <span className="settings-form__label">Port</span>
-            <input
-              type="number"
-              value={hop.port}
-              min={1}
-              max={65535}
-              onChange={(e) =>
-                updateHop({ port: e.target.value === "" ? 22 : Number(e.target.value) })
-              }
-              data-testid="jump-host-port"
-            />
-          </div>
-
-          <div className="settings-form__field">
-            <span className="settings-form__label">Username</span>
-            <input
-              type="text"
-              value={hop.username}
-              onChange={(e) => updateHop({ username: e.target.value })}
-              placeholder="admin"
-              data-testid="jump-host-username"
-            />
-          </div>
-
-          <div className="settings-form__field">
-            <span className="settings-form__label">Auth Method</span>
-            <select
-              value={hop.authMethod}
-              onChange={(e) => updateHop({ authMethod: e.target.value })}
-              data-testid="jump-host-auth-method"
-            >
-              {AUTH_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {hop.authMethod === "key" && (
-            <div className="settings-form__field">
-              <span className="settings-form__label">Key Path</span>
-              <KeyPathInput
-                value={hop.keyPath ?? ""}
-                onChange={(v) => updateHop({ keyPath: v || undefined })}
-                placeholder="~/.ssh/id_ed25519"
-                testIdPrefix="jump-host-key-path"
+          {hops.map((hop, i) =>
+            multi ? (
+              <div className="jump-host__card" key={i} data-testid={`jump-host-card-${i}`}>
+                <div className="jump-host__card-head">
+                  <span className="jump-host__card-title">
+                    Hop {i + 1} ({positionLabel(i, hops.length)})
+                  </span>
+                  <button
+                    type="button"
+                    className="jump-host__card-remove"
+                    onClick={() => removeHop(i)}
+                    data-testid={`jump-host-remove-${i}`}
+                  >
+                    <Trash2 size={13} aria-hidden />
+                    Remove
+                  </button>
+                </div>
+                <JumpHostEntry hop={hop} index={i} onChange={(patch) => updateHop(i, patch)} />
+              </div>
+            ) : (
+              <JumpHostEntry
+                key={i}
+                hop={hop}
+                index={i}
+                onChange={(patch) => updateHop(i, patch)}
               />
-            </div>
+            )
           )}
 
-          {hop.authMethod === "password" && (
-            <div className="settings-form__field">
-              <span className="settings-form__label">Password</span>
-              <PasswordInput
-                value={hop.password ?? ""}
-                onChange={(e) => updateHop({ password: e.target.value || undefined })}
-                placeholder="Jump host password"
-                data-testid="jump-host-password"
-              />
-            </div>
-          )}
+          <button
+            type="button"
+            className="jump-host__add-hop"
+            onClick={addHop}
+            data-testid="jump-host-add-hop"
+          >
+            <Plus size={13} aria-hidden />
+            Add another hop
+          </button>
 
           <p className="settings-form__hint">
-            The target connects through this jump host (OpenSSH <code>-J</code> / ProxyJump). The
-            bastion only forwards the connection — it needs TCP forwarding enabled.
+            The target connects through {multi ? "these jump hosts" : "this jump host"} (OpenSSH{" "}
+            <code>-J</code> / ProxyJump), ordered outermost → innermost. Each bastion only forwards
+            the connection — it needs TCP forwarding enabled.
           </p>
 
-          <JumpHostPathDisplay hops={[hop.host]} target={targetHost ?? ""} />
+          <JumpHostPathDisplay hops={hops.map((h) => h.host)} target={targetHost ?? ""} />
+
+          {warnings.map((w, i) => (
+            <p
+              className="settings-form__hint settings-form__hint--warning"
+              key={i}
+              data-testid="jump-host-warning"
+            >
+              {w}
+            </p>
+          ))}
+
+          {errors.length > 0 && (
+            <div className="jump-host__errors" data-testid="jump-host-errors" role="alert">
+              <AlertTriangle size={13} aria-hidden />
+              <ul className="jump-host__error-list">
+                {errors.map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </>
       )}
     </div>
