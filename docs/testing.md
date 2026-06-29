@@ -752,7 +752,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: **9 WebdriverIO files** (5 in `tests/e2e/`, 4 in `tests/e2e/infrastructure/`) — the remainder still being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) was ported to `tests/system/tests/test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`) remain pending #934.
+E2E test coverage: **8 WebdriverIO files** (4 in `tests/e2e/`, 4 in `tests/e2e/infrastructure/`) — the remainder still being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`) remain pending #934.
 
 ### Test Environment Setup
 
