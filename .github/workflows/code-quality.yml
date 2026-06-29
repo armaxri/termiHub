@@ -40,6 +40,12 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          # Reader/writer split: only push runs on develop/main SAVE the cache;
+          # PRs restore it but don't write their own. PR caches are scoped to the
+          # PR and become dead weight after merge — and the repo cache was already
+          # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -61,10 +67,15 @@ jobs:
           cargo test -p termihub-core --no-run --features ssh
           cargo test -p termihub-core --no-run --features telnet
 
+      # Prebuilt binary download (~seconds) instead of `cargo install cargo-audit`,
+      # which compiles from source (~3 min) on a cold cache.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
       - name: Check for security vulnerabilities
-        run: |
-          cargo install cargo-audit
-          cargo audit
+        run: cargo audit
 
   # Frontend Quality Checks
   frontend-quality:
@@ -128,6 +139,12 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          # Reader/writer split: only push runs on develop/main SAVE the cache;
+          # PRs restore it but don't write their own. PR caches are scoped to the
+          # PR and become dead weight after merge — and the repo cache was already
+          # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -174,10 +191,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Prebuilt binary download instead of compiling cargo-audit from source.
+      # This job has no rust-cache, so the old `cargo install` recompiled it every
+      # run (~197 s); the prebuilt download takes seconds.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
       - name: Cargo Audit
-        run: |
-          cargo install cargo-audit
-          cargo audit
+        run: cargo audit
 
   # Check conventional commits (PR only)
   commit-lint:
