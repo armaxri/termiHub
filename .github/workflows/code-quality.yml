@@ -41,9 +41,11 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          # Reader/writer split: only push runs on develop/main SAVE the cache;
-          # PRs restore it but don't write their own. PR caches are scoped to the
-          # PR and become dead weight after merge — and the repo cache was already
+          # Reader/writer split. Integration happens on develop: merging a PR is a
+          # push event on develop, which SAVEs the cache; main is the default
+          # branch, kept as a global fallback. PRs (based on develop) restore the
+          # develop cache via base-branch access and never write their own. PR
+          # caches are dead weight after merge — and the repo cache was already
           # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
@@ -140,9 +142,11 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          # Reader/writer split: only push runs on develop/main SAVE the cache;
-          # PRs restore it but don't write their own. PR caches are scoped to the
-          # PR and become dead weight after merge — and the repo cache was already
+          # Reader/writer split. Integration happens on develop: merging a PR is a
+          # push event on develop, which SAVEs the cache; main is the default
+          # branch, kept as a global fallback. PRs (based on develop) restore the
+          # develop cache via base-branch access and never write their own. PR
+          # caches are dead weight after merge — and the repo cache was already
           # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
