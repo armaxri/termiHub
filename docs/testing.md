@@ -119,7 +119,7 @@ describe("Terminal Creation Flow", () => {
 pnpm test:e2e
 
 # Run specific test file
-pnpm test:e2e -- --spec tests/e2e/network-tools.test.js
+pnpm test:e2e -- --spec tests/e2e/network-tools-live.test.js
 
 # Run in headless mode (CI)
 pnpm test:e2e:ci
@@ -752,7 +752,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: **9 WebdriverIO files** (5 in `tests/e2e/`, 4 in `tests/e2e/infrastructure/`) — the remainder still being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) was ported to `tests/system/tests/test_ssh_tunnels.py` and removed (#810).
+E2E test coverage: **8 WebdriverIO files** (4 in `tests/e2e/`, 4 in `tests/e2e/infrastructure/`) — the remainder still being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`) remain pending #934.
 
 ### Test Environment Setup
 
@@ -868,5 +868,5 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-XPLAT-01, 02                 | `tests/system/tests/test_cross_platform.py`                                        |
 | MT-SVC-01, 02, 03               | `embedded-services.test.js`                                                        |
 | MT-SVC-04, 05 (transfer)        | `embedded-services.test.js` (SVC-12, SVC-13 via curl)                              |
-| MT-NET-01–09                    | `network-tools.test.js`                                                            |
-| MT-NET-10, 12, 13, 14, 17, 18   | `network-tools-live.test.js` (requires `network` profile)                          |
+| MT-NET-01–09                    | `tests/system/tests/test_network_tools.py`                                         |
+| MT-NET-10, 12, 13, 14, 17, 18   | `network-tools-live.test.js` (requires `network` profile; port blocked on #934)    |
