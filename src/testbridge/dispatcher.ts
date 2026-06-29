@@ -43,6 +43,12 @@ export interface BridgeDeps {
    * to Tauri's `getCurrentWindow().setSize(...)`; unit tests supply a stub.
    */
   resizeWindow: (width: number, height: number) => Promise<void>;
+  /**
+   * Capture a PNG screenshot of the rendered app as a `data:image/png;base64,…`
+   * URL, rejecting if capture is unavailable. The live {@link TestBridge} wires
+   * this to a DOM rasterizer; unit tests supply a stub.
+   */
+  screenshot: () => Promise<string>;
 }
 
 /** Resolve an element by its `data-testid`, escaping the value for the selector. */
@@ -487,6 +493,14 @@ export async function dispatchCommand(
         return fail("getState", `state path "${command.path}" does not resolve`);
       }
       return ok("getState", resolved);
+    }
+
+    case "screenshot": {
+      try {
+        return ok("screenshot", await deps.screenshot());
+      } catch (error) {
+        return fail("screenshot", error instanceof Error ? error.message : String(error));
+      }
     }
 
     default: {

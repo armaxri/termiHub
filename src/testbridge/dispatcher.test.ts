@@ -19,6 +19,7 @@ function setup(
     getState: () => ({}),
     sendTerminalInput: async () => false,
     resizeWindow: async () => {},
+    screenshot: async () => "data:image/png;base64,AAAA",
     ...overrides,
   };
   return { deps, container };
@@ -235,6 +236,32 @@ describe("dispatchCommand", () => {
       const res = await dispatchCommand({ action: "resizeWindow", width: 800, height: 600 }, deps);
       expect(res.ok).toBe(false);
       expect(res.error).toContain("window unavailable");
+    });
+  });
+
+  describe("screenshot", () => {
+    it("returns the data URL from the injected screenshot dep", async () => {
+      const screenshot = vi.fn(async () => "data:image/png;base64,SGVsbG8=");
+      const { deps } = setup(`<div></div>`, { screenshot });
+
+      const res = await dispatchCommand({ action: "screenshot" }, deps);
+      expect(res).toEqual({
+        ok: true,
+        action: "screenshot",
+        value: "data:image/png;base64,SGVsbG8=",
+      });
+      expect(screenshot).toHaveBeenCalledOnce();
+    });
+
+    it("fails with the dep's error when capture throws", async () => {
+      const screenshot = vi.fn(async () => {
+        throw new Error("capture unavailable");
+      });
+      const { deps } = setup(`<div></div>`, { screenshot });
+
+      const res = await dispatchCommand({ action: "screenshot" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("capture unavailable");
     });
   });
 

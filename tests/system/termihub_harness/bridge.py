@@ -15,6 +15,8 @@ single run (issue #817).
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import threading
 from typing import Any, Optional
 
@@ -24,6 +26,9 @@ from .protocol import Command, Response, decode_response, encode_request
 
 DEFAULT_REQUEST_TIMEOUT = 10.0
 DEFAULT_APP_WAIT_TIMEOUT = 30.0
+#: Cap for a single bridge frame. The default (1 MiB) is too small for a
+#: ``screenshot`` data URL of a large window, so allow generously larger frames.
+MAX_BRIDGE_FRAME_BYTES = 32 * 1024 * 1024
 
 
 class BridgeError(Exception):
@@ -277,6 +282,32 @@ class Driver:
     def get_state(self, path: Optional[str] = None) -> Any:
         return self._call({"action": "getState", "path": path})
 
+    def screenshot(self) -> str:
+        """Capture a PNG screenshot of the rendered app as a data URL.
+
+        Returns a ``data:image/png;base64,…`` string produced by rasterizing the
+        live DOM. Use it for visual evidence on a manual carve-out (pixel
+        geometry, theme rendering) or to enrich a failure bundle. The DOM path
+        does **not** capture the xterm GPU canvas or native OS dialogs — read
+        terminal text via :meth:`read_terminal` instead. Decode with
+        :func:`screenshot_to_png_bytes`.
+        """
+        return self._call({"action": "screenshot"})
+
+
+def screenshot_to_png_bytes(data_url: str) -> bytes:
+    """Decode a ``data:image/png;base64,…`` screenshot URL to raw PNG bytes.
+
+    Accepts either a full data URL (the wire form :meth:`Driver.screenshot`
+    returns) or a bare base64 payload. Raises ``ValueError`` if the base64 is
+    malformed so a caller can fail loudly rather than write a corrupt file.
+    """
+    payload = data_url.split(",", 1)[1] if data_url.startswith("data:") else data_url
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"invalid base64 screenshot payload: {exc}") from exc
+
 
 class Bridge:
     """A listening bridge server. Hand :attr:`port` to the app before launch."""
@@ -354,7 +385,12 @@ class Bridge:
             await connection.reader()
 
         async def serve() -> None:
-            self._server = await websockets.serve(handler, self._host, self._requested_port)
+            self._server = await websockets.serve(
+                handler,
+                self._host,
+                self._requested_port,
+                max_size=MAX_BRIDGE_FRAME_BYTES,
+            )
             self._port = self._server.sockets[0].getsockname()[1]
             self._ready.set()
             try:

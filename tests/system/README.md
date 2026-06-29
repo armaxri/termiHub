@@ -443,8 +443,11 @@ Tips:
 ## Driver verbs
 
 `click`, `type`, `select`, `context_menu`, `press_key`, `terminal_input`,
-`exists`, `get_text`, `get_attribute`, `read_terminal`, `get_state` — the same
-vocabulary as the TypeScript `Driver`.
+`exists`, `get_text`, `get_attribute`, `read_terminal`, `get_state`,
+`screenshot` — the same vocabulary as the TypeScript `Driver`. `screenshot`
+returns a PNG data URL of the rendered app (DOM rasterization; see
+[`docs/test-bridge.md`](../../docs/test-bridge.md#screenshots-screenshot)) and is
+also written into the failure-artifact bundle as `screenshot.png`.
 
 UI elements with UUID `data-testid`s (connections, folders) are resolved by
 **name** through `getState` via the `termihub_harness.ui` helpers (`find_connection`,

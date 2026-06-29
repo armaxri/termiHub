@@ -219,12 +219,17 @@ python scripts/build-testid-catalog.py --check     # CI freshness gate
 
 **Impact:** kills the #1 source of "element not found". **Effort:** medium.
 
-### P5 — Optional screenshot verb for visual carve-outs
+### P5 — Optional screenshot verb for visual carve-outs ✅ done (#900)
 
 Some carve-outs are manual only because the bridge can't _see_ the rendered UI.
-A bridge `screenshot` verb (webview-side `canvas`/`html2canvas` or a Tauri
-window capture) attached to the failure bundle would shrink the manual set and
-enrich P2's artifacts.
+A bridge `screenshot` verb rasterizes the live DOM (webview-side
+[`html-to-image`](https://github.com/bubkoo/html-to-image), lazy-imported so it
+stays a test-mode-only chunk) to a PNG data URL, available on both the TS and
+Python `Driver`. The P2 failure-artifact bundle now writes a `screenshot.png`
+when the app supports the verb, and `manual_observe` (#914) attaches one to its
+report. The DOM path does not capture the xterm GPU canvas or native OS dialogs
+(terminal text is read via `readTerminal`); a native window-capture backend
+could lift that in future.
 
 **Impact:** fewer manual carve-outs, richer failure bundles. **Effort:** larger
 (platform capture path).
