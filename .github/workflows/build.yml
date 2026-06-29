@@ -61,6 +61,10 @@ jobs:
           # full release builds on every push to develop/main warm the exact cache
           # these PR builds restore — so a fresh PR starts from a hot cache.
           shared-key: tauri-${{ matrix.rust_target }}
+          # PR builds are pure readers: dev-build.yml (on push to develop/main) is
+          # the writer for this shared-key, so PRs never need to save and don't add
+          # dead PR-scoped caches to the repo's 10 GB budget.
+          save-if: false
 
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
