@@ -6,6 +6,12 @@ on:
   push:
     branches: [ main, develop ]
 
+# Cancel superseded runs on the same ref (a force-push or a newer commit on the
+# PR) so we don't burn runner minutes finishing checks for stale commits.
+concurrency:
+  group: code-quality-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Rust Backend Quality Checks
   rust-quality:
@@ -34,6 +40,14 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          # Reader/writer split. Integration happens on develop: merging a PR is a
+          # push event on develop, which SAVEs the cache; main is the default
+          # branch, kept as a global fallback. PRs (based on develop) restore the
+          # develop cache via base-branch access and never write their own. PR
+          # caches are dead weight after merge — and the repo cache was already
+          # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -55,10 +69,15 @@ jobs:
           cargo test -p termihub-core --no-run --features ssh
           cargo test -p termihub-core --no-run --features telnet
 
+      # Prebuilt binary download (~seconds) instead of `cargo install cargo-audit`,
+      # which compiles from source (~3 min) on a cold cache.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
       - name: Check for security vulnerabilities
-        run: |
-          cargo install cargo-audit
-          cargo audit
+        run: cargo audit
 
   # Frontend Quality Checks
   frontend-quality:
@@ -122,6 +141,14 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          # Reader/writer split. Integration happens on develop: merging a PR is a
+          # push event on develop, which SAVEs the cache; main is the default
+          # branch, kept as a global fallback. PRs (based on develop) restore the
+          # develop cache via base-branch access and never write their own. PR
+          # caches are dead weight after merge — and the repo cache was already
+          # over GitHub's 10 GB limit, causing LRU eviction churn (cold caches).
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -168,10 +195,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Prebuilt binary download instead of compiling cargo-audit from source.
+      # This job has no rust-cache, so the old `cargo install` recompiled it every
+      # run (~197 s); the prebuilt download takes seconds.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
       - name: Cargo Audit
-        run: |
-          cargo install cargo-audit
-          cargo audit
+        run: cargo audit
 
   # Check conventional commits (PR only)
   commit-lint:

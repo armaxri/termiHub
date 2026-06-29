@@ -4,7 +4,20 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# Cancel an in-flight PR build when a newer commit is pushed to the same PR —
+# no point finishing a build for a superseded commit.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # PR builds verify the app *compiles* on each platform. They intentionally do
+  # NOT bundle installers (`--no-bundle`) — packaging (NSIS/MSI/DMG/AppImage)
+  # rarely breaks, is the slowest tail (esp. Windows), and full installers are
+  # produced by the Dev Build workflow on every push to develop/main. The PR
+  # matrix is also trimmed to one arch per OS (x64 Linux, arm64 macOS, x64
+  # Windows); the dropped arches (macOS x64, Linux arm64) are still built in full
+  # by dev-build.yml post-merge.
   build:
     name: Build on ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
@@ -13,28 +26,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
-            os: macos-latest
-            rust_target: 'x86_64-apple-darwin'
-            artifact_name: 'termiHub-macOS-x64'
           - platform: 'macos-latest-arm'
             os: macos-latest
             rust_target: 'aarch64-apple-darwin'
-            artifact_name: 'termiHub-macOS-arm64'
           - platform: 'ubuntu-latest'
             os: ubuntu-latest
             rust_target: 'x86_64-unknown-linux-gnu'
-            artifact_name: 'termiHub-Linux-x64'
-          - platform: 'ubuntu-arm64'
-            os: ubuntu-24.04-arm
-            rust_target: 'aarch64-unknown-linux-gnu'
-            artifact_name: 'termiHub-Linux-arm64'
-            # AppImage is not supported on ARM64 (linuxdeploy is x86_64-only)
-            extra_args: '--bundles deb,rpm'
           - platform: 'windows-latest'
             os: windows-latest
             rust_target: 'x86_64-pc-windows-msvc'
-            artifact_name: 'termiHub-Windows-x64'
 
     steps:
       - name: Checkout code
@@ -57,7 +57,16 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.platform }}
+          # shared-key (keyed by rust target, identical in dev-build.yml) lets the
+          # full release builds on every push to develop/main warm the exact cache
+          # these PR builds restore — so a fresh PR starts from a hot cache.
+          shared-key: tauri-${{ matrix.rust_target }}
+          # PR builds are pure readers. The writer for this shared-key is
+          # dev-build.yml, which runs when a PR merges into develop (a push event
+          # on develop) — that's where integration actually happens. A PR based on
+          # develop can restore its base branch's caches, so it starts hot without
+          # ever saving its own dead, PR-scoped cache against the 10 GB budget.
+          save-if: false
 
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -76,52 +85,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build frontend
-        run: pnpm run build
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # Don't create release, just build
-          tagName: ''
-          releaseName: ''
-          releaseBody: ''
-          releaseDraft: false
-          prerelease: false
-          args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: |
-            target/${{ matrix.rust_target }}/release/bundle/**/*
-          if-no-files-found: error
-          retention-days: 7
-
-  # Build size report (for main branch only)
-  build-size-report:
-    name: Build Size Report
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    needs: build
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-
-      - name: Calculate sizes
-        run: |
-          echo "# Build Size Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Size |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|------|" >> $GITHUB_STEP_SUMMARY
-
-          for dir in termiHub-*; do
-            if [ -d "$dir" ]; then
-              size=$(du -sh "$dir" | cut -f1)
-              echo "| $dir | $size |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+      # `tauri build --no-bundle` runs the frontend build (beforeBuildCommand:
+      # `pnpm build`) and compiles the release binary, but skips installer
+      # packaging. This is the compile-verification the PR needs; dev-build.yml
+      # produces the actual installers on push to develop/main.
+      - name: Build Tauri app (compile only, no installers)
+        run: pnpm tauri build --no-bundle --target ${{ matrix.rust_target }}
