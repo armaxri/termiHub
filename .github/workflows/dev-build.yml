@@ -98,7 +98,10 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          key: dev-build-${{ matrix.platform }}
+          # Shared with build.yml (same rust target → same shared-key): these
+          # full release builds on push to develop/main warm the cache that PR
+          # builds restore, so PRs don't start from a cold Rust cache.
+          shared-key: tauri-${{ matrix.rust_target }}
 
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
