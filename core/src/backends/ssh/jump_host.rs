@@ -87,3 +87,87 @@ pub async fn connect_through_jump_hosts(
         intermediates,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A hung hop step (one that never resolves) must fail within the per-hop
+    /// timeout — surfacing *which* hop hung — instead of blocking the whole
+    /// chain indefinitely (#938).
+    #[tokio::test]
+    async fn hop_step_times_out_and_names_the_hop() {
+        let label = "hop 2 (bastion:22)";
+        let start = Instant::now();
+        let result: Result<(), SessionError> = run_hop_step(
+            label,
+            Duration::from_secs(1),
+            None,
+            async {
+                // A blackholed intermediate hop never completes the handshake.
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(())
+            },
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        let err = result.expect_err("hung hop should time out");
+        let msg = err.to_string();
+        assert!(msg.contains("timed out"), "unexpected error: {msg}");
+        assert!(msg.contains(label), "error should name the hop: {msg}");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "timeout took too long: {elapsed:?}"
+        );
+    }
+
+    /// Cancelling the token mid-connect aborts a hung hop promptly, well before
+    /// the per-hop timeout would fire (#938).
+    #[tokio::test]
+    async fn hop_step_aborts_when_token_cancelled() {
+        let label = "hop 2 (bastion:22)";
+        let token = CancellationToken::new();
+        let cancel_handle = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_handle.cancel();
+        });
+
+        let start = Instant::now();
+        let result: Result<(), SessionError> = run_hop_step(
+            label,
+            Duration::from_secs(30),
+            Some(&token),
+            async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok(())
+            },
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        let err = result.expect_err("cancelled hop should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("cancelled"), "unexpected error: {msg}");
+        assert!(msg.contains(label), "error should name the hop: {msg}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "cancellation took too long: {elapsed:?}"
+        );
+    }
+
+    /// A hop that completes within budget returns its value untouched, and the
+    /// per-hop timeout/cancellation wrapper adds no overhead on the happy path.
+    #[tokio::test]
+    async fn hop_step_passes_through_on_success() {
+        let token = CancellationToken::new();
+        let result =
+            run_hop_step("hop 2 (bastion:22)", Duration::from_secs(1), Some(&token), async {
+                Ok::<_, SessionError>(42)
+            })
+            .await;
+        assert_eq!(result.expect("hop should succeed"), 42);
+    }
+}
