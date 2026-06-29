@@ -64,6 +64,15 @@ pub fn expand_config_value(value: &str) -> String {
         .into_owned()
 }
 
+/// Expand `${VAR}` placeholders and `~` in an optional SSH key path, stripping
+/// any surrounding quotes first — users often paste paths like `"C:\...\key"`.
+fn expand_key_path(key_path: Option<String>) -> Option<String> {
+    key_path.map(|s| {
+        let stripped = s.trim().trim_matches('"').trim_matches('\'');
+        expand_config_value(stripped)
+    })
+}
+
 /// Terminal dimensions (columns x rows).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PtySize {
@@ -220,6 +229,74 @@ impl Default for DockerConfig {
     }
 }
 
+/// Configuration for a single jump host (bastion) hop in a `ProxyJump` chain.
+///
+/// Mirrors OpenSSH's `-J` / `ProxyJump` directive: a hop is itself a minimal SSH
+/// connection used purely as transport to reach the next hop (or the target).
+///
+/// Core only uses the inline connection fields here. A hop sourced from a saved
+/// connection (referenced by `connection_id`) is resolved to these inline values
+/// by the desktop layer *before* the config reaches core (Phase 4) — `connection_id`
+/// is carried only so the stored config round-trips.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JumpHostConfig {
+    /// Reference to a saved SSH connection ID (resolved to the inline fields by
+    /// the desktop layer; unused by core).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    pub host: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    pub username: String,
+    pub auth_method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+}
+
+impl Default for JumpHostConfig {
+    fn default() -> Self {
+        Self {
+            connection_id: None,
+            host: String::new(),
+            port: default_ssh_port(),
+            username: String::new(),
+            auth_method: String::new(),
+            password: None,
+            key_path: None,
+        }
+    }
+}
+
+impl JumpHostConfig {
+    /// Build a minimal [`SshConfig`] for establishing this hop, reusing the
+    /// standard connect/auth machinery. Terminal-only fields (cols/rows/shell)
+    /// are irrelevant for a transport hop and left at their defaults.
+    pub fn to_ssh_config(&self) -> SshConfig {
+        SshConfig {
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            auth_method: self.auth_method.clone(),
+            password: self.password.clone(),
+            key_path: self.key_path.clone(),
+            ..SshConfig::default()
+        }
+    }
+
+    /// Return a copy with all `${VAR}` placeholders and `~` expanded in the
+    /// inline connection fields.
+    pub fn expand(mut self) -> Self {
+        self.host = expand_config_value(&self.host);
+        self.username = expand_config_value(&self.username);
+        self.key_path = expand_key_path(self.key_path);
+        self.password = self.password.map(|s| expand_config_value(&s));
+        self
+    }
+}
+
 /// Unified SSH session configuration.
 ///
 /// Superset of desktop `SshConfig` and agent `SshSessionConfig`.
@@ -254,6 +331,11 @@ pub struct SshConfig {
     /// failing. `None` falls back to [`DEFAULT_SSH_CONNECT_TIMEOUT_SECS`] (#841).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_timeout_secs: Option<u64>,
+    /// Optional jump host (`ProxyJump`) chain, ordered outermost → innermost
+    /// (`ssh -J edge,bastion` ⇒ `[edge, bastion]`). Empty means a direct
+    /// connection. Accepts the legacy `jumpHosts` key for forward compatibility.
+    #[serde(default, alias = "jumpHosts", skip_serializing_if = "Vec::is_empty")]
+    pub proxy_jump: Vec<JumpHostConfig>,
 }
 
 impl SshConfig {
@@ -284,6 +366,7 @@ impl Default for SshConfig {
             enable_file_browser: None,
             save_password: None,
             connect_timeout_secs: None,
+            proxy_jump: Vec::new(),
         }
     }
 }
@@ -389,12 +472,9 @@ impl SshConfig {
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
         self.username = expand_config_value(&self.username);
-        self.key_path = self.key_path.map(|s| {
-            // Strip surrounding quotes — users often paste paths like "C:\...\key"
-            let stripped = s.trim().trim_matches('"').trim_matches('\'');
-            expand_config_value(stripped)
-        });
+        self.key_path = expand_key_path(self.key_path);
         self.password = self.password.map(|s| expand_config_value(&s));
+        self.proxy_jump = self.proxy_jump.into_iter().map(|h| h.expand()).collect();
         self
     }
 }
@@ -898,6 +978,7 @@ mod tests {
             enable_file_browser: Some(false),
             save_password: None,
             connect_timeout_secs: Some(15),
+            proxy_jump: Vec::new(),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: SshConfig = serde_json::from_str(&json).unwrap();
@@ -915,6 +996,112 @@ mod tests {
         assert_eq!(back.enable_file_browser, Some(false));
         assert!(back.save_password.is_none());
         assert_eq!(back.connect_timeout_secs, Some(15));
+    }
+
+    // --- jump host (ProxyJump) tests ---
+
+    #[test]
+    fn ssh_config_proxy_jump_roundtrip() {
+        let cfg = SshConfig {
+            host: "target.internal".into(),
+            username: "deploy".into(),
+            auth_method: "key".into(),
+            proxy_jump: vec![JumpHostConfig {
+                host: "bastion.example.com".into(),
+                port: 2222,
+                username: "admin".into(),
+                auth_method: "key".into(),
+                key_path: Some("~/.ssh/bastion".into()),
+                ..Default::default()
+            }],
+            ..SshConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        // Field serializes camelCase.
+        assert!(json.contains("\"proxyJump\""));
+        let back: SshConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.proxy_jump.len(), 1);
+        assert_eq!(back.proxy_jump[0].host, "bastion.example.com");
+        assert_eq!(back.proxy_jump[0].port, 2222);
+        assert_eq!(back.proxy_jump[0].username, "admin");
+        assert_eq!(
+            back.proxy_jump[0].key_path.as_deref(),
+            Some("~/.ssh/bastion")
+        );
+    }
+
+    #[test]
+    fn ssh_config_empty_proxy_jump_is_omitted() {
+        let json = serde_json::to_string(&SshConfig::default()).unwrap();
+        assert!(!json.contains("proxyJump"));
+    }
+
+    #[test]
+    fn ssh_config_proxy_jump_defaults_when_absent() {
+        let json = r#"{ "host": "h", "username": "u", "authMethod": "password" }"#;
+        let cfg: SshConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.proxy_jump.is_empty());
+    }
+
+    #[test]
+    fn ssh_config_accepts_legacy_jump_hosts_alias() {
+        // The earlier draft used `jumpHosts`; it must still deserialize.
+        let json = r#"{
+            "host": "h", "username": "u", "authMethod": "key",
+            "jumpHosts": [
+                { "host": "bastion", "port": 22, "username": "admin", "authMethod": "agent" }
+            ]
+        }"#;
+        let cfg: SshConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.proxy_jump.len(), 1);
+        assert_eq!(cfg.proxy_jump[0].host, "bastion");
+    }
+
+    #[test]
+    fn jump_host_config_port_defaults_to_22() {
+        let json = r#"{ "host": "bastion", "username": "admin", "authMethod": "key" }"#;
+        let hop: JumpHostConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(hop.port, 22);
+    }
+
+    #[test]
+    fn jump_host_config_to_ssh_config_copies_connection_fields() {
+        let hop = JumpHostConfig {
+            host: "bastion".into(),
+            port: 2200,
+            username: "admin".into(),
+            auth_method: "password".into(),
+            password: Some("secret".into()),
+            key_path: None,
+            connection_id: Some("saved-id".into()),
+        };
+        let cfg = hop.to_ssh_config();
+        assert_eq!(cfg.host, "bastion");
+        assert_eq!(cfg.port, 2200);
+        assert_eq!(cfg.username, "admin");
+        assert_eq!(cfg.auth_method, "password");
+        assert_eq!(cfg.password.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn ssh_config_expand_expands_inline_jump_hosts() {
+        // SAFETY: test-only env var, single value.
+        unsafe { std::env::set_var("THUB_JUMP_TEST_HOST", "bastion.expanded") };
+        let cfg = SshConfig {
+            host: "target".into(),
+            username: "u".into(),
+            auth_method: "key".into(),
+            proxy_jump: vec![JumpHostConfig {
+                host: "${THUB_JUMP_TEST_HOST}".into(),
+                username: "admin".into(),
+                auth_method: "key".into(),
+                ..Default::default()
+            }],
+            ..SshConfig::default()
+        }
+        .expand();
+        assert_eq!(cfg.proxy_jump[0].host, "bastion.expanded");
+        unsafe { std::env::remove_var("THUB_JUMP_TEST_HOST") };
     }
 
     // --- camelCase field name tests ---

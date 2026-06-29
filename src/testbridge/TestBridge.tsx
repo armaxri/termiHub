@@ -38,6 +38,14 @@ export function TestBridge() {
       // Drive the real Tauri window so resize-triggered behavior (xterm fit →
       // PTY resize) runs exactly as it does for an interactive window drag.
       resizeWindow: (width, height) => getCurrentWindow().setSize(new LogicalSize(width, height)),
+      // Rasterize the live DOM to a PNG data URL. Lazy-imported so html-to-image
+      // is a test-mode-only chunk that never weighs down the normal bundle. The
+      // DOM path captures layout/theme but not the xterm GPU canvas or native
+      // dialogs (terminal text is read via readTerminal instead).
+      screenshot: async () => {
+        const { toPng } = await import("html-to-image");
+        return toPng(document.body, { cacheBust: true });
+      },
     };
 
     const dispatch = (command: Parameters<typeof dispatchCommand>[0]) =>

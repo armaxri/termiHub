@@ -145,6 +145,10 @@ class FakeDriver implements Driver {
     }
     return cur;
   }
+
+  async screenshot(): Promise<string> {
+    return "data:image/png;base64,AAAA";
+  }
 }
 
 /** Run options with an instant sleep so timing-based steps don't wait in tests. */

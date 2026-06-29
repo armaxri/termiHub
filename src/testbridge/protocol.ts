@@ -276,6 +276,23 @@ export interface GetStateCommand {
   path?: string;
 }
 
+/**
+ * Capture a PNG screenshot of the rendered app, returned as a data URL.
+ *
+ * Some carve-outs are manual only because the in-webview bridge can't *see* the
+ * rendered UI (pixel geometry, theme rendering). This rasterizes the live DOM to
+ * a `data:image/png;base64,…` string, so a test can attach visual evidence and
+ * the failure-artifact bundle can include a snapshot of the moment a test failed.
+ * Like {@link ResizeWindowCommand} it resolves against an injected `screenshot`
+ * dep, so the live {@link TestBridge} wires the real rasterizer while unit tests
+ * supply a stub. The DOM-rasterization path does **not** capture the xterm GPU
+ * canvas or native OS dialogs — terminal content is read via
+ * {@link ReadTerminalCommand} instead.
+ */
+export interface ScreenshotCommand {
+  action: "screenshot";
+}
+
 /** A terminal viewport scroll position, returned by `getTerminalViewport`. */
 export interface TerminalViewport {
   /** Buffer line shown at the top of the visible area. */
@@ -304,7 +321,8 @@ export type BridgeCommand =
   | ReadTerminalCommand
   | ScrollTerminalCommand
   | GetTerminalViewportCommand
-  | GetStateCommand;
+  | GetStateCommand
+  | ScreenshotCommand;
 
 /** The discriminator literal of any {@link BridgeCommand}. */
 export type BridgeAction = BridgeCommand["action"];

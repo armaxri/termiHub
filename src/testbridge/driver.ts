@@ -145,6 +145,12 @@ export interface Driver {
   getTerminalViewport(options?: GetTerminalViewportOptions): Promise<TerminalViewport>;
   /** Read a slice of app state, optionally by dot-path. */
   getState(path?: string): Promise<unknown>;
+  /**
+   * Capture a PNG screenshot of the rendered app as a `data:image/png;base64,…`
+   * URL — visual evidence for a manual carve-out or a failure bundle. Rasterizes
+   * the DOM, so it does not capture the xterm GPU canvas or native OS dialogs.
+   */
+  screenshot(): Promise<string>;
 }
 
 /**
@@ -276,5 +282,9 @@ export class InAppBridgeDriver implements Driver {
 
   async getState(path?: string): Promise<unknown> {
     return this.send({ action: "getState", path });
+  }
+
+  async screenshot(): Promise<string> {
+    return this.send<string>({ action: "screenshot" });
   }
 }

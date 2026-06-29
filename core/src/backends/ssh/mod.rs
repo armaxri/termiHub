@@ -8,6 +8,7 @@ pub mod auth;
 pub mod connector;
 mod file_browser;
 pub mod handler;
+pub mod jump_host;
 mod legacy_pem;
 mod monitoring;
 pub mod x11;
@@ -18,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info};
 
-use crate::config::SshConfig;
+use crate::config::{JumpHostConfig, SshConfig};
 use crate::connection::{
     Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
     SelectOption, SettingsField, SettingsGroup, SettingsSchema,
@@ -153,6 +154,14 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         })
         .unwrap_or_default();
 
+    // Jump host (ProxyJump) chain, stored inline as an array of hop objects.
+    // Accepts the legacy `jumpHosts` key as well as `proxyJump`.
+    let proxy_jump = settings
+        .get("proxyJump")
+        .or_else(|| settings.get("jumpHosts"))
+        .and_then(|v| serde_json::from_value::<Vec<JumpHostConfig>>(v.clone()).ok())
+        .unwrap_or_default();
+
     SshConfig {
         host: str_field("host"),
         port,
@@ -169,6 +178,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         enable_file_browser: opt_bool("enableFileBrowser"),
         save_password: opt_bool("savePassword"),
         connect_timeout_secs: opt_u64("connectTimeoutSecs"),
+        proxy_jump,
     }
 }
 
@@ -800,6 +810,39 @@ mod tests {
         });
         let config = parse_ssh_settings(&settings);
         assert_eq!(config.connect_timeout_secs, Some(5));
+    }
+
+    #[test]
+    fn parse_ssh_settings_reads_proxy_jump() {
+        let settings = serde_json::json!({
+            "host": "target.internal",
+            "username": "deploy",
+            "authMethod": "key",
+            "proxyJump": [
+                {
+                    "host": "bastion.example.com",
+                    "port": 2222,
+                    "username": "admin",
+                    "authMethod": "key",
+                    "keyPath": "~/.ssh/bastion"
+                }
+            ],
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.proxy_jump.len(), 1);
+        assert_eq!(config.proxy_jump[0].host, "bastion.example.com");
+        assert_eq!(config.proxy_jump[0].port, 2222);
+    }
+
+    #[test]
+    fn parse_ssh_settings_proxy_jump_defaults_empty() {
+        let settings = serde_json::json!({
+            "host": "h",
+            "username": "u",
+            "authMethod": "password",
+        });
+        let config = parse_ssh_settings(&settings);
+        assert!(config.proxy_jump.is_empty());
     }
 
     #[test]
