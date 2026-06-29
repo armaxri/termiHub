@@ -33,22 +33,27 @@ def sanitize_nodeid(nodeid: str) -> str:
     return safe.strip("_") or "test"
 
 
-def _safe_write(path: Path, produce: Callable[[], str]) -> None:
-    """Write ``produce()`` to ``path``; on error, write the error beside it.
+def _record_probe_error(path: Path, exc: BaseException) -> None:
+    """Write a failed probe's error beside its target as ``<name>.error.txt``.
 
     Capture must never raise — a broken bridge during a failure is exactly when
     the bundle matters most, so a failed probe records its own error rather than
     masking the original test failure.
     """
     try:
+        path.with_suffix(path.suffix + ".error.txt").write_text(
+            f"{type(exc).__name__}: {exc}", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def _safe_write(path: Path, produce: Callable[[], str]) -> None:
+    """Write ``produce()`` text to ``path``; record the error beside it on failure."""
+    try:
         path.write_text(produce(), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 — capture is best-effort by design
-        try:
-            path.with_suffix(path.suffix + ".error.txt").write_text(
-                f"{type(exc).__name__}: {exc}", encoding="utf-8"
-            )
-        except OSError:
-            pass
+        _record_probe_error(path, exc)
 
 
 def _safe_write_bytes(path: Path, produce: Callable[[], bytes]) -> None:
@@ -56,12 +61,7 @@ def _safe_write_bytes(path: Path, produce: Callable[[], bytes]) -> None:
     try:
         path.write_bytes(produce())
     except Exception as exc:  # noqa: BLE001 — capture is best-effort by design
-        try:
-            path.with_suffix(path.suffix + ".error.txt").write_text(
-                f"{type(exc).__name__}: {exc}", encoding="utf-8"
-            )
-        except OSError:
-            pass
+        _record_probe_error(path, exc)
 
 
 def _capture_screenshot_png(driver: Any) -> bytes:
