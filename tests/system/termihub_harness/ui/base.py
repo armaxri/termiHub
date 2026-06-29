@@ -35,3 +35,11 @@ class HarnessMixin:
             interval: float = ...,
             what: str = ...,
         ) -> _T: ...
+
+    def is_disabled(self, test_id: str) -> bool:
+        """Whether a control is disabled.
+
+        React reflects a truthy ``disabled`` prop to the attribute (present → an
+        empty string, absent → ``None``), so a non-``None`` value means disabled.
+        """
+        return self.driver.get_attribute(test_id, "disabled") is not None
