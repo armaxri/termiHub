@@ -24,6 +24,7 @@ import {
   RemoteAgentDefinition,
   AgentSettings,
   DEFAULT_AGENT_SETTINGS,
+  JumpHostConfig,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
@@ -38,6 +39,8 @@ import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
+import { JumpHostSection } from "./JumpHostSection";
+import { validateProxyJump } from "@/utils/validateProxyJump";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -280,6 +283,34 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     (!!existingAgent || (selectedType === "remote" && !existingConnection));
   /** Either agent mode (used for shared behavior like hiding Terminal/Appearance). */
   const isAnyAgentMode = isAgentTransportMode || isAgentDefinitionMode;
+
+  /** Whether the SSH "Jump Host" section applies to the current edit. */
+  const showJumpHostSection = selectedType === "ssh" && !isAnyAgentMode;
+
+  // The schema-driven form only tracks its own fields, so its onChange would drop
+  // sibling keys like `proxyJump` (managed by JumpHostSection). Re-merge it.
+  const handleSchemaSettingsChange = useCallback((values: Record<string, unknown>) => {
+    setConnSettings((prev) =>
+      prev.proxyJump !== undefined ? { ...values, proxyJump: prev.proxyJump } : values
+    );
+  }, []);
+
+  const handleJumpHostChange = useCallback((hops: JumpHostConfig[] | undefined) => {
+    setConnSettings((prev) => {
+      if (hops && hops.length > 0) return { ...prev, proxyJump: hops };
+      const { proxyJump: _omit, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+
+  /** Jump-host chain validation (errors block save; warnings are advisory). */
+  const jumpHostValidation = useMemo(
+    () =>
+      showJumpHostSection
+        ? validateProxyJump((connSettings.proxyJump as JumpHostConfig[] | undefined) ?? [])
+        : { errors: [], warnings: [] },
+    [showJumpHostSection, connSettings.proxyJump]
+  );
 
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(
     existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS
@@ -549,6 +580,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const saveConnection = useCallback((): SavedConnection | RemoteAgentDefinition | null => {
     if (!name.trim()) return null;
     if (nameError) return null;
+    if (jumpHostValidation.errors.length > 0) return null;
 
     if (isAgentTransportMode) {
       const agentConfig = connSettings as unknown as RemoteAgentConfig;
@@ -613,6 +645,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }, [
     name,
     nameError,
+    jumpHostValidation,
     connSettings,
     selectedType,
     agentSettings,
@@ -913,13 +946,23 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <ConnectionSettingsForm
           schema={currentSchema}
           settings={connSettings}
-          onChange={setConnSettings}
+          onChange={handleSchemaSettingsChange}
           credentialSavedHint={credentialSavedHint}
           availablePorts={
             isAgentDefinitionMode
               ? (existingAgent?.capabilities?.availableSerialPorts ?? [])
               : undefined
           }
+        />
+      )}
+
+      {showJumpHostSection && (
+        <JumpHostSection
+          value={connSettings.proxyJump as JumpHostConfig[] | undefined}
+          targetHost={connSettings.host as string | undefined}
+          onChange={handleJumpHostChange}
+          errors={jumpHostValidation.errors}
+          warnings={jumpHostValidation.warnings}
         />
       )}
 

@@ -82,6 +82,65 @@ async fn ssh_jump_01_two_hop_proxy_jump() {
         .expect("SSH-JUMP-01: Direct-tcpip channel to target should succeed");
 }
 
+// ── SSH-JUMP-02: multi-hop (2-hop) ProxyJump chain ───────────────────
+
+/// Exercise the N-hop chain in `connect_through_jump_hosts` end-to-end. There is
+/// only one bastion fixture, so the second hop re-enters the bastion via its
+/// docker-network name (`termihub-ssh-bastion:22`) before the final hop to the
+/// target — `127.0.0.1:2204` → `termihub-ssh-bastion:22` → `termihub-ssh-target:22`.
+/// This drives the full loop (direct first hop, then two channel-tunnelled hops)
+/// without needing a second internal bastion container.
+#[tokio::test]
+async fn ssh_jump_02_multi_hop_proxy_jump() {
+    require_docker!(PORT_SSH_BASTION);
+
+    let key = ssh_keys_dir().join("ed25519");
+    let key = key.to_str().expect("key path is valid UTF-8").to_string();
+
+    let inline_hop = |host: &str, port: u16| JumpHostConfig {
+        host: host.to_string(),
+        port,
+        username: "testuser".to_string(),
+        auth_method: "key".to_string(),
+        key_path: Some(key.clone()),
+        ..Default::default()
+    };
+
+    let target = SshConfig {
+        host: "termihub-ssh-target".to_string(),
+        port: 22,
+        username: "testuser".to_string(),
+        auth_method: "key".to_string(),
+        key_path: Some(key.clone()),
+        // Outermost → innermost: enter the bastion from the host, hop to the
+        // bastion again over the docker network, then on to the target.
+        proxy_jump: vec![
+            inline_hop("127.0.0.1", PORT_SSH_BASTION),
+            inline_hop("termihub-ssh-bastion", 22),
+        ],
+        ..Default::default()
+    };
+
+    let conn = connect_through_jump_hosts(&target)
+        .await
+        .expect("SSH-JUMP-02: 2-hop jump-host connection should succeed");
+
+    // One intermediate session per hop is retained to hold the chain open.
+    assert_eq!(
+        conn.intermediates.len(),
+        2,
+        "SSH-JUMP-02: expected two retained intermediate hop sessions"
+    );
+
+    let output = ssh_exec(&conn.session, "cat /home/testuser/marker.txt")
+        .await
+        .expect("SSH-JUMP-02: exec on target via 2-hop chain should succeed");
+    assert!(
+        output.contains("JUMPHOST_TARGET_REACHED"),
+        "SSH-JUMP-02: Expected marker 'JUMPHOST_TARGET_REACHED', got: {output}"
+    );
+}
+
 // ── SSH-SHELL-01: Restricted shell (rbash) ───────────────────────────
 
 #[tokio::test]

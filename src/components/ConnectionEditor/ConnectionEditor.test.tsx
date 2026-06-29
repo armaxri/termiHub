@@ -1070,3 +1070,131 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     expect(nameErrorText()).toMatch(/definition with this name already exists/i);
   });
 });
+
+describe("ConnectionEditor — SSH Jump Host section", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  function query(testId: string): HTMLElement | null {
+    return container.querySelector(`[data-testid="${testId}"]`);
+  }
+
+  function setValue(el: HTMLInputElement | HTMLSelectElement, value: string, event = "input") {
+    const proto =
+      el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    act(() => {
+      setter?.call(el, value);
+      el.dispatchEvent(new Event(event, { bubbles: true }));
+    });
+  }
+
+  const flush = () =>
+    act(async () => {
+      await Promise.resolve();
+    });
+
+  function renderFor(connId: string) {
+    act(() => {
+      root.render(
+        <ConnectionEditor
+          tabId="tab-jh-1"
+          meta={{ connectionId: connId, folderId: null }}
+          isVisible={true}
+        />
+      );
+    });
+  }
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD], folders: [] });
+      return Promise.resolve(null);
+    });
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [SSH_CONN_PASSWORD],
+      connectionTypes: [SSH_TYPE_FULL],
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  it("renders the Jump Host section for an SSH connection", () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    expect(query("jump-host-section")).toBeTruthy();
+    expect((query("jump-host-enabled") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("persists an inline jump host through save, surviving a later schema-field edit", async () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    await flush();
+
+    // Enable the jump host and fill its required fields (host + username, so
+    // validation passes and save is not blocked).
+    act(() => {
+      (query("jump-host-enabled") as HTMLInputElement).click();
+    });
+    setValue(query("jump-host-host-0") as HTMLInputElement, "bastion.example.com");
+    setValue(query("jump-host-username-0") as HTMLInputElement, "jumper");
+    await flush();
+
+    // Toggle a schema field afterwards — this fires the schema form's onChange,
+    // which must NOT drop the sibling proxyJump key.
+    act(() => {
+      (query("field-savePassword") as HTMLInputElement).click();
+    });
+    await flush();
+
+    act(() => {
+      (query("connection-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // Assert on the persisted payload (the post-save reload overwrites the store).
+    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
+    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const cfg = persisted.config.config as Record<string, unknown>;
+    // The schema edit landed...
+    expect(cfg.savePassword).toBe(false);
+    // ...and the jump host configured before it survived the schema onChange.
+    expect(cfg.proxyJump).toEqual([
+      { host: "bastion.example.com", port: 22, username: "jumper", authMethod: "key" },
+    ]);
+  });
+
+  it("blocks save while a jump host is missing required fields", async () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    await flush();
+
+    // Enable the jump host but leave host/username empty → invalid.
+    act(() => {
+      (query("jump-host-enabled") as HTMLInputElement).click();
+    });
+    await flush();
+
+    expect(query("jump-host-errors")).toBeTruthy();
+
+    act(() => {
+      (query("connection-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // Save was prevented: no save_connection invoke.
+    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
+    expect(saveCall).toBeUndefined();
+  });
+});

@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**426** literal · **117** dynamic · **3** indirect.
+**432** literal · **119** dynamic · **8** indirect.
 
 ## Literal test IDs
 
@@ -187,6 +187,12 @@ Fixed strings — match exactly.
 | `inline-folder-cancel` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-confirm` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-name-input` | `src/components/Sidebar/InlineFolderInput.tsx` |
+| `jump-host-add-hop` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-enabled` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-errors` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-path` | `src/components/ConnectionEditor/JumpHostPathDisplay.tsx` |
+| `jump-host-section` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-warning` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `keyboard-settings-conflict` | `src/components/Settings/KeyboardSettings.tsx` |
 | `keyboard-settings-editor-delegation` | `src/components/Settings/KeyboardSettings.tsx` |
 | `keyboard-settings-editor-delegation-label` | `src/components/Settings/KeyboardSettings.tsx` |
@@ -512,6 +518,8 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `icon-picker-cell-*` | `icon-picker-cell-${entry.name}` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
 | `indent-spaces-*` | `indent-spaces-${size}` | `src/components/StatusBar/StatusBar.tsx` |
 | `indent-tabs-*` | `indent-tabs-${size}` | `src/components/StatusBar/StatusBar.tsx` |
+| `jump-host-card-*` | `jump-host-card-${i}` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-remove-*` | `jump-host-remove-${i}` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `keybinding-binding-*` | `keybinding-binding-${binding.action}` | `src/components/Settings/KeyboardSettings.tsx` |
 | `keybinding-reset-*` | `keybinding-reset-${binding.action}` | `src/components/Settings/KeyboardSettings.tsx` |
 | `keybinding-row-*` | `keybinding-row-${binding.action}` | `src/components/Settings/KeyboardSettings.tsx` |
@@ -579,3 +587,8 @@ where the component is used, not at the `data-testid` site.
 | `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
+| `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("host")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("password")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("port")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("username")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
