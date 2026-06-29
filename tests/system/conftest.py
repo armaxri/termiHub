@@ -1,11 +1,20 @@
 """Shared pytest fixtures and CLI options for the system-test harness."""
 
+import datetime
+import sys
+
 import pytest
 
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     sanitize_nodeid,
     write_failure_artifacts,
+)
+from termihub_harness.manual import (
+    ManualSession,
+    detect_platform,
+    manual_skip_reason,
+    write_manual_report,
 )
 
 from termihub_harness import (
@@ -43,6 +52,78 @@ def pytest_addoption(parser):
         help="Enable SystemTest.delay4user() sleeps for human watch-along. "
         "Skipped entirely without the flag.",
     )
+    parser.addoption(
+        "--manual",
+        action="store_true",
+        default=False,
+        help="Run @pytest.mark.manual guided tests interactively (needs a TTY). "
+        "Without it they skip, so CI / AI-agent / normal runs stay green.",
+    )
+    parser.addoption(
+        "--manual-platform",
+        action="store",
+        default=None,
+        metavar="OS",
+        help="Override the platform used to select platform-scoped manual tests "
+        "(macos / linux / windows). Defaults to the host platform.",
+    )
+
+
+# ── Guided-manual mode (issue #914) ──────────────────────────────────────────
+def pytest_configure(config):
+    """Register the ``manual`` marker and start the per-run report collector."""
+    config.addinivalue_line(
+        "markers",
+        "manual: guided-manual test — automated setup then an operator prompt. "
+        "Skipped unless --manual is passed with an interactive TTY.",
+    )
+    config._manual_session = ManualSession()
+    config._manual_started = datetime.datetime.now(datetime.timezone.utc)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip ``manual`` tests unless ``--manual`` + a TTY + the platform all match.
+
+    Done at collection time (not in a fixture) so a skipped guided test never
+    pays the cost of launching the real app — the skip marker is evaluated before
+    any class-scoped app fixture runs. A test scopes itself to platforms via the
+    marker, e.g. ``@pytest.mark.manual(platforms=["macos", "windows"])``; omitting
+    ``platforms`` runs it everywhere.
+    """
+    enabled = bool(config.getoption("manual"))
+    interactive = sys.stdin.isatty()
+    selected = config.getoption("manual_platform") or detect_platform()
+    config._manual_platform = selected  # reused by pytest_sessionfinish
+    for item in items:
+        marker = item.get_closest_marker("manual")
+        if marker is None:
+            continue
+        reason = manual_skip_reason(
+            enabled=enabled,
+            interactive=interactive,
+            selected_platform=selected,
+            platforms=marker.kwargs.get("platforms"),
+        )
+        if reason:
+            item.add_marker(pytest.mark.skip(reason=reason))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Flush the guided-manual report to ``tests/reports/`` if any prompt ran."""
+    config = session.config
+    collector = getattr(config, "_manual_session", None)
+    if collector is None or not collector.records:
+        return
+    # ARTIFACT_ROOT is tests/system/artifacts; reports live at tests/reports.
+    path = write_manual_report(
+        collector.records,
+        ARTIFACT_ROOT.parents[1] / "reports",
+        started_at=config._manual_started,
+        completed_at=datetime.datetime.now(datetime.timezone.utc),
+        selected_platform=getattr(config, "_manual_platform", None) or detect_platform(),
+    )
+    if path is not None:
+        print(f"\n[manual] wrote guided-manual report to {path}")
 
 
 @pytest.fixture

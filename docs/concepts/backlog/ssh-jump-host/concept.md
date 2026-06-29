@@ -1,6 +1,7 @@
 # First-Class SSH Jump Host / Gateway in Connection Editor
 
-**GitHub Issue:** [#520](https://github.com/armaxri/termiHub/issues/520)
+**GitHub Issues:** [#520](https://github.com/armaxri/termiHub/issues/520) (original gateway/UI concept),
+[#872](https://github.com/armaxri/termiHub/issues/872) (ProxyJump connect path + `SSH-JUMP-01` test conversion)
 
 > **Folder-form concept** (AI-driven concept workflow). Visual surfaces live in
 > [`mockups/`](mockups/), behavior diagrams in [`behavior.md`](behavior.md), and the
@@ -157,7 +158,10 @@ When a jump host connection drops mid-session:
 
 #### Core Config Extension (`core/src/config/mod.rs`)
 
-Add jump host configuration to `SshConfig`:
+`SshConfig` (currently at `core/src/config/mod.rs:230`) has **no** jump/proxy/bastion field today —
+its fields are `host`, `port`, `username`, `auth_method`, `password`, `key_path`, `shell`, `cols`,
+`rows`, `env`, `enable_x11_forwarding`, `enable_monitoring`, `enable_file_browser`, `save_password`,
+`connect_timeout_secs`. Add jump host configuration:
 
 ```rust
 /// Configuration for a single jump host hop.
@@ -179,52 +183,95 @@ pub struct JumpHostConfig {
 // Add to SshConfig:
 pub struct SshConfig {
     // ... existing fields ...
-    /// Optional jump host chain (ordered outermost to innermost).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub jump_hosts: Vec<JumpHostConfig>,
+    /// Optional jump host chain (ordered outermost to innermost), OpenSSH `-J` / `ProxyJump` style.
+    #[serde(default, alias = "jumpHosts", skip_serializing_if = "Vec::is_empty")]
+    pub proxy_jump: Vec<JumpHostConfig>,
 }
 ```
 
-The `expand()` method on `SshConfig` should also expand environment variables in inline jump host fields.
+> **Naming decision (#872):** The field is named **`proxy_jump`** (serialized `proxyJump`) to match
+> OpenSSH's `ProxyJump` / `-J` directive, which is the term most SSH users already know. A serde
+> `alias = "jumpHosts"` keeps the UI-facing label "Jump Host" working and tolerates the earlier
+> draft name. The chain is ordered outermost→innermost (`-J edge,bastion` ⇒
+> `[edge, bastion]`), exactly like `ssh -J`.
+
+The `expand()` method on `SshConfig` (`core/src/config/mod.rs:388`) currently expands `${VAR}`/`~`
+in `host`, `username`, `key_path`, and `password`. It must also expand those placeholders in each
+inline `JumpHostConfig` hop's `host`, `username`, `key_path`, and `password`.
 
 #### SSH Backend Modification (`core/src/backends/ssh/`)
 
-Add a new module `core/src/backends/ssh/jump_host.rs` to handle jump host connection logic:
+> **Stack reality:** termiHub's SSH stack is **`russh 0.61`** (async, pure-Rust), _not_ the
+> `ssh2`/libssh2 bindings. `SshSession` is `russh::client::Handle<TermiHubHandler>`
+> (`core/src/backends/ssh/handler.rs`). This makes session-over-channel a **solved, already-used
+> pattern** rather than a risk — see below.
+
+The connect path already in the tree is `do_connect_and_authenticate()`
+(`core/src/backends/ssh/auth.rs:76`), which:
+
+1. opens a `tokio::net::TcpStream::connect(addr)` (auth.rs:83),
+2. hands it to `russh::client::connect_stream(russh_config, tokio_tcp, handler)` (auth.rs:113), then
+3. calls `authenticate(&mut session, config)` (auth.rs:117) — `agent`, `key` (with legacy-PEM-EC
+   fallback), or `password`.
+
+The **only** difference for a jump hop is _what stream_ step 2 runs over. russh's `connect_stream`
+accepts any `AsyncRead + AsyncWrite + Unpin` — and a forwarded channel already exposes exactly that
+via `channel.into_stream()`, the same call SFTP, X11, and every tunnel forwarder already use
+(`auth.rs:113`, `files/sftp.rs:43`, `tunnel/local_forward.rs:150`, `tunnel/dynamic_forward.rs:186`,
+`tunnel/remote_forward.rs:122`).
+
+Refactor `do_connect_and_authenticate` so the transport is injectable, then add a channel variant —
+no new crate, no custom `Read+Write` adapter:
+
+```rust
+/// Establish + authenticate a russh session over an existing forwarded channel
+/// (opened with `channel_open_direct_tcpip` on the previous hop).
+pub async fn connect_and_authenticate_over_channel(
+    config: &SshConfig,
+    channel: russh::Channel<russh::client::Msg>,
+) -> Result<SshSession, SessionError> {
+    let russh_config = build_client_config(config);
+    let handler = TermiHubHandler::new(/* host key policy */);
+    // channel.into_stream(): AsyncRead + AsyncWrite + Unpin — exactly what connect_stream wants.
+    let mut session =
+        russh::client::connect_stream(russh_config, channel.into_stream(), handler).await?;
+    authenticate(&mut session, config).await?;
+    Ok(session)
+}
+```
+
+Add a new module `core/src/backends/ssh/jump_host.rs` that walks the chain:
 
 ```rust
 /// Establish an SSH session through a chain of jump hosts.
-///
-/// Returns the authenticated session on the final target host.
-pub fn connect_through_jump_hosts(
-    hops: &[ResolvedJumpHost],
-    target_config: &SshConfig,
-) -> Result<ssh2::Session, SessionError> {
-    // 1. Connect to the first hop directly via TCP
-    // 2. For each subsequent hop, open a direct-tcpip channel
-    //    and establish an SSH session over it
-    // 3. On the final hop, open a direct-tcpip channel to the target
-    // 4. Establish the target SSH session over that channel
+/// Returns the authenticated russh session on the final target host.
+pub async fn connect_through_jump_hosts(
+    hops: &[ResolvedJumpHost], // ordered outermost → innermost
+    target: &SshConfig,
+) -> Result<SshSession, SessionError> {
+    // 1. First hop: ordinary TCP connect + auth (reuse do_connect_and_authenticate).
+    let mut session = do_connect_and_authenticate(&hops[0].config).await?;
+
+    // 2. Each subsequent hop: open a direct-tcpip channel on the *current* session to the
+    //    next hop's host:port, then handshake/auth the next session over that channel.
+    for next in &hops[1..] {
+        let channel = session
+            .channel_open_direct_tcpip(&next.config.host, next.config.port as u32, "localhost", 0)
+            .await?;
+        session = connect_and_authenticate_over_channel(&next.config, channel).await?;
+    }
+
+    // 3. Final hop → target: direct-tcpip to the target, then auth the target session over it.
+    let channel = session
+        .channel_open_direct_tcpip(&target.host, target.port as u32, "localhost", 0)
+        .await?;
+    connect_and_authenticate_over_channel(target, channel).await
 }
 ```
 
-The `connect_and_authenticate` function in `auth.rs` currently creates a `TcpStream` directly. For jump host support, a new variant is needed that accepts a pre-established channel (from `direct_tcpip`) instead of opening a new TCP connection:
-
-```rust
-/// Connect and authenticate over an existing forwarded channel.
-pub fn connect_and_authenticate_over_channel(
-    config: &SshConfig,
-    channel: ssh2::Channel,
-) -> Result<ssh2::Session, SessionError> {
-    let mut session = ssh2::Session::new()?;
-    // The ssh2 crate's Session::set_tcp_stream() accepts any Read+Write.
-    // A Channel implements Read+Write, so it can be used as the transport.
-    session.set_tcp_stream(channel);
-    session.handshake()?;
-    // ... authenticate as before ...
-}
-```
-
-> **Note**: The `ssh2` crate's `Session::set_tcp_stream` accepts a generic `TcpStream`, not a `Channel` directly. The implementation may need to wrap the channel in a custom adapter that implements `Read + Write`, or use the lower-level `libssh2` API for session-over-channel. This is a key technical risk to investigate during implementation.
+`channel_open_direct_tcpip` is the **identical primitive** the tunnel forwarders already call
+(`tunnel/local_forward.rs:140`, `tunnel/dynamic_forward.rs:168`), so the building block is proven in
+production code — this feature reuses it for the terminal connect path instead of duplicating it.
 
 #### Session Pool Extension (`src-tauri/src/tunnel/session_pool.rs`)
 
@@ -236,11 +283,13 @@ The existing `SshSessionPool` already supports reference-counted session sharing
 
 ```rust
 /// Extended pool entry to track jump host intermediates.
+/// (`SshSession` = `Arc<russh::client::Handle<TermiHubHandler>>`, the same handle type the
+/// tunnel forwarders already pool — russh handles are cheaply cloneable and internally synced.)
 struct PooledSession {
-    session: Arc<Mutex<Session>>,
+    session: SshSession,
     ref_count: usize,
     /// Sessions for intermediate hops (if this is a multi-hop chain).
-    intermediate_sessions: Vec<Arc<Mutex<Session>>>,
+    intermediate_sessions: Vec<SshSession>,
 }
 ```
 
@@ -252,15 +301,16 @@ struct PooledSession {
 
 #### New and Modified Files
 
-| File                                   | Change                                                                |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| `core/src/config/mod.rs`               | **Modify** — Add `JumpHostConfig` struct, `jump_hosts` to `SshConfig` |
-| `core/src/backends/ssh/jump_host.rs`   | **New** — Jump host connection logic, channel-based auth              |
-| `core/src/backends/ssh/mod.rs`         | **Modify** — Use jump host logic when `jump_hosts` is non-empty       |
-| `core/src/backends/ssh/auth.rs`        | **Modify** — Add `connect_and_authenticate_over_channel`              |
-| `src-tauri/src/tunnel/session_pool.rs` | **Modify** — Extend for shared use, intermediate session tracking     |
-| `src-tauri/src/connection/manager.rs`  | **Modify** — Add chain resolution, deletion protection                |
-| `src-tauri/src/connection/config.rs`   | **Modify** — Validate jump host config on save                        |
+| File                                   | Change                                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `core/src/config/mod.rs`               | **Modify** — Add `JumpHostConfig` struct + `proxy_jump` to `SshConfig`; expand inline hops                      |
+| `core/src/backends/ssh/jump_host.rs`   | **New** — `connect_through_jump_hosts` (russh chain over `channel_open_direct_tcpip`)                           |
+| `core/src/backends/ssh/mod.rs`         | **Modify** — Use jump host logic when `proxy_jump` is non-empty                                                 |
+| `core/src/backends/ssh/auth.rs`        | **Modify** — Factor transport out of `do_connect_and_authenticate`; add `connect_and_authenticate_over_channel` |
+| `src-tauri/src/tunnel/session_pool.rs` | **Modify** — Extend for shared use, intermediate session tracking                                               |
+| `src-tauri/src/connection/manager.rs`  | **Modify** — Add chain resolution, deletion protection                                                          |
+| `src-tauri/src/connection/config.rs`   | **Modify** — Validate jump host config on save                                                                  |
+| `core/tests/ssh_advanced.rs`           | **Modify** — Convert `SSH-JUMP-01` to drive `connect_through_jump_hosts` end-to-end (see below)                 |
 
 ### Frontend (React/TypeScript)
 
@@ -386,9 +436,44 @@ For inline jump hosts:
 
 Inline jump host passwords follow the same credential store flow as regular SSH passwords — stored via the active credential store when `savePassword` is true.
 
+### Testing — `SSH-JUMP-01` Conversion (#872)
+
+The integration fixtures already exist and are wired for a real 2-hop jump:
+
+- **Docker fixtures** (`tests/docker/docker-compose.yml`): `ssh-jumphost-bastion`
+  (`termihub-ssh-bastion`, published on `127.0.0.1:2204`, on both `test-net` and `jumphost-net`) and
+  `ssh-jumphost-target` (`termihub-ssh-target`, **no host port**, only on the isolated
+  `jumphost-net`). The target is deliberately unreachable except _through_ the bastion — the exact
+  topology a ProxyJump must traverse.
+- **Current test** `ssh_jump_01_two_hop_proxy_jump` (`core/tests/ssh_advanced.rs:23`) proves only the
+  building blocks: it (a) shells out to the system `ssh` binary _on the bastion_ to confirm the
+  target is reachable, and (b) calls the raw `channel_open_direct_tcpip("termihub-ssh-target", 22,
+…)` primitive. Neither path goes through a termiHub jump connection a user could configure.
+
+**Conversion plan:** rewrite (or add a sibling to) `SSH-JUMP-01` so it drives termiHub's own
+`connect_through_jump_hosts` end-to-end:
+
+1. Build an `SshConfig` for the **target** (`termihub-ssh-target:22`) carrying a one-hop
+   `proxy_jump` chain whose inline `JumpHostConfig` points at the **bastion**
+   (`127.0.0.1:2204`, ed25519 key).
+2. Call `connect_through_jump_hosts(&hops, &target)` and assert it returns an authenticated session
+   **on the target** — something only reachable via the bastion, so success proves the hop actually
+   forwarded.
+3. Open a shell/exec channel on the returned session and assert it reads the target's
+   `marker.txt`, replacing the `ssh`-shell-out reachability check.
+4. Keep the raw `channel_open_direct_tcpip` assertion as a lower-level regression guard.
+
+This converts the test from "the primitive works" to "a user-configurable termiHub jump connection
+works", closing the gap #872 identifies. The test is gated behind the same Docker-fixtures feature
+flag as the rest of `ssh_advanced.rs`.
+
 ### Implementation Phases
 
-1. **Phase 1 — Core backend**: Add `JumpHostConfig` to `SshConfig`. Implement `connect_through_jump_hosts` for single-hop. Extend `connect_and_authenticate` to work over forwarded channels. Unit test with mock sessions.
+1. **Phase 1 — Core backend**: Add `JumpHostConfig` + `proxy_jump` to `SshConfig`. Factor the
+   transport out of `do_connect_and_authenticate` and add `connect_and_authenticate_over_channel`
+   (russh `connect_stream` over `channel.into_stream()`). Implement `connect_through_jump_hosts` for
+   single-hop. Convert `SSH-JUMP-01` (`core/tests/ssh_advanced.rs`) to drive it end-to-end through
+   the bastion/target Docker fixtures (see Testing above).
 
 2. **Phase 2 — Connection editor UI**: Add `JumpHostSection` component. Implement saved-connection dropdown and inline config mode. Wire to existing save/load paths.
 
@@ -400,12 +485,12 @@ Inline jump host passwords follow the same credential store flow as regular SSH 
 
 ### Technical Risks
 
-| Risk                                                | Mitigation                                                                                           |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `ssh2` crate may not support session-over-channel   | Investigate during Phase 1. Fallback: use `russh` crate which natively supports channel transports.  |
-| Pooled jump host session becomes stale              | Add keepalive pings to pooled sessions. Detect disconnection and trigger reconnection for all users. |
-| Credential prompting for multiple hops is confusing | Show clear hop labels in password dialogs: "Password for hop 1 (bastion.example.com)"                |
-| Performance with deep chains                        | Cap default at 5 hops with warning. Each hop adds ~100ms latency for handshake.                      |
+| Risk                                                | Mitigation                                                                                                                                                                                                            |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session-over-channel transport                      | **Resolved by stack** — russh's `connect_stream` accepts the `AsyncRead+AsyncWrite` from `channel.into_stream()`; already used by SFTP/X11/tunnels (`auth.rs:113`, `local_forward.rs:150`). No custom adapter needed. |
+| Pooled jump host session becomes stale              | Add keepalive pings to pooled sessions. Detect disconnection and trigger reconnection for all users.                                                                                                                  |
+| Credential prompting for multiple hops is confusing | Show clear hop labels in password dialogs: "Password for hop 1 (bastion.example.com)"                                                                                                                                 |
+| Performance with deep chains                        | Cap default at 5 hops with warning. Each hop adds ~100ms latency for handshake.                                                                                                                                       |
 
 ---
 

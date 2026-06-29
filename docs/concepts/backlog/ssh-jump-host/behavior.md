@@ -62,7 +62,7 @@ sequenceDiagram
     CM->>SSH1: Connect & authenticate to jump host
 
     Note over CM,SSH2: Hop 2: Target Host
-    CM->>SSH1: direct_tcpip(targetHost, targetPort)
+    CM->>SSH1: channel_open_direct_tcpip(targetHost, targetPort)
     SSH1-->>CM: Forwarded channel
     CM->>CS: getCredential(targetId)
     alt Password saved
@@ -188,7 +188,7 @@ sequenceDiagram
     end
 
     Note over CM,TGT: Phase 2: Channel Forwarding
-    CM->>JH: session.channel_direct_tcpip("app-server", 22)
+    CM->>JH: session.channel_open_direct_tcpip("app-server", 22)
     JH-->>CM: Forwarded TCP channel
 
     Note over CM,TGT: Phase 3: Target Authentication
@@ -218,13 +218,13 @@ sequenceDiagram
     H1-->>CM: Authenticated session
 
     Note over CM,H2: Hop 2: Forward to bastion through edge
-    CM->>H1: channel_direct_tcpip("bastion", 22)
+    CM->>H1: channel_open_direct_tcpip("bastion", 22)
     H1-->>CM: Forwarded channel to bastion
     CM->>H2: SSH handshake + auth over channel
     H2-->>CM: Authenticated session on bastion
 
     Note over CM,TGT: Final: Forward to target through bastion
-    CM->>H2: channel_direct_tcpip("db-server", 22)
+    CM->>H2: channel_open_direct_tcpip("db-server", 22)
     H2-->>CM: Forwarded channel to target
     CM->>TGT: SSH handshake + auth over channel
     TGT-->>CM: Authenticated session on target

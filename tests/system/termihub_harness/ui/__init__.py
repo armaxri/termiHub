@@ -22,6 +22,7 @@ Mixin → concern:
 - :class:`FilesUi`           — the local file browser (path, rows, create, navigate)
 - :class:`EditorUi`          — the Monaco file editor + status-bar controls
 - :class:`SettingsUi`        — the Settings editor
+- :class:`ManualUi`          — operator prompts for guided-manual tests (#914)
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
 testid helpers) stay functions so they remain unit-testable without an app.
@@ -34,6 +35,7 @@ from .credential_store import CredentialStoreUi
 from .editor import EditorUi
 from .files import FilesUi, file_row_testid
 from .layout import LayoutUi
+from .manual import ManualUi
 from .lookups import (
     connection_item_testid,
     connections,
@@ -67,6 +69,7 @@ __all__ = [
     "FilesUi",
     "EditorUi",
     "SettingsUi",
+    "ManualUi",
     "ShellFsUi",
     "connections",
     "find_connection",
