@@ -778,6 +778,13 @@ A guided test is marked `@pytest.mark.manual` and mixes in `ManualUi`, whose ver
 
 At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes, platform, timestamps) is written to [`tests/reports/`](../tests/reports/). See the worked examples in [`tests/system/tests/test_manual_examples.py`](../tests/system/tests/test_manual_examples.py) and the harness [README](../tests/system/README.md#guided-manual-tests---manual).
 
+Migrated guided-manual suites so far:
+
+| Suite                                                                      | Covers (manual IDs)               | The human step                                                                                                      |
+| -------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py) | worked examples (visual / dialog) | eyeball colors / drive a save dialog / yes-no                                                                       |
+| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)   | MT-CONN-08/09/17, MT-TAB-08       | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store automatically |
+
 New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
 
 ### Legacy Guided Manual Test Runner (YAML)
