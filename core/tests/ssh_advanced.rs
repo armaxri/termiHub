@@ -12,46 +12,70 @@
 mod common;
 
 use common::{
-    require_docker, ssh_exec, ssh_key_config, ssh_password_config, PORT_SSH_BASTION,
+    require_docker, ssh_exec, ssh_key_config, ssh_keys_dir, ssh_password_config, PORT_SSH_BASTION,
     PORT_SSH_RESTRICTED, PORT_SSH_TUNNEL,
 };
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
+use termihub_core::backends::ssh::jump_host::connect_through_jump_hosts;
+use termihub_core::config::{JumpHostConfig, SshConfig};
 
-// ── SSH-JUMP-01: 2-hop ProxyJump chain ───────────────────────────────
+// ── SSH-JUMP-01: ProxyJump through a bastion to an internal target ─────
 
+/// Drive termiHub's own jump-host connect path end-to-end: connect to the
+/// internal target (`termihub-ssh-target`, reachable *only* via the bastion on
+/// the isolated `jumphost-net`) by configuring a one-hop `proxy_jump` chain
+/// through the bastion (published on port 2204). A successful, authenticated
+/// session on the target — which has no host port — proves the hop forwarded
+/// the SSH handshake correctly, replacing the earlier `ssh`-shell-out
+/// reachability check (#872).
 #[tokio::test]
 async fn ssh_jump_01_two_hop_proxy_jump() {
     require_docker!(PORT_SSH_BASTION);
 
-    // Step 1: Connect to the bastion host.
-    let bastion_config = ssh_key_config(PORT_SSH_BASTION, "ed25519");
-    let (bastion_session, _) = connect_and_authenticate(&bastion_config)
+    let key = ssh_keys_dir().join("ed25519");
+    let key = key.to_str().expect("key path is valid UTF-8").to_string();
+
+    // Target on jumphost-net, reached via a single ProxyJump hop (the bastion).
+    let target = SshConfig {
+        host: "termihub-ssh-target".to_string(),
+        port: 22,
+        username: "testuser".to_string(),
+        auth_method: "key".to_string(),
+        key_path: Some(key.clone()),
+        proxy_jump: vec![JumpHostConfig {
+            host: "127.0.0.1".to_string(),
+            port: PORT_SSH_BASTION,
+            username: "testuser".to_string(),
+            auth_method: "key".to_string(),
+            key_path: Some(key),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    // Step 1: Connect to the target *through* the jump host using termiHub's
+    // own ProxyJump implementation.
+    let conn = connect_through_jump_hosts(&target)
         .await
-        .expect("SSH-JUMP-01: Bastion connection should succeed");
+        .expect("SSH-JUMP-01: jump-host connection to target should succeed");
 
-    // Step 2: Verify the bastion can reach the internal target by executing an
-    // SSH command through the bastion to the target — exercising the same
-    // network path a ProxyJump connection would use. This is a fixture-level
-    // reachability check, not a test of a termiHub jump-host feature: the SSH
-    // backend has no first-class ProxyJump config yet (tracked separately); the
-    // raw `channel_open_direct_tcpip` primitive it would build on is checked in
-    // step 3.
-    let output = ssh_exec(
-        &bastion_session,
-        "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-         -i /home/testuser/.ssh/ed25519 \
-         testuser@termihub-ssh-target 'cat /home/testuser/marker.txt'",
-    )
-    .await
-    .expect("SSH-JUMP-01: SSH through bastion to target should succeed");
-
+    // Step 2: Read the target's marker over the jumped session. The target is
+    // unreachable except through the bastion, so reading it confirms the chain
+    // landed on the right host.
+    let output = ssh_exec(&conn.session, "cat /home/testuser/marker.txt")
+        .await
+        .expect("SSH-JUMP-01: exec on target via jump host should succeed");
     assert!(
         output.contains("JUMPHOST_TARGET_REACHED"),
         "SSH-JUMP-01: Expected marker 'JUMPHOST_TARGET_REACHED', got: {output}"
     );
 
-    // Step 3: Also verify direct-tcpip channel creation works
-    // (this is the underlying mechanism for ProxyJump).
+    // Step 3: Low-level regression guard — the `channel_open_direct_tcpip`
+    // primitive the jump path is built on still works directly on the bastion.
+    let bastion_config = ssh_key_config(PORT_SSH_BASTION, "ed25519");
+    let (bastion_session, _) = connect_and_authenticate(&bastion_config)
+        .await
+        .expect("SSH-JUMP-01: Bastion connection should succeed");
     let _channel = bastion_session
         .channel_open_direct_tcpip("termihub-ssh-target", 22, "localhost", 0)
         .await
