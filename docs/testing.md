@@ -762,9 +762,27 @@ E2E test coverage: **10 WebdriverIO files** (6 in `tests/e2e/`, 4 in `tests/e2e/
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
-### Guided Manual Test Runner
+### Guided-Manual Tests in the Python Harness (preferred)
 
-All manual test items are defined as machine-readable YAML in [`tests/manual/*.yaml`](../tests/manual/). The **guided test runner** presents applicable tests one at a time, manages infrastructure, and generates a JSON report:
+Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
+
+A guided test is marked `@pytest.mark.manual` and mixes in `ManualUi`, whose verbs (`manual_step`, `manual_confirm`, `manual_observe`) print the instruction + expected result and record pass/fail/skip.
+
+```bash
+# From tests/system/. Without --manual (or with no interactive TTY) these
+# tests SKIP, so CI / AI-agent / normal runs stay green:
+./pytest.sh -m manual                         # lists/skips manual tests
+./pytest.sh --manual -k native_dialog -s      # walk an operator through one test
+./pytest.sh --manual --manual-platform=windows -s   # select platform-scoped items
+```
+
+At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes, platform, timestamps) is written to [`tests/reports/`](../tests/reports/). See the worked examples in [`tests/system/tests/test_manual_examples.py`](../tests/system/tests/test_manual_examples.py) and the harness [README](../tests/system/README.md#guided-manual-tests---manual).
+
+New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
+
+### Legacy Guided Manual Test Runner (YAML)
+
+The remaining manual test items are still defined as machine-readable YAML in [`tests/manual/*.yaml`](../tests/manual/). The standalone runner presents applicable tests one at a time, manages infrastructure, and generates a JSON report. It is being subsumed by the harness flow above:
 
 ```bash
 # Run all manual tests for the current platform

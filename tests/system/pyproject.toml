@@ -5,4 +5,5 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "integration: launches the real built app/agent (needs `pnpm tauri build`)",
+    "manual: guided-manual test — automated setup then an operator prompt (skipped unless --manual + TTY)",
 ]

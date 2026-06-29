@@ -362,6 +362,51 @@ delay and run at full speed. To actually watch the UI, add the boolean flag:
 Each delay prints `⏸  delay4user: sleeping 2.0s — <reason>` so it is clear what
 is being shown.
 
+### Guided-manual tests (`--manual`)
+
+Some checks are irreducibly manual — a native OS dialog, xterm-canvas color
+fidelity, cursor blink — but the _setup_ around them is fully automatable. A
+**guided-manual test** is a normal `pytest` test that does all the automatable
+work through the usual mixins, then calls an operator prompt for just the human
+bit. Mark the suite (or method) `@pytest.mark.manual` and mix in `ManualUi`:
+
+```python
+@pytest.mark.integration
+@pytest.mark.manual
+class TestExport(ConnectionsUi, ManualUi, SystemTest):
+    def test_export_native_dialog(self):
+        self.create_local_connection(unique_name("demo"))   # harness setup
+        self.manual_step(                                    # the human bit
+            "Use the sidebar ⋯ menu → Export Connections and save the file.",
+            "A native Save dialog appears and writes a JSON file.",
+        )
+```
+
+Operator verbs on `ManualUi`:
+
+| Call                                   | Behavior                                                     |
+| -------------------------------------- | ------------------------------------------------------------ |
+| `self.manual_step(instr, expected)`    | print, wait for Enter, ask pass/fail/skip; fail → test fails |
+| `self.manual_confirm(question)`        | yes/no prompt → `bool`                                       |
+| `self.manual_observe(instr, expected)` | like `manual_step`, attaches a screenshot once #900 lands    |
+
+**Skip-by-default.** Without `--manual` (or with no interactive TTY) these tests
+**skip** with a clear reason, so CI / AI-agent / normal runs stay green. Run a
+single guided test interactively (use `-s` so the prompts reach your console):
+
+```sh
+./pytest.sh --manual -k native_dialog -s
+# select a different platform's platform-scoped items:
+./pytest.sh --manual --manual-platform=windows -s
+```
+
+A `manual-<ts>-<platform>-<arch>.{json,md}` report (pass/fail/skip + notes,
+platform, timestamps) is written to [`tests/reports/`](../reports/) at the end of
+the session. See the worked examples in
+[`tests/test_manual_examples.py`](tests/test_manual_examples.py). This subsumes
+the standalone `scripts/test-manual.py` + `tests/manual/*.yaml` runner, which is
+being migrated incrementally (epic #913).
+
 Tips:
 
 - **Find `data-testid`s** in the React components (`src/**`) or the existing
