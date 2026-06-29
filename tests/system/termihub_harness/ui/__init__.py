@@ -23,6 +23,7 @@ Mixin → concern:
 - :class:`EditorUi`          — the Monaco file editor + status-bar controls
 - :class:`SettingsUi`        — the Settings editor
 - :class:`ManualUi`          — operator prompts for guided-manual tests (#914)
+- :class:`NetworkToolsUi`    — the Network Tools sidebar + diagnostic panels
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
 testid helpers) stay functions so they remain unit-testable without an app.
@@ -46,6 +47,7 @@ from .lookups import (
     iter_tabs,
 )
 from .monitoring import MonitoringUi
+from .network_tools import NetworkToolsUi
 from .passwordprompt import PasswordPromptUi
 from .settings import SettingsUi
 from .shell_fs import ShellFsUi
@@ -70,6 +72,7 @@ __all__ = [
     "EditorUi",
     "SettingsUi",
     "ManualUi",
+    "NetworkToolsUi",
     "ShellFsUi",
     "connections",
     "find_connection",
