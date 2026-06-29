@@ -1143,11 +1143,13 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     renderFor(SSH_CONN_PASSWORD.id);
     await flush();
 
-    // Enable the jump host and fill its host.
+    // Enable the jump host and fill its required fields (host + username, so
+    // validation passes and save is not blocked).
     act(() => {
       (query("jump-host-enabled") as HTMLInputElement).click();
     });
-    setValue(query("jump-host-host") as HTMLInputElement, "bastion.example.com");
+    setValue(query("jump-host-host-0") as HTMLInputElement, "bastion.example.com");
+    setValue(query("jump-host-username-0") as HTMLInputElement, "jumper");
     await flush();
 
     // Toggle a schema field afterwards — this fires the schema form's onChange,
@@ -1170,7 +1172,29 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     expect(cfg.savePassword).toBe(false);
     // ...and the jump host configured before it survived the schema onChange.
     expect(cfg.proxyJump).toEqual([
-      { host: "bastion.example.com", port: 22, username: "", authMethod: "key" },
+      { host: "bastion.example.com", port: 22, username: "jumper", authMethod: "key" },
     ]);
+  });
+
+  it("blocks save while a jump host is missing required fields", async () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    await flush();
+
+    // Enable the jump host but leave host/username empty → invalid.
+    act(() => {
+      (query("jump-host-enabled") as HTMLInputElement).click();
+    });
+    await flush();
+
+    expect(query("jump-host-errors")).toBeTruthy();
+
+    act(() => {
+      (query("connection-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // Save was prevented: no save_connection invoke.
+    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
+    expect(saveCall).toBeUndefined();
   });
 });

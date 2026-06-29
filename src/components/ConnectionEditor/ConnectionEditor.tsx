@@ -40,6 +40,7 @@ import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { JumpHostSection } from "./JumpHostSection";
+import { validateProxyJump } from "@/utils/validateProxyJump";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -301,6 +302,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return rest;
     });
   }, []);
+
+  /** Jump-host chain validation (errors block save; warnings are advisory). */
+  const jumpHostValidation = useMemo(
+    () =>
+      showJumpHostSection
+        ? validateProxyJump((connSettings.proxyJump as JumpHostConfig[] | undefined) ?? [])
+        : { errors: [], warnings: [] },
+    [showJumpHostSection, connSettings.proxyJump]
+  );
 
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(
     existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS
@@ -570,6 +580,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const saveConnection = useCallback((): SavedConnection | RemoteAgentDefinition | null => {
     if (!name.trim()) return null;
     if (nameError) return null;
+    if (jumpHostValidation.errors.length > 0) return null;
 
     if (isAgentTransportMode) {
       const agentConfig = connSettings as unknown as RemoteAgentConfig;
@@ -634,6 +645,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }, [
     name,
     nameError,
+    jumpHostValidation,
     connSettings,
     selectedType,
     agentSettings,
@@ -949,6 +961,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           value={connSettings.proxyJump as JumpHostConfig[] | undefined}
           targetHost={connSettings.host as string | undefined}
           onChange={handleJumpHostChange}
+          errors={jumpHostValidation.errors}
+          warnings={jumpHostValidation.warnings}
         />
       )}
 

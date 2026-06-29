@@ -4,19 +4,22 @@ import { createRoot, Root } from "react-dom/client";
 import type { JumpHostConfig } from "@/types/connection";
 import { JumpHostSection } from "./JumpHostSection";
 
-// Mock the heavy KeyPathInput (pulls in SSH key validation / fs APIs).
+// Mock the heavy KeyPathInput (pulls in SSH key validation / fs APIs). Honor the
+// passed testIdPrefix so per-hop key-path fields stay addressable.
 vi.mock("@/components/Settings/KeyPathInput", () => ({
   KeyPathInput: ({
     value,
     onChange,
     placeholder,
+    testIdPrefix,
   }: {
     value: string;
     onChange: (v: string) => void;
     placeholder?: string;
+    testIdPrefix?: string;
   }) => (
     <input
-      data-testid="jump-host-key-path"
+      data-testid={testIdPrefix}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
@@ -56,10 +59,18 @@ function query(testId: string): HTMLElement | null {
 function render(
   value: JumpHostConfig[] | undefined,
   onChange: (hops: JumpHostConfig[] | undefined) => void,
-  targetHost = "target.internal"
+  opts: { targetHost?: string; errors?: string[]; warnings?: string[] } = {}
 ) {
   act(() => {
-    root.render(<JumpHostSection value={value} targetHost={targetHost} onChange={onChange} />);
+    root.render(
+      <JumpHostSection
+        value={value}
+        targetHost={opts.targetHost ?? "target.internal"}
+        onChange={onChange}
+        errors={opts.errors}
+        warnings={opts.warnings}
+      />
+    );
   });
 }
 
@@ -82,6 +93,13 @@ const HOP: JumpHostConfig = {
   keyPath: "~/.ssh/bastion",
 };
 
+const HOP2: JumpHostConfig = {
+  host: "internal-bastion",
+  port: 22,
+  username: "ops",
+  authMethod: "agent",
+};
+
 describe("JumpHostSection", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -98,71 +116,136 @@ describe("JumpHostSection", () => {
     render(undefined, vi.fn());
     const checkbox = query("jump-host-enabled") as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
-    expect(query("jump-host-host")).toBeNull();
+    expect(query("jump-host-host-0")).toBeNull();
   });
 
   it("enabling emits a default single inline hop", () => {
     const onChange = vi.fn();
     render(undefined, onChange);
-    const checkbox = query("jump-host-enabled") as HTMLInputElement;
     act(() => {
-      checkbox.click();
+      (query("jump-host-enabled") as HTMLInputElement).click();
     });
     expect(onChange).toHaveBeenCalledWith([
       { host: "", port: 22, username: "", authMethod: "key" },
     ]);
   });
 
-  it("renders the inline fields populated from the hop", () => {
+  it("renders the inline fields populated from the hop (single hop, no card)", () => {
     render([HOP], vi.fn());
-    expect((query("jump-host-host") as HTMLInputElement).value).toBe("bastion.example.com");
-    expect((query("jump-host-port") as HTMLInputElement).value).toBe("2222");
-    expect((query("jump-host-username") as HTMLInputElement).value).toBe("admin");
-    expect((query("jump-host-auth-method") as HTMLSelectElement).value).toBe("key");
-    expect(query("jump-host-key-path")).toBeTruthy();
-    expect(query("jump-host-password")).toBeNull();
+    expect((query("jump-host-host-0") as HTMLInputElement).value).toBe("bastion.example.com");
+    expect((query("jump-host-port-0") as HTMLInputElement).value).toBe("2222");
+    expect((query("jump-host-username-0") as HTMLInputElement).value).toBe("admin");
+    expect((query("jump-host-auth-method-0") as HTMLSelectElement).value).toBe("key");
+    expect(query("jump-host-key-path-0")).toBeTruthy();
+    expect(query("jump-host-password-0")).toBeNull();
+    // A single hop is not wrapped in a numbered card.
+    expect(query("jump-host-card-0")).toBeNull();
   });
 
   it("editing the host merges into the existing hop", () => {
     const onChange = vi.fn();
     render([HOP], onChange);
-    setValue(query("jump-host-host") as HTMLInputElement, "edge.example.com");
+    setValue(query("jump-host-host-0") as HTMLInputElement, "edge.example.com");
     expect(onChange).toHaveBeenCalledWith([{ ...HOP, host: "edge.example.com" }]);
   });
 
   it("shows the password field for password auth and hides the key path", () => {
     render([{ ...HOP, authMethod: "password" }], vi.fn());
-    expect(query("jump-host-password")).toBeTruthy();
-    expect(query("jump-host-key-path")).toBeNull();
+    expect(query("jump-host-password-0")).toBeTruthy();
+    expect(query("jump-host-key-path-0")).toBeNull();
   });
 
   it("agent auth hides both key path and password", () => {
     render([{ ...HOP, authMethod: "agent" }], vi.fn());
-    expect(query("jump-host-key-path")).toBeNull();
-    expect(query("jump-host-password")).toBeNull();
+    expect(query("jump-host-key-path-0")).toBeNull();
+    expect(query("jump-host-password-0")).toBeNull();
   });
 
   it("switching auth method merges into the hop", () => {
     const onChange = vi.fn();
     render([HOP], onChange);
-    setValue(query("jump-host-auth-method") as HTMLSelectElement, "password", "change");
+    setValue(query("jump-host-auth-method-0") as HTMLSelectElement, "password", "change");
     expect(onChange).toHaveBeenCalledWith([{ ...HOP, authMethod: "password" }]);
   });
 
   it("disabling clears the jump-host config", () => {
     const onChange = vi.fn();
     render([HOP], onChange);
-    const checkbox = query("jump-host-enabled") as HTMLInputElement;
     act(() => {
-      checkbox.click();
+      (query("jump-host-enabled") as HTMLInputElement).click();
     });
     expect(onChange).toHaveBeenCalledWith(undefined);
   });
 
   it("shows the connection path with the target host", () => {
-    render([HOP], vi.fn(), "app-server.internal");
+    render([HOP], vi.fn(), { targetHost: "app-server.internal" });
     const path = query("jump-host-path");
     expect(path?.textContent).toContain("bastion.example.com");
     expect(path?.textContent).toContain("app-server.internal");
+  });
+
+  // ── Multi-hop ──────────────────────────────────────────────────────
+
+  it("appends a default hop when 'Add another hop' is clicked", () => {
+    const onChange = vi.fn();
+    render([HOP], onChange);
+    act(() => {
+      (query("jump-host-add-hop") as HTMLButtonElement).click();
+    });
+    expect(onChange).toHaveBeenCalledWith([
+      HOP,
+      { host: "", port: 22, username: "", authMethod: "key" },
+    ]);
+  });
+
+  it("renders numbered, removable cards for multiple hops", () => {
+    render([HOP, HOP2], vi.fn());
+    expect(query("jump-host-card-0")).toBeTruthy();
+    expect(query("jump-host-card-1")).toBeTruthy();
+    expect((query("jump-host-host-1") as HTMLInputElement).value).toBe("internal-bastion");
+    expect(query("jump-host-card-0")?.textContent).toContain("outermost");
+    expect(query("jump-host-card-1")?.textContent).toContain("innermost");
+  });
+
+  it("removing a hop drops it from the chain", () => {
+    const onChange = vi.fn();
+    render([HOP, HOP2], onChange);
+    act(() => {
+      (query("jump-host-remove-1") as HTMLButtonElement).click();
+    });
+    expect(onChange).toHaveBeenCalledWith([HOP]);
+  });
+
+  it("editing a second hop merges into the right entry", () => {
+    const onChange = vi.fn();
+    render([HOP, HOP2], onChange);
+    setValue(query("jump-host-username-1") as HTMLInputElement, "deployer");
+    expect(onChange).toHaveBeenCalledWith([HOP, { ...HOP2, username: "deployer" }]);
+  });
+
+  it("shows the full chain in the connection path", () => {
+    render([HOP, HOP2], vi.fn(), { targetHost: "db-server" });
+    const path = query("jump-host-path")?.textContent ?? "";
+    expect(path).toContain("bastion.example.com");
+    expect(path).toContain("internal-bastion");
+    expect(path).toContain("db-server");
+  });
+
+  // ── Validation display ─────────────────────────────────────────────
+
+  it("renders blocking errors when provided", () => {
+    render([{ ...HOP, host: "" }], vi.fn(), { errors: ["Jump host: host is required."] });
+    const errors = query("jump-host-errors");
+    expect(errors).toBeTruthy();
+    expect(errors?.textContent).toContain("host is required");
+  });
+
+  it("renders advisory warnings when provided", () => {
+    render([HOP], vi.fn(), {
+      warnings: ["Chain has 6 hops. Deep chains may add connection latency."],
+    });
+    expect(query("jump-host-warning")?.textContent).toContain("Deep chains");
+    // A warning is not an error block.
+    expect(query("jump-host-errors")).toBeNull();
   });
 });
