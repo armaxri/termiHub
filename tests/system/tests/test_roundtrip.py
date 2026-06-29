@@ -122,6 +122,22 @@ def test_get_value_round_trip(bridge):
         assert driver.get_value("field-port") == "22"
 
 
+def test_screenshot_round_trip(bridge):
+    data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
+    handler = dispatcher_like(screenshot=data_url)
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+        assert driver.screenshot() == data_url
+
+
+def test_screenshot_unavailable_raises_bridge_error(bridge):
+    # No screenshot configured → the fake app reports capture unavailable.
+    with FakeApp(bridge.port, dispatcher_like()):
+        driver = bridge.wait_for_app(timeout=5)
+        with pytest.raises(BridgeError):
+            driver.screenshot()
+
+
 def test_ok_false_raises_bridge_error(bridge):
     with FakeApp(bridge.port, dispatcher_like(state={})):
         driver = bridge.wait_for_app(timeout=5)

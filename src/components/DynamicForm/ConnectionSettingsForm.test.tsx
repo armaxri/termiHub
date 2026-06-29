@@ -152,6 +152,7 @@ describe("ConnectionSettingsForm", () => {
       getState: () => ({}),
       sendTerminalInput: async () => false,
       resizeWindow: async () => {},
+      screenshot: async () => "data:image/png;base64,AAAA",
     };
     await act(async () => {
       await dispatchCommand({ action: "select", testId: "field-authMethod", value: "key" }, deps);

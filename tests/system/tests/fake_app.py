@@ -79,6 +79,7 @@ def dispatcher_like(
     computed_styles: dict | None = None,
     values: dict | None = None,
     viewport: dict | None = None,
+    screenshot: str | None = None,
 ) -> Handler:
     """A handler that mimics the real dispatcher for the common command set.
 
@@ -86,6 +87,7 @@ def dispatcher_like(
     ``getComputedStyle`` (with or without a ``testId``) can be answered.
     ``values`` is keyed by ``testId`` → live control value for ``getValue``.
     ``viewport`` is the ``{viewportY, baseY}`` returned by ``getTerminalViewport``.
+    ``screenshot`` is the data URL returned by the ``screenshot`` command.
     """
     state = state or {}
     computed_styles = computed_styles or {}
@@ -169,6 +171,10 @@ def dispatcher_like(
             return {"ok": True, "action": "getValue", "value": values.get(command["testId"], "")}
         if action == "exists":
             return {"ok": True, "action": "exists", "value": True}
+        if action == "screenshot":
+            if screenshot is None:
+                return {"ok": False, "action": "screenshot", "error": "capture unavailable"}
+            return {"ok": True, "action": "screenshot", "value": screenshot}
         return {"ok": False, "action": action or "?", "error": f"unhandled {action}"}
 
     handle.recorded = recorded  # type: ignore[attr-defined]
