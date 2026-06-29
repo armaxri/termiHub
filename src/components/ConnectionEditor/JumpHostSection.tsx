@@ -94,8 +94,19 @@ export function JumpHostSection({
 
       {enabled && (
         <>
-          {hops.map((hop, i) =>
-            multi ? (
+          {hops.map((hop, i) => {
+            const entry = (
+              <JumpHostEntry
+                key={i}
+                hop={hop}
+                index={i}
+                onChange={(patch) => updateHop(i, patch)}
+              />
+            );
+            // A lone hop renders as a plain field group; multiple hops get a
+            // numbered, removable card around the same entry.
+            if (!multi) return entry;
+            return (
               <div className="jump-host__card" key={i} data-testid={`jump-host-card-${i}`}>
                 <div className="jump-host__card-head">
                   <span className="jump-host__card-title">
@@ -111,17 +122,10 @@ export function JumpHostSection({
                     Remove
                   </button>
                 </div>
-                <JumpHostEntry hop={hop} index={i} onChange={(patch) => updateHop(i, patch)} />
+                {entry}
               </div>
-            ) : (
-              <JumpHostEntry
-                key={i}
-                hop={hop}
-                index={i}
-                onChange={(patch) => updateHop(i, patch)}
-              />
-            )
-          )}
+            );
+          })}
 
           <button
             type="button"
