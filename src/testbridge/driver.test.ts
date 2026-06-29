@@ -185,6 +185,15 @@ describe("InAppBridgeDriver", () => {
     expect(sent[0]).toEqual({ action: "getTerminalViewport", tabId: "tab-3" });
   });
 
+  it("maps screenshot to a screenshot command and unwraps the data URL", async () => {
+    const { transport, sent } = scriptedTransport({
+      screenshot: { ok: true, action: "screenshot", value: "data:image/png;base64,SGk=" },
+    });
+    const value = await new InAppBridgeDriver(transport).screenshot();
+    expect(value).toBe("data:image/png;base64,SGk=");
+    expect(sent[0]).toEqual({ action: "screenshot" });
+  });
+
   it("rejects with a BridgeError carrying the message on failure", async () => {
     const { transport } = scriptedTransport({
       click: { ok: false, action: "click", error: 'no element with data-testid="ghost"' },

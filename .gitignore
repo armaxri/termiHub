@@ -52,3 +52,7 @@ yarn.lock
 
 # Concept mockup screenshot previews (generated)
 docs/concepts/_assets/.preview/
+
+# Python bytecode (e.g. scripts/*.py imported by tests)
+__pycache__/
+*.pyc

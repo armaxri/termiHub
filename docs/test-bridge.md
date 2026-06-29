@@ -154,6 +154,7 @@ unmount.
 | `readTerminal`        | Read a terminal's reconstructed logical-line text              |
 | `getTerminalViewport` | Read a terminal's `{ viewportY, baseY }` scroll position       |
 | `getState`            | Read app store state, optionally by dot-path                   |
+| `screenshot`          | Capture a PNG of the rendered app as a data URL (see below)    |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -267,6 +268,30 @@ await driver.drag("sidebar-resize-handle", 100);
 await driver.getComputedStyle("cursor", { testId: "sidebar-resize-handle" }); // "col-resize"
 await driver.getComputedStyle("--bg-primary"); // active theme background
 ```
+
+### Screenshots (`screenshot`)
+
+`getComputedStyle` proves an individual style resolves, but some carve-outs need
+to _see_ the rendered result (overall pixel geometry, theme rendering). The
+`screenshot` verb rasterizes the live DOM to a PNG and returns it as a
+`data:image/png;base64,…` URL:
+
+- `{ action: "screenshot" }` → `value` is the PNG data URL. The live bridge
+  lazy-imports [`html-to-image`](https://github.com/bubkoo/html-to-image) (a
+  test-mode-only chunk, kept out of the normal bundle) and rasterizes
+  `document.body`; unit tests inject a stub via the `screenshot` dep.
+- **Limitation:** DOM rasterization does **not** capture the xterm GPU canvas or
+  native OS dialogs — read terminal text via `readTerminal` instead. A native
+  window-capture backend could lift this in future.
+
+```ts
+const dataUrl = await driver.screenshot(); // "data:image/png;base64,…"
+```
+
+The Python harness exposes the same verb (`driver.screenshot()`), and the
+failure-artifact bundle writes a `screenshot.png` alongside `state.json` /
+`terminal.txt` whenever the app supports the verb — visual evidence of the moment
+a test failed. Decode the data URL with `screenshot_to_png_bytes`.
 
 It fails (`ok: false`) when there is no active terminal, or when the target tab
 has no backend session bound (e.g. the shell has exited).

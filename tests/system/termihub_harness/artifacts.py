@@ -33,22 +33,47 @@ def sanitize_nodeid(nodeid: str) -> str:
     return safe.strip("_") or "test"
 
 
-def _safe_write(path: Path, produce: Callable[[], str]) -> None:
-    """Write ``produce()`` to ``path``; on error, write the error beside it.
+def _record_probe_error(path: Path, exc: BaseException) -> None:
+    """Write a failed probe's error beside its target as ``<name>.error.txt``.
 
     Capture must never raise — a broken bridge during a failure is exactly when
     the bundle matters most, so a failed probe records its own error rather than
     masking the original test failure.
     """
     try:
+        path.with_suffix(path.suffix + ".error.txt").write_text(
+            f"{type(exc).__name__}: {exc}", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def _safe_write(path: Path, produce: Callable[[], str]) -> None:
+    """Write ``produce()`` text to ``path``; record the error beside it on failure."""
+    try:
         path.write_text(produce(), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 — capture is best-effort by design
-        try:
-            path.with_suffix(path.suffix + ".error.txt").write_text(
-                f"{type(exc).__name__}: {exc}", encoding="utf-8"
-            )
-        except OSError:
-            pass
+        _record_probe_error(path, exc)
+
+
+def _safe_write_bytes(path: Path, produce: Callable[[], bytes]) -> None:
+    """Binary counterpart of :func:`_safe_write` for the screenshot PNG."""
+    try:
+        path.write_bytes(produce())
+    except Exception as exc:  # noqa: BLE001 — capture is best-effort by design
+        _record_probe_error(path, exc)
+
+
+def _capture_screenshot_png(driver: Any) -> bytes:
+    """Capture a PNG screenshot via the bridge and decode it to raw bytes.
+
+    Imported lazily so this module keeps no hard dependency on the bridge for its
+    unit tests, and so a driver stub without ``screenshot`` is simply skipped by
+    the ``hasattr`` guard in :func:`write_failure_artifacts`.
+    """
+    from .bridge import screenshot_to_png_bytes
+
+    return screenshot_to_png_bytes(driver.screenshot())
 
 
 def write_failure_artifacts(dest: Path, driver: Optional[Any], app: Optional[Any]) -> Path:
@@ -59,6 +84,7 @@ def write_failure_artifacts(dest: Path, driver: Optional[Any], app: Optional[Any
 
     - ``driver.get_state()`` → ``state.json``
     - ``driver.read_terminal()`` → ``terminal.txt``
+    - ``driver.screenshot()`` → ``screenshot.png`` (when the bridge supports it)
     - ``app.read_log()`` → ``app.log``
     """
     dest.mkdir(parents=True, exist_ok=True)
@@ -68,6 +94,11 @@ def write_failure_artifacts(dest: Path, driver: Optional[Any], app: Optional[Any
             lambda: json.dumps(driver.get_state(), indent=2, default=str, sort_keys=True),
         )
         _safe_write(dest / "terminal.txt", driver.read_terminal)
+        # The screenshot verb (#900) may be absent on older apps / driver stubs —
+        # capture it only when present so the bundle gains visual evidence where
+        # available without breaking where it is not.
+        if hasattr(driver, "screenshot"):
+            _safe_write_bytes(dest / "screenshot.png", lambda: _capture_screenshot_png(driver))
     if app is not None:
         _safe_write(dest / "app.log", app.read_log)
     return dest

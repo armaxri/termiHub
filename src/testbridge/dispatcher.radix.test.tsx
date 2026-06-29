@@ -34,6 +34,7 @@ function deps(): BridgeDeps {
     getState: () => ({}),
     sendTerminalInput: async () => false,
     resizeWindow: async () => {},
+    screenshot: async () => "data:image/png;base64,AAAA",
   };
 }
 

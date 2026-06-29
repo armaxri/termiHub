@@ -201,21 +201,35 @@ args) without side effects. See
 **Impact:** removes setup friction and the "did I rebuild?" foot-gun.
 **Effort:** small.
 
-### P4 — A generated `data-testid` catalog
+### P4 — A generated `data-testid` catalog ✅ done (#899)
 
-Stale selectors are the most common authoring error. A small script that scans
-`src/**` for `data-testid` (including dynamic `${prefix}-…` forms) into a
-checked-in catalog — or a `driver.list_testids()` debug verb — lets an author
-confirm an id without spelunking components.
+Stale selectors are the most common authoring error.
+**[`scripts/build-testid-catalog.py`](../scripts/build-testid-catalog.py)** scans
+`src/**` for every `data-testid` and writes a checked-in catalog at
+[`tests/system/testid-catalog.md`](../tests/system/testid-catalog.md), so an
+author can confirm an id (and its exact form) without spelunking components.
+Dynamic ids (`file-row-${name}`, `${testIdPrefix}-download`) are rendered as `*`
+glob patterns (`file-row-*`, `*-download`); prop-supplied ids are listed as
+**indirect**. CI runs `--check` so the catalog never drifts.
+
+```sh
+python scripts/build-testid-catalog.py            # regenerate
+python scripts/build-testid-catalog.py --check     # CI freshness gate
+```
 
 **Impact:** kills the #1 source of "element not found". **Effort:** medium.
 
-### P5 — Optional screenshot verb for visual carve-outs
+### P5 — Optional screenshot verb for visual carve-outs ✅ done (#900)
 
 Some carve-outs are manual only because the bridge can't _see_ the rendered UI.
-A bridge `screenshot` verb (webview-side `canvas`/`html2canvas` or a Tauri
-window capture) attached to the failure bundle would shrink the manual set and
-enrich P2's artifacts.
+A bridge `screenshot` verb rasterizes the live DOM (webview-side
+[`html-to-image`](https://github.com/bubkoo/html-to-image), lazy-imported so it
+stays a test-mode-only chunk) to a PNG data URL, available on both the TS and
+Python `Driver`. The P2 failure-artifact bundle now writes a `screenshot.png`
+when the app supports the verb, and `manual_observe` (#914) attaches one to its
+report. The DOM path does not capture the xterm GPU canvas or native OS dialogs
+(terminal text is read via `readTerminal`); a native window-capture backend
+could lift that in future.
 
 **Impact:** fewer manual carve-outs, richer failure bundles. **Effort:** larger
 (platform capture path).
