@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**426** literal · **117** dynamic · **3** indirect.
+**434** literal · **117** dynamic · **3** indirect.
 
 ## Literal test IDs
 
@@ -187,6 +187,14 @@ Fixed strings — match exactly.
 | `inline-folder-cancel` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-confirm` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-name-input` | `src/components/Sidebar/InlineFolderInput.tsx` |
+| `jump-host-auth-method` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-enabled` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-host` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-password` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-path` | `src/components/ConnectionEditor/JumpHostPathDisplay.tsx` |
+| `jump-host-port` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-section` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-username` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `keyboard-settings-conflict` | `src/components/Settings/KeyboardSettings.tsx` |
 | `keyboard-settings-editor-delegation` | `src/components/Settings/KeyboardSettings.tsx` |
 | `keyboard-settings-editor-delegation-label` | `src/components/Settings/KeyboardSettings.tsx` |
