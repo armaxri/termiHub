@@ -101,6 +101,22 @@ async fn do_connect_and_authenticate(
         }
     }
 
+    handshake_and_authenticate(config, tokio_tcp).await
+}
+
+/// Run the SSH handshake over an established byte stream and authenticate.
+///
+/// Shared by the direct-TCP path ([`do_connect_and_authenticate`]) and the
+/// jump-host path ([`connect_and_authenticate_over_channel`]). The transport is
+/// any async byte stream: a [`tokio::net::TcpStream`] for a direct connection, or
+/// a forwarded `direct-tcpip` channel stream for a hop.
+async fn handshake_and_authenticate<S>(
+    config: &SshConfig,
+    stream: S,
+) -> Result<(SshSession, ForwardedChannelRegistry), SessionError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let russh_config = Arc::new(russh::client::Config {
         // SSH-level keepalives: send every 30 s, abort after 3 unanswered.
         keepalive_interval: Some(Duration::from_secs(30)),
@@ -110,13 +126,27 @@ async fn do_connect_and_authenticate(
 
     let (handler, registry) = TermiHubHandler::new();
 
-    let mut session = russh::client::connect_stream(russh_config, tokio_tcp, handler)
+    let mut session = russh::client::connect_stream(russh_config, stream, handler)
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("SSH handshake failed: {e}")))?;
 
     authenticate(&mut session, config).await?;
 
     Ok((session, registry))
+}
+
+/// Establish and authenticate an SSH session over an existing forwarded channel.
+///
+/// The `channel` must be a `direct-tcpip` channel opened on a previous hop's
+/// session (via [`channel_open_direct_tcpip`](russh::client::Handle::channel_open_direct_tcpip))
+/// targeting the next hop or the final target `host:port`. The russh handshake
+/// runs over the channel's byte stream — the same `into_stream()` transport that
+/// SFTP, X11, and the tunnel forwarders use. Used by the jump-host connect path.
+pub async fn connect_and_authenticate_over_channel(
+    config: &SshConfig,
+    channel: russh::Channel<russh::client::Msg>,
+) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    handshake_and_authenticate(config, channel.into_stream()).await
 }
 
 /// Perform SSH authentication on an already-connected session.

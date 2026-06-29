@@ -148,13 +148,25 @@ impl SshConnector for RusshSshConnector {
         alive: Arc<AtomicBool>,
     ) -> Result<SshShellHandle, SessionError> {
         use super::auth::connect_and_authenticate;
+        use super::jump_host::connect_through_jump_hosts;
         use super::x11::X11Forwarder;
         use russh::ChannelMsg;
 
-        let (mut session, registry) = connect_and_authenticate(config).await?;
-
-        // Optional X11 forwarding (must be set up before opening the shell channel).
+        // Opaque resources kept alive for the session lifetime.
         let mut extensions: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
+
+        // Connect directly, or through a ProxyJump chain when one is configured.
+        let (mut session, registry) = if config.proxy_jump.is_empty() {
+            connect_and_authenticate(config).await?
+        } else {
+            let conn = connect_through_jump_hosts(config).await?;
+            // Retain the bastion/intermediate hop sessions: dropping them would
+            // close the direct-tcpip channels that carry the target session.
+            for hop in conn.intermediates {
+                extensions.push(Box::new(hop));
+            }
+            (conn.session, conn.registry)
+        };
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
         if config.enable_x11_forwarding {
