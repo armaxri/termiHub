@@ -780,10 +780,11 @@ At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` r
 
 Migrated guided-manual suites so far:
 
-| Suite                                                                      | Covers (manual IDs)               | The human step                                                                                                      |
-| -------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py) | worked examples (visual / dialog) | eyeball colors / drive a save dialog / yes-no                                                                       |
-| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)   | MT-CONN-08/09/17, MT-TAB-08       | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store automatically |
+| Suite                                                                        | Covers (manual IDs)                                 | The human step                                                                                                   |
+| ---------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                   | eyeball colours / drive a save dialog / yes-no                                                                   |
+| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17, MT-TAB-08                         | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store            |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.. | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar) — screenshot attached |
 
 New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
 
