@@ -201,12 +201,21 @@ args) without side effects. See
 **Impact:** removes setup friction and the "did I rebuild?" foot-gun.
 **Effort:** small.
 
-### P4 — A generated `data-testid` catalog
+### P4 — A generated `data-testid` catalog ✅ done (#899)
 
-Stale selectors are the most common authoring error. A small script that scans
-`src/**` for `data-testid` (including dynamic `${prefix}-…` forms) into a
-checked-in catalog — or a `driver.list_testids()` debug verb — lets an author
-confirm an id without spelunking components.
+Stale selectors are the most common authoring error.
+**[`scripts/build-testid-catalog.py`](../scripts/build-testid-catalog.py)** scans
+`src/**` for every `data-testid` and writes a checked-in catalog at
+[`tests/system/testid-catalog.md`](../tests/system/testid-catalog.md), so an
+author can confirm an id (and its exact form) without spelunking components.
+Dynamic ids (`file-row-${name}`, `${testIdPrefix}-download`) are rendered as `*`
+glob patterns (`file-row-*`, `*-download`); prop-supplied ids are listed as
+**indirect**. CI runs `--check` so the catalog never drifts.
+
+```sh
+python scripts/build-testid-catalog.py            # regenerate
+python scripts/build-testid-catalog.py --check     # CI freshness gate
+```
 
 **Impact:** kills the #1 source of "element not found". **Effort:** medium.
 
