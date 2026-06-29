@@ -93,6 +93,9 @@ jobs:
       - name: Lint Markdown
         run: pnpm run markdownlint
 
+      - name: Check data-testid catalog is up to date (#899)
+        run: python3 scripts/build-testid-catalog.py --check
+
   # Run tests
   tests:
     name: Run Tests
