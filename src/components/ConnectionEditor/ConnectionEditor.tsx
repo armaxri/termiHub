@@ -24,6 +24,7 @@ import {
   RemoteAgentDefinition,
   AgentSettings,
   DEFAULT_AGENT_SETTINGS,
+  JumpHostConfig,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
@@ -38,6 +39,7 @@ import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
+import { JumpHostSection } from "./JumpHostSection";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -280,6 +282,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     (!!existingAgent || (selectedType === "remote" && !existingConnection));
   /** Either agent mode (used for shared behavior like hiding Terminal/Appearance). */
   const isAnyAgentMode = isAgentTransportMode || isAgentDefinitionMode;
+
+  /** Whether the SSH "Jump Host" section applies to the current edit. */
+  const showJumpHostSection = selectedType === "ssh" && !isAnyAgentMode;
+
+  // The schema-driven form only tracks its own fields, so its onChange would drop
+  // sibling keys like `proxyJump` (managed by JumpHostSection). Re-merge it.
+  const handleSchemaSettingsChange = useCallback((values: Record<string, unknown>) => {
+    setConnSettings((prev) =>
+      prev.proxyJump !== undefined ? { ...values, proxyJump: prev.proxyJump } : values
+    );
+  }, []);
+
+  const handleJumpHostChange = useCallback((hops: JumpHostConfig[] | undefined) => {
+    setConnSettings((prev) => {
+      if (hops && hops.length > 0) return { ...prev, proxyJump: hops };
+      const { proxyJump: _omit, ...rest } = prev;
+      return rest;
+    });
+  }, []);
 
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(
     existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS
@@ -913,13 +934,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <ConnectionSettingsForm
           schema={currentSchema}
           settings={connSettings}
-          onChange={setConnSettings}
+          onChange={handleSchemaSettingsChange}
           credentialSavedHint={credentialSavedHint}
           availablePorts={
             isAgentDefinitionMode
               ? (existingAgent?.capabilities?.availableSerialPorts ?? [])
               : undefined
           }
+        />
+      )}
+
+      {showJumpHostSection && (
+        <JumpHostSection
+          value={connSettings.proxyJump as JumpHostConfig[] | undefined}
+          targetHost={connSettings.host as string | undefined}
+          onChange={handleJumpHostChange}
         />
       )}
 

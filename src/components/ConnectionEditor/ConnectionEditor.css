@@ -231,6 +231,65 @@
   gap: 4px;
 }
 
+/* === Jump Host (SSH ProxyJump) section === */
+.jump-host__toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.jump-host__toggle-label svg {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.jump-host__path {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--spacing-md);
+}
+
+.jump-host__path-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.jump-host__path-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.jump-host__path-node-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.jump-host__path-arrow {
+  color: var(--text-tertiary, var(--text-secondary));
+  flex-shrink: 0;
+}
+
+.jump-host__path-node--target {
+  color: var(--text-accent, var(--focus-border));
+}
+
 .settings-form__file-row input {
   flex: 1;
   min-width: 0;
