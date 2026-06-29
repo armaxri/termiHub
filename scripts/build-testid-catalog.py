@@ -51,7 +51,9 @@ CATALOG_PATH = REPO_ROOT / "tests" / "system" / "testid-catalog.md"
 _SKIP_SUFFIXES = (".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".d.ts")
 _SKIP_DIR_PARTS = {"__tests__", "test", "__mocks__", "testbridge"}
 
-_INTERP = re.compile(r"\$\{[^}]*\}")
+_INTERP = re.compile(r"\$\{[^}]*\}")  # a ${...} interpolation
+_COLLAPSE = re.compile(r"\*+")  # runs of glob stars
+_EQ = re.compile(r"\s*=\s*")  # the `=` between attribute name and value
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +125,6 @@ def scan_testids(text: str) -> "list[tuple[str, str]]":
     are gone by then.
     """
     needle = "data-testid"
-    eq = re.compile(r"\s*=\s*")
     out: "list[tuple[str, str]]" = []
     i = 0
     while True:
@@ -131,7 +132,7 @@ def scan_testids(text: str) -> "list[tuple[str, str]]":
         if j < 0:
             break
         k = j + len(needle)
-        m = eq.match(text, k)
+        m = _EQ.match(text, k)
         if not m:
             i = k
             continue
@@ -159,7 +160,7 @@ def scan_testids(text: str) -> "list[tuple[str, str]]":
 
 def to_pattern(template: str) -> str:
     """Render a template string into a ``*``-glob pattern (``file-row-*``)."""
-    return re.sub(r"\*+", "*", _INTERP.sub("*", template))
+    return _COLLAPSE.sub("*", _INTERP.sub("*", template))
 
 
 def _classify_string(value: str) -> "tuple[str, str, str]":
@@ -231,6 +232,19 @@ def _files(entry: dict) -> str:
     return ", ".join(f"`{f}`" for f in sorted(entry["files"]))
 
 
+def _section(title: str, description: "list[str]", headers: "list[str]") -> "list[str]":
+    """Scaffold for a catalog section: heading, prose, and the table header row."""
+    return [
+        "",
+        f"## {title}",
+        "",
+        *description,
+        "",
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("-" * len(h) for h in headers) + " |",
+    ]
+
+
 def render(buckets: "dict[str, dict]") -> str:
     """Render the buckets into the deterministic catalog markdown."""
     literal = buckets["literal"]
@@ -251,41 +265,34 @@ def render(buckets: "dict[str, dict]") -> str:
         "",
         f"**{len(literal)}** literal · **{len(dynamic)}** dynamic · "
         f"**{len(indirect)}** indirect.",
-        "",
-        "## Literal test IDs",
-        "",
-        "Fixed strings — match exactly.",
-        "",
-        "| testid | source |",
-        "| ------ | ------ |",
     ]
+
+    lines += _section(
+        "Literal test IDs", ["Fixed strings — match exactly."], ["testid", "source"]
+    )
     for key in sorted(literal):
         lines.append(f"| `{key}` | {_files(literal[key])} |")
 
-    lines += [
-        "",
-        "## Dynamic test IDs",
-        "",
-        "Built from a template; `*` marks an interpolated segment. Match on the",
-        "static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).",
-        "",
-        "| pattern | example template | source |",
-        "| ------- | ---------------- | ------ |",
-    ]
+    lines += _section(
+        "Dynamic test IDs",
+        [
+            "Built from a template; `*` marks an interpolated segment. Match on the",
+            "static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).",
+        ],
+        ["pattern", "example template", "source"],
+    )
     for key in sorted(dynamic):
         example = sorted(dynamic[key]["raw"])[0]
         lines.append(f"| `{key}` | `{example}` | {_files(dynamic[key])} |")
 
-    lines += [
-        "",
-        "## Indirect test IDs",
-        "",
-        "Supplied by a prop/variable at the call site — the real id is defined",
-        "where the component is used, not at the `data-testid` site.",
-        "",
-        "| expression | source |",
-        "| ---------- | ------ |",
-    ]
+    lines += _section(
+        "Indirect test IDs",
+        [
+            "Supplied by a prop/variable at the call site — the real id is defined",
+            "where the component is used, not at the `data-testid` site.",
+        ],
+        ["expression", "source"],
+    )
     for key in sorted(indirect):
         lines.append(f"| `{{{key}}}` | {_files(indirect[key])} |")
 
