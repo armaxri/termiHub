@@ -64,6 +64,15 @@ pub fn expand_config_value(value: &str) -> String {
         .into_owned()
 }
 
+/// Expand `${VAR}` placeholders and `~` in an optional SSH key path, stripping
+/// any surrounding quotes first — users often paste paths like `"C:\...\key"`.
+fn expand_key_path(key_path: Option<String>) -> Option<String> {
+    key_path.map(|s| {
+        let stripped = s.trim().trim_matches('"').trim_matches('\'');
+        expand_config_value(stripped)
+    })
+}
+
 /// Terminal dimensions (columns x rows).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PtySize {
@@ -282,10 +291,7 @@ impl JumpHostConfig {
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
         self.username = expand_config_value(&self.username);
-        self.key_path = self.key_path.map(|s| {
-            let stripped = s.trim().trim_matches('"').trim_matches('\'');
-            expand_config_value(stripped)
-        });
+        self.key_path = expand_key_path(self.key_path);
         self.password = self.password.map(|s| expand_config_value(&s));
         self
     }
@@ -466,11 +472,7 @@ impl SshConfig {
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
         self.username = expand_config_value(&self.username);
-        self.key_path = self.key_path.map(|s| {
-            // Strip surrounding quotes — users often paste paths like "C:\...\key"
-            let stripped = s.trim().trim_matches('"').trim_matches('\'');
-            expand_config_value(stripped)
-        });
+        self.key_path = expand_key_path(self.key_path);
         self.password = self.password.map(|s| expand_config_value(&s));
         self.proxy_jump = self.proxy_jump.into_iter().map(|h| h.expand()).collect();
         self
