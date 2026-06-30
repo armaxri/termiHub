@@ -34,6 +34,12 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === Tauri npm/crate version drift ===
+REM Drift here aborts 'pnpm tauri build' before it starts (issue #1014).
+node scripts\internal\check-tauri-version-drift.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 if %FAILED%==1 (
     echo SOME CHECKS FAILED. Run scripts\format.cmd to auto-fix formatting.
     exit /b 1
