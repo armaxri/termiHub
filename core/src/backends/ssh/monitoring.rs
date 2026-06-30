@@ -17,8 +17,8 @@ use crate::monitoring::{
     MONITORING_COMMAND,
 };
 
-use super::jump_host::connect_target;
 use super::handler::SshSession;
+use super::jump_host::connect_target;
 
 /// Polling interval for collecting system stats.
 const MONITORING_INTERVAL: Duration = Duration::from_secs(2);

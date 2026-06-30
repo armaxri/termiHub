@@ -384,7 +384,10 @@ async fn ssh_tunnel_02_tcp_echo_via_tunnel() {
 /// Build SSH connection settings for the internal target reached through the
 /// bastion (the same chain as SSH-JUMP-01), toggling the SFTP file browser and
 /// monitoring providers.
-fn jump_host_target_settings(enable_monitoring: bool, enable_file_browser: bool) -> serde_json::Value {
+fn jump_host_target_settings(
+    enable_monitoring: bool,
+    enable_file_browser: bool,
+) -> serde_json::Value {
     let key = ssh_keys_dir().join("ed25519");
     let key = key.to_str().expect("key path is valid UTF-8");
     serde_json::json!({
