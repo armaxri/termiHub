@@ -5,7 +5,7 @@
  * must warn first (it would silently break their chains); deleting an
  * unreferenced connection deletes immediately as before.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
@@ -52,14 +52,14 @@ const q = (testId: string) => document.querySelector(`[data-testid="${testId}"]`
 describe("ConnectionList — jump-host delete protection", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let deleteConnection: ReturnType<typeof vi.fn>;
+  let deleteConnection: Mock<(connectionId: string) => void>;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    deleteConnection = vi.fn();
+    deleteConnection = vi.fn<(connectionId: string) => void>();
     useAppStore.setState({ settings: { ...baseSettings }, deleteConnection });
   });
 
