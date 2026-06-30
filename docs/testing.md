@@ -119,7 +119,7 @@ describe("Terminal Creation Flow", () => {
 pnpm test:e2e
 
 # Run specific test file
-pnpm test:e2e -- --spec tests/e2e/network-tools-live.test.js
+pnpm test:e2e -- --spec tests/e2e/infrastructure/remote-agent.test.js
 
 # Run in headless mode (CI)
 pnpm test:e2e:ci
@@ -752,7 +752,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: **8 WebdriverIO files** (4 in `tests/e2e/`, 4 in `tests/e2e/infrastructure/`) — the remainder still being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`) remain pending #934.
+E2E test coverage: a shrinking set of WebdriverIO files (performance + the `infrastructure/` remote-agent and Windows-shells specs) — the remainder is being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`, MT-NET-10/12/14/17/18) were ported to `tests/system/tests/test_network_tools_live.py` and removed (#946).
 
 ### Test Environment Setup
 
@@ -878,4 +878,5 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-SVC-01, 02, 03               | `tests/system/tests/test_embedded_services.py` (SVC-01..11)                                                            |
 | MT-SVC-04, 05 (transfer)        | `tests/system/tests/test_embedded_services.py` (SVC-12 FTP, SVC-13 TFTP via curl)                                      |
 | MT-NET-01–09                    | `tests/system/tests/test_network_tools.py`                                                                             |
-| MT-NET-10, 12, 13, 14, 17, 18   | `network-tools-live.test.js` (requires `network` profile; port blocked on #934)                                        |
+| MT-NET-10, 12, 14, 17, 18       | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)         |
+| MT-NET-13                       | _manual_ (large-range warning is a native `window.confirm()`, no `data-testid`)                                        |
