@@ -1,21 +1,31 @@
-"""Guided-manual tests for visual / rendering verification (issue #915).
+"""Guided-manual tests for visual / rendering verification (issues #915, #1003).
 
 Pixel- and timing-level rendering the DOM/store bridge cannot assert: glyph
 shaping, ANSI colour fidelity, box-drawing joins, theme colours, scrollbar
-styling. Following the guided-manual contract (#914), the harness sets up the
-**exact** state — opens a terminal, emits the precise escape sequences, or
-switches the theme — and then asks the operator only to *look* and confirm. Each
-uses :meth:`manual_observe`, which attaches a screenshot to the report via the
-bridge ``screenshot`` verb (#900) so the visual evidence is captured.
+styling, startup/connect white-flashes, and OS-level chrome (the dock/taskbar
+icon). Following the guided-manual contract (#914), the harness sets up the
+**exact** state — opens a terminal, emits the precise escape sequences, switches
+the theme, performs a cold relaunch, or drives the SSH connect — and then asks
+the operator only to *look* and confirm. Each uses :meth:`manual_observe`, which
+attaches a screenshot to the report via the bridge ``screenshot`` verb (#900) so
+the visual evidence is captured.
 
-Covered: ANSI colours (MT-SSH-02), 256-colour (MT-SSH-02), box-drawing
+Covered (#915): ANSI colours (MT-SSH-02), 256-colour (MT-SSH-02), box-drawing
 (MT-UI-31), Nerd Font / Powerline glyphs (MT-SER-01/02), theme colours
-(MT-UI-02..09), and vertical scrollbar appearance (MT-UI-35/36). The startup /
-connect white-flash items (MT-UI-01, MT-LOCAL-05) and OS-level app-icon checks
-remain follow-ups.
+(MT-UI-02..09), and vertical scrollbar appearance (MT-UI-35/36).
+
+Added (#1003): no startup white-flash (MT-UI-01), no SSH connect / setup-command
+flash (MT-LOCAL-05), no black bar at the bottom of the terminal (MT-UI-16), and
+the OS-level app icon (MT-UI-19). These are timing- and OS-level checks that stay
+operator-confirmed, but the harness still automates everything around them — the
+cold relaunch, the SSH connect, opening the terminal, and showing the screen — so
+the operator only has to *look*.
 
 Marked ``manual`` + ``integration``, so they **skip** on CI / normal runs and
-run only under ``./pytest.sh --manual -k visual -s`` with an operator.
+run only under ``./pytest.sh --manual -k visual -s`` with an operator. The SSH
+connect-flash case additionally needs the Docker SSH containers (the
+``ssh_fixtures`` session fixture, which skips gracefully when no container
+runtime is available).
 """
 
 from __future__ import annotations
@@ -23,12 +33,16 @@ from __future__ import annotations
 import pytest
 
 from termihub_harness import (
+    ConnectionsUi,
     ManualUi,
+    PasswordPromptUi,
     SettingsUi,
     SidebarUi,
+    SshUi,
     SystemTest,
     TabsUi,
     TerminalUi,
+    unique_name,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.manual]
@@ -42,7 +56,15 @@ _BOX = "┌───┐\\n│ hi │\\n└───┘"
 
 
 class TestVisualRendering(
-    TerminalUi, TabsUi, SettingsUi, SidebarUi, ManualUi, SystemTest
+    TerminalUi,
+    TabsUi,
+    SettingsUi,
+    SidebarUi,
+    ConnectionsUi,
+    PasswordPromptUi,
+    SshUi,
+    ManualUi,
+    SystemTest,
 ):
     """Visual checks: harness emits the exact pixels, operator confirms them."""
 
@@ -146,3 +168,96 @@ class TestVisualRendering(
             label="scrollbar",
         )
         self.driver.scroll_terminal(to_bottom=True)
+
+    # ── No startup white-flash (MT-UI-01) ────────────────────────────────────
+    def test_no_startup_white_flash(self):
+        """Cold-relaunch the app; the operator watches the window background.
+
+        The white-flash is a paint-timing artefact between the OS window
+        appearing and the web view's first paint — invisible to the DOM/store
+        bridge, so it stays operator-confirmed. The harness still automates the
+        only setup that matters: a real kill-and-relaunch via ``restart_app``,
+        so the operator just has to watch the window come up. They should keep
+        their eyes on the window *before* triggering the prompt response, as the
+        relaunch already happened — re-run the case if they missed it.
+        """
+        self.close_all_tabs()
+        # A genuine cold start: kill the app and bring it back up. This is the
+        # exact event MT-UI-01 checks; everything the operator needs is now on
+        # screen, so they only have to recall what they just saw.
+        self.restart_app()
+        self.manual_observe(
+            "Recall the window you just watched relaunch (re-run if you looked "
+            "away — the app was killed and relaunched a moment ago).",
+            "The window came up with the dark background (#1e1e1e) already "
+            "painted -- no white flash between the OS window appearing and the "
+            "app's first paint.",
+            label="startup-no-white-flash",
+        )
+
+    # ── No SSH connect / setup-command flash (MT-LOCAL-05) ───────────────────
+    @pytest.mark.usefixtures("ssh_fixtures")
+    def test_no_ssh_connect_setup_flash(self):
+        """Drive the password-SSH connect; the operator watches for a flash.
+
+        Whether setup/wrapper commands briefly flash before the remote prompt is
+        a timing artefact of the connect handshake the bridge cannot assert, so
+        it stays operator-confirmed. The harness automates the whole connect —
+        create the connection, Save & Connect, answer the password prompt, land
+        in the terminal — so the operator only has to watch the terminal open.
+        Needs the Docker SSH password container (``ssh_fixtures``); skips when no
+        container runtime is available.
+        """
+        self.close_all_tabs()
+        # Full automated connect (create + Save & Connect + password + terminal).
+        # The operator should watch the terminal area while this runs.
+        self.connect_ssh_password(unique_name("ssh-flash"))
+        self.manual_observe(
+            "Watch the terminal you just connected to as it opened (re-run if "
+            "you looked away -- the SSH session was just established).",
+            "The remote shell prompt appeared cleanly -- no flash of setup / "
+            "wrapper commands before the prompt, no white/black flicker as the "
+            "session opened.",
+            label="ssh-connect-no-flash",
+        )
+
+    # ── No black bar at the bottom of the terminal (MT-UI-16) ────────────────
+    def test_no_black_bar_at_terminal_bottom(self):
+        """Open a terminal with a prompt; the operator checks the bottom edge.
+
+        A stray black bar at the bottom of the terminal is a layout/sizing
+        artefact (the xterm rows not filling the pane) the bridge cannot measure
+        reliably, so it stays operator-confirmed. The harness automates standing
+        up the terminal and getting a prompt on screen.
+        """
+        self.close_all_tabs()
+        self.ensure_terminal()
+        # Make the bottom rows clearly the prompt, not blank padding.
+        self.run_command("echo bottom-bar-check")
+        self.wait_for_output("bottom-bar-check")
+        self.manual_observe(
+            "Look at the very bottom edge of the terminal pane, below the last "
+            "line of output.",
+            "The terminal background fills all the way to the bottom of the pane "
+            "-- no black bar / empty strip between the last row and the pane "
+            "edge or status bar.",
+            label="terminal-no-black-bar",
+        )
+
+    # ── OS-level app icon (MT-UI-19) ─────────────────────────────────────────
+    def test_app_icon_in_dock_or_taskbar(self):
+        """The operator checks the OS dock/taskbar/launcher icon.
+
+        The app icon lives entirely in OS chrome outside the web view, so there
+        is nothing the bridge can set up or assert — it is purely operator-
+        confirmed. The harness only ensures the app is running and focused (a
+        terminal exists) so the icon is present in the dock/taskbar to inspect.
+        """
+        self.ensure_terminal()
+        self.manual_observe(
+            "Check the app icon in the dock (macOS), taskbar (Windows), or "
+            "launcher/dock (Linux) for the running app.",
+            "The custom termiHub icon is displayed -- not a generic / default "
+            "application icon.",
+            label="app-icon",
+        )

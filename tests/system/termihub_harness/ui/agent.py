@@ -100,22 +100,17 @@ class AgentUi(HarnessMixin):
     def open_agent_menu(self, name: str) -> None:
         """Right-click an agent by name and wait for its context menu to mount.
 
-        The agent id is re-resolved by name on every poll (a save reloads the
-        store), and the context menu is dispatched on the ``agent-header`` element
-        — the actual ``ContextMenu.Trigger`` — only once it is in the DOM.
+        Delegates to :meth:`HarnessMixin.open_named_context_menu`: the agent id is
+        re-resolved by name on every poll (a save reloads the store), and the
+        right-click is dispatched on the ``agent-header`` element — the actual
+        ``ContextMenu.Trigger`` — only once it is in the DOM.
         """
-
-        def menu_open() -> bool:
-            agent = self.find_agent(name)
-            if agent is None:
-                return False
-            header = self.agent_header_testid(agent["id"])
-            if not self.driver.exists(header):
-                return False
-            self.driver.context_menu(header)
-            return self.driver.exists(self.CTX_CONNECT)
-
-        self.wait(menu_open, what=f"the {name!r} agent context menu")
+        self.open_named_context_menu(
+            resolve=lambda: self.find_agent(name),
+            testid_for=self.agent_header_testid,
+            sentinel=self.CTX_CONNECT,
+            what=f"the {name!r} agent context menu",
+        )
 
     def agent_menu_action(self, name: str, action_test_id: str) -> None:
         """Right-click an agent by name and click a context-menu action."""
