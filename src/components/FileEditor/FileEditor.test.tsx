@@ -185,3 +185,56 @@ describe("FileEditor — save error handling (#969)", () => {
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 });
+
+describe("FileEditor — close while in error state (#971)", () => {
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  it("clears the dirty flag when the file fails to load, so the tab is closable", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "sftp_read_file_content") return Promise.reject(new Error("ssh session closed"));
+      return Promise.resolve(undefined);
+    });
+    // Simulate a tab that was dirty before the connection dropped.
+    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+
+    render();
+    await flush();
+
+    // The error view is shown...
+    expect(query("file-editor-error")).not.toBeNull();
+    // ...and the dirty flag is cleared so TabBar won't raise a stuck close prompt.
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+  });
+
+  it("resolves an already-pending close request by closing the failed tab", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "sftp_read_file_content") return Promise.reject(new Error("ssh session closed"));
+      return Promise.resolve(undefined);
+    });
+    const closeTabSpy = vi.fn();
+    useAppStore.setState({
+      closeTab: closeTabSpy,
+      pendingCloseRequest: { tabId: TAB_ID, panelId: "panel-1" },
+    });
+
+    render();
+    await flush();
+
+    expect(closeTabSpy).toHaveBeenCalledWith(TAB_ID, "panel-1");
+    expect(useAppStore.getState().pendingCloseRequest).toBeNull();
+  });
+});
