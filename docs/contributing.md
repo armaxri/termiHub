@@ -1008,9 +1008,12 @@ After creating and closing 40 terminals, verify:
 
 ### Automated Performance Tests
 
+The performance suite was ported from WebdriverIO to the Python bridge harness
+(`tests/system/tests/test_performance.py`, #811). Run it via:
+
 ```bash
-# Requires a built app (pnpm tauri build) and tauri-driver
-pnpm test:e2e:perf
+# Builds the app if needed, then runs the performance suite under pytest
+./scripts/test-system-py.sh -k performance
 ```
 
 The suite covers: PERF-01 (create 40 terminals), PERF-02 (UI responsiveness), PERF-03 (heap under 500 MB), PERF-04 (cleanup after close).

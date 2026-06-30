@@ -303,20 +303,22 @@ Use these skills with `/skill-name` during development:
 
 All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) variants. They can be run from anywhere in the repo. See [scripts/README.md](../scripts/README.md) for details.
 
-| Script                           | Purpose                                                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `./scripts/setup.sh`             | Install all dependencies and do an initial build                                                                   |
-| `./scripts/dev.sh`               | Start the app in dev mode with hot-reload                                                                          |
-| `./scripts/build.sh`             | Build for production (creates platform installer)                                                                  |
-| `./scripts/test.sh`              | Run all unit tests (frontend + backend + agent)                                                                    |
-| `./scripts/check.sh`             | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                |
-| `./scripts/format.sh`            | Auto-fix all formatting issues (Prettier + cargo fmt)                                                              |
-| `./scripts/clean.sh`             | Remove all build artifacts for a fresh start                                                                       |
-| `./scripts/build-agents.sh`      | Build remote agent binaries (cross-compilation targets)                                                            |
-| `./scripts/setup-agent-cross.sh` | Set up cross-compilation toolchain for agent builds                                                                |
-| `./scripts/test-system.sh`       | Start Docker infra + virtual serial ports and run system-level E2E tests (dispatches to platform-specific runners) |
-| `./scripts/release-check.sh`     | Validate release readiness (version consistency, changelog, tests, quality, git state, branch, code markers)       |
-| `./scripts/smoke-test.sh`        | Post-install smoke test (launch app, verify UI, confirm clean shutdown)                                            |
+| Script                             | Purpose                                                                                                                           |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `./scripts/setup.sh`               | Install all dependencies and do an initial build                                                                                  |
+| `./scripts/dev.sh`                 | Start the app in dev mode with hot-reload                                                                                         |
+| `./scripts/build.sh`               | Build for production (creates platform installer)                                                                                 |
+| `./scripts/test.sh`                | Run all unit tests (frontend + backend + agent)                                                                                   |
+| `./scripts/check.sh`               | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                               |
+| `./scripts/format.sh`              | Auto-fix all formatting issues (Prettier + cargo fmt)                                                                             |
+| `./scripts/clean.sh`               | Remove all build artifacts for a fresh start                                                                                      |
+| `./scripts/build-agents.sh`        | Build remote agent binaries (cross-compilation targets)                                                                           |
+| `./scripts/setup-agent-cross.sh`   | Set up cross-compilation toolchain for agent builds                                                                               |
+| `./scripts/test-system-py.sh`      | Run the Python bridge system-test harness (`tests/system/`) — builds the app if stale, brings up `--fixtures`, forwards to pytest |
+| `./scripts/test-system-linux.sh`   | Linux per-machine orchestration: Docker infra + virtual serial ports + unit & Rust integration tests                              |
+| `./scripts/test-system-windows.sh` | Windows (WSL/Git Bash) per-machine orchestration: Docker/Podman infra + unit & Rust integration tests                             |
+| `./scripts/release-check.sh`       | Validate release readiness (version consistency, changelog, tests, quality, git state, branch, code markers)                      |
+| `./scripts/smoke-test.sh`          | Post-install smoke test (launch app, verify UI, confirm clean shutdown)                                                           |
 
 ### Auto-Formatting Hook
 
