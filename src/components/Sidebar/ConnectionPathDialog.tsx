@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Route,
@@ -70,7 +70,6 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
   // origin. Keyed by the probe's node index so events map straight onto it.
   const [statuses, setStatuses] = useState<NodeStatus[]>([]);
   const [messages, setMessages] = useState<Record<number, string>>({});
-  const probeIdRef = useRef<string | null>(null);
 
   // Run a probe for the lifetime of an open dialog: start it, subscribe to its
   // hop-status events, and cancel + unsubscribe on close / unmount.
@@ -78,7 +77,6 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
     if (!open) return;
 
     const probeId = `probe-${connection.id}-${Date.now()}`;
-    probeIdRef.current = probeId;
     const probedNodeCount = hops.length + 1;
     setStatuses(Array.from({ length: probedNodeCount }, () => "pending" as NodeStatus));
     setMessages({});
