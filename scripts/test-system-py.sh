@@ -4,9 +4,8 @@
 # bring up the Docker fixtures, then `cd tests/system && ./pytest.sh …` — with a
 # single entry point.
 #
-# Unlike scripts/test-system.sh (which drives the legacy tauri-driver flow), this
-# runs the host-native bridge harness, so it works on macOS, Linux, and Windows
-# (via the .cmd variant).
+# This runs the host-native bridge harness, so it works on macOS, Linux, and
+# Windows (via the .cmd variant) — unlike the retired legacy tauri-driver flow.
 #
 # Run from anywhere in the repo:
 #

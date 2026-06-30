@@ -1110,9 +1110,16 @@ Experimental features may ship in public releases. The flag is not a hidden deve
 
 ### ADR-5: E2E System Tests Run in Docker (Linux Only)
 
+> **Status update (epic #799):** The WebdriverIO/`tauri-driver` system-test
+> suites have been migrated to the host-native **Python bridge harness**
+> (`tests/system/`, run via `./scripts/test-system-py.sh`), which works on
+> macOS, Linux, and Windows without Docker-in-the-loop for the app itself.
+> `wdio.conf.js` remains only as a scaffold for future tauri-driver UI specs.
+> The context and trade-offs below are retained as the original record.
+
 **Context:** Tauri's `tauri-driver` (the WebDriver proxy for E2E tests) only supports Linux (WebKitGTK) and Windows (Edge WebView2). On macOS, it prints "not supported on this platform" and exits because Apple provides no WKWebView driver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in apps. This is a known Tauri limitation ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)) with no upstream fix expected.
 
-**Decision:** Run E2E system tests inside a Docker container with a Linux environment (Xvfb + WebKitGTK + WebKitWebDriver + tauri-driver). This allows developers on macOS to run the full E2E suite locally via `./scripts/test-system.sh` without needing a CI service.
+**Decision:** Run E2E system tests inside a Docker container with a Linux environment (Xvfb + WebKitGTK + WebKitWebDriver + tauri-driver). This allowed developers on macOS to run the full E2E suite locally without needing a CI service.
 
 **Rationale:**
 

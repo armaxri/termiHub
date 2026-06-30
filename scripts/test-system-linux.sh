@@ -2,25 +2,25 @@
 # Per-machine system test orchestration for Linux.
 #
 # This script:
-#   1. Checks prerequisites (Docker, socat, cargo, pnpm, tauri-driver)
+#   1. Checks prerequisites (Docker, socat, cargo, pnpm)
 #   2. Starts Docker containers from tests/docker/
 #   3. Sets up virtual serial ports (socat)
 #   4. Runs unit tests (frontend + backend + agent)
 #   5. Runs Rust integration tests against Docker containers
-#   6. Runs E2E tests via tauri-driver (if available)
-#   7. Optionally runs fault/stress profile tests
-#   8. Detects USB-to-serial hardware
-#   9. Detects ARM architecture and adjusts tests
-#   10. Tears down containers (unless --keep-infra)
+#   6. Optionally runs fault/stress profile tests
+#   7. Detects USB-to-serial hardware
+#   8. Detects ARM architecture and adjusts tests
+#   9. Tears down containers (unless --keep-infra)
+#
+# UI/infrastructure E2E coverage now lives in the Python bridge harness
+# (tests/system/, run via scripts/test-system-py.sh) — see epic #799.
 #
 # Usage:
 #   ./scripts/test-system-linux.sh [OPTIONS]
 #
 # Options:
-#   --skip-build      Skip cargo/pnpm build steps
 #   --skip-serial     Skip virtual serial port setup
 #   --skip-unit       Skip unit tests (run integration tests only)
-#   --skip-e2e        Skip E2E tests even if tauri-driver is available
 #   --with-fault      Include network fault injection tests (profile: fault)
 #   --with-stress     Include SFTP stress tests (profile: stress)
 #   --with-all        Include all profiles (fault + stress)
@@ -38,20 +38,16 @@ source scripts/internal/dev-local-env.sh
 
 # ─── Parse arguments ────────────────────────────────────────────────────────
 
-SKIP_BUILD=0
 SKIP_SERIAL=0
 SKIP_UNIT=0
-SKIP_E2E=0
 WITH_FAULT=0
 WITH_STRESS=0
 KEEP_INFRA=0
 
 for arg in "$@"; do
     case "$arg" in
-        --skip-build)  SKIP_BUILD=1 ;;
         --skip-serial) SKIP_SERIAL=1 ;;
         --skip-unit)   SKIP_UNIT=1 ;;
-        --skip-e2e)    SKIP_E2E=1 ;;
         --with-fault)  WITH_FAULT=1 ;;
         --with-stress) WITH_STRESS=1 ;;
         --with-all)    WITH_FAULT=1; WITH_STRESS=1 ;;
@@ -60,10 +56,8 @@ for arg in "$@"; do
             echo "Usage: ./scripts/test-system-linux.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --skip-build    Skip cargo/pnpm build steps"
             echo "  --skip-serial   Skip virtual serial port setup"
             echo "  --skip-unit     Skip unit tests (integration only)"
-            echo "  --skip-e2e      Skip E2E tests"
             echo "  --with-fault    Include network fault injection tests"
             echo "  --with-stress   Include SFTP stress tests"
             echo "  --with-all      Include all test profiles"
@@ -115,7 +109,7 @@ cleanup() {
         wait "$SOCAT_PID" 2>/dev/null || true
     fi
 
-    rm -f /tmp/termihub-serial-a /tmp/termihub-serial-b
+    rm -f ${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a} ${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b}
 
     if [ "$DOCKER_STARTED" -eq 1 ] && [ "$KEEP_INFRA" -eq 0 ]; then
         echo "Stopping containers..."
@@ -145,7 +139,6 @@ echo ""
 echo "Checking prerequisites..."
 
 MISSING=0
-HAS_TAURI_DRIVER=0
 
 if ! command -v "$CONTAINER_CMD" &>/dev/null; then
     echo "  MISSING: $CONTAINER_CMD — install Docker: https://docs.docker.com/engine/install/"
@@ -171,14 +164,6 @@ fi
 if [ "$SKIP_SERIAL" -eq 0 ] && ! command -v socat &>/dev/null; then
     echo "  MISSING: socat — install with: sudo apt install socat"
     MISSING=1
-fi
-
-if command -v tauri-driver &>/dev/null; then
-    HAS_TAURI_DRIVER=1
-    echo "  tauri-driver: found"
-else
-    echo "  tauri-driver: not found (E2E tests will be skipped)"
-    echo "    Install with: cargo install tauri-driver"
 fi
 
 if [ "$MISSING" -ne 0 ]; then
@@ -215,26 +200,6 @@ if [ ! -d node_modules ]; then
     echo ""
     echo "node_modules missing, running pnpm install..."
     pnpm install
-fi
-
-# ─── Build the app (for E2E) ────────────────────────────────────────────────
-
-APP_BINARY="./target/release/termihub"
-
-if [ "$HAS_TAURI_DRIVER" -eq 1 ] && [ "$SKIP_E2E" -eq 0 ]; then
-    if [ "$SKIP_BUILD" -eq 0 ]; then
-        echo ""
-        echo "=== Building termiHub (needed for E2E) ==="
-        pnpm tauri build
-    elif [ ! -f "$APP_BINARY" ]; then
-        echo ""
-        echo "WARNING: App binary not found at $APP_BINARY"
-        echo "E2E tests will be skipped. Build with: pnpm tauri build"
-        HAS_TAURI_DRIVER=0
-    else
-        echo ""
-        echo "=== Skipping build (--skip-build), using existing binary ==="
-    fi
 fi
 
 # ─── Start Docker containers ────────────────────────────────────────────────
@@ -286,8 +251,8 @@ if [ "$SKIP_SERIAL" -eq 0 ]; then
     echo ""
     echo "=== Setting up virtual serial ports ==="
 
-    PTY_A="/tmp/termihub-serial-a"
-    PTY_B="/tmp/termihub-serial-b"
+    PTY_A="${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a}"
+    PTY_B="${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b}"
 
     rm -f "$PTY_A" "$PTY_B"
 
@@ -333,19 +298,14 @@ echo "  Platform:   Linux ($ARCH)"
 echo "  SSH:        127.0.0.1:2201-2208"
 echo "  Telnet:     127.0.0.1:2301"
 if [ "$SKIP_SERIAL" -eq 0 ]; then
-echo "  Serial A:   /tmp/termihub-serial-a"
-echo "  Serial B:   /tmp/termihub-serial-b (echo server)"
+echo "  Serial A:   ${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a}"
+echo "  Serial B:   ${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b} (echo server)"
 fi
 if [ "$WITH_FAULT" -eq 1 ]; then
 echo "  Fault:      127.0.0.1:2209 (network fault proxy)"
 fi
 if [ "$WITH_STRESS" -eq 1 ]; then
 echo "  SFTP:       127.0.0.1:2210 (stress test container)"
-fi
-if [ "$HAS_TAURI_DRIVER" -eq 1 ] && [ "$SKIP_E2E" -eq 0 ]; then
-echo "  E2E:        enabled (tauri-driver found)"
-else
-echo "  E2E:        skipped"
 fi
 echo ""
 echo "==========================================="
@@ -443,19 +403,6 @@ if [ "$WITH_STRESS" -eq 1 ]; then
             TEST_EXIT=1
         fi
     fi
-fi
-
-# 4. E2E tests (Linux only, requires tauri-driver)
-if [ "$HAS_TAURI_DRIVER" -eq 1 ] && [ "$SKIP_E2E" -eq 0 ]; then
-    echo ""
-    echo "=== Running E2E infrastructure tests ==="
-    if ! pnpm test:e2e:infra; then
-        echo "E2E INFRASTRUCTURE TESTS FAILED."
-        TEST_EXIT=1
-    fi
-else
-    echo ""
-    echo "=== E2E tests skipped ==="
 fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────

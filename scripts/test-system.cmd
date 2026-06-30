@@ -5,11 +5,9 @@ REM
 REM Usage: scripts\test-system.cmd [OPTIONS]
 REM
 REM Options:
-REM   --skip-build         Skip cargo/pnpm build steps
 REM   --skip-unit          Skip unit tests (integration only)
 REM   --skip-serial        No-op on Windows (serial ports not available; accepted
 REM                        for compatibility with cross-platform invocations)
-REM   --skip-e2e           Skip E2E tests
 REM   --skip-integration   Skip Rust integration tests (no containers needed);
 REM                        use with Podman when docker buildx is unavailable
 REM   --with-fault         Include network fault injection tests (profile: fault)
@@ -29,10 +27,8 @@ echo Run system-level tests with container infrastructure (SSH, Telnet).
 echo Delegates to scripts\test-system-windows.sh via Git Bash or WSL.
 echo.
 echo Options:
-echo   --skip-build         Skip cargo/pnpm build steps
 echo   --skip-unit          Skip unit tests (integration only)
 echo   --skip-serial        No-op on Windows (serial ports not available)
-echo   --skip-e2e           Skip E2E tests
 echo   --skip-integration   Skip Rust integration tests (no containers needed)
 echo   --with-fault         Include network fault injection tests
 echo   --with-stress        Include SFTP stress tests

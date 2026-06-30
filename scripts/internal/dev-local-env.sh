@@ -63,7 +63,7 @@ _thdl_port TERMIHUB_TEST_SFTP_STRESS_PORT    2210
 _thdl_port TERMIHUB_TEST_REMOTE_AGENT_PORT   2211
 _thdl_port TERMIHUB_TEST_TELNET_PORT         2301
 _thdl_port TERMIHUB_TEST_NETWORK_TARGET_PORT 8080
-# examples/docker quick-start + WebdriverIO E2E target (examples/docker-compose.yml).
+# examples/docker quick-start dev target (examples/docker/docker-compose.yml).
 _thdl_port TERMIHUB_TEST_E2E_SSH_PORT        2222
 _thdl_port TERMIHUB_TEST_E2E_TELNET_PORT     2323
 

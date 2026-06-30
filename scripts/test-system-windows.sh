@@ -3,12 +3,14 @@
 #
 # This script:
 #   1. Detects the execution environment (WSL, Git Bash, MSYS2)
-#   2. Checks prerequisites (Docker/Podman, cargo, pnpm, tauri-driver)
+#   2. Checks prerequisites (Docker/Podman, cargo, pnpm)
 #   3. Starts container test infrastructure (Docker Desktop or Podman)
 #   4. Runs unit tests (frontend + backend + agent)
 #   5. Runs Rust integration tests against containers
-#   6. Runs E2E tests via tauri-driver (if available)
-#   7. Tears down containers (unless --keep-infra)
+#   6. Tears down containers (unless --keep-infra)
+#
+# UI/infrastructure E2E coverage now lives in the Python bridge harness
+# (tests/system/, run via scripts/test-system-py.sh) — see epic #799.
 #
 # Note: Virtual serial ports (socat) are NOT available on Windows/WSL.
 #
@@ -25,11 +27,9 @@
 #   ./scripts/test-system-windows.sh [OPTIONS]
 #
 # Options:
-#   --skip-build         Skip cargo/pnpm build steps
 #   --skip-unit          Skip unit tests (run integration tests only)
 #   --skip-serial        No-op on Windows (serial ports not available; accepted
 #                        for compatibility with cross-platform invocations)
-#   --skip-e2e           Skip E2E tests
 #   --skip-integration   Skip Rust integration tests (no containers needed);
 #                        use when container image build is unavailable (Podman)
 #   --with-fault         Include network fault injection tests (profile: fault)
@@ -49,21 +49,17 @@ source scripts/internal/dev-local-env.sh
 
 # ─── Parse arguments ────────────────────────────────────────────────────────
 
-SKIP_BUILD=0
 SKIP_UNIT=0
 SKIP_INTEGRATION=0
-SKIP_E2E=0
 WITH_FAULT=0
 WITH_STRESS=0
 KEEP_INFRA=0
 
 for arg in "$@"; do
     case "$arg" in
-        --skip-build)        SKIP_BUILD=1 ;;
         --skip-unit)         SKIP_UNIT=1 ;;
         --skip-serial)       ;;  # No-op on Windows — serial ports are always unavailable
         --skip-integration)  SKIP_INTEGRATION=1 ;;
-        --skip-e2e)          SKIP_E2E=1 ;;
         --with-fault)        WITH_FAULT=1 ;;
         --with-stress)       WITH_STRESS=1 ;;
         --with-all)          WITH_FAULT=1; WITH_STRESS=1 ;;
@@ -72,11 +68,9 @@ for arg in "$@"; do
             echo "Usage: ./scripts/test-system-windows.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --skip-build         Skip cargo/pnpm build steps"
             echo "  --skip-unit          Skip unit tests (integration only)"
             echo "  --skip-serial        No-op on Windows (serial ports not available)"
             echo "  --skip-integration   Skip Rust integration tests (no containers needed)"
-            echo "  --skip-e2e           Skip E2E tests"
             echo "  --with-fault         Include network fault injection tests"
             echo "  --with-stress        Include SFTP stress tests"
             echo "  --with-all           Include all test profiles"
@@ -227,7 +221,6 @@ echo ""
 echo "Checking prerequisites..."
 
 MISSING=0
-HAS_TAURI_DRIVER=0
 
 # Container runtime: validate the detected/provided runtime
 if ! command -v "$CONTAINER_CMD" &>/dev/null; then
@@ -249,13 +242,6 @@ fi
 if ! command -v pnpm &>/dev/null; then
     echo "  MISSING: pnpm — install with: npm install -g pnpm"
     MISSING=1
-fi
-
-if command -v tauri-driver &>/dev/null; then
-    HAS_TAURI_DRIVER=1
-    echo "  tauri-driver: found"
-else
-    echo "  tauri-driver: not found (E2E tests will be skipped)"
 fi
 
 if [ "$MISSING" -ne 0 ]; then
@@ -296,26 +282,6 @@ if [ ! -d node_modules ]; then
     echo ""
     echo "node_modules missing, running pnpm install..."
     pnpm install
-fi
-
-# ─── Build the app (for E2E) ────────────────────────────────────────────────
-
-APP_BINARY="./target/release/termihub.exe"
-
-if [ "$HAS_TAURI_DRIVER" -eq 1 ] && [ "$SKIP_E2E" -eq 0 ]; then
-    if [ "$SKIP_BUILD" -eq 0 ]; then
-        echo ""
-        echo "=== Building termiHub (needed for E2E) ==="
-        pnpm tauri build
-    elif [ ! -f "$APP_BINARY" ]; then
-        echo ""
-        echo "WARNING: App binary not found at $APP_BINARY"
-        echo "E2E tests will be skipped. Build with: pnpm tauri build"
-        HAS_TAURI_DRIVER=0
-    else
-        echo ""
-        echo "=== Skipping build (--skip-build), using existing binary ==="
-    fi
 fi
 
 # ─── Start Docker containers (skipped with --skip-integration) ──────────────
@@ -431,11 +397,6 @@ fi
 if [ "$WITH_STRESS" -eq 1 ]; then
 echo "  SFTP:       127.0.0.1:2210 (stress test container)"
 fi
-if [ "$HAS_TAURI_DRIVER" -eq 1 ] && [ "$SKIP_E2E" -eq 0 ]; then
-echo "  E2E:        enabled (tauri-driver found)"
-else
-echo "  E2E:        skipped"
-fi
 echo ""
 echo "==========================================="
 
@@ -534,24 +495,6 @@ else
     echo "    NOTE: Integration tests require Docker Desktop for image builds"
     echo "    with 'additional_contexts'. With Podman on Windows, 'docker buildx'"
     echo "    (bundled with Docker Desktop) is required. Linux CI covers this coverage."
-fi
-
-# 4. E2E tests (requires tauri-driver)
-if [ "$HAS_TAURI_DRIVER" -eq 1 ] && [ "$SKIP_E2E" -eq 0 ]; then
-    echo ""
-    echo "=== Running E2E infrastructure tests ==="
-    if ! pnpm test:e2e:infra; then
-        echo "E2E INFRASTRUCTURE TESTS FAILED."
-        TEST_EXIT=1
-    fi
-
-    # Windows-specific shell E2E tests
-    echo ""
-    echo "--- Windows shell E2E tests ---"
-    echo "(Included in the E2E infra suite — gated by process.platform check)"
-else
-    echo ""
-    echo "=== E2E tests skipped ==="
 fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────

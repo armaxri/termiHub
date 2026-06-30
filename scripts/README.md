@@ -11,11 +11,10 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `check`                   | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                                                                                               |
 | `format`                  | Auto-fix all formatting issues (Prettier + cargo fmt)                                                                                                                                             |
 | `clean`                   | Remove all build artifacts for a fresh start                                                                                                                                                      |
-| `test-system`             | Start Docker infra + virtual serial ports and run system-level E2E tests                                                                                                                          |
 | `test-system-py`          | One-command runner for the Python **bridge** harness — builds the app if missing/stale (`--debug`), brings up `--fixtures`, forwards args to `tests/system/pytest.sh`                             |
-| `test-system-mac`         | macOS system test orchestration: Docker containers, unit tests, Rust integration tests (no E2E)                                                                                                   |
-| `test-system-linux`       | Linux system test orchestration: Docker containers, unit tests, integration tests, E2E tests                                                                                                      |
-| `test-system-windows`     | Windows system test orchestration via WSL/Git Bash: Docker or Podman, unit tests, integration tests, E2E                                                                                          |
+| `test-system-mac`         | macOS system test orchestration: Docker containers, unit tests, Rust integration tests                                                                                                            |
+| `test-system-linux`       | Linux system test orchestration: Docker containers, unit tests, Rust integration tests                                                                                                            |
+| `test-system-windows`     | Windows system test orchestration via WSL/Git Bash: Docker or Podman, unit tests, Rust integration tests                                                                                          |
 | `setup-agent-cross`       | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                                                                                            |
 | `build-agents`            | Build the remote agent: Linux targets via cross-rs (musl), or macOS/Windows targets natively (`--native`)                                                                                         |
 | `release-check`           | Validate release readiness — version consistency, changelog (incl. unconsolidated `docs/changes/` fragments), tests, quality checks, git state, branch, and code markers                          |
@@ -44,12 +43,6 @@ cp default.dev.local.json dev.local.json   # per-checkout config (gitignored)
 ./scripts/test.sh
 ./scripts/check.sh
 
-# System tests (Docker + virtual serial)
-./scripts/test-system.sh              # Full run (build + Docker + serial + tests)
-./scripts/test-system.sh --skip-build # Reuse existing binary
-./scripts/test-system.sh --skip-serial # SSH/Telnet only, no serial port setup
-./scripts/test-system.sh --keep-infra  # Keep Docker containers after tests
-
 # Python bridge harness — one command (build if needed + fixtures + pytest)
 ./scripts/test-system-py.sh --debug -k sftp_infra -x -s            # debug build, one suite
 ./scripts/test-system-py.sh --fixtures "ssh-password ssh-keys" -m integration -k ssh
@@ -59,7 +52,7 @@ cp default.dev.local.json dev.local.json   # per-checkout config (gitignored)
 # Per-machine comprehensive system tests (macOS / Linux)
 ./scripts/test-system-mac.sh                    # macOS (unit + integration, no E2E)
 ./scripts/test-system-mac.sh --with-all         # Include fault + stress profiles
-./scripts/test-system-linux.sh                  # Linux (unit + integration + E2E)
+./scripts/test-system-linux.sh                  # Linux (unit + integration)
 ./scripts/test-system-linux.sh --with-fault     # Include network fault tests
 ./scripts/test-system-windows.sh                # Windows via WSL/Git Bash
 ```
@@ -69,7 +62,6 @@ REM Per-machine comprehensive system tests (Windows — cmd.exe)
 scripts\test-system-windows.cmd                                          REM Full run
 scripts\test-system-windows.cmd --skip-unit                              REM Integration tests only
 scripts\test-system-windows.cmd --skip-integration                       REM Unit tests only (Podman — no docker buildx)
-scripts\test-system-windows.cmd --skip-e2e                               REM Unit + integration, no E2E
 
 REM Simple general dispatcher (also callable from cmd.exe)
 scripts\test-system.cmd                                                  REM Delegates to test-system-windows.sh
