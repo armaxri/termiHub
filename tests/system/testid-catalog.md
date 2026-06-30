@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**448** literal · **122** dynamic · **14** indirect.
+**449** literal · **122** dynamic · **14** indirect.
 
 ## Literal test IDs
 
@@ -91,6 +91,7 @@ Fixed strings — match exactly.
 | `connection-list-remote-agents-toggle` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-path-close` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
 | `connection-path-dialog` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
+| `connection-path-node` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
 | `connection-picker` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-close` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-inline` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
