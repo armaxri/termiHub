@@ -214,6 +214,42 @@ class TestCredentialStore(
         self.wait(lambda: self.find_tab(name), what="the recovered SSH tab")
         self.wait(self.has_terminal, what="the SSH terminal session after recovery")
 
+    def test_disabled_save_does_not_store_and_reprompts(self):
+        # The inverse of test_saved_password_is_reused_on_reconnect, and the last
+        # behavior the old credential-store-infra.test.js (CRED-06) still covered:
+        # when the user unchecks the (default-on) "Save password" box, nothing is
+        # written to the store, so the next connect must prompt again.
+        self.setup_master_password_store(MASTER_PASSWORD)
+        name = unique_name("cred-nosave")
+        self.create_ssh_connection(
+            name,
+            host=SSH_HOST,
+            port=SSH_PASSWORD_PORT,
+            username=SSH_USERNAME,
+            connect=False,
+        )
+        self.require_stable_connection(name)
+
+        # First connect: uncheck the save box before answering, so the credential
+        # is never stored, then land in a shell.
+        self.connect_connection(name)
+        self.wait(
+            lambda: self.driver.exists("password-prompt-save-checkbox"),
+            what="the save-password toggle",
+        )
+        self.driver.click("password-prompt-save-checkbox")  # default on → off
+        self.handle_password_prompt()
+        first = self.wait(lambda: self.find_tab(name), what="the first SSH tab")
+        self.wait(self.has_terminal, what="the first SSH terminal session")
+
+        self.close_tab(first["id"])
+        self.wait(lambda: self.find_tab(name) is None, what="the first tab to close")
+
+        # Second connect: no stored credential, so the prompt reappears.
+        self.connect_connection(name)
+        self.wait(self.password_prompt_open, what="the password prompt on reconnect")
+        self.cancel_password_prompt()
+
     def test_auto_lock_timeout_setting_persists(self):
         # The auto-lock options start at 5 minutes, so the lock firing cannot be
         # awaited in a system test (covered by manual test MT-CRED-04). This verifies

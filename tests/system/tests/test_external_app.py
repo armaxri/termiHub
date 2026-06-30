@@ -18,7 +18,7 @@ Covered:
 - **Open in VS Code** — local (MT-FB-04/14), SFTP (MT-FB-15), and the
   "VS Code not installed → menu item hidden" path (MT-FB-16).
 - **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07) and
-  the "Setup Agent" launcher in the connection-error dialog (MT-SSH-09).
+  the "Setup SSH Agent" button in the connection editor (MT-SSH-09, #955).
 - **X11 forwarding** — enabling ``enableX11Forwarding`` on a connection, proving
   the flag persists and the session connects, then confirming a remote X11 window
   appears (MT-SSH-14/15/16/18, MT-XPLAT-03).
@@ -213,43 +213,39 @@ class TestExternalApp(
         assert self.wait(self.has_terminal, what="the agent-authenticated terminal")
 
     # ── Setup-Agent launcher (MT-SSH-09) ─────────────────────────────────────
-    @pytest.mark.usefixtures("ssh_fixtures")
     def test_setup_agent_launcher_opens_helper(self):
-        """A failed agent connection surfaces the connection-error dialog with a
-        'Setup Agent' button; clicking it opens the agent-setup helper.
+        """The connection editor surfaces a 'Setup SSH Agent' button when SSH +
+        agent auth is selected (#955); clicking it opens the agent-setup helper
+        terminal.
 
-        The helper is a Windows PowerShell elevation flow (MT-SSH-09); on a host
-        where the button is not rendered, this skips.
+        Unlike the old connection-error-dialog path, this drives the editor
+        button directly, so the in-app side is fully harness-verified (the button
+        appears and a 'Setup SSH Agent' tab opens). Needs no fixtures and no
+        failed connection. Only the helper command's *effect* (PowerShell
+        elevation on Windows, ``ssh-add`` on macOS/Linux) is operator-confirmed.
         """
         self.close_all_tabs()
-        self.manual_step(
-            "Ensure NO ssh-agent key is loaded for the fixture host (so agent auth "
-            "fails):\n      ssh-add -D",
-            "ssh-add reports all identities removed.",
-        )
 
         name = unique_name("agent-setup")
-        self.create_ssh_connection(
-            name,
-            host=SSH_HOST,
-            port=SSH_KEYS_PORT,
-            username=SSH_USERNAME,
-            auth_method="agent",
-            connect=True,
-        )
+        # Open the editor with agent auth selected — this surfaces the button.
+        self._fill_ssh_editor(name, port=SSH_KEYS_PORT, auth_method="agent")
         self.wait(
-            lambda: self.driver.exists("connection-error-setup-agent")
-            or self.driver.exists("connection-error-close"),
-            what="the connection-error dialog",
+            lambda: self.driver.exists("ssh-setup-agent"),
+            what="the Setup SSH Agent button (SSH + agent auth)",
         )
-        if not self.driver.exists("connection-error-setup-agent"):
-            pytest.skip("Setup-Agent button not offered on this platform")
 
-        self.driver.click("connection-error-setup-agent")
+        self.driver.click("ssh-setup-agent")
+
+        # In-app verification: a helper terminal tab opened.
+        self.wait(
+            lambda: self.find_tab("Setup SSH Agent") is not None,
+            what="the 'Setup SSH Agent' helper tab to open",
+        )
+
         self.manual_step(
-            "termiHub clicked 'Setup Agent'.",
-            "A local helper tab/terminal opens running the SSH-agent setup command "
-            "(PowerShell elevation on Windows).",
+            "termiHub opened the 'Setup SSH Agent' helper tab.",
+            "The helper terminal runs the SSH-agent setup command (PowerShell "
+            "elevation on Windows; `ssh-agent` + `ssh-add` on macOS/Linux).",
         )
 
     # ── X11 forwarding (MT-SSH-14/15/16/18, MT-XPLAT-03) ─────────────────────

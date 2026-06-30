@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { PlugZap, TerminalSquare, Palette, Settings } from "lucide-react";
+import { PlugZap, TerminalSquare, Palette, Settings, KeyRound } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -44,6 +44,7 @@ import { validateProxyJump } from "@/utils/validateProxyJump";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
+import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
 
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
@@ -286,6 +287,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   /** Whether the SSH "Jump Host" section applies to the current edit. */
   const showJumpHostSection = selectedType === "ssh" && !isAnyAgentMode;
+
+  /** Whether the SSH "Setup SSH Agent" helper applies (SSH + agent auth). */
+  const showSshAgentSetup =
+    selectedType === "ssh" && !isAnyAgentMode && connSettings.authMethod === "agent";
 
   // The schema-driven form only tracks its own fields, so its onChange would drop
   // sibling keys like `proxyJump` (managed by JumpHostSection). Re-merge it.
@@ -666,12 +671,26 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleSetupSshAgent = useCallback(async () => {
     const shells = await listAvailableShells();
     if (shells.length === 0) return;
+    if (isWindows()) {
+      // Windows' ssh-agent is a service that is disabled by default; enable and
+      // start it (elevated), then add the user's keys.
+      addTab("Setup SSH Agent", "local", {
+        type: "local",
+        config: {
+          shell: "powershell" as ShellType,
+          initialCommand:
+            "Start-Process powershell -Verb RunAs -ArgumentList 'Set-Service ssh-agent -StartupType Manual; Start-Service ssh-agent; ssh-add; pause'",
+        },
+      });
+      return;
+    }
+    // macOS / Linux: start an agent for this shell (if none is running) and add
+    // the default keys. `ssh-add` alone errors when no agent is reachable.
     addTab("Setup SSH Agent", "local", {
       type: "local",
       config: {
-        shell: "powershell" as ShellType,
-        initialCommand:
-          "Start-Process powershell -Verb RunAs -ArgumentList 'Set-Service ssh-agent -StartupType Manual; Start-Service ssh-agent; ssh-add; pause'",
+        shell: (shells[0] as ShellType) ?? "bash",
+        initialCommand: 'eval "$(ssh-agent -s)" && ssh-add',
       },
     });
   }, [addTab]);
@@ -835,9 +854,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     closeThisTab();
   }, [closeThisTab]);
 
-  // Suppress the SSH agent setup handler reference so it can be attached to a button outside the form
-  void handleSetupSshAgent;
-
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
 
   // Filter Docker runtime options based on what's actually installed
@@ -964,6 +980,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           errors={jumpHostValidation.errors}
           warnings={jumpHostValidation.warnings}
         />
+      )}
+
+      {showSshAgentSetup && (
+        <div className="settings-panel__category" data-testid="ssh-agent-setup-section">
+          <h3 className="settings-panel__category-title">SSH Agent</h3>
+          <button
+            type="button"
+            className="connection-editor__btn connection-editor__btn--secondary connection-editor__setup-agent-btn"
+            onClick={handleSetupSshAgent}
+            data-testid="ssh-setup-agent"
+          >
+            <KeyRound size={13} aria-hidden />
+            Setup SSH Agent
+          </button>
+          <p className="settings-form__hint">
+            Opens a terminal that starts your SSH agent and adds your keys (<code>ssh-add</code>),
+            so agent authentication can find them.
+          </p>
+        </div>
       )}
 
       {isAgentDefinitionMode && (
