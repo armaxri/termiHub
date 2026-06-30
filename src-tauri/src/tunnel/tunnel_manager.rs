@@ -545,7 +545,14 @@ impl TunnelManager {
             )));
         }
 
-        serde_json::from_value(conn.config.settings.clone()).map_err(|e| {
+        // Expand any saved-connection jump-host references to inline hops before
+        // core parses the chain (it only connects with inline hops) — #940.
+        let mut settings = conn.config.settings.clone();
+        conn_mgr
+            .resolve_jump_host_refs(&mut settings, Some(connection_id))
+            .map_err(|e| TerminalError::TunnelError(e.to_string()))?;
+
+        serde_json::from_value(settings).map_err(|e| {
             TerminalError::TunnelError(format!(
                 "Failed to parse SSH config for connection {}: {}",
                 connection_id, e

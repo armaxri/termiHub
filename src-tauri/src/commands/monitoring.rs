@@ -2,6 +2,7 @@ use tauri::State;
 use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
+use crate::connection::manager::ConnectionManager;
 use crate::monitoring::{MonitoringManager, SystemStats};
 use crate::utils::errors::TerminalError;
 
@@ -15,9 +16,15 @@ use crate::utils::errors::TerminalError;
 /// thread and starve the async runtime.
 #[tauri::command]
 pub async fn monitoring_open(
-    config: serde_json::Value,
+    mut config: serde_json::Value,
     manager: State<'_, MonitoringManager>,
+    conn_manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
+    // Expand saved-connection jump-host references to inline hops before core
+    // parses the chain (it only connects with inline hops) — #940.
+    conn_manager
+        .resolve_jump_host_refs(&mut config, None)
+        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
     let config = parse_ssh_settings(&config);
     info!(host = %config.host, port = config.port, "Opening monitoring session");
     let manager = (*manager).clone();

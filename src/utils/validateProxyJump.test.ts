@@ -1,9 +1,19 @@
 import { describe, it, expect } from "vitest";
-import type { JumpHostConfig } from "@/types/connection";
+import type { JumpHostConfig, SavedConnection } from "@/types/connection";
 import { validateProxyJump } from "./validateProxyJump";
 
 function hop(overrides: Partial<JumpHostConfig> = {}): JumpHostConfig {
   return { host: "bastion", port: 22, username: "admin", authMethod: "key", ...overrides };
+}
+
+/** A saved SSH connection, optionally with its own jump-host chain. */
+function sshConn(id: string, hops: JumpHostConfig[] = [], type = "ssh"): SavedConnection {
+  return {
+    id,
+    name: id,
+    folderId: null,
+    config: { type, config: hops.length ? { proxyJump: hops } : {} },
+  };
 }
 
 describe("validateProxyJump", () => {
@@ -45,5 +55,62 @@ describe("validateProxyJump", () => {
     const { errors, warnings } = validateProxyJump(deep);
     expect(errors).toEqual([]);
     expect(warnings.some((w) => w.includes("6 hops"))).toBe(true);
+  });
+
+  describe("with saved-connection references (#940)", () => {
+    it("accepts a reference to an existing SSH connection", () => {
+      const ctx = { connections: [sshConn("Work/bastion")] };
+      const { errors } = validateProxyJump([hop({ connectionId: "Work/bastion" })], ctx);
+      expect(errors).toEqual([]);
+    });
+
+    it("flags a reference to a connection that no longer exists", () => {
+      const { errors } = validateProxyJump([hop({ connectionId: "ghost" })], { connections: [] });
+      expect(errors.some((e) => e.includes("not found"))).toBe(true);
+    });
+
+    it("flags a reference to a non-SSH connection", () => {
+      const local = sshConn("loc", [], "local");
+      const { errors } = validateProxyJump([hop({ connectionId: "loc" })], {
+        connections: [local],
+      });
+      expect(errors.some((e) => e.includes("not an SSH connection"))).toBe(true);
+    });
+
+    it("detects a direct circular reference (A → B → A)", () => {
+      const a = sshConn("A", [hop({ connectionId: "B" })]);
+      const b = sshConn("B", [hop({ connectionId: "A" })]);
+      const { errors } = validateProxyJump([hop({ connectionId: "A" })], {
+        connections: [a, b],
+        currentConnectionId: "self",
+      });
+      expect(errors.some((e) => e.includes("Circular"))).toBe(true);
+    });
+
+    it("detects a hop that routes back through the connection being edited", () => {
+      // Editing connection "me"; a hop references "gw", whose chain points back to "me".
+      const gw = sshConn("gw", [hop({ connectionId: "me" })]);
+      const me = sshConn("me");
+      const { errors } = validateProxyJump([hop({ connectionId: "gw" })], {
+        connections: [gw, me],
+        currentConnectionId: "me",
+      });
+      expect(errors.some((e) => e.includes("Circular"))).toBe(true);
+    });
+
+    it("accepts a non-circular nested reference chain", () => {
+      const a = sshConn("A", [hop({ connectionId: "B" })]);
+      const b = sshConn("B");
+      const { errors } = validateProxyJump([hop({ connectionId: "A" })], {
+        connections: [a, b],
+        currentConnectionId: "self",
+      });
+      expect(errors).toEqual([]);
+    });
+
+    it("skips reference checks entirely when no context is provided", () => {
+      const { errors } = validateProxyJump([hop({ connectionId: "ghost" })]);
+      expect(errors).toEqual([]);
+    });
   });
 });

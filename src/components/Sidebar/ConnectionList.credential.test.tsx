@@ -182,6 +182,24 @@ describe("ConnectionList — password dialog conditions", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
+  it("does not show dialog for password auth when an inline password is present (#963)", async () => {
+    // A config that already carries a non-empty password (e.g. an "Open Jump
+    // Host Terminal" gateway built from an inline hop) is the credential itself
+    // — handleConnect must use it and not consult the store or prompt.
+    const conn = makeSshConn("pw-inline", "password");
+    (conn.config.config as Record<string, unknown>).password = "inline-secret";
+    render([conn]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await clickConnectButton(conn.id);
+
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    // The store lookup is skipped entirely for an inline password.
+    expect(mockedResolveCredential).not.toHaveBeenCalled();
+  });
+
   it("does not show dialog for agent auth", async () => {
     const conn = makeSshConn("agent-auth", "agent");
     render([conn]);

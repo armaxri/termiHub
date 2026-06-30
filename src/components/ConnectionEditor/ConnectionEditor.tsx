@@ -41,6 +41,7 @@ import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { JumpHostSection } from "./JumpHostSection";
 import { validateProxyJump } from "@/utils/validateProxyJump";
+import { sshJumpHostOptions } from "@/utils/jumpHost";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -156,6 +157,7 @@ interface ConnectionEditorProps {
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
   const connections = useAppStore((s) => s.connections);
+  const folders = useAppStore((s) => s.folders);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
@@ -308,13 +310,24 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     });
   }, []);
 
+  /** SSH connections offered as saved-connection jump-host hops (#940), labelled
+   * by folder path and excluding the connection being edited (no self-reference). */
+  const jumpHostOptions = useMemo(
+    () =>
+      showJumpHostSection ? sshJumpHostOptions(connections, folders, editingConnectionId) : [],
+    [showJumpHostSection, connections, folders, editingConnectionId]
+  );
+
   /** Jump-host chain validation (errors block save; warnings are advisory). */
   const jumpHostValidation = useMemo(
     () =>
       showJumpHostSection
-        ? validateProxyJump((connSettings.proxyJump as JumpHostConfig[] | undefined) ?? [])
+        ? validateProxyJump((connSettings.proxyJump as JumpHostConfig[] | undefined) ?? [], {
+            connections,
+            currentConnectionId: editingConnectionId,
+          })
         : { errors: [], warnings: [] },
-    [showJumpHostSection, connSettings.proxyJump]
+    [showJumpHostSection, connSettings.proxyJump, connections, editingConnectionId]
   );
 
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(
@@ -977,6 +990,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           value={connSettings.proxyJump as JumpHostConfig[] | undefined}
           targetHost={connSettings.host as string | undefined}
           onChange={handleJumpHostChange}
+          savedConnections={jumpHostOptions}
           errors={jumpHostValidation.errors}
           warnings={jumpHostValidation.warnings}
         />
