@@ -11,6 +11,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import type { SavedConnection, JumpHostConfig } from "@/types/connection";
+import { resolveCredential } from "@/services/api";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -20,6 +21,8 @@ vi.mock("@/services/api", () => ({
   isSshKeyEncrypted: vi.fn(() => Promise.resolve(false)),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
 }));
+
+const mockedResolveCredential = vi.mocked(resolveCredential);
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 const baseSettings = {
@@ -51,8 +54,12 @@ describe("ConnectionList — jump-host context menu", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    vi.clearAllMocks();
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    useAppStore.setState({
+      settings: { ...baseSettings },
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
   });
 
   afterEach(() => {
@@ -82,6 +89,34 @@ describe("ConnectionList — jump-host context menu", () => {
     openMenu(sshConnection("plain", {}));
     expect(document.querySelector('[data-testid="context-connection-open-jump-host"]')).toBeNull();
     expect(document.querySelector('[data-testid="context-connection-show-path"]')).toBeNull();
+  });
+
+  it("opens a jump-host terminal without prompting when the hop has an inline password (#963)", async () => {
+    // A password-auth bastion with an inline password must not re-prompt: the
+    // synthesized gateway carries the hop's password, so the credential is
+    // already known (the synthetic id would miss the store).
+    const passwordHop: JumpHostConfig = {
+      host: "bastion",
+      port: 22,
+      username: "admin",
+      authMethod: "password",
+      password: "bastion-secret",
+    };
+    openMenu(sshConnection("app-server", { proxyJump: [passwordHop] }));
+
+    const openGateway = document.querySelector(
+      '[data-testid="context-connection-open-jump-host"]'
+    ) as HTMLElement | null;
+    expect(openGateway).not.toBeNull();
+
+    await act(async () => {
+      openGateway!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    expect(mockedResolveCredential).not.toHaveBeenCalled();
   });
 
   it("opens the connection-path dialog with the full hop chain", () => {

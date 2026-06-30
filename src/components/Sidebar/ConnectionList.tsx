@@ -455,6 +455,24 @@ export function ConnectionList() {
           return;
         }
 
+        // An inline, non-empty password on the config is itself the credential —
+        // e.g. an "Open Jump Host Terminal" gateway synthesized from an inline
+        // hop, whose password lives on the hop, not in the store (#963). Use it
+        // directly: a credential-store lookup here is keyed by this (possibly
+        // synthetic) connection id and would miss, forcing a redundant prompt
+        // even though the password is already known.
+        if (typeof cfg.password === "string" && cfg.password.length > 0) {
+          addTab(
+            connection.name,
+            connection.config.type,
+            config,
+            undefined,
+            undefined,
+            connection.terminalOptions
+          );
+          return;
+        }
+
         // Before attempting credential resolution, check whether the credential store
         // is locked. If it is, we can't read the stored credential and SSH would fall
         // back to interactive password prompts. Prompt for unlock first and wait —
