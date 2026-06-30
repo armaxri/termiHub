@@ -34,7 +34,10 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 
 # Run a second instance in parallel (e.g. two checkouts side-by-side)
 ./scripts/dev.sh 1422            # explicit port argument
-echo 1422 > dev.local            # or set a per-checkout default (gitignored)
+cp default.dev.local.json dev.local.json   # per-checkout config (gitignored)
+# Edit dev.local.json: distinct dev_port + compose_project + test_port_offset.
+# This also isolates the test environments (Docker, serial, E2E) so several
+# checkouts can run all tests at once — see docs/testing.md "Parallel test isolation".
 
 # Before pushing
 ./scripts/format.sh

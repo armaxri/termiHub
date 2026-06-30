@@ -601,21 +601,21 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 
 ### Test Suites
 
-| Suite               | File                                        | Tests | Docker Containers                          | Description                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------- | ------------------------------------------- | ----- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SSH Auth            | `core/tests/ssh_auth.rs`                    | 15    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 5 passphrase keys, wrong credentials, wrong passphrase                                                                                                                                                                                                                                                                                         |
-| SSH Compat          | `core/tests/ssh_compat.rs`                  | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                                                                                                                                                                                                                                                                                                                      |
-| SSH Advanced        | `core/tests/ssh_advanced.rs`                | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                                                                                                                                                                                                                                                                                                                            |
-| SSH Banner          | `core/tests/ssh_banner.rs`                  | 3     | ssh-banner:2206, ssh-password:2201         | Pre-auth banner text, no-banner on standard server, banner on failed auth                                                                                                                                                                                                                                                                                             |
-| Telnet              | `core/tests/telnet.rs`                      | 3     | telnet:2301                                | Connect, output subscribe, login flow                                                                                                                                                                                                                                                                                                                                 |
-| SFTP Stress         | `core/tests/sftp_stress.rs`                 | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions                                                                                                                                                                                                                                                                                                     |
-| Network Resilience  | `core/tests/network_resilience.rs`          | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption                                                                                                                                                                                                                                                                                                        |
-| Monitoring          | `core/tests/monitoring.rs`                  | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                                                                                                                                                                                                                                                                                                                             |
-| Agent Deploy SFTP   | `src-tauri/src/utils/remote_exec.rs`        | 1     | ssh-password:2201                          | Uploads a file over SFTP and reads it back, exercising the agent auto-deploy `block_in_place` path from `spawn_blocking` (#828/#837). In the desktop crate: `cargo test -p termihub --lib agent_deploy`. Pinned to password auth; port via `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) — see [Parallel dev instances](#parallel-dev-instances-agent-deploy-test) |
-| SSH Banner (system) | `tests/system/tests/test_ssh_banner.py`     | 2     | ssh-banner:2206                            | Pre-auth banner / MOTD display (ported from `ssh-banner.test.js`)                                                                                                                                                                                                                                                                                                     |
-| SSH Keys (system)   | `tests/system/tests/test_ssh_keys.py`       | 4     | ssh-keys:2203                              | Key-based auth flows (ported from `ssh-keys.test.js`)                                                                                                                                                                                                                                                                                                                 |
-| SSH Infra (system)  | `tests/system/tests/test_ssh.py`            | 11    | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                                        |
-| Win Shells (system) | `tests/system/tests/test_windows_shells.py` | 13    | none                                       | PowerShell / cmd.exe selection, rendering, input, the shell selector, and WSL sessions (cwd / `/mnt` path translation). Windows-only; WSL cases skip without WSL2 (ported from `windows-shells.test.js`, #975)                                                                                                                                                        |
+| Suite               | File                                        | Tests | Docker Containers                          | Description                                                                                                                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------- | ----- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SSH Auth            | `core/tests/ssh_auth.rs`                    | 15    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 5 passphrase keys, wrong credentials, wrong passphrase                                                                                                                                                                                                                                                                         |
+| SSH Compat          | `core/tests/ssh_compat.rs`                  | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                                                                                                                                                                                                                                                                                                      |
+| SSH Advanced        | `core/tests/ssh_advanced.rs`                | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                                                                                                                                                                                                                                                                                                            |
+| SSH Banner          | `core/tests/ssh_banner.rs`                  | 3     | ssh-banner:2206, ssh-password:2201         | Pre-auth banner text, no-banner on standard server, banner on failed auth                                                                                                                                                                                                                                                                             |
+| Telnet              | `core/tests/telnet.rs`                      | 3     | telnet:2301                                | Connect, output subscribe, login flow                                                                                                                                                                                                                                                                                                                 |
+| SFTP Stress         | `core/tests/sftp_stress.rs`                 | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions                                                                                                                                                                                                                                                                                     |
+| Network Resilience  | `core/tests/network_resilience.rs`          | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption                                                                                                                                                                                                                                                                                        |
+| Monitoring          | `core/tests/monitoring.rs`                  | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                                                                                                                                                                                                                                                                                                             |
+| Agent Deploy SFTP   | `src-tauri/src/utils/remote_exec.rs`        | 1     | ssh-password:2201                          | Uploads a file over SFTP and reads it back, exercising the agent auto-deploy `block_in_place` path from `spawn_blocking` (#828/#837). In the desktop crate: `cargo test -p termihub --lib agent_deploy`. Pinned to password auth; port via `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) — see [Parallel test isolation](#parallel-test-isolation) |
+| SSH Banner (system) | `tests/system/tests/test_ssh_banner.py`     | 2     | ssh-banner:2206                            | Pre-auth banner / MOTD display (ported from `ssh-banner.test.js`)                                                                                                                                                                                                                                                                                     |
+| SSH Keys (system)   | `tests/system/tests/test_ssh_keys.py`       | 4     | ssh-keys:2203                              | Key-based auth flows (ported from `ssh-keys.test.js`)                                                                                                                                                                                                                                                                                                 |
+| SSH Infra (system)  | `tests/system/tests/test_ssh.py`            | 11    | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                        |
+| Win Shells (system) | `tests/system/tests/test_windows_shells.py` | 13    | none                                       | PowerShell / cmd.exe selection, rendering, input, the shell selector, and WSL sessions (cwd / `/mnt` path translation). Windows-only; WSL cases skip without WSL2 (ported from `windows-shells.test.js`, #975)                                                                                                                                        |
 
 ### Skip Behavior
 
@@ -627,35 +627,107 @@ The local UI system suites author and clean up files **through the terminal**, a
 
 The cwd/`pwd`/path checks are cross-platform too (#902): `ShellCommands` builds the `pwd`-equality markers (POSIX `[ "$(pwd)" = … ]` vs PowerShell `if ((Get-Location).Path -eq …)`), supplies per-platform scratch directories for the cwd-following tests (`/tmp`,`/etc` vs `$env:TEMP`,`$env:WINDIR`) and starting-directory values, and `is_absolute_path()` accepts a POSIX root, a Windows drive, or a UNC path — so `test_local_shell.py` and the cwd-aware `test_file_browser_local.py` tests run on every platform with no `@skip_on_windows` gate.
 
-### Parallel Dev Instances (agent-deploy test)
+### Parallel Test Isolation
 
-Several checkouts of termiHub can run side by side, each with its own gitignored
-`dev.local.json` (`dev_port`, `dev_agent_port`, `dev_name`). The **Agent Deploy
-SFTP** test (`agent_deploy_sftp_upload_round_trips_over_real_ssh`) is pinned to
-**password auth** against the `ssh-password` container, and reads its port from
-`TERMIHUB_TEST_SSH_PASSWORD_PORT` (default `2201`):
+Several checkouts of termiHub can run **all** of their test environments at the
+same time on one machine — the full Docker container set, the Python bridge
+harness, the Rust integration tests, the serial fixtures, and the E2E driver —
+without any cross-checkout side effects. Every shared host resource (container
+names, published ports, Docker networks, the `tauri-driver` port, the virtual
+serial device paths) is derived from a single per-checkout config file so two
+checkouts never contend for the same resource.
+
+#### Setup
+
+Each checkout owns a gitignored `dev.local.json`. Create it from the committed
+template and edit the values:
 
 ```bash
-# default — shared container on 2201
-cargo test -p termihub --lib agent_deploy
-
-# point an instance at its own ssh-password container on a distinct port
-TERMIHUB_TEST_SSH_PASSWORD_PORT=2231 cargo test -p termihub --lib agent_deploy
+cp default.dev.local.json dev.local.json
 ```
 
-The test self-skips when the chosen port is unreachable, and every upload uses a
-UUID-suffixed remote path, so concurrent runs against the **same** container never
-collide on the remote `/tmp` file.
+| Key                | Default    | Purpose                                                                                                                                                       |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev_port`         | `1420`     | Vite dev-server port for `./scripts/dev.sh` (HMR uses `dev_port + 1`).                                                                                        |
+| `dev_agent_port`   | `2222`     | Local `sshd` port `./scripts/dev.sh` starts for the dev agent (Unix only).                                                                                    |
+| `dev_name`         | —          | Label for the dev-agent connection entry in the termiHub sidebar (optional).                                                                                  |
+| `compose_project`  | `termihub` | Docker Compose project name for the test containers. Namespaces every **container, network and volume**, so parallel checkouts never share a container.       |
+| `test_port_offset` | `0`        | Integer added to **every** published / looked-up test infrastructure port. Keep it a multiple of `1000` and unique per checkout so port ranges never overlap. |
 
-**Recommended usage for parallel checkouts:** the single shared `ssh-password:2201`
-container is safe to share across all instances as-is (UUID remote paths prevent
-collisions), so by default just run the test in each checkout. For fully isolated
-servers, give each checkout its own password container on a distinct host port and
-set `TERMIHUB_TEST_SSH_PASSWORD_PORT` to match in that checkout's environment.
+Every key is optional. An **omitted** key (or no `dev.local.json` at all) falls
+back to the default above — which reproduces the historical single-checkout
+behaviour exactly (project `termihub`, ports `2201…`, etc.), so CI and a lone
+checkout need no config.
+
+#### Recommended per-checkout values
+
+Give each parallel checkout a distinct row:
+
+| Checkout | `dev_port` | `dev_agent_port` | `compose_project` | `test_port_offset` |
+| -------- | ---------- | ---------------- | ----------------- | ------------------ |
+| dev0     | `1420`     | `2222`           | `termihub-test-0` | `0`                |
+| dev1     | `1430`     | `2232`           | `termihub-test-1` | `1000`             |
+| dev2     | `1440`     | `2242`           | `termihub-test-2` | `2000`             |
+
+With offset `1000` the SSH containers move to `3201…3211`, telnet to `3301`, and
+the network-tools HTTP target to `9080`; offset `2000` moves them to `4201…`,
+`4301`, `10080`. The `1000` step is larger than the span of all base ports, so
+ranges from different checkouts can never overlap.
+
+#### What is isolated, and how
+
+`dev.local.json` resolves into a canonical set of environment variables that
+every entry point honours. The resolver lives in two mirrored forms:
+
+- **Shell:** `scripts/internal/dev-local-env.sh` — sourced by `test.sh`,
+  `test-system*.sh`, and the E2E runner; exports `COMPOSE_PROJECT_NAME`,
+  `TERMIHUB_TEST_PORT_OFFSET`, the per-service `TERMIHUB_TEST_*_PORT` values, the
+  serial device paths, and `TERMIHUB_TAURI_DRIVER_PORT`.
+- **Python:** `termihub_harness.dev_local` — read by the bridge-harness Docker
+  fixtures so the harness publishes/looks up the same offset ports and runs
+  `compose` under the same project name.
+
+| Resource                         | Base (offset 0)                 | Derivation                                                                 |
+| -------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
+| Docker container / network names | `termihub-*` / `termihub-*-net` | Prefixed with `compose_project` (`COMPOSE_PROJECT_NAME`).                  |
+| SSH / telnet / HTTP host ports   | `2201–2211`, `2301`, `8080`     | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`. |
+| SSH-tunnel test ports            | `18081–18088`                   | `base + test_port_offset`.                                                 |
+| Virtual serial device paths      | `/tmp/termihub-serial-{a,b}`    | Suffixed with `compose_project`.                                           |
+| `tauri-driver` (E2E) port        | `4444`                          | `4444 + test_port_offset`.                                                 |
+
+The Rust integration tests reach the jump-host target through its **Compose
+service-name network alias** (`ssh-jumphost-target`, `ssh-jumphost-bastion`),
+which is stable across projects, and the network-fault container is addressed via
+`compose exec` under the active project — so namespacing the containers does not
+break them.
+
+#### Verifying isolation
+
+```bash
+# Render the compose file with a checkout's project + offset applied:
+COMPOSE_PROJECT_NAME=termihub-test-1 TERMIHUB_TEST_SSH_PASSWORD_PORT=3201 \
+  docker compose -f tests/docker/docker-compose.yml config | grep -E 'name:|published'
+
+# Bring this checkout's isolated containers up / down (the scripts do this for you):
+docker compose -p termihub-test-1 -f tests/docker/docker-compose.yml up -d ssh-password
+docker compose -p termihub-test-1 -f tests/docker/docker-compose.yml down
+```
+
+#### Note: sharing vs. isolating containers
+
+The **Agent Deploy SFTP** test
+(`agent_deploy_sftp_upload_round_trips_over_real_ssh`) targets the `ssh-password`
+container on `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default `2201`, or `2201 +
+test_port_offset` once the resolver is sourced). It self-skips when that port is
+unreachable, and every upload uses a UUID-suffixed remote path, so even checkouts
+that **share** one container never collide on the remote `/tmp` file. With a
+per-checkout `test_port_offset` each checkout instead gets its **own** container,
+which is required for the mutating fixtures — e.g. the network-fault tests apply
+`tc` qdisc faults to the whole container, so two checkouts must not share it.
 
 > The per-checkout `dev_agent_port` `sshd` that `./scripts/dev.sh` starts is **not**
-> used by this test: it is key-auth only (`PasswordAuthentication no`), so it is
-> incompatible with the password-auth path the test pins to.
+> used by the agent-deploy test: it is key-auth only (`PasswordAuthentication no`),
+> so it is incompatible with the password-auth path the test pins to.
 
 ### Per-Machine Test Scripts
 
