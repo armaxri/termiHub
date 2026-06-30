@@ -221,10 +221,27 @@ mod tests {
 
     #[test]
     fn storage_mode_to_settings_str_round_trip() {
-        for mode in &[StorageMode::MasterPassword, StorageMode::None] {
+        for mode in &[
+            StorageMode::MasterPassword,
+            StorageMode::None,
+            StorageMode::OsKeychain,
+        ] {
             let s = mode.to_settings_str();
             let parsed = StorageMode::from_settings_str(Some(s));
             assert_eq!(&parsed, mode);
         }
+    }
+
+    #[test]
+    fn storage_mode_from_settings_str_os_keychain() {
+        assert_eq!(
+            StorageMode::from_settings_str(Some("os_keychain")),
+            StorageMode::OsKeychain
+        );
+    }
+
+    #[test]
+    fn storage_mode_to_settings_str_os_keychain() {
+        assert_eq!(StorageMode::OsKeychain.to_settings_str(), "os_keychain");
     }
 }
