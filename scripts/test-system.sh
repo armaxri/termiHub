@@ -25,6 +25,11 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Resolve this checkout's test environment (Compose project, offset ports,
+# serial device paths, driver port) from dev.local.json, so several checkouts
+# can run all test environments at once. See docs/testing.md.
+source scripts/internal/dev-local-env.sh
+
 # ─── Parse arguments ────────────────────────────────────────────────────────
 
 SKIP_BUILD=0
@@ -155,7 +160,7 @@ cleanup() {
         wait "$SOCAT_PID" 2>/dev/null || true
     fi
 
-    rm -f /tmp/termihub-serial-a /tmp/termihub-serial-b
+    rm -f "${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a}" "${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b}"
 
     if [ "$DOCKER_STARTED" -eq 1 ] && [ "$KEEP_INFRA" -eq 0 ]; then
         echo "Stopping containers..."
@@ -249,10 +254,10 @@ $CONTAINER_CMD compose -f examples/docker/docker-compose.yml up -d --build
 DOCKER_STARTED=1
 
 # Wait for SSH server
-echo "Waiting for SSH server on port 2222..."
+echo "Waiting for SSH server on port ${TERMIHUB_TEST_E2E_SSH_PORT}..."
 MAX_WAIT=30
 WAITED=0
-while ! nc -z 127.0.0.1 2222 2>/dev/null; do
+while ! nc -z 127.0.0.1 "$TERMIHUB_TEST_E2E_SSH_PORT" 2>/dev/null; do
     sleep 1
     WAITED=$((WAITED + 1))
     if [ "$WAITED" -ge "$MAX_WAIT" ]; then
@@ -260,12 +265,12 @@ while ! nc -z 127.0.0.1 2222 2>/dev/null; do
         exit 1
     fi
 done
-echo "  SSH server ready (127.0.0.1:2222)."
+echo "  SSH server ready (127.0.0.1:${TERMIHUB_TEST_E2E_SSH_PORT})."
 
 # Wait for Telnet server
-echo "Waiting for Telnet server on port 2323..."
+echo "Waiting for Telnet server on port ${TERMIHUB_TEST_E2E_TELNET_PORT}..."
 WAITED=0
-while ! nc -z 127.0.0.1 2323 2>/dev/null; do
+while ! nc -z 127.0.0.1 "$TERMIHUB_TEST_E2E_TELNET_PORT" 2>/dev/null; do
     sleep 1
     WAITED=$((WAITED + 1))
     if [ "$WAITED" -ge "$MAX_WAIT" ]; then
@@ -273,7 +278,7 @@ while ! nc -z 127.0.0.1 2323 2>/dev/null; do
         exit 1
     fi
 done
-echo "  Telnet server ready (127.0.0.1:2323)."
+echo "  Telnet server ready (127.0.0.1:${TERMIHUB_TEST_E2E_TELNET_PORT})."
 
 # ─── Set up virtual serial ports ────────────────────────────────────────────
 
@@ -281,8 +286,10 @@ if [ "$SKIP_SERIAL" -eq 0 ]; then
     echo ""
     echo "=== Setting up virtual serial ports ==="
 
-    PTY_A="/tmp/termihub-serial-a"
-    PTY_B="/tmp/termihub-serial-b"
+    # Project-suffixed paths (from the resolver) so parallel checkouts' socat
+    # PTYs never collide on the same /tmp path.
+    PTY_A="${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a}"
+    PTY_B="${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b}"
 
     # Clean up stale symlinks
     rm -f "$PTY_A" "$PTY_B"
@@ -328,11 +335,11 @@ echo "==========================================="
 echo "  System Test Environment Ready"
 echo "==========================================="
 echo ""
-echo "  SSH:      127.0.0.1:2222  (testuser / testpass)"
-echo "  Telnet:   127.0.0.1:2323"
+echo "  SSH:      127.0.0.1:${TERMIHUB_TEST_E2E_SSH_PORT}  (testuser / testpass)"
+echo "  Telnet:   127.0.0.1:${TERMIHUB_TEST_E2E_TELNET_PORT}"
 if [ "$SKIP_SERIAL" -eq 0 ]; then
-echo "  Serial A: /tmp/termihub-serial-a"
-echo "  Serial B: /tmp/termihub-serial-b (echo server)"
+echo "  Serial A: $PTY_A"
+echo "  Serial B: $PTY_B (echo server)"
 fi
 echo ""
 echo "==========================================="

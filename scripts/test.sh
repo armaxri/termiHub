@@ -5,6 +5,11 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Resolve this checkout's test environment (Compose project, offset ports,
+# serial device paths, driver port) from dev.local.json, so several checkouts
+# can run all test environments at once. See docs/testing.md.
+source scripts/internal/dev-local-env.sh
+
 if [ ! -d node_modules ]; then
     echo "node_modules missing, running pnpm install..."
     pnpm install

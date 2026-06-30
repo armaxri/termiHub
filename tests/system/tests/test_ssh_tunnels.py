@@ -37,6 +37,11 @@ from termihub_harness import (
     unique_name,
 )
 
+from termihub_harness import dev_local
+
+#: Local-forward listen ports are offset per checkout (parallel isolation).
+_TUNNEL_OFFSET = dev_local.port_offset()
+
 pytestmark = pytest.mark.integration
 
 HOST = "127.0.0.1"
@@ -158,7 +163,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     def test_create_tunnel_appears_in_list(self):
         """TUNNEL-07: a saved tunnel shows up in the sidebar list."""
-        tunnel = self._create_tunnel("tunnel-stats", local_port=18085)
+        tunnel = self._create_tunnel("tunnel-stats", local_port=18085 + _TUNNEL_OFFSET)
         assert tunnel["name"].startswith("sys-tunnel-stats")
         assert tunnel["tunnelType"]["type"] == "local"
         assert self.driver.exists(f"tunnel-item-{tunnel['id']}")
@@ -166,7 +171,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     def test_double_click_opens_editor_for_edit(self):
         """TUNNEL-08: double-clicking a tunnel reopens the editor pre-filled."""
-        tunnel = self._create_tunnel("tunnel-edit", local_port=18086)
+        tunnel = self._create_tunnel("tunnel-edit", local_port=18086 + _TUNNEL_OFFSET)
         self.driver.double_click(f"tunnel-item-{tunnel['id']}")
         self.wait(
             lambda: self.driver.exists("tunnel-editor-name"),
@@ -182,7 +187,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     def test_duplicate_creates_a_copy(self):
         """TUNNEL-09: Duplicate makes a "Copy of <name>" tunnel."""
-        tunnel = self._create_tunnel("tunnel-dup", local_port=18087)
+        tunnel = self._create_tunnel("tunnel-dup", local_port=18087 + _TUNNEL_OFFSET)
         self.wait(
             lambda: self.driver.exists(f"tunnel-duplicate-{tunnel['id']}"),
             what="the duplicate control",
@@ -195,7 +200,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     def test_delete_removes_tunnel(self):
         """TUNNEL-10: Delete removes the tunnel from the store and the list."""
-        tunnel = self._create_tunnel("tunnel-del", local_port=18088)
+        tunnel = self._create_tunnel("tunnel-del", local_port=18088 + _TUNNEL_OFFSET)
         tid = tunnel["id"]
         self.wait(
             lambda: self.driver.exists(f"tunnel-delete-{tid}"),
@@ -212,12 +217,12 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     @skip_live_tunnel_on_macos
     def test_save_and_start_connects(self):
-        tunnel = self._create_tunnel("tunnel-save-start", local_port=18083, start=True)
+        tunnel = self._create_tunnel("tunnel-save-start", local_port=18083 + _TUNNEL_OFFSET, start=True)
         self._assert_running(tunnel["id"])
 
     @skip_live_tunnel_on_macos
     def test_start_then_stop(self):
-        tid = self._create_tunnel("tunnel-startstop", local_port=18081)["id"]
+        tid = self._create_tunnel("tunnel-startstop", local_port=18081 + _TUNNEL_OFFSET)["id"]
         self.driver.click(f"tunnel-start-{tid}")  # key auth → no prompt
         self._assert_running(tid)
         # Stop must take effect: the status returns to "disconnected" and the
@@ -233,7 +238,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     @skip_live_tunnel_on_macos
     def test_tunnel_runs_alongside_an_ssh_session(self):
-        tunnel = self._create_tunnel("tunnel-traffic", local_port=18084, start=True)
+        tunnel = self._create_tunnel("tunnel-traffic", local_port=18084 + _TUNNEL_OFFSET, start=True)
         self._assert_running(tunnel["id"])
         # A key-auth SSH session to the same host connects with the tunnel up.
         self.switch_to_connections_sidebar()
