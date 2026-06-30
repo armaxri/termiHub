@@ -54,6 +54,15 @@ else
 fi
 
 echo ""
+echo "=== Tauri npm/crate version drift ==="
+# Drift here aborts 'pnpm tauri build' before it starts (issue #1014).
+if node scripts/internal/check-tauri-version-drift.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1

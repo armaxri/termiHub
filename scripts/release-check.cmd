@@ -67,6 +67,20 @@ if %ALL_MATCH%==1 (
 
 set VERSION=%PKG_VER%
 
+REM === Tauri npm/crate Version Drift ===
+echo.
+echo === Tauri npm/crate Version Drift ===
+
+REM `pnpm tauri build` refuses to build when an @tauri-apps/* npm package and its
+REM Rust crate drift apart on major/minor (issue #1014). Catch it here instead.
+node scripts\internal\check-tauri-version-drift.mjs
+if errorlevel 1 (
+    echo   FAIL: Tauri npm/crate version drift would block 'pnpm tauri build'
+    set FAILED=1
+) else (
+    echo   PASS: Tauri npm packages and Rust crates are aligned
+)
+
 REM === CHANGELOG Dated Section ===
 echo.
 echo === CHANGELOG Dated Section ===
