@@ -100,12 +100,22 @@ class ConnectionsUi(HarnessMixin):
         return self.wait(lambda: self.find_folder(name), what=f"folder {name!r}")
 
     def open_new_connection_editor(self) -> None:
-        """Open a fresh connection editor and wait for its name field."""
-        self.driver.click("connection-list-new-connection")
-        self.wait(
-            lambda: self.driver.exists("connection-editor-name-input"),
-            what="the connection editor",
-        )
+        """Open a fresh connection editor and wait for its name field.
+
+        Retries the click rather than firing once: right after a terminal
+        connects/closes the connection list re-renders (the store reloads and the
+        sidebar view can briefly change), so a single click can land while the
+        New Connection button is absent. Clicking only while the editor isn't yet
+        open keeps this idempotent (it never reopens an already-open editor).
+        """
+
+        def opened() -> bool:
+            if self.driver.exists("connection-editor-name-input"):
+                return True
+            self.driver.click("connection-list-new-connection")
+            return self.driver.exists("connection-editor-name-input")
+
+        self.wait(opened, what="the connection editor")
 
     def _try_select(self, test_id: str, value: str) -> bool:
         """``driver.select`` that returns True, for use as a :meth:`wait` predicate.
