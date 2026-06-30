@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**450** literal · **123** dynamic · **14** indirect.
+**452** literal · **123** dynamic · **14** indirect.
 
 ## Literal test IDs
 
@@ -152,6 +152,7 @@ Fixed strings — match exactly.
 | `export-password-error` | `src/components/ExportImport/ExportDialog.tsx` |
 | `export-submit` | `src/components/ExportImport/ExportDialog.tsx` |
 | `export-warning` | `src/components/ExportImport/ExportDialog.tsx` |
+| `external-files-add` | `src/components/Settings/ExternalFilesSettings.tsx` |
 | `file-browser-cd-here` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-current-path` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-disconnect` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -190,6 +191,7 @@ Fixed strings — match exactly.
 | `icon-picker-grid` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
 | `icon-picker-search` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
 | `import-config-btn` | `src/components/Settings/PortableModeSettings.tsx` |
+| `import-dialog-success` | `src/components/ExportImport/ImportDialog.tsx` |
 | `import-password` | `src/components/ExportImport/ImportDialog.tsx` |
 | `import-submit` | `src/components/ExportImport/ImportDialog.tsx` |
 | `import-with-credentials` | `src/components/ExportImport/ImportDialog.tsx` |

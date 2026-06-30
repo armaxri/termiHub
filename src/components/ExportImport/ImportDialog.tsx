@@ -91,7 +91,9 @@ export function ImportDialog() {
 
           {success ? (
             <>
-              <p className="import-dialog__success">{success}</p>
+              <p className="import-dialog__success" data-testid="import-dialog-success">
+                {success}
+              </p>
               <div className="import-dialog__actions">
                 <button
                   className="import-dialog__btn import-dialog__btn--primary"
