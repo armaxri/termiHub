@@ -13,8 +13,8 @@
 mod common;
 
 use common::{
-    require_docker, ssh_exec, ssh_key_config, ssh_keys_dir, ssh_password_config, PORT_SSH_BASTION,
-    PORT_SSH_RESTRICTED, PORT_SSH_TUNNEL,
+    port_ssh_bastion, port_ssh_restricted, port_ssh_tunnel, require_docker, ssh_exec,
+    ssh_key_config, ssh_keys_dir, ssh_password_config,
 };
 use std::time::Duration;
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
@@ -26,7 +26,7 @@ use termihub_core::connection::ConnectionType;
 // ── SSH-JUMP-01: ProxyJump through a bastion to an internal target ─────
 
 /// Drive termiHub's own jump-host connect path end-to-end: connect to the
-/// internal target (`termihub-ssh-target`, reachable *only* via the bastion on
+/// internal target (`ssh-jumphost-target`, reachable *only* via the bastion on
 /// the isolated `jumphost-net`) by configuring a one-hop `proxy_jump` chain
 /// through the bastion (published on port 2204). A successful, authenticated
 /// session on the target — which has no host port — proves the hop forwarded
@@ -34,21 +34,21 @@ use termihub_core::connection::ConnectionType;
 /// reachability check (#872).
 #[tokio::test]
 async fn ssh_jump_01_two_hop_proxy_jump() {
-    require_docker!(PORT_SSH_BASTION);
+    require_docker!(port_ssh_bastion());
 
     let key = ssh_keys_dir().join("ed25519");
     let key = key.to_str().expect("key path is valid UTF-8").to_string();
 
     // Target on jumphost-net, reached via a single ProxyJump hop (the bastion).
     let target = SshConfig {
-        host: "termihub-ssh-target".to_string(),
+        host: "ssh-jumphost-target".to_string(),
         port: 22,
         username: "testuser".to_string(),
         auth_method: "key".to_string(),
         key_path: Some(key.clone()),
         proxy_jump: vec![JumpHostConfig {
             host: "127.0.0.1".to_string(),
-            port: PORT_SSH_BASTION,
+            port: port_ssh_bastion(),
             username: "testuser".to_string(),
             auth_method: "key".to_string(),
             key_path: Some(key),
@@ -76,12 +76,12 @@ async fn ssh_jump_01_two_hop_proxy_jump() {
 
     // Step 3: Low-level regression guard — the `channel_open_direct_tcpip`
     // primitive the jump path is built on still works directly on the bastion.
-    let bastion_config = ssh_key_config(PORT_SSH_BASTION, "ed25519");
+    let bastion_config = ssh_key_config(port_ssh_bastion(), "ed25519");
     let (bastion_session, _) = connect_and_authenticate(&bastion_config)
         .await
         .expect("SSH-JUMP-01: Bastion connection should succeed");
     let _channel = bastion_session
-        .channel_open_direct_tcpip("termihub-ssh-target", 22, "localhost", 0)
+        .channel_open_direct_tcpip("ssh-jumphost-target", 22, "localhost", 0)
         .await
         .expect("SSH-JUMP-01: Direct-tcpip channel to target should succeed");
 }
@@ -90,13 +90,13 @@ async fn ssh_jump_01_two_hop_proxy_jump() {
 
 /// Exercise the N-hop chain in `connect_through_jump_hosts` end-to-end. There is
 /// only one bastion fixture, so the second hop re-enters the bastion via its
-/// docker-network name (`termihub-ssh-bastion:22`) before the final hop to the
-/// target — `127.0.0.1:2204` → `termihub-ssh-bastion:22` → `termihub-ssh-target:22`.
+/// docker-network name (`ssh-jumphost-bastion:22`) before the final hop to the
+/// target — `127.0.0.1:2204` → `ssh-jumphost-bastion:22` → `ssh-jumphost-target:22`.
 /// This drives the full loop (direct first hop, then two channel-tunnelled hops)
 /// without needing a second internal bastion container.
 #[tokio::test]
 async fn ssh_jump_02_multi_hop_proxy_jump() {
-    require_docker!(PORT_SSH_BASTION);
+    require_docker!(port_ssh_bastion());
 
     let key = ssh_keys_dir().join("ed25519");
     let key = key.to_str().expect("key path is valid UTF-8").to_string();
@@ -111,7 +111,7 @@ async fn ssh_jump_02_multi_hop_proxy_jump() {
     };
 
     let target = SshConfig {
-        host: "termihub-ssh-target".to_string(),
+        host: "ssh-jumphost-target".to_string(),
         port: 22,
         username: "testuser".to_string(),
         auth_method: "key".to_string(),
@@ -119,8 +119,8 @@ async fn ssh_jump_02_multi_hop_proxy_jump() {
         // Outermost → innermost: enter the bastion from the host, hop to the
         // bastion again over the docker network, then on to the target.
         proxy_jump: vec![
-            inline_hop("127.0.0.1", PORT_SSH_BASTION),
-            inline_hop("termihub-ssh-bastion", 22),
+            inline_hop("127.0.0.1", port_ssh_bastion()),
+            inline_hop("ssh-jumphost-bastion", 22),
         ],
         ..Default::default()
     };
@@ -163,7 +163,7 @@ async fn ssh_jump_02_multi_hop_proxy_jump() {
 /// timeout that would otherwise apply.
 #[tokio::test]
 async fn ssh_jump_06_hung_intermediate_hop_times_out() {
-    require_docker!(PORT_SSH_BASTION);
+    require_docker!(port_ssh_bastion());
 
     let key = ssh_keys_dir().join("ed25519");
     let key = key.to_str().expect("key path is valid UTF-8").to_string();
@@ -175,7 +175,7 @@ async fn ssh_jump_06_hung_intermediate_hop_times_out() {
     const MAX_ELAPSED_SECS: u64 = 30;
 
     let target = SshConfig {
-        host: "termihub-ssh-target".to_string(),
+        host: "ssh-jumphost-target".to_string(),
         port: 22,
         username: "testuser".to_string(),
         auth_method: "key".to_string(),
@@ -186,7 +186,7 @@ async fn ssh_jump_06_hung_intermediate_hop_times_out() {
         proxy_jump: vec![
             JumpHostConfig {
                 host: "127.0.0.1".to_string(),
-                port: PORT_SSH_BASTION,
+                port: port_ssh_bastion(),
                 username: "testuser".to_string(),
                 auth_method: "key".to_string(),
                 key_path: Some(key.clone()),
@@ -247,13 +247,13 @@ async fn ssh_jump_03_shared_gateway_session_pooling() {
     };
     use termihub_core::backends::ssh::session_pool::shared_gateway_pool;
 
-    require_docker!(PORT_SSH_BASTION);
+    require_docker!(port_ssh_bastion());
 
     let key = ssh_keys_dir().join("ed25519");
     let key = key.to_str().expect("key path is valid UTF-8").to_string();
 
     let target = SshConfig {
-        host: "termihub-ssh-target".to_string(),
+        host: "ssh-jumphost-target".to_string(),
         port: 22,
         username: "testuser".to_string(),
         auth_method: "key".to_string(),
@@ -265,7 +265,7 @@ async fn ssh_jump_03_shared_gateway_session_pooling() {
             // ref-counted entry when run in parallel).
             connection_id: Some("ssh-jump-03-pool-test".to_string()),
             host: "127.0.0.1".to_string(),
-            port: PORT_SSH_BASTION,
+            port: port_ssh_bastion(),
             username: "testuser".to_string(),
             auth_method: "key".to_string(),
             key_path: Some(key),
@@ -340,9 +340,9 @@ async fn ssh_jump_03_shared_gateway_session_pooling() {
 
 #[tokio::test]
 async fn ssh_shell_01_restricted_shell() {
-    require_docker!(PORT_SSH_RESTRICTED);
+    require_docker!(port_ssh_restricted());
 
-    let config = ssh_password_config(PORT_SSH_RESTRICTED);
+    let config = ssh_password_config(port_ssh_restricted());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-SHELL-01: Restricted shell connection should succeed");
@@ -363,12 +363,12 @@ async fn ssh_shell_01_restricted_shell() {
 
 #[tokio::test]
 async fn ssh_shell_02_unrestricted_shell() {
-    require_docker!(PORT_SSH_RESTRICTED);
+    require_docker!(port_ssh_restricted());
 
     // Connect as freeuser who has an unrestricted shell.
     let config = termihub_core::config::SshConfig {
         host: "127.0.0.1".to_string(),
-        port: PORT_SSH_RESTRICTED,
+        port: port_ssh_restricted(),
         username: "freeuser".to_string(),
         auth_method: "password".to_string(),
         password: Some("testpass".to_string()),
@@ -393,9 +393,9 @@ async fn ssh_shell_02_unrestricted_shell() {
 
 #[tokio::test]
 async fn ssh_tunnel_01_local_forward_http() {
-    require_docker!(PORT_SSH_TUNNEL);
+    require_docker!(port_ssh_tunnel());
 
-    let config = ssh_password_config(PORT_SSH_TUNNEL);
+    let config = ssh_password_config(port_ssh_tunnel());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-TUNNEL-01: Tunnel connection should succeed");
@@ -433,9 +433,9 @@ async fn ssh_tunnel_01_local_forward_http() {
 
 #[tokio::test]
 async fn ssh_tunnel_02_tcp_echo_via_tunnel() {
-    require_docker!(PORT_SSH_TUNNEL);
+    require_docker!(port_ssh_tunnel());
 
-    let config = ssh_password_config(PORT_SSH_TUNNEL);
+    let config = ssh_password_config(port_ssh_tunnel());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-TUNNEL-02: Tunnel connection should succeed");
@@ -482,7 +482,7 @@ fn jump_host_target_settings(
     let key = ssh_keys_dir().join("ed25519");
     let key = key.to_str().expect("key path is valid UTF-8");
     serde_json::json!({
-        "host": "termihub-ssh-target",
+        "host": "ssh-jumphost-target",
         "port": 22,
         "username": "testuser",
         "authMethod": "key",
@@ -491,7 +491,7 @@ fn jump_host_target_settings(
         "enableFileBrowser": enable_file_browser,
         "proxyJump": [{
             "host": "127.0.0.1",
-            "port": PORT_SSH_BASTION,
+            "port": port_ssh_bastion(),
             "username": "testuser",
             "authMethod": "key",
             "keyPath": key,
@@ -500,13 +500,13 @@ fn jump_host_target_settings(
 }
 
 /// SSH-JUMP-04: the **SFTP file browser** must reach a jump-host target through
-/// the bastion. The target (`termihub-ssh-target`) has no host port and is only
+/// the bastion. The target (`ssh-jumphost-target`) has no host port and is only
 /// reachable via the bastion, so listing its filesystem proves the SFTP session
 /// was tunnelled through the gateway rather than attempting a (failing) direct
 /// connection (#939).
 #[tokio::test]
 async fn ssh_jump_04_sftp_through_jump_host() {
-    require_docker!(PORT_SSH_BASTION);
+    require_docker!(port_ssh_bastion());
 
     let mut ssh = Ssh::new();
     ssh.connect(jump_host_target_settings(false, true))
@@ -534,7 +534,7 @@ async fn ssh_jump_04_sftp_through_jump_host() {
 /// sample proves the monitoring session was routed through the gateway (#939).
 #[tokio::test]
 async fn ssh_jump_05_monitoring_through_jump_host() {
-    require_docker!(PORT_SSH_BASTION);
+    require_docker!(port_ssh_bastion());
 
     let mut ssh = Ssh::new();
     ssh.connect(jump_host_target_settings(true, false))

@@ -20,7 +20,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    apply_fault, require_docker, ssh_exec, ssh_password_config, FaultGuard, PORT_NETWORK_FAULT,
+    apply_fault, port_network_fault, require_docker, ssh_exec, ssh_password_config, FaultGuard,
 };
 use serial_test::serial;
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
@@ -30,11 +30,11 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_01_high_latency() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
     // Establish baseline connection.
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -64,10 +64,10 @@ async fn net_fault_01_high_latency() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_02_extreme_latency() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -96,10 +96,10 @@ async fn net_fault_02_extreme_latency() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_03_moderate_packet_loss() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -123,10 +123,10 @@ async fn net_fault_03_moderate_packet_loss() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_04_severe_packet_loss() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -157,10 +157,10 @@ async fn net_fault_04_severe_packet_loss() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_05_dialup_throttle() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -184,10 +184,10 @@ async fn net_fault_05_dialup_throttle() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_06_1mbps_throttle() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -210,10 +210,10 @@ async fn net_fault_06_1mbps_throttle() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_07_full_disconnect() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -235,11 +235,11 @@ async fn net_fault_07_full_disconnect() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_08_disconnect_and_recovery() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
     // Establish connection.
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
 
     // Inject disconnect.
     apply_fault(&["apply-disconnect"]).expect("Disconnect should succeed");
@@ -267,10 +267,10 @@ async fn net_fault_08_disconnect_and_recovery() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_09_jitter() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");
@@ -294,10 +294,10 @@ async fn net_fault_09_jitter() {
 #[tokio::test]
 #[serial(network_fault)]
 async fn net_fault_10_packet_corruption() {
-    require_docker!(PORT_NETWORK_FAULT);
+    require_docker!(port_network_fault());
     let _guard = FaultGuard::new();
 
-    let config = ssh_password_config(PORT_NETWORK_FAULT);
+    let config = ssh_password_config(port_network_fault());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("Baseline connection should succeed");

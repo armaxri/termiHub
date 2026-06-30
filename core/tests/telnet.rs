@@ -12,7 +12,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{require_docker, PORT_TELNET};
+use common::{port_telnet, require_docker};
 use termihub_core::backends::telnet::Telnet;
 use termihub_core::connection::ConnectionType;
 
@@ -20,12 +20,12 @@ use termihub_core::connection::ConnectionType;
 
 #[tokio::test]
 async fn tel_01_connect() {
-    require_docker!(PORT_TELNET);
+    require_docker!(port_telnet());
 
     let mut telnet = Telnet::new();
     let settings = serde_json::json!({
         "host": "127.0.0.1",
-        "port": PORT_TELNET
+        "port": port_telnet()
     });
 
     telnet
@@ -45,12 +45,12 @@ async fn tel_01_connect() {
 
 #[tokio::test]
 async fn tel_02_receive_output() {
-    require_docker!(PORT_TELNET);
+    require_docker!(port_telnet());
 
     let mut telnet = Telnet::new();
     let settings = serde_json::json!({
         "host": "127.0.0.1",
-        "port": PORT_TELNET
+        "port": port_telnet()
     });
 
     telnet
@@ -96,12 +96,12 @@ async fn tel_02_receive_output() {
 
 #[tokio::test]
 async fn tel_03_command_execution() {
-    require_docker!(PORT_TELNET);
+    require_docker!(port_telnet());
 
     let mut telnet = Telnet::new();
     let settings = serde_json::json!({
         "host": "127.0.0.1",
-        "port": PORT_TELNET
+        "port": port_telnet()
     });
 
     telnet

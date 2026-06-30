@@ -11,8 +11,8 @@
 mod common;
 
 use common::{
-    require_docker, ssh_exec, ssh_key_config, ssh_key_passphrase_config, ssh_keys_dir,
-    ssh_password_config, PORT_SSH_KEYS, PORT_SSH_PASSWORD,
+    port_ssh_keys, port_ssh_password, require_docker, ssh_exec, ssh_key_config,
+    ssh_key_passphrase_config, ssh_keys_dir, ssh_password_config,
 };
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
@@ -20,9 +20,9 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 #[tokio::test]
 async fn ssh_auth_01_password_login() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
-    let config = ssh_password_config(PORT_SSH_PASSWORD);
+    let config = ssh_password_config(port_ssh_password());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-01: Password auth should succeed");
@@ -40,9 +40,9 @@ async fn ssh_auth_01_password_login() {
 
 #[tokio::test]
 async fn ssh_auth_02_rsa_2048_key() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_config(PORT_SSH_KEYS, "rsa_2048");
+    let config = ssh_key_config(port_ssh_keys(), "rsa_2048");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-02: RSA-2048 key auth should succeed");
@@ -60,9 +60,9 @@ async fn ssh_auth_02_rsa_2048_key() {
 
 #[tokio::test]
 async fn ssh_auth_03_rsa_4096_key() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_config(PORT_SSH_KEYS, "rsa_4096");
+    let config = ssh_key_config(port_ssh_keys(), "rsa_4096");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-03: RSA-4096 key auth should succeed");
@@ -80,9 +80,9 @@ async fn ssh_auth_03_rsa_4096_key() {
 
 #[tokio::test]
 async fn ssh_auth_04_ed25519_key() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_config(PORT_SSH_KEYS, "ed25519");
+    let config = ssh_key_config(port_ssh_keys(), "ed25519");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-04: Ed25519 key auth should succeed");
@@ -100,9 +100,9 @@ async fn ssh_auth_04_ed25519_key() {
 
 #[tokio::test]
 async fn ssh_auth_05_ecdsa_256_key() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_config(PORT_SSH_KEYS, "ecdsa_256");
+    let config = ssh_key_config(port_ssh_keys(), "ecdsa_256");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-05: ECDSA-256 key auth should succeed");
@@ -120,9 +120,9 @@ async fn ssh_auth_05_ecdsa_256_key() {
 
 #[tokio::test]
 async fn ssh_auth_06_ecdsa_384_key() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_config(PORT_SSH_KEYS, "ecdsa_384");
+    let config = ssh_key_config(port_ssh_keys(), "ecdsa_384");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-06: ECDSA-384 key auth should succeed");
@@ -140,9 +140,9 @@ async fn ssh_auth_06_ecdsa_384_key() {
 
 #[tokio::test]
 async fn ssh_auth_07_ecdsa_521_key() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_config(PORT_SSH_KEYS, "ecdsa_521");
+    let config = ssh_key_config(port_ssh_keys(), "ecdsa_521");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-07: ECDSA-521 key auth should succeed");
@@ -160,9 +160,9 @@ async fn ssh_auth_07_ecdsa_521_key() {
 
 #[tokio::test]
 async fn ssh_auth_08_rsa_2048_passphrase() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_passphrase_config(PORT_SSH_KEYS, "rsa_2048_passphrase");
+    let config = ssh_key_passphrase_config(port_ssh_keys(), "rsa_2048_passphrase");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-08: RSA-2048 passphrase key auth should succeed");
@@ -180,9 +180,9 @@ async fn ssh_auth_08_rsa_2048_passphrase() {
 
 #[tokio::test]
 async fn ssh_auth_09_ed25519_passphrase() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_passphrase_config(PORT_SSH_KEYS, "ed25519_passphrase");
+    let config = ssh_key_passphrase_config(port_ssh_keys(), "ed25519_passphrase");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-09: Ed25519 passphrase key auth should succeed");
@@ -200,9 +200,9 @@ async fn ssh_auth_09_ed25519_passphrase() {
 
 #[tokio::test]
 async fn ssh_auth_10_ecdsa_256_passphrase() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_passphrase_config(PORT_SSH_KEYS, "ecdsa_256_passphrase");
+    let config = ssh_key_passphrase_config(port_ssh_keys(), "ecdsa_256_passphrase");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-10: ECDSA-256 passphrase key auth should succeed");
@@ -227,9 +227,9 @@ async fn ssh_auth_10_ecdsa_256_passphrase() {
 /// fallback — covered by that module's own unit tests (#845).
 #[tokio::test]
 async fn ssh_auth_13_ecdsa_384_passphrase() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_passphrase_config(PORT_SSH_KEYS, "ecdsa_384_passphrase");
+    let config = ssh_key_passphrase_config(port_ssh_keys(), "ecdsa_384_passphrase");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-13: ECDSA-384 passphrase key auth should succeed");
@@ -251,9 +251,9 @@ async fn ssh_auth_13_ecdsa_384_passphrase() {
 /// fallback for encrypted PEM/SEC1 keys.
 #[tokio::test]
 async fn ssh_auth_14_ecdsa_521_passphrase() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
-    let config = ssh_key_passphrase_config(PORT_SSH_KEYS, "ecdsa_521_passphrase");
+    let config = ssh_key_passphrase_config(port_ssh_keys(), "ecdsa_521_passphrase");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-AUTH-14: ECDSA-521 passphrase key auth should succeed");
@@ -271,11 +271,11 @@ async fn ssh_auth_14_ecdsa_521_passphrase() {
 
 #[tokio::test]
 async fn ssh_auth_11_wrong_password_rejected() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
     let config = termihub_core::config::SshConfig {
         host: "127.0.0.1".to_string(),
-        port: PORT_SSH_PASSWORD,
+        port: port_ssh_password(),
         username: "testuser".to_string(),
         auth_method: "password".to_string(),
         password: Some("wrongpassword".to_string()),
@@ -293,7 +293,7 @@ async fn ssh_auth_11_wrong_password_rejected() {
 
 #[tokio::test]
 async fn ssh_auth_12_wrong_key_rejected() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
     // A throwaway Ed25519 key that is intentionally NOT in the container's
     // authorized_keys (those come from tests/fixtures/ssh-keys). Embedded as a
@@ -322,7 +322,7 @@ AAAEAcqb4xWsO2YRZ6lRZ8Z1J403c449E7SmzTqLAlTN97zg/p5Gp8ilLmY8hdukDFv36Q
 
     let config = termihub_core::config::SshConfig {
         host: "127.0.0.1".to_string(),
-        port: PORT_SSH_KEYS,
+        port: port_ssh_keys(),
         username: "testuser".to_string(),
         auth_method: "key".to_string(),
         key_path: Some(key_path.to_str().unwrap().to_string()),
@@ -343,13 +343,13 @@ AAAEAcqb4xWsO2YRZ6lRZ8Z1J403c449E7SmzTqLAlTN97zg/p5Gp8ilLmY8hdukDFv36Q
 /// authorized_keys, so only the incorrect passphrase causes the failure.
 #[tokio::test]
 async fn ssh_auth_15_wrong_passphrase_rejected() {
-    require_docker!(PORT_SSH_KEYS);
+    require_docker!(port_ssh_keys());
 
     // rsa_2048_passphrase is a valid key authorized on ssh-keys,
     // but we supply the wrong passphrase.
     let config = termihub_core::config::SshConfig {
         host: "127.0.0.1".to_string(),
-        port: PORT_SSH_KEYS,
+        port: port_ssh_keys(),
         username: "testuser".to_string(),
         auth_method: "key".to_string(),
         key_path: Some(
