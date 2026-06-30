@@ -12,7 +12,16 @@ import { frontendLog } from "@/utils/frontendLog";
 
 const MAX_HISTORY = 120;
 
-/** HTTP Monitor diagnostic tab content. */
+/**
+ * HTTP Monitor diagnostic tab content.
+ *
+ * Unlike the Traceroute and Port Scanner panels (which share the
+ * `useNetworkTask` hook), the monitor keeps its own listener wiring: monitors
+ * are long-lived and the active one's check listener must outlive individual
+ * start/stop cycles and a perpetual monitor list, whereas the hook tears its
+ * listener down on stop. As with Ping, the listener is registered *before* the
+ * start command so the backend's immediate first check is never missed (#1002).
+ */
 export function HttpMonitorPanel() {
   const [url, setUrl] = useState("https://");
   // UI uses seconds; API takes milliseconds
