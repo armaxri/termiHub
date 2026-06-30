@@ -172,6 +172,34 @@ impl ConnectionManager {
         })
     }
 
+    /// Resolve every saved-connection jump-host reference in `settings` in place.
+    ///
+    /// Expands each `proxyJump` hop that references a saved SSH connection (by
+    /// `connectionId`) into that connection's inline fields and resolved
+    /// credentials — recursively, rejecting circular references — so the settings
+    /// handed to core contain only inline hops (#940). No-op when the connection
+    /// has no jump-host chain or no references. `root_id` is the connection being
+    /// connected, when known, so a hop that references its own connection is
+    /// rejected as circular.
+    pub fn resolve_jump_host_refs(
+        &self,
+        settings: &mut serde_json::Value,
+        root_id: Option<&str>,
+    ) -> Result<()> {
+        // Skip the (disk-reloading) connection load for the common case of no
+        // chain or an inline-only chain — there is nothing to resolve.
+        if !super::jump_host_resolver::chain_has_reference(settings) {
+            return Ok(());
+        }
+        let connections = self.get_all()?.connections;
+        super::jump_host_resolver::resolve_proxy_jump_refs(
+            settings,
+            &connections,
+            &*self.credential_store,
+            root_id,
+        )
+    }
+
     /// Reload the in-memory store from disk before a mutation.
     ///
     /// This prevents a second instance from restoring connections (or other data)

@@ -70,7 +70,9 @@ export const config = {
     // network-tools-live.test.js (MT-NET-10/12/14/17/18) was ported to the Python
     // harness (tests/system/tests/test_network_tools_live.py) and removed — see #946.
     infra: ["./tests/e2e/infrastructure/*.test.js"],
-    perf: ["./tests/e2e/performance.test.js"],
+    // performance + performance-stress (PERF-01..04) were ported to the Python
+    // harness (tests/system/tests/test_performance.py) and removed — see #811.
+    perf: [],
   },
 
   // Point WDIO directly at the tauri-driver WebDriver server (port 4444).

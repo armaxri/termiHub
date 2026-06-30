@@ -41,6 +41,19 @@ function readEditorStatus(editor: monaco.editor.IStandaloneCodeEditor): EditorSt
   };
 }
 
+/**
+ * Turn a raw save error into a clear, user-facing message. Permission failures
+ * (the common case for admin-owned remote files) get a friendly explanation;
+ * everything else falls back to the underlying error text.
+ */
+function formatSaveError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/permission denied|eacces|\bnot permitted\b|access denied/i.test(raw)) {
+    return `Permission denied — you don't have write access to this file. (${raw})`;
+  }
+  return `Save failed: ${raw}`;
+}
+
 interface FileEditorProps {
   tabId: string;
   meta: EditorTabMeta;
@@ -71,6 +84,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Surfaced when a save fails (e.g. permission denied on a remote file). Unlike
+  // `error` — which replaces the whole editor for a load failure — this is a
+  // dismissible banner shown above the editor so the buffer (and its unsaved
+  // changes) stay intact and the user can retry. (#969)
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Monaco theme derived from the active termiHub theme.  getCurrentTheme()
   // always returns the resolved theme (dark or light), even when the setting
   // is "system", so this handles all three settings modes correctly.
@@ -163,6 +181,22 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     setEditorDirty(tabId, isDirty);
   }, [isDirty, content, savedContent, tabId, setEditorDirty]);
 
+  // A file that failed to load (e.g. the connection dropped) shows the
+  // error-only view, which doesn't render the UnsavedChangesDialog. If such a
+  // tab were left marked dirty, TabBar would raise a close prompt that can never
+  // be answered, leaving the tab stuck open. It has nothing to save, so clear
+  // its dirty flag and resolve any already-pending close request by closing it
+  // outright. (#971)
+  useEffect(() => {
+    if (!error) return;
+    setEditorDirty(tabId, false);
+    if (pendingCloseRequest?.tabId === tabId) {
+      const req = pendingCloseRequest;
+      setPendingCloseRequest(null);
+      closeTab(req.tabId, req.panelId);
+    }
+  }, [error, tabId, pendingCloseRequest, setEditorDirty, setPendingCloseRequest, closeTab]);
+
   const handleSave = useCallback(async () => {
     if (content === null || saving) return;
 
@@ -176,6 +210,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     }
 
     setSaving(true);
+    setSaveError(null);
     try {
       if (meta.isRemote && meta.sftpSessionId) {
         await sftpWriteFileContent(meta.sftpSessionId, meta.filePath, content);
@@ -190,7 +225,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         renameTab(tabId, getBasename(targetPath));
       }
     } catch (err) {
+      // Surface the failure: `savedContent` is left untouched, so the buffer
+      // stays marked dirty/unsaved and the user can fix permissions and retry.
       console.error("Save failed:", err);
+      setSaveError(formatSaveError(err));
     } finally {
       setSaving(false);
     }
@@ -387,6 +425,21 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
           {saving ? "Saving..." : isUnsavedScratch ? "Save As..." : "Save"}
         </button>
       </div>
+      {saveError && (
+        <div className="file-editor__save-error" role="alert" data-testid="file-editor-save-error">
+          <AlertCircle size={14} />
+          <span className="file-editor__save-error-text">{saveError}</span>
+          <button
+            className="file-editor__save-error-dismiss"
+            onClick={() => setSaveError(null)}
+            title="Dismiss"
+            aria-label="Dismiss save error"
+            data-testid="file-editor-save-error-dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div className="file-editor__editor-container">
         <Editor
           defaultValue={content ?? ""}

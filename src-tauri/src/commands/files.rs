@@ -3,6 +3,7 @@ use tauri::{Emitter, Manager, State};
 use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
+use crate::connection::manager::ConnectionManager;
 use crate::files::sftp::SftpManager;
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
@@ -15,9 +16,15 @@ use crate::utils::vscode;
 /// (from the `keyValueList` schema type) are handled correctly.
 #[tauri::command]
 pub async fn sftp_open(
-    config: serde_json::Value,
+    mut config: serde_json::Value,
     manager: State<'_, SftpManager>,
+    conn_manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
+    // Expand saved-connection jump-host references to inline hops before core
+    // parses the chain (it only connects with inline hops) — #940.
+    conn_manager
+        .resolve_jump_host_refs(&mut config, None)
+        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
     let config = parse_ssh_settings(&config);
     info!(host = %config.host, port = config.port, "Opening SFTP session");
     // The SSH handshake blocks (and uses `block_in_place` internally), so run it

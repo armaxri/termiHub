@@ -79,8 +79,13 @@ class TabsUi(HarnessMixin):
             self.driver.click("unsaved-changes-just-close")
 
     def close_all_tabs(self) -> None:
-        """Close every open tab (e.g. between reconnect checks)."""
-        for _ in range(20):
+        """Close every open tab (e.g. between reconnect checks).
+
+        The loop is bounded above the current tab count (not a fixed cap) so even
+        the 40-terminal performance suite fully drains, while still capping a
+        pathological close-that-reopens loop.
+        """
+        for _ in range(self.tab_count() * 2 + 5):
             tabs = self._all_tabs()
             if not tabs:
                 return

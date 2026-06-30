@@ -3,6 +3,7 @@
 //!
 //! Tests termiHub's SSH backend for advanced scenarios:
 //! - SSH-JUMP-01: 2-hop ProxyJump via bastion (port 2204 → internal target)
+//! - SSH-JUMP-06: a hung intermediate hop times out within its per-hop budget
 //! - SSH-SHELL-01/02: Restricted shell (rbash) on port 2205
 //! - SSH-TUNNEL-01/02: Port forwarding through SSH tunnel on port 2207
 //!
@@ -141,6 +142,91 @@ async fn ssh_jump_02_multi_hop_proxy_jump() {
     assert!(
         output.contains("JUMPHOST_TARGET_REACHED"),
         "SSH-JUMP-02: Expected marker 'JUMPHOST_TARGET_REACHED', got: {output}"
+    );
+}
+
+// ── SSH-JUMP-06: a hung intermediate hop times out within its budget ──
+
+/// A blackholed *intermediate* hop must fail the whole chain within that hop's
+/// per-hop connect timeout — naming the offending hop — instead of hanging until
+/// the OS TCP timeout (#938/#950). Where the fast unit tests bound `run_hop_step`
+/// in isolation, this drives a *real* two-hop chain end-to-end: the first hop is
+/// the reachable bastion, and the second hop targets a black-holed address behind
+/// it.
+///
+/// The black-holed address is `192.0.2.1` (RFC 5737 TEST-NET-1, guaranteed
+/// non-routable). The bastion has a default route, so its `direct-tcpip` connect
+/// to that address is sent and silently dropped — the channel-open never
+/// confirms — exactly the "hung intermediate hop" shape #938 added the per-hop
+/// timeout for. The hop carries a short `connect_timeout_secs` (the #951 per-hop
+/// override), so the connect aborts in ~2 s, well under the multi-minute OS TCP
+/// timeout that would otherwise apply.
+#[tokio::test]
+async fn ssh_jump_06_hung_intermediate_hop_times_out() {
+    require_docker!(PORT_SSH_BASTION);
+
+    let key = ssh_keys_dir().join("ed25519");
+    let key = key.to_str().expect("key path is valid UTF-8").to_string();
+
+    const HOP_TIMEOUT_SECS: u64 = 2;
+    // Comfortably above the per-hop budget (to tolerate scheduling/build slack)
+    // but far below the multi-minute OS TCP timeout a missing per-hop bound would
+    // incur — the whole point of the assertion.
+    const MAX_ELAPSED_SECS: u64 = 30;
+
+    let target = SshConfig {
+        host: "termihub-ssh-target".to_string(),
+        port: 22,
+        username: "testuser".to_string(),
+        auth_method: "key".to_string(),
+        key_path: Some(key.clone()),
+        // Outermost → innermost: the real bastion (reachable), then a black-holed
+        // intermediate hop that accepts no connection. The chain never reaches the
+        // target; it must fail at the second hop within its timeout.
+        proxy_jump: vec![
+            JumpHostConfig {
+                host: "127.0.0.1".to_string(),
+                port: PORT_SSH_BASTION,
+                username: "testuser".to_string(),
+                auth_method: "key".to_string(),
+                key_path: Some(key.clone()),
+                ..Default::default()
+            },
+            JumpHostConfig {
+                host: "192.0.2.1".to_string(),
+                port: 22,
+                username: "testuser".to_string(),
+                auth_method: "key".to_string(),
+                key_path: Some(key),
+                connect_timeout_secs: Some(HOP_TIMEOUT_SECS),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    let start = std::time::Instant::now();
+    let result = connect_through_jump_hosts(&target).await;
+    let elapsed = start.elapsed();
+
+    // `JumpHostConnection` is not `Debug`, so match rather than `expect_err`.
+    let msg = match result {
+        Ok(_) => panic!("SSH-JUMP-06: a black-holed intermediate hop must fail the chain"),
+        Err(err) => err.to_string(),
+    };
+    assert!(
+        msg.contains("timed out"),
+        "SSH-JUMP-06: error should report a timeout, got: {msg}"
+    );
+    // The chain is `[hop 1 (bastion), hop 2 (192.0.2.1:22)]`; the failure must
+    // name the offending second hop, not the reachable bastion.
+    assert!(
+        msg.contains("hop 2") && msg.contains("192.0.2.1"),
+        "SSH-JUMP-06: error should name the offending hop, got: {msg}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(MAX_ELAPSED_SECS),
+        "SSH-JUMP-06: connect should abort within the per-hop budget, took {elapsed:?}"
     );
 }
 

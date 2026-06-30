@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { ArrowLeftRight, Plus, Trash2, AlertTriangle } from "lucide-react";
 import type { JumpHostConfig } from "@/types/connection";
+import type { SavedConnectionOption } from "@/utils/jumpHost";
 import { JumpHostEntry } from "./JumpHostEntry";
 import { JumpHostPathDisplay } from "./JumpHostPathDisplay";
 
@@ -11,6 +12,8 @@ interface JumpHostSectionProps {
   targetHost: string | undefined;
   /** Emits the new chain, or `undefined` to remove jump-host config entirely. */
   onChange: (hops: JumpHostConfig[] | undefined) => void;
+  /** SSH connections selectable as a saved-connection hop (#940). */
+  savedConnections?: SavedConnectionOption[];
   /** Blocking validation messages (save is prevented while present). */
   errors?: string[];
   /** Non-blocking advisories. */
@@ -41,11 +44,23 @@ export function JumpHostSection({
   value,
   targetHost,
   onChange,
+  savedConnections = [],
   errors = [],
   warnings = [],
 }: JumpHostSectionProps) {
   const hops = useMemo(() => value ?? [], [value]);
   const enabled = hops.length > 0;
+
+  /** Display host for the connection-path summary: a referenced hop shows its
+   * connection's label rather than its (editor-empty) inline host. */
+  const displayHost = useCallback(
+    (hop: JumpHostConfig): string => {
+      if (!hop.connectionId) return hop.host;
+      const opt = savedConnections.find((o) => o.id === hop.connectionId);
+      return opt?.label ?? hop.connectionId;
+    },
+    [savedConnections]
+  );
 
   const toggleEnabled = useCallback(
     (checked: boolean) => {
@@ -101,6 +116,7 @@ export function JumpHostSection({
                 hop={hop}
                 index={i}
                 onChange={(patch) => updateHop(i, patch)}
+                savedConnections={savedConnections}
               />
             );
             // A lone hop renders as a plain field group; multiple hops get a
@@ -143,7 +159,7 @@ export function JumpHostSection({
             the connection — it needs TCP forwarding enabled.
           </p>
 
-          <JumpHostPathDisplay hops={hops.map((h) => h.host)} target={targetHost ?? ""} />
+          <JumpHostPathDisplay hops={hops.map(displayHost)} target={targetHost ?? ""} />
 
           {warnings.map((w, i) => (
             <p
