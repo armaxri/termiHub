@@ -168,10 +168,10 @@ class TestNetworkToolsLive(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, System
             timeout=FIRST_CHECK_TIMEOUT,
         )
 
-        # The sidebar only loads its monitor list on mount (#986), so force a
-        # remount to pick up the running monitor; its row is keyed by a dynamic id,
-        # so assert on the section's rendered short URL (host:port).
-        self.reload_network_tools_sidebar()
+        # The sidebar was already open when the monitor started; since #986 it
+        # live-updates from the check event, so the running monitor appears
+        # without a remount. Its row is keyed by a dynamic id, so assert on the
+        # section's rendered short URL (host:port).
         self.wait(
             lambda: str(http_target) in (self.driver.get_text("network-monitors-section") or ""),
             what="the running monitor in the sidebar Monitors section",

@@ -109,6 +109,39 @@ class EmbeddedServicesUi(HarnessMixin):
         self.driver.click(f"server-delete-{server_id}")
         self.wait(lambda: self.find_server(name) is None, what="the server to be deleted")
 
+    # ── Per-server right-click context menu ──────────────────────────────────
+    def open_server_menu(self, server_id: str) -> None:
+        """Right-click a server row and wait for its context menu (issue #965).
+
+        ``EmbeddedServerItem`` wraps each row in a Radix context menu that mirrors
+        the inline action buttons under ``ctx-*-${id}`` testids. We wait for the
+        Copy-URL item — present regardless of running state — so the menu is
+        confirmed open before any action is selected.
+        """
+        self.driver.context_menu(f"server-item-{server_id}")
+        self.wait(
+            lambda: self.driver.exists(f"ctx-copy-url-{server_id}"),
+            what="the server context menu",
+        )
+
+    def ctx_start_server(self, server_id: str) -> None:
+        """Start a server via its context menu; wait for it to report ``running``."""
+        self.open_server_menu(server_id)
+        self.driver.click(f"ctx-start-{server_id}")
+        self.wait(lambda: self.server_running(server_id), what="the server to start")
+
+    def ctx_stop_server(self, server_id: str) -> None:
+        """Stop a server via its context menu; wait for it to leave ``running``."""
+        self.open_server_menu(server_id)
+        self.driver.click(f"ctx-stop-{server_id}")
+        self.wait(lambda: not self.server_running(server_id), what="the server to stop")
+
+    def ctx_delete_server(self, server_id: str, name: str) -> None:
+        """Delete a server via its context menu; wait for it to vanish from store."""
+        self.open_server_menu(server_id)
+        self.driver.click(f"ctx-delete-{server_id}")
+        self.wait(lambda: self.find_server(name) is None, what="the server to be deleted")
+
     # ── Cleanup ──────────────────────────────────────────────────────────────
     def cleanup_all_servers(self) -> None:
         """Stop and delete every embedded server (between-test hygiene)."""

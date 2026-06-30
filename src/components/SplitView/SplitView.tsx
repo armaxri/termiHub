@@ -513,7 +513,9 @@ function SplitChild({
 }) {
   return (
     <>
-      {index > 0 && <Separator className="split-view__resize-handle" />}
+      {index > 0 && (
+        <Separator className="split-view__resize-handle" data-testid="split-view-resize-handle" />
+      )}
       <Panel minSize={10} defaultSize={defaultSize}>
         {children}
       </Panel>
@@ -712,6 +714,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             >
               <ContextMenu.Trigger asChild>
                 <div
+                  data-testid={`terminal-context-trigger-${tab.id}`}
                   className={
                     tab.id === panel.activeTabId
                       ? "terminal-context-trigger"
