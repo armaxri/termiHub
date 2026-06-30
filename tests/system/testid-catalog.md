@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**446** literal · **122** dynamic · **14** indirect.
+**448** literal · **122** dynamic · **14** indirect.
 
 ## Literal test IDs
 
