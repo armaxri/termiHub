@@ -76,6 +76,15 @@ class TerminalUi(HarnessMixin):
             what="a terminal with a shell prompt",
         )
 
+    def open_new_terminal(self) -> None:
+        """Click the toolbar "new terminal" button to open another terminal tab.
+
+        Unlike :meth:`ensure_terminal` (which creates the *first* terminal only if
+        none exists), this always opens an additional one — the primitive the
+        performance suite uses to stand up many concurrent terminals.
+        """
+        self.driver.click(NEW_TERMINAL)
+
     def run_command(self, command: str) -> None:
         """Type a command into the active terminal (a newline is appended).
 

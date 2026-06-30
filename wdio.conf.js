@@ -68,7 +68,9 @@ export const config = {
     // and removed — see #809.
     local: [],
     infra: ["./tests/e2e/infrastructure/*.test.js", "./tests/e2e/network-tools-live.test.js"],
-    perf: ["./tests/e2e/performance.test.js"],
+    // performance + performance-stress (PERF-01..04) were ported to the Python
+    // harness (tests/system/tests/test_performance.py) and removed — see #811.
+    perf: [],
   },
 
   // Point WDIO directly at the tauri-driver WebDriver server (port 4444).

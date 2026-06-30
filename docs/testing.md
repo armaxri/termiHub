@@ -534,19 +534,22 @@ Install the recommended VS Code extensions (already configured in `.vscode/exten
 
 ## Performance Testing
 
-termiHub includes an automated E2E performance test suite that validates 40 concurrent terminals:
+termiHub includes an automated performance test suite that validates 40 concurrent terminals, running on the cross-platform Python bridge harness:
 
 ```bash
-# Run the performance test suite (requires built app + tauri-driver; Linux/Windows only)
-pnpm test:e2e:perf
+# Run the performance suite (requires a built app; runs on all platforms)
+TERMIHUB_TEST_APP_BINARY=<path-to-built-app> tests/system/.venv/bin/python \
+  -m pytest tests/system/tests/test_performance.py -s
 ```
 
-The suite (`tests/e2e/performance.test.js`) covers:
+The suite (`tests/system/tests/test_performance.py`) covers:
 
-- **PERF-01**: Create 40 terminals via toolbar, verify tab count
-- **PERF-02**: UI responsiveness with 40 terminals open (41st creation <5s)
-- **PERF-03**: JS heap memory stays under 500 MB
-- **PERF-04**: Cleanup after closing all terminals
+- **PERF-01**: Create 40 terminals via the toolbar, verify tab count, log creation throughput
+- **PERF-02**: Tab-switch latency to the first / middle / last tab with 40 open (each <2s)
+- **PERF-03**: Terminal input still works with 40 open, and the 41st terminal opens promptly (<5s)
+- **PERF-04**: Cleanup after closing all terminals, log close timing
+
+The JS-heap check from the original WebdriverIO suite is dropped — it read a Chromium-only `performance.memory` metric via `browser.execute`, which the cross-platform bridge has no verb for (tracked back to #800).
 
 For detailed profiling instructions, baseline metrics, and memory leak detection, see the [Performance Profiling section in Contributing](contributing.md#performance-profiling).
 
