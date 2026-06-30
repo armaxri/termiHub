@@ -67,7 +67,9 @@ export const config = {
     // test_file_browser_local.py, test_editor.py, test_terminal_auto_scroll.py)
     // and removed — see #809.
     local: [],
-    infra: ["./tests/e2e/infrastructure/*.test.js", "./tests/e2e/network-tools-live.test.js"],
+    // network-tools-live.test.js (MT-NET-10/12/14/17/18) was ported to the Python
+    // harness (tests/system/tests/test_network_tools_live.py) and removed — see #946.
+    infra: ["./tests/e2e/infrastructure/*.test.js"],
     // performance + performance-stress (PERF-01..04) were ported to the Python
     // harness (tests/system/tests/test_performance.py) and removed — see #811.
     perf: [],
