@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Activity, RefreshCw, Unplug, Loader2, Server } from "lucide-react";
+import { Activity, RefreshCw, Unplug, Loader2, Server, Route } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { jumpHostStatusLabel } from "@/utils/jumpHost";
 import { ConnectionConfig } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/services/api";
@@ -83,6 +84,7 @@ export function StatusBar() {
     <div className="status-bar" data-testid="status-bar">
       <div className="status-bar__section status-bar__section--left">
         <PortableBadge />
+        <JumpHostStatus />
         <MonitoringStatus />
         <ServicesIndicator />
         <CredentialStoreIndicator />
@@ -166,6 +168,27 @@ export function StatusBar() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Shows the SSH jump-host (ProxyJump) chain for the active terminal.
+ *
+ * When the active tab connects through one or more bastions, the status bar
+ * shows `SSH: user@target via gateway` so the hop chain is visible at a glance.
+ * Hidden for direct connections and non-SSH tabs.
+ */
+function JumpHostStatus() {
+  const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
+  const label = jumpHostStatusLabel(activeTabConfig);
+
+  if (!label) return null;
+
+  return (
+    <span className="status-bar__item" data-testid="status-bar-jump-host" title={`SSH: ${label}`}>
+      <Route size={13} />
+      SSH: {label}
+    </span>
   );
 }
 
