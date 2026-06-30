@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**444** literal · **122** dynamic · **10** indirect.
+**444** literal · **122** dynamic · **11** indirect.
 
 ## Literal test IDs
 
@@ -605,6 +605,7 @@ where the component is used, not at the `data-testid` site.
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("host")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("password")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("port")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |

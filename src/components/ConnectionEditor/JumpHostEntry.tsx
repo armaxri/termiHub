@@ -100,6 +100,23 @@ export function JumpHostEntry({ hop, index, onChange }: JumpHostEntryProps) {
           />
         </div>
       )}
+
+      <div className="settings-form__field">
+        <span className="settings-form__label">Connect Timeout (s)</span>
+        <input
+          type="number"
+          value={hop.connectTimeoutSecs ?? ""}
+          min={1}
+          max={300}
+          placeholder="Default (20 s)"
+          onChange={(e) =>
+            onChange({
+              connectTimeoutSecs: e.target.value === "" ? undefined : Number(e.target.value),
+            })
+          }
+          data-testid={tid("connect-timeout")}
+        />
+      </div>
     </>
   );
 }
