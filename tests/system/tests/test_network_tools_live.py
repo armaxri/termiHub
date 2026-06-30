@@ -45,12 +45,6 @@ from termihub_harness import (
 
 pytestmark = pytest.mark.integration
 
-# The monitor's default interval is 30s and it does an immediate first check on
-# start. If the panel's event listener attaches a hair after that immediate check
-# fires, the first result is missed and the next is one interval later — so the
-# wait must comfortably outlast one 30s interval to be race-free.
-FIRST_CHECK_TIMEOUT = 45.0
-
 
 @pytest.fixture
 def open_tcp_port() -> Iterator[int]:
@@ -148,11 +142,13 @@ class TestNetworkToolsLive(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, System
     def test_http_monitor_check_and_chart(self, http_target: int):
         self.start_http_monitor(f"http://127.0.0.1:{http_target}")
 
-        # The first check completes and records a 200 in the history table.
+        # The immediate first check completes and records a 200 in the history
+        # table. Since #1002 the panel attaches its listener before issuing the
+        # start command, so this first check is never missed — the default
+        # ~20s wait is ample (no longer needs to outlast a 30s interval).
         self.wait(
             lambda: self.driver.exists("http-monitor-entry-0"),
             what="the first HTTP monitor check",
-            timeout=FIRST_CHECK_TIMEOUT,
         )
         assert "200" in (self.driver.get_text("http-monitor-history") or "")
         # The response-time chart renders after the first check.
@@ -165,7 +161,6 @@ class TestNetworkToolsLive(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, System
         self.wait(
             lambda: self.driver.exists("http-monitor-entry-0"),
             what="the first HTTP monitor check",
-            timeout=FIRST_CHECK_TIMEOUT,
         )
 
         # The sidebar was already open when the monitor started; since #986 it
