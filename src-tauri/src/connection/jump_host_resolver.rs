@@ -24,6 +24,19 @@ use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 /// own chain-depth warning. Chains this deep are pathological.
 const MAX_RESOLVE_DEPTH: usize = 16;
 
+/// Whether `settings` has a jump-host chain with at least one saved-connection
+/// reference to expand. A cheap pre-check so callers can skip loading the whole
+/// connection store for the common inline-only / no-chain case.
+pub(crate) fn chain_has_reference(settings: &Value) -> bool {
+    match settings
+        .get("proxyJump")
+        .or_else(|| settings.get("jumpHosts"))
+    {
+        Some(Value::Array(hops)) => hops.iter().any(|h| reference_id(h).is_some()),
+        _ => false,
+    }
+}
+
 /// Resolve every `connectionId` jump-host reference in `settings` in place.
 ///
 /// Walks the `proxyJump` array (or its legacy `jumpHosts` alias), replacing each
@@ -161,14 +174,12 @@ fn build_inline_hop(
     let username = s.get("username").and_then(Value::as_str).unwrap_or("");
     let auth_method = s.get("authMethod").and_then(Value::as_str).unwrap_or("");
 
-    let mut hop = json!({
-        "connectionId": ref_id,
-        "host": host,
-        "port": port,
-        "username": username,
-        "authMethod": auth_method,
-    });
-    let obj = hop.as_object_mut().expect("json! built an object");
+    let mut obj = serde_json::Map::new();
+    obj.insert("connectionId".into(), json!(ref_id));
+    obj.insert("host".into(), json!(host));
+    obj.insert("port".into(), json!(port));
+    obj.insert("username".into(), json!(username));
+    obj.insert("authMethod".into(), json!(auth_method));
 
     if let Some(key_path) = s.get("keyPath").and_then(Value::as_str) {
         if !key_path.is_empty() {
@@ -198,7 +209,7 @@ fn build_inline_hop(
         );
     }
 
-    Ok(hop)
+    Ok(Value::Object(obj))
 }
 
 /// Resolve a referenced connection's saved credential for its auth method.
@@ -305,6 +316,19 @@ mod tests {
         let before = settings.clone();
         resolve_proxy_jump_refs(&mut settings, &[], &MemStore::default(), None).unwrap();
         assert_eq!(settings, before);
+    }
+
+    #[test]
+    fn chain_has_reference_detects_only_reference_chains() {
+        // No chain, and an inline-only chain, both need no resolution.
+        assert!(!chain_has_reference(&json!({ "host": "h" })));
+        assert!(!chain_has_reference(&settings_with_hops(json!([
+            { "host": "bastion", "port": 22, "username": "u", "authMethod": "agent" }
+        ]))));
+        // A chain with a reference must be detected.
+        assert!(chain_has_reference(&settings_with_hops(json!([
+            { "connectionId": "gw" }
+        ]))));
     }
 
     #[test]

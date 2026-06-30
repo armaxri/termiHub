@@ -72,9 +72,11 @@ export function validateProxyJump(
 }
 
 /**
- * Detect a cycle reachable by following `connectionId` references, mirroring the
- * backend resolver. Seeded with the connection being edited so a hop that routes
- * back through it (`A → B → A`) is caught.
+ * Detect a cycle reachable by following `connectionId` references. This is the
+ * editor's save-time UX check; the authoritative connect-time safety net is the
+ * backend resolver (`src-tauri/src/connection/jump_host_resolver.rs`), which runs
+ * the same algorithm. Seeded with the connection being edited so a hop that
+ * routes back through it (`A → B → A`) is caught.
  */
 function hasCircularReference(hops: JumpHostConfig[], ctx: ProxyJumpContext): boolean {
   const visited = new Set<string>();

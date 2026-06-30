@@ -186,6 +186,11 @@ impl ConnectionManager {
         settings: &mut serde_json::Value,
         root_id: Option<&str>,
     ) -> Result<()> {
+        // Skip the (disk-reloading) connection load for the common case of no
+        // chain or an inline-only chain — there is nothing to resolve.
+        if !super::jump_host_resolver::chain_has_reference(settings) {
+            return Ok(());
+        }
         let connections = self.get_all()?.connections;
         super::jump_host_resolver::resolve_proxy_jump_refs(
             settings,
