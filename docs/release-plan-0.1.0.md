@@ -214,8 +214,10 @@ Run these in parallel where possible. Each machine is independent.
 # 1. Unit tests (5 min)
 ./scripts/test.sh
 
-# 2. System tests with Docker (30 min)
-./scripts/test-system.sh --skip-serial
+# 2. System tests with Docker (30 min): unit + Rust integration
+./scripts/test-system-mac.sh
+# UI/infrastructure coverage (Python bridge harness):
+./scripts/test-system-py.sh
 
 # 3. Agent cross-compilation verification (10 min)
 ./scripts/build-agents.sh
@@ -241,11 +243,13 @@ Docker, WSLg (verified), and network access to the Raspi.
 ```bash
 # Run all commands inside WSL
 
-# 1. Full system test suite including E2E (40 min)
-./scripts/test-system.sh --with-all
+# 1. Full system test suite (40 min)
+./scripts/test-system-linux.sh --with-all
 
-# This runs: unit tests, Rust integration tests, E2E via tauri-driver,
-# network fault tests, SFTP stress tests
+# This runs: unit tests, Rust integration tests,
+# network fault tests, SFTP stress tests.
+# UI/infrastructure coverage runs separately via the Python bridge harness:
+./scripts/test-system-py.sh
 ```
 
 **Serial ports**: If socat is available, the script auto-creates virtual
@@ -253,7 +257,7 @@ serial ports. If not, serial tests are skipped (acceptable for beta).
 
 **How to stop**: `Ctrl+C`, then `cd tests/docker && docker compose down`.
 
-**How to resume**: `./scripts/test-system.sh --with-all --skip-unit`
+**How to resume**: `./scripts/test-system-linux.sh --with-all --skip-unit`
 (skip already-passed unit tests).
 
 ### 4.3 Windows Notebook — ~30 min wall clock

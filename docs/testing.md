@@ -389,9 +389,10 @@ jobs:
       - uses: codecov/codecov-action@v3
 
   e2e-tests:
-    # NOTE: E2E tests only run on Linux and Windows.
-    # tauri-driver does not support macOS (no WKWebView driver).
-    # See ADR-5 in architecture.md for details.
+    # NOTE: `wdio.conf.js` is currently an empty scaffold (all specs were ported
+    # to the Python bridge harness, tests/system/); this job is a placeholder for
+    # future tauri-driver UI specs. tauri-driver only runs on Linux and Windows
+    # (no macOS WKWebView driver) — see ADR-5 in architecture.md.
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -741,7 +742,7 @@ Manual test procedures for verifying user-facing features before releases and af
 
 ### E2E Automation Coverage
 
-Manual tests that can be automated have been moved to WebdriverIO E2E tests. The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to E2E test files.
+Manual tests that can be automated have been moved to the Python bridge system-test harness (`tests/system/`). The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to the automated test files.
 
 **100 manual test items remain** across 14 YAML files. These cannot be automated due to:
 
@@ -908,7 +909,7 @@ When adding new manual tests, add the YAML definition to the appropriate file in
 
 ### E2E Coverage Map
 
-Mapping of manual test IDs that have been automated to their E2E test files:
+Mapping of manual test IDs that have been automated to their Python harness test files:
 
 | Manual Test IDs                  | E2E Test File                                                                                                          |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
