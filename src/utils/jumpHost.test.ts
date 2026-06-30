@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   getJumpHosts,
   hasJumpHost,
-  jumpHostShortLabel,
   jumpHostTooltip,
   jumpHostStatusLabel,
   jumpHostGatewayConnection,
@@ -49,20 +48,6 @@ describe("hasJumpHost", () => {
   it("is true only when a chain is present", () => {
     expect(hasJumpHost(sshConfig({ proxyJump: [hop("bastion")] }))).toBe(true);
     expect(hasJumpHost(sshConfig({}))).toBe(false);
-  });
-});
-
-describe("jumpHostShortLabel", () => {
-  it("shows 'via <host>' for a single hop", () => {
-    expect(jumpHostShortLabel([hop("bastion")])).toBe("via bastion");
-  });
-
-  it("shows the hop count for multi-hop chains", () => {
-    expect(jumpHostShortLabel([hop("edge"), hop("bastion")])).toBe("2 hops");
-  });
-
-  it("is empty for no hops", () => {
-    expect(jumpHostShortLabel([])).toBe("");
   });
 });
 

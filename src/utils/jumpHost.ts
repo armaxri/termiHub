@@ -37,16 +37,6 @@ function hopLabel(hop: JumpHostConfig): string {
 }
 
 /**
- * Compact label for the connection tree next to the hop badge:
- * `via bastion` for a single hop, `N hops` for a multi-hop chain.
- */
-export function jumpHostShortLabel(hops: JumpHostConfig[]): string {
-  if (hops.length === 0) return "";
-  if (hops.length === 1) return `via ${hopLabel(hops[0])}`;
-  return `${hops.length} hops`;
-}
-
-/**
  * Full-path tooltip for the hop chain, e.g.
  * `Via: edge-gateway → internal-bastion → db-server`. The target name is
  * appended when provided.

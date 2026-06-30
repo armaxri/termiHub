@@ -326,9 +326,9 @@ function ConnectionItem({
                 >
                   <Route size={14} /> Show Connection Path
                 </ContextMenu.Item>
+                <ContextMenu.Separator className="context-menu__separator" />
               </>
             )}
-            <ContextMenu.Separator className="context-menu__separator" />
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onDuplicate(connection.id)}
