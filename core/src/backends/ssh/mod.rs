@@ -659,7 +659,9 @@ mod tests {
             // Honour a token that is already cancelled so the cancellation wiring
             // (connect_cancellable → open_shell) can be unit-tested without a server.
             if cancel.is_some_and(|t| t.is_cancelled()) {
-                return Err(SessionError::SpawnFailed("mock: connect cancelled".to_string()));
+                return Err(SessionError::SpawnFailed(
+                    "mock: connect cancelled".to_string(),
+                ));
             }
             if self.should_fail {
                 return Err(SessionError::SpawnFailed(
@@ -1295,7 +1297,10 @@ mod tests {
         token.cancel();
 
         let result = ssh.connect_cancellable(mock_settings(), Some(token)).await;
-        assert!(result.is_err(), "a pre-cancelled token must abort the connect");
+        assert!(
+            result.is_err(),
+            "a pre-cancelled token must abort the connect"
+        );
         assert!(!ssh.is_connected());
     }
 

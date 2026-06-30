@@ -2085,7 +2085,10 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        assert!(cancelled, "the connecting session should have been cancellable");
+        assert!(
+            cancelled,
+            "the connecting session should have been cancellable"
+        );
 
         let result = join.await.expect("join");
         assert!(result.is_err(), "a cancelled connect must return an error");

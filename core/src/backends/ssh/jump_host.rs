@@ -47,9 +47,9 @@ pub struct JumpHostConnection {
 /// indefinitely (#938). Wrapping each hop step here gives OpenSSH-like per-hop
 /// `ConnectTimeout` semantics and a clear "which hop hung" error. Cancelling the
 /// token aborts a hung hop promptly instead of waiting out the timeout, mirroring
-/// [`connect_and_authenticate_cancellable`](super::auth::connect_and_authenticate_cancellable);
-/// threading a real token through the (shared) pooled gateway path is follow-up
-/// #952, so production callers currently pass `None`.
+/// [`connect_and_authenticate_cancellable`](super::auth::connect_and_authenticate_cancellable).
+/// The shell and tunnel connect paths thread a real token here (#952); the
+/// non-pooled [`connect_through_jump_hosts`] helper passes `None`.
 async fn run_hop_step<T, F>(
     hop_label: &str,
     timeout: Duration,
@@ -157,14 +157,15 @@ pub async fn connect_gateway_chain(
     // First hop: an ordinary direct TCP connection, bounded by its connect
     // timeout (#841) and abortable via `cancel` (#952). Label any failure.
     let first_cfg = first.to_ssh_config();
-    let (mut current, mut registry) = connect_and_authenticate_cancellable(&first_cfg, cancel.cloned())
-        .await
-        .map_err(|e| {
-            SessionError::SpawnFailed(format!(
-                "Jump host {}: {e}",
-                hop_label(1, &first_cfg.host, first_cfg.port)
-            ))
-        })?;
+    let (mut current, mut registry) =
+        connect_and_authenticate_cancellable(&first_cfg, cancel.cloned())
+            .await
+            .map_err(|e| {
+                SessionError::SpawnFailed(format!(
+                    "Jump host {}: {e}",
+                    hop_label(1, &first_cfg.host, first_cfg.port)
+                ))
+            })?;
     let mut intermediate_sessions: Vec<SshSession> = Vec::new();
 
     // Each subsequent hop: open a direct-tcpip channel on the current session to
@@ -173,7 +174,8 @@ pub async fn connect_gateway_chain(
     for (idx, hop) in hops.iter().enumerate().skip(1) {
         let cfg = hop.to_ssh_config();
         let label = hop_label(idx + 1, &cfg.host, cfg.port);
-        let (next, next_registry) = connect_hop_over_channel(&current, &cfg, &label, cancel).await?;
+        let (next, next_registry) =
+            connect_hop_over_channel(&current, &cfg, &label, cancel).await?;
         intermediate_sessions.push(current);
         current = next;
         registry = next_registry;
