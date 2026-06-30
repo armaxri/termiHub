@@ -23,6 +23,14 @@ use super::auth::{connect_and_authenticate, connect_and_authenticate_over_channe
 use super::handler::{ForwardedChannelRegistry, SshSession};
 use super::session_pool::{shared_gateway_pool, PooledRef, SshGateway};
 
+/// A reference-counted hold on a pooled, shared gateway session.
+///
+/// Returned by [`connect_target`] (and [`connect_target_through_pooled_gateway`])
+/// for jump-host connections; keep it alive for the lifetime of the target
+/// session it carries, and drop it afterwards to release the gateway back to the
+/// pool.
+pub type GatewayHold = PooledRef<Arc<SshGateway>>;
+
 /// An authenticated SSH session on the target, reached through a jump-host chain.
 ///
 /// The intermediate hop sessions are retained in [`intermediates`](Self::intermediates):
@@ -226,6 +234,30 @@ pub async fn connect_target_through_pooled_gateway(
 
     let (session, registry) = open_target_over_gateway(&gateway.session, target).await?;
     Ok((session, registry, gateway))
+}
+
+/// Connect to `target`, honoring its [`SshConfig::proxy_jump`] chain.
+///
+/// When `proxy_jump` is empty this is a plain [`connect_and_authenticate`]; when
+/// it is non-empty the target is reached through its **pooled, shared** gateway
+/// (see [`connect_target_through_pooled_gateway`]) and a [`GatewayHold`] is
+/// returned to keep that gateway alive for the session's lifetime (`None` for a
+/// direct connection).
+///
+/// This is the single entry point every SSH provider — the shell connector, the
+/// SFTP file browser, and monitoring — uses so they all reach a jump-host target
+/// through the bastion instead of attempting a (failing) direct connection
+/// (#939), sharing one gateway session across the connection's providers.
+pub async fn connect_target(
+    target: &SshConfig,
+) -> Result<(SshSession, ForwardedChannelRegistry, Option<GatewayHold>), SessionError> {
+    if target.proxy_jump.is_empty() {
+        let (session, registry) = connect_and_authenticate(target).await?;
+        Ok((session, registry, None))
+    } else {
+        let (session, registry, gateway) = connect_target_through_pooled_gateway(target).await?;
+        Ok((session, registry, Some(gateway)))
+    }
 }
 
 /// Connect to `target` through its [`SshConfig::proxy_jump`] chain with a

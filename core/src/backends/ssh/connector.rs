@@ -147,8 +147,7 @@ impl SshConnector for RusshSshConnector {
         config: &SshConfig,
         alive: Arc<AtomicBool>,
     ) -> Result<SshShellHandle, SessionError> {
-        use super::auth::connect_and_authenticate;
-        use super::jump_host::connect_target_through_pooled_gateway;
+        use super::jump_host::connect_target;
         use super::x11::X11Forwarder;
         use russh::ChannelMsg;
 
@@ -156,18 +155,14 @@ impl SshConnector for RusshSshConnector {
         let mut extensions: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
 
         // Connect directly, or through a ProxyJump chain when one is configured.
-        let (mut session, registry) = if config.proxy_jump.is_empty() {
-            connect_and_authenticate(config).await?
-        } else {
-            let (session, registry, gateway_ref) =
-                connect_target_through_pooled_gateway(config).await?;
+        let (mut session, registry, gateway_ref) = connect_target(config).await?;
+        if let Some(gateway_ref) = gateway_ref {
             // Hold the pooled gateway reference for the session lifetime. It keeps
             // the shared bastion session (and its direct-tcpip channel carrying
             // this target session) alive; dropping it with `extensions` releases
             // the reference back to the pool, closing the gateway once unused.
             extensions.push(Box::new(gateway_ref));
-            (session, registry)
-        };
+        }
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
         if config.enable_x11_forwarding {
