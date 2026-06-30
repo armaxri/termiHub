@@ -5,10 +5,12 @@
 //   2. Install tauri-driver: cargo install tauri-driver
 //
 // Usage:
-//   pnpm test:e2e          — run UI + local tests
-//   pnpm test:e2e:ui       — connection forms, CRUD, tabs, splits, settings (no backend needed)
-//   pnpm test:e2e:local    — local shell + local file browser
-//   pnpm test:e2e:infra    — SSH, serial, telnet (requires live servers)
+//   pnpm test:e2e          — run any UI specs under tests/e2e/*.test.js
+//
+// The infrastructure, UI, local, and performance specs were all ported to the
+// Python bridge harness (tests/system/, epic #799); the named wdio suites were
+// retired with them (#1015). This config is the remaining scaffold for future
+// tauri-driver UI specs — the helpers under tests/e2e/helpers/ stay for them.
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -36,44 +38,12 @@ function appBinaryPath() {
 export const config = {
   runner: "local",
 
-  // Default specs: UI + local tests (excludes infrastructure/)
+  // Picks up any UI specs placed under tests/e2e/. All previously-shipped
+  // specs (UI, local, infrastructure, performance) were ported to the Python
+  // bridge harness (tests/system/) and removed — see epic #799.
   specs: ["./tests/e2e/*.test.js"],
 
   exclude: [],
-
-  // Named suites for selective runs
-  suites: {
-    ui: [
-      "./tests/e2e/connection-forms.test.js",
-      // connection-crud.test.js was ported to the Python bridge harness
-      // (tests/system/tests/test_connection_crud.py) and removed — see #807.
-      "./tests/e2e/connection-editor-extended.test.js",
-      // The UI suite below was ported to the Python harness (tests/system) in #808:
-      //   tab-management, tab-horizontal-scroll, split-views, sidebar-toggle,
-      //   sidebar-resize, settings, sidebar-sections, theme-layout, ui-state,
-      //   cross-platform.
-      "./tests/e2e/ssh-tunnels.test.js",
-      "./tests/e2e/ssh-agent-warning.test.js",
-      "./tests/e2e/credential-store.test.js",
-      "./tests/e2e/encrypted-export-import.test.js",
-      // external-files.test.js was ported to the Python harness
-      // (tests/system/tests/test_external_files.py) and removed — see #809.
-      // embedded-services.test.js (SVC-01..13) was ported to the Python harness
-      // (tests/system/tests/test_embedded_services.py) and removed — see #947.
-    ],
-    // The local UI suite (local-shell, local-shell-extended, file-browser-local,
-    // file-browser-extended, editor, terminal-auto-scroll) was ported to the
-    // Python harness (tests/system/tests/test_local_shell.py,
-    // test_file_browser_local.py, test_editor.py, test_terminal_auto_scroll.py)
-    // and removed — see #809.
-    local: [],
-    // network-tools-live.test.js (MT-NET-10/12/14/17/18) was ported to the Python
-    // harness (tests/system/tests/test_network_tools_live.py) and removed — see #946.
-    infra: ["./tests/e2e/infrastructure/*.test.js"],
-    // performance + performance-stress (PERF-01..04) were ported to the Python
-    // harness (tests/system/tests/test_performance.py) and removed — see #811.
-    perf: [],
-  },
 
   // Point WDIO directly at the tauri-driver WebDriver server (port 4444).
   // tauri-driver acts as a WebDriver proxy in front of the native driver
