@@ -154,13 +154,12 @@ pub async fn connect_gateway_chain(hops: &[JumpHostConfig]) -> Result<SshGateway
     // First hop: an ordinary direct TCP connection, already bounded by its
     // connect timeout (#841). Label any failure with the hop.
     let first_cfg = first.to_ssh_config();
-    let (mut current, mut registry) =
-        connect_and_authenticate(&first_cfg).await.map_err(|e| {
-            SessionError::SpawnFailed(format!(
-                "Jump host {}: {e}",
-                hop_label(1, &first_cfg.host, first_cfg.port)
-            ))
-        })?;
+    let (mut current, mut registry) = connect_and_authenticate(&first_cfg).await.map_err(|e| {
+        SessionError::SpawnFailed(format!(
+            "Jump host {}: {e}",
+            hop_label(1, &first_cfg.host, first_cfg.port)
+        ))
+    })?;
     let mut intermediate_sessions: Vec<SshSession> = Vec::new();
 
     // Each subsequent hop: open a direct-tcpip channel on the current session to
@@ -169,8 +168,7 @@ pub async fn connect_gateway_chain(hops: &[JumpHostConfig]) -> Result<SshGateway
     for (idx, hop) in hops.iter().enumerate().skip(1) {
         let cfg = hop.to_ssh_config();
         let label = hop_label(idx + 1, &cfg.host, cfg.port);
-        let (next, next_registry) =
-            connect_hop_over_channel(&current, &cfg, &label, None).await?;
+        let (next, next_registry) = connect_hop_over_channel(&current, &cfg, &label, None).await?;
         intermediate_sessions.push(current);
         current = next;
         registry = next_registry;
