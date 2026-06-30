@@ -148,10 +148,10 @@ pub fn gateway_pool_key(hops: &[JumpHostConfig]) -> String {
 /// subsequent hop is reached over a `direct-tcpip` channel opened on the
 /// preceding hop's session.
 ///
-/// Every hop is bounded by its [`SshConfig::connect_timeout`] (intermediate hops
-/// fall back to the default, as [`JumpHostConfig`] carries no per-hop override),
-/// and a failure names the offending hop, so a hung intermediate hop fails within
-/// its budget instead of hanging the whole chain (#938).
+/// Every hop is bounded by its [`SshConfig::connect_timeout`] — the hop's own
+/// per-hop `connect_timeout_secs` override (#951), or the default when unset — and
+/// a failure names the offending hop, so a hung intermediate hop fails within its
+/// budget instead of hanging the whole chain (#938).
 ///
 /// Returns an error if `hops` is empty.
 pub async fn connect_gateway_chain(

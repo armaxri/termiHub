@@ -254,6 +254,11 @@ pub struct JumpHostConfig {
     pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_path: Option<String>,
+    /// Per-hop connect/handshake timeout (seconds). `None` falls back to
+    /// [`DEFAULT_SSH_CONNECT_TIMEOUT_SECS`], mirroring [`SshConfig`], so a slow
+    /// bastion can be given a longer budget than a fast one (#951).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_timeout_secs: Option<u64>,
 }
 
 impl Default for JumpHostConfig {
@@ -266,6 +271,7 @@ impl Default for JumpHostConfig {
             auth_method: String::new(),
             password: None,
             key_path: None,
+            connect_timeout_secs: None,
         }
     }
 }
@@ -282,6 +288,7 @@ impl JumpHostConfig {
             auth_method: self.auth_method.clone(),
             password: self.password.clone(),
             key_path: self.key_path.clone(),
+            connect_timeout_secs: self.connect_timeout_secs,
             ..SshConfig::default()
         }
     }
@@ -1074,6 +1081,7 @@ mod tests {
             password: Some("secret".into()),
             key_path: None,
             connection_id: Some("saved-id".into()),
+            connect_timeout_secs: None,
         };
         let cfg = hop.to_ssh_config();
         assert_eq!(cfg.host, "bastion");
@@ -1081,6 +1089,60 @@ mod tests {
         assert_eq!(cfg.username, "admin");
         assert_eq!(cfg.auth_method, "password");
         assert_eq!(cfg.password.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn jump_host_connect_timeout_defaults_when_unset() {
+        // A hop with no per-hop override falls back to the default budget, so a
+        // chain authored before #951 keeps its current behavior.
+        let hop = JumpHostConfig {
+            host: "bastion".into(),
+            username: "admin".into(),
+            auth_method: "agent".into(),
+            ..JumpHostConfig::default()
+        };
+        assert_eq!(hop.connect_timeout_secs, None);
+        assert_eq!(
+            hop.to_ssh_config().connect_timeout(),
+            Duration::from_secs(DEFAULT_SSH_CONNECT_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn jump_host_connect_timeout_honors_per_hop_override() {
+        // A slow bastion gets a longer budget than the default; the per-hop value
+        // must survive the trip through `to_ssh_config` so `connect_gateway_chain`
+        // bounds the hop by it (#951).
+        let hop = JumpHostConfig {
+            host: "slow-bastion".into(),
+            username: "admin".into(),
+            auth_method: "agent".into(),
+            connect_timeout_secs: Some(45),
+            ..JumpHostConfig::default()
+        };
+        assert_eq!(
+            hop.to_ssh_config().connect_timeout(),
+            Duration::from_secs(45)
+        );
+    }
+
+    #[test]
+    fn jump_host_connect_timeout_roundtrips_and_omits_when_unset() {
+        let with_timeout = JumpHostConfig {
+            host: "bastion".into(),
+            username: "admin".into(),
+            auth_method: "agent".into(),
+            connect_timeout_secs: Some(30),
+            ..JumpHostConfig::default()
+        };
+        let json = serde_json::to_string(&with_timeout).unwrap();
+        assert!(json.contains("\"connectTimeoutSecs\":30"), "json: {json}");
+        let back: JumpHostConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.connect_timeout_secs, Some(30));
+
+        // Unset must be omitted from the serialized form, matching `SshConfig`.
+        let without = serde_json::to_string(&JumpHostConfig::default()).unwrap();
+        assert!(!without.contains("connectTimeoutSecs"), "json: {without}");
     }
 
     #[test]
