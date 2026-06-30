@@ -51,6 +51,7 @@ pub fn run() {
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
+        .manage(commands::connection_path::ProbeRegistry::default())
         .manage(log_buffer);
 
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
@@ -387,6 +388,8 @@ pub fn run() {
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::cancel_connecting,
+            commands::connection_path::probe_connection_path_cmd,
+            commands::connection_path::cancel_connection_path_probe,
             commands::session::get_connection_types,
             commands::session::send_input,
             commands::session::set_session_line_ending,
