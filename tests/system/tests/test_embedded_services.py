@@ -122,17 +122,11 @@ class TestEmbeddedServices(
         assert not self.server_running(server["id"])
 
     def test_http_server_serves_a_file(self):
+        # Directory listing is on by default. Regression for #961: a listed file
+        # must still download (it previously 404'd while the index rendered).
         root = self._serve_dir("hello.txt", "termihub-http-ok")
         port = self.free_port()
-        name = unique_name("http")
-        self.open_new_dialog()
-        self.fill_dialog(name, proto="http", root=str(root), port=port)
-        # Directory listing is on by default, but with it on the embedded server
-        # 404s direct file downloads (a real bug — see #961). Turn it off so this
-        # case exercises actual file serving via ServeDir.
-        self.driver.click("server-dialog-dirlisting")
-        self.driver.click(self.DIALOG_SAVE)
-        server = self.require_server(name)
+        server = self.create_server(unique_name("http"), proto="http", root=str(root), port=port)
         self.start_server(server["id"])
 
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/hello.txt", timeout=10) as resp:
