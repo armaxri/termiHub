@@ -17,8 +17,7 @@ vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
 vi.mock("./UpdateIndicator", () => ({ UpdateIndicator: () => null }));
 
 function setActiveTab(config: ConnectionConfig) {
-  const state = useAppStore.getState();
-  const leaf = state.rootPanel;
+  const leafId = useAppStore.getState().rootPanel.id;
   const tab: TerminalTab = {
     id: "tab-1",
     sessionId: "s1",
@@ -26,12 +25,12 @@ function setActiveTab(config: ConnectionConfig) {
     connectionType: "ssh",
     contentType: "terminal",
     config,
-    panelId: leaf.id,
+    panelId: leafId,
     isActive: true,
   };
   useAppStore.setState({
-    rootPanel: { ...leaf, tabs: [tab], activeTabId: tab.id },
-    activePanelId: leaf.id,
+    rootPanel: { type: "leaf", id: leafId, tabs: [tab], activeTabId: tab.id },
+    activePanelId: leafId,
   });
 }
 
