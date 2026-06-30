@@ -6,8 +6,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{Request, StatusCode};
 use axum::handler::Handler;
+use axum::http::{Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::{middleware, Router};
@@ -149,11 +149,7 @@ async fn dir_listing_handler(
 /// [`dir_listing_handler`], which renders a directory index for real
 /// directories. Index-file auto-serving is disabled so directories always render
 /// the generated listing. When disabled, only [`ServeDir`] is used.
-fn build_router(
-    root: PathBuf,
-    directory_listing: bool,
-    tracking_state: TrackingState,
-) -> Router {
+fn build_router(root: PathBuf, directory_listing: bool, tracking_state: TrackingState) -> Router {
     let router = if directory_listing {
         let serve_dir = ServeDir::new(root.clone())
             .append_index_html_on_directories(false)
@@ -235,11 +231,7 @@ mod tests {
         let tracking_state = TrackingState {
             stats: AtomicServerStats::new(),
         };
-        let router = build_router(
-            dir.path().to_path_buf(),
-            directory_listing,
-            tracking_state,
-        );
+        let router = build_router(dir.path().to_path_buf(), directory_listing, tracking_state);
         (dir, router)
     }
 
