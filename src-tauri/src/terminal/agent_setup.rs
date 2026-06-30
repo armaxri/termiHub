@@ -170,6 +170,7 @@ pub fn setup_remote_agent(
         "ssh",
         settings,
         None,
+        None,
         app_handle.clone(),
     ))?;
 

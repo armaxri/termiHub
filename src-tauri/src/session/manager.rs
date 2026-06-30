@@ -6,10 +6,11 @@
 //! remote connections use [`RemoteProxy`](super::remote_proxy::RemoteProxy).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -170,6 +171,26 @@ pub struct SessionManager {
     monitoring_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
     /// Registry for persistent sessions, keyed by connection ID.
     persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
+    /// Cancellation tokens for in-flight (still connecting) local sessions, keyed
+    /// by the caller-supplied `connect_id`. Lets a Stop/close while connecting
+    /// abort the handshake promptly instead of waiting out the timeout (#952).
+    connecting: Arc<StdMutex<HashMap<String, CancellationToken>>>,
+}
+
+/// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
+/// connect attempt finishes (success, failure, or cancellation) — RAII so the
+/// entry is cleared even when the connect returns early via `?`.
+struct ConnectingGuard {
+    map: Arc<StdMutex<HashMap<String, CancellationToken>>>,
+    id: String,
+}
+
+impl Drop for ConnectingGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.map.lock() {
+            map.remove(&self.id);
+        }
+    }
 }
 
 impl SessionManager {
@@ -181,6 +202,26 @@ impl SessionManager {
             agent_manager,
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
+            connecting: Arc::new(StdMutex::new(HashMap::new())),
+        }
+    }
+
+    /// Cancel an in-flight (still connecting) local session by its `connect_id`.
+    ///
+    /// Fires the registered cancellation token so a connecting SSH session aborts
+    /// its handshake promptly. Returns `true` if a matching connect was in flight.
+    pub fn cancel_connecting(&self, connect_id: &str) -> bool {
+        let token = self
+            .connecting
+            .lock()
+            .ok()
+            .and_then(|map| map.get(connect_id).cloned());
+        match token {
+            Some(token) => {
+                token.cancel();
+                true
+            }
+            None => false,
         }
     }
 
@@ -196,6 +237,7 @@ impl SessionManager {
         type_id: &str,
         settings: serde_json::Value,
         agent_id: Option<&str>,
+        connect_id: Option<&str>,
         emitter: E,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
@@ -207,6 +249,27 @@ impl SessionManager {
                 )));
             }
         }
+
+        // Register a cancellation token so a Stop/close while connecting can abort
+        // the in-flight handshake (#952). Local (core-backend) connects honour it;
+        // remote proxy connects currently ignore it. The guard clears the entry
+        // when this connect finishes, even on an early `?` return.
+        let (cancel_token, _connecting_guard) = match connect_id {
+            Some(cid) => {
+                let token = CancellationToken::new();
+                if let Ok(mut map) = self.connecting.lock() {
+                    map.insert(cid.to_string(), token.clone());
+                }
+                (
+                    Some(token),
+                    Some(ConnectingGuard {
+                        map: self.connecting.clone(),
+                        id: cid.to_string(),
+                    }),
+                )
+            }
+            None => (None, None),
+        };
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -231,7 +294,7 @@ impl SessionManager {
                     .registry
                     .create(type_id)
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-                conn.connect(settings.clone())
+                conn.connect_cancellable(settings.clone(), cancel_token.clone())
                     .await
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
                 (conn, None)
@@ -651,7 +714,7 @@ impl SessionManager {
         }
 
         let session_id = self
-            .create_connection(type_id, settings, agent_id, emitter.clone())
+            .create_connection(type_id, settings, agent_id, None, emitter.clone())
             .await?;
 
         // Capture the agent-side remote session ID so that attach_persistent_tab
@@ -1918,6 +1981,116 @@ mod tests {
         );
         let agent_manager = Arc::new(NullAgent);
         SessionManager::new(registry, agent_manager)
+    }
+
+    /// A connection whose `connect_cancellable` blocks until its token fires —
+    /// lets us exercise mid-connect cancellation (#952) deterministically.
+    #[derive(Default)]
+    struct BlockingConnect;
+
+    #[async_trait::async_trait]
+    impl ConnectionType for BlockingConnect {
+        fn type_id(&self) -> &str {
+            "blocking"
+        }
+        fn display_name(&self) -> &str {
+            "Blocking"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: false,
+                file_browser: false,
+                resize: true,
+                persistent: false,
+            }
+        }
+        async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+            // Only reached without a token; block long enough that a failed
+            // cancellation would hang the test instead of passing.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok(())
+        }
+        async fn connect_cancellable(
+            &mut self,
+            settings: serde_json::Value,
+            cancel: Option<CancellationToken>,
+        ) -> Result<(), SessionError> {
+            match cancel {
+                Some(token) => {
+                    token.cancelled().await;
+                    Err(SessionError::SpawnFailed("connect cancelled".to_string()))
+                }
+                None => self.connect(settings).await,
+            }
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    /// Cancelling a connecting local session via its `connect_id` aborts the
+    /// in-flight connect and clears the tracker entry (#952).
+    #[tokio::test]
+    async fn cancel_connecting_aborts_in_flight_local_connect() {
+        let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+        registry.register(
+            "blocking",
+            "Blocking",
+            "mock",
+            Box::new(|| Box::new(BlockingConnect)),
+        );
+        let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+
+        let spawned = manager.clone();
+        let join = tokio::spawn(async move {
+            spawned
+                .create_connection(
+                    "blocking",
+                    serde_json::json!({}),
+                    None,
+                    Some("c1"),
+                    MockEventEmitter::new(),
+                )
+                .await
+        });
+
+        // Poll until the connect registers its token, then fire the cancel.
+        let mut cancelled = false;
+        for _ in 0..200 {
+            if manager.cancel_connecting("c1") {
+                cancelled = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(cancelled, "the connecting session should have been cancellable");
+
+        let result = join.await.expect("join");
+        assert!(result.is_err(), "a cancelled connect must return an error");
+        // The RAII guard cleared the entry, so a second cancel finds nothing.
+        assert!(!manager.cancel_connecting("c1"));
     }
 
     // ── Persistent session tests ──────────────────────────────────────
