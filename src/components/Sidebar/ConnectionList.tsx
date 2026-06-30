@@ -26,6 +26,7 @@ import {
   Copy,
   Activity,
   Server,
+  ArrowLeftRight,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ShellType } from "@/types/terminal";
@@ -44,6 +45,7 @@ import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
+import { getJumpHosts, jumpHostTooltip } from "@/utils/jumpHost";
 import { AgentNode } from "./AgentNode";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -235,6 +237,8 @@ function ConnectionItem({
   if (isDragging) className += " connection-tree__item--dragging";
   if (isSelected) className += " connection-tree__item--selected";
 
+  const jumpHosts = getJumpHosts(connection.config);
+
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -251,6 +255,18 @@ function ConnectionItem({
         >
           <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
           <span className="connection-tree__label">{connection.name}</span>
+          {jumpHosts.length > 0 && (
+            <span
+              className="connection-tree__jump-badge"
+              title={jumpHostTooltip(jumpHosts, connection.name)}
+              data-testid={`connection-jump-badge-${connection.id}`}
+            >
+              <ArrowLeftRight size={12} />
+              {jumpHosts.length > 1 && (
+                <span className="connection-tree__jump-count">{jumpHosts.length}</span>
+              )}
+            </span>
+          )}
           <span className="connection-tree__type">{connection.config.type}</span>
         </button>
       </ContextMenu.Trigger>
