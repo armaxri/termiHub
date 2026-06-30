@@ -141,6 +141,107 @@ async fn ssh_jump_02_multi_hop_proxy_jump() {
     );
 }
 
+// ── SSH-JUMP-03: shared gateway-session pooling (#924) ───────────────
+
+/// Two connections that reach their target through the same bastion must share a
+/// single, reference-counted gateway session, and the pool must drain once the
+/// last reference is released.
+///
+/// Drives the pooled connect path (`connect_target_through_pooled_gateway`) used
+/// by terminals and tunnels: connecting twice through the same one-hop chain
+/// yields the *same* `SshGateway` (ref_count 2), and dropping both references
+/// removes the entry from the shared pool.
+#[tokio::test]
+async fn ssh_jump_03_shared_gateway_session_pooling() {
+    use termihub_core::backends::ssh::jump_host::{
+        connect_target_through_pooled_gateway, gateway_pool_key,
+    };
+    use termihub_core::backends::ssh::session_pool::shared_gateway_pool;
+
+    require_docker!(PORT_SSH_BASTION);
+
+    let key = ssh_keys_dir().join("ed25519");
+    let key = key.to_str().expect("key path is valid UTF-8").to_string();
+
+    let target = SshConfig {
+        host: "termihub-ssh-target".to_string(),
+        port: 22,
+        username: "testuser".to_string(),
+        auth_method: "key".to_string(),
+        key_path: Some(key.clone()),
+        proxy_jump: vec![JumpHostConfig {
+            host: "127.0.0.1".to_string(),
+            port: PORT_SSH_BASTION,
+            username: "testuser".to_string(),
+            auth_method: "key".to_string(),
+            key_path: Some(key),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let pool = shared_gateway_pool();
+    let pool_key = gateway_pool_key(&target.proxy_jump);
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        0,
+        "SSH-JUMP-03: gateway must not be pooled before any connection"
+    );
+
+    // First connection: creates and pools the gateway session.
+    let (session_a, _registry_a, gateway_a) = connect_target_through_pooled_gateway(&target)
+        .await
+        .expect("SSH-JUMP-03: first pooled connection should succeed");
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        1,
+        "SSH-JUMP-03: first connection should hold one gateway reference"
+    );
+
+    // Second connection through the same bastion: reuses the pooled gateway.
+    let (session_b, _registry_b, gateway_b) = connect_target_through_pooled_gateway(&target)
+        .await
+        .expect("SSH-JUMP-03: second pooled connection should succeed");
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        2,
+        "SSH-JUMP-03: both connections must share one gateway (ref_count 2)"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&gateway_a, &gateway_b),
+        "SSH-JUMP-03: both connections must reuse the same gateway session"
+    );
+
+    // Both independent target sessions are usable over the shared gateway.
+    for (label, session) in [("A", &session_a), ("B", &session_b)] {
+        let output = ssh_exec(session, "cat /home/testuser/marker.txt")
+            .await
+            .unwrap_or_else(|e| panic!("SSH-JUMP-03: exec on target {label} should succeed: {e}"));
+        assert!(
+            output.contains("JUMPHOST_TARGET_REACHED"),
+            "SSH-JUMP-03: target {label} should be reachable via shared gateway, got: {output}"
+        );
+    }
+
+    // Releasing one reference keeps the gateway alive for the other.
+    drop(gateway_a);
+    drop(session_a);
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        1,
+        "SSH-JUMP-03: gateway must stay pooled while a connection still uses it"
+    );
+
+    // Releasing the last reference drains the gateway from the pool.
+    drop(gateway_b);
+    drop(session_b);
+    assert_eq!(
+        pool.ref_count(&pool_key),
+        0,
+        "SSH-JUMP-03: gateway must drain once the last connection is released"
+    );
+}
+
 // ── SSH-SHELL-01: Restricted shell (rbash) ───────────────────────────
 
 #[tokio::test]
