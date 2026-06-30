@@ -1,0 +1,96 @@
+.connection-path-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: var(--spacing-lg, 16px);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-overlay, 0 8px 32px rgba(0, 0, 0, 0.3));
+  z-index: 1001;
+}
+
+.connection-path-dialog__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.connection-path-dialog__subtitle {
+  margin: 0 0 14px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.connection-path-dialog__chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.connection-path-dialog__node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.connection-path-dialog__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.connection-path-dialog__icon {
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.connection-path-dialog__label {
+  color: var(--text-primary);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connection-path-dialog__detail {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.connection-path-dialog__arrow {
+  color: var(--text-secondary);
+  margin: 2px 0 2px 14px;
+}
+
+.connection-path-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.connection-path-dialog__button {
+  padding: 4px 16px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md, 4px);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.connection-path-dialog__button:hover {
+  background: var(--bg-hover, var(--bg-tertiary));
+}

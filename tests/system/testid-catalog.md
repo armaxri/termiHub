@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**432** literal · **119** dynamic · **8** indirect.
+**437** literal · **120** dynamic · **8** indirect.
 
 ## Literal test IDs
 
@@ -89,6 +89,8 @@ Fixed strings — match exactly.
 | `connection-list-new-connection` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-list-new-folder` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-list-remote-agents-toggle` | `src/components/Sidebar/ConnectionList.tsx` |
+| `connection-path-close` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
+| `connection-path-dialog` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
 | `connection-picker` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-close` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-inline` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
@@ -116,7 +118,9 @@ Fixed strings — match exactly.
 | `context-connection-delete` | `src/components/Sidebar/ConnectionList.tsx` |
 | `context-connection-duplicate` | `src/components/Sidebar/ConnectionList.tsx` |
 | `context-connection-edit` | `src/components/Sidebar/ConnectionList.tsx` |
+| `context-connection-open-jump-host` | `src/components/Sidebar/ConnectionList.tsx` |
 | `context-connection-ping` | `src/components/Sidebar/ConnectionList.tsx` |
+| `context-connection-show-path` | `src/components/Sidebar/ConnectionList.tsx` |
 | `context-folder-delete` | `src/components/Sidebar/ConnectionList.tsx` |
 | `context-folder-new-connection` | `src/components/Sidebar/ConnectionList.tsx` |
 | `context-folder-new-subfolder` | `src/components/Sidebar/ConnectionList.tsx` |
@@ -339,6 +343,7 @@ Fixed strings — match exactly.
 | `sidebar-resize-handle` | `src/App.tsx` |
 | `status-bar` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-eol` | `src/components/StatusBar/StatusBar.tsx` |
+| `status-bar-jump-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-language` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-tab-size` | `src/components/StatusBar/StatusBar.tsx` |
 | `tab-context-clear` | `src/components/Terminal/Tab.tsx` |
@@ -483,6 +488,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
+| `connection-jump-badge-*` | `connection-jump-badge-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-picker-agent-def-*` | `connection-picker-agent-def-${def.id}` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-agent-empty-*` | `connection-picker-agent-empty-${agent.id}` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-agent-offline-*` | `connection-picker-agent-offline-${agent.id}` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |

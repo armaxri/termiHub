@@ -301,3 +301,76 @@ tests:
       - "The Connect Timeout (s) field is visible and editable under Connection → Advanced"
     verification: manual
     tags: [tunnel]
+
+  # --- Jump host (ProxyJump) indicators, status bar & context menu (PR #958) ---
+
+  - id: MT-SSH-41
+    name: "Jump-host connections show a hop badge with full-path tooltip"
+    pr: 958
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create an SSH connection with a single inline jump host (Connection → Jump Host)"
+      - "Create a second SSH connection with a multi-hop chain (two hops via 'Add another hop')"
+      - "Look at both connections in the connection sidebar and hover the hop badge"
+    expected:
+      - "Each jump-host connection shows an accent left-right arrow badge next to its name"
+      - "The multi-hop connection additionally shows a small hop-count label (e.g. '2')"
+      - "Hovering the badge shows a tooltip with the full path, e.g. 'Via: edge -> bastion -> target'"
+      - "A plain SSH connection (no jump host) shows no badge"
+    verification: manual
+    tags: [jump-host, visual]
+
+  - id: MT-SSH-42
+    name: "Status bar shows the hop chain for the active jump-host terminal"
+    pr: 958
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect a jump-host SSH connection so a terminal tab is active"
+      - "Look at the left side of the status bar"
+      - "Switch to a non-jump-host (or local) tab"
+    expected:
+      - "While the jump-host tab is active, the status bar shows 'SSH: user@target via gateway' with a route icon"
+      - "Switching to a direct/local tab removes the hop-chain item from the status bar"
+    verification: manual
+    tags: [jump-host]
+
+  - id: MT-SSH-43
+    name: "Jump-host context menu: Open Jump Host Terminal & Show Connection Path"
+    pr: 958
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Right-click a jump-host SSH connection in the sidebar"
+      - "Click 'Open Jump Host Terminal'"
+      - "Right-click again and click 'Show Connection Path'"
+    expected:
+      - "The context menu shows 'Open Jump Host Terminal' and 'Show Connection Path' only for jump-host connections (a plain SSH connection shows neither)"
+      - "'Open Jump Host Terminal' opens a terminal connected directly to the gateway (the innermost bastion)"
+      - "'Show Connection Path' opens a dialog listing the full chain (You -> hop... -> target) with each hop's user@host:port"
+    verification: manual
+    tags: [jump-host]
+
+  - id: MT-SSH-44
+    name: "Jump-host reconnection re-establishes the chain through the shared gateway"
+    pr: 958
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open two SSH terminals that both reach their target through the same bastion"
+      - "Drop the bastion (e.g. stop the bastion container or kill its sshd)"
+      - "Use the reconnect banner on each terminal to reconnect (trigger both close together)"
+    expected:
+      - "Each terminal shows a reconnect banner when its session drops"
+      - "Reconnecting re-establishes the full jump-host chain and the terminal becomes usable again"
+      - "Both terminals reconnecting at once create only one new gateway session (verify in the Open Connections panel)"
+    verification: manual
+    tags: [jump-host]
