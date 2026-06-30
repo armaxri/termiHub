@@ -161,6 +161,21 @@
   opacity: 1;
 }
 
+/* Jump-host (ProxyJump) hop badge */
+.connection-tree__jump-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.connection-tree__jump-count {
+  font-size: 10px;
+  line-height: 1;
+  margin-left: 1px;
+  color: var(--text-secondary);
+}
+
 /* Context menu styling */
 .context-menu__content {
   min-width: 170px;
