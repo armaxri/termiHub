@@ -846,7 +846,8 @@ mod tests {
                     "port": 2222,
                     "username": "admin",
                     "authMethod": "key",
-                    "keyPath": "~/.ssh/bastion"
+                    "keyPath": "~/.ssh/bastion",
+                    "connectTimeoutSecs": 45
                 }
             ],
         });
@@ -854,6 +855,8 @@ mod tests {
         assert_eq!(config.proxy_jump.len(), 1);
         assert_eq!(config.proxy_jump[0].host, "bastion.example.com");
         assert_eq!(config.proxy_jump[0].port, 2222);
+        // The per-hop connect timeout (#951) round-trips through settings parsing.
+        assert_eq!(config.proxy_jump[0].connect_timeout_secs, Some(45));
     }
 
     #[test]
