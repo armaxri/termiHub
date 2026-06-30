@@ -102,6 +102,17 @@ jobs:
           # full release builds on push to develop/main warm the cache that PR
           # builds restore, so PRs don't start from a cold Rust cache.
           shared-key: tauri-${{ matrix.rust_target }}
+          # Budget guard (#1006): only the three targets the PR Build workflow
+          # (build.yml) actually restores — Linux x64, macOS arm64, Windows x64 —
+          # are worth persisting into the shared 10 GB repo cache. The two
+          # dev-build-only targets (linux-arm64, macos-x64) are never restored by
+          # any PR, so saving them just crowds out the PR-blocking caches and
+          # forces LRU eviction of the Windows PR cache. Those two post-merge
+          # builds run cold instead — non-blocking.
+          save-if: >-
+            ${{ matrix.rust_target == 'x86_64-unknown-linux-gnu'
+              || matrix.rust_target == 'aarch64-apple-darwin'
+              || matrix.rust_target == 'x86_64-pc-windows-msvc' }}
 
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -264,6 +275,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: dev-agent-${{ matrix.target }}
+          # Budget guard (#1006): agent binaries are built only post-merge and are
+          # never restored by a PR build. Persisting them spent ~2 GB of the shared
+          # 10 GB repo cache budget, evicting the PR-blocking Windows cache. Don't
+          # save — these non-blocking cross builds run cold. (The cross image itself
+          # is still reused via the Docker buildx gha cache below.)
+          save-if: false
 
       - name: Install cross-rs
         run: |
@@ -326,6 +343,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: dev-agent-${{ matrix.target }}
+          # Budget guard (#1006): macOS agent binaries are built only post-merge and
+          # are never restored by a PR build. Don't persist them into the shared
+          # 10 GB repo cache budget — they crowd out the PR-blocking Windows cache.
+          # These non-blocking native builds run cold instead.
+          save-if: false
 
       - name: Build agent
         env:
