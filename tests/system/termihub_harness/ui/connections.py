@@ -130,29 +130,63 @@ class ConnectionsUi(HarnessMixin):
             what=f"the {type_id!r} connection-type option to load",
         )
 
+    def _select_when_available(self, test_id: str, value: str, *, what: str) -> None:
+        """Select ``value`` in a ``<select>`` whose options load asynchronously.
+
+        Editor dropdown options come from async-loaded backend state (detected
+        shells, WSL distros), so the requested option can lag the field's render.
+        Retry the select until the option exists (``self.wait`` swallows the
+        ``BridgeError`` from a not-yet-present option and retries).
+        """
+        self.wait(lambda: self._try_select(test_id, value), what=what)
+
+    def _fill_starting_directory(self, value: str) -> None:
+        """Fill the editor's optional ``field-startingDirectory`` (awaiting it).
+
+        Shared by the local and WSL editors, whose schemas both expose a
+        ``startingDirectory`` field that the backend expands (``/tmp``, ``~/...``,
+        ``${env:VAR}``).
+        """
+        self.wait(
+            lambda: self.driver.exists("field-startingDirectory"),
+            what="the starting-directory field",
+        )
+        self.driver.type("field-startingDirectory", value)
+
+    def select_shell(self, shell: str) -> None:
+        """Choose a shell in the open Local editor's ``field-shell`` dropdown.
+
+        The shell ``<select>``'s options come from the backend ``settings_schema``
+        (the detected shells, e.g. ``powershell``/``cmd``/``gitbash`` on Windows).
+        """
+        self._select_when_available(
+            "field-shell", shell, what=f"the {shell!r} shell option to load"
+        )
+
     def create_local_connection(
         self,
         name: str,
         *,
+        shell: Optional[str] = None,
         starting_directory: Optional[str] = None,
         connect: bool = False,
     ) -> str:
         """Create a local-shell connection (the default editor type).
 
-        ``starting_directory`` fills the optional ``field-startingDirectory`` so
-        the shell opens there (supports ``/tmp``, ``~/...`` and ``${env:VAR}``,
-        which the backend expands). ``connect=True`` clicks **Save & Connect**,
-        which saves then immediately opens the terminal — so the caller never
-        needs a sidebar double-click.
+        ``shell`` selects a specific entry in the ``field-shell`` dropdown (e.g.
+        ``"powershell"``, ``"cmd"``, ``"gitbash"``); when omitted the platform
+        default is kept. ``starting_directory`` fills the optional
+        ``field-startingDirectory`` so the shell opens there (supports ``/tmp``,
+        ``~/...`` and ``${env:VAR}``, which the backend expands). ``connect=True``
+        clicks **Save & Connect**, which saves then immediately opens the terminal
+        — so the caller never needs a sidebar double-click.
         """
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
+        if shell is not None:
+            self.select_shell(shell)
         if starting_directory is not None:
-            self.wait(
-                lambda: self.driver.exists("field-startingDirectory"),
-                what="the starting-directory field",
-            )
-            self.driver.type("field-startingDirectory", starting_directory)
+            self._fill_starting_directory(starting_directory)
         self.driver.click(self.EDITOR_SAVE_CONNECT if connect else self.EDITOR_SAVE)
         self.require_connection(name)
         return name
@@ -272,6 +306,50 @@ class ConnectionsUi(HarnessMixin):
         self.driver.click(
             "connection-editor-save-connect" if connect else "connection-editor-save"
         )
+
+    def open_wsl_editor(self) -> None:
+        """Open the editor and switch it to the WSL type, awaiting its fields.
+
+        WSL is a **dedicated Windows-only connection type** (not an entry in the
+        Local shell dropdown), registered only when the backend is built for
+        Windows — so this only succeeds on a Windows host. The distribution field
+        (``field-distribution``) is a ``<select>`` whose options come from
+        ``wsl.exe --list``; see :meth:`create_wsl_connection`.
+        """
+        self.open_new_connection_editor()
+        self.select_connection_type("wsl")
+        self.wait(
+            lambda: self.driver.exists("field-distribution"),
+            what="the WSL connection fields",
+        )
+
+    def create_wsl_connection(
+        self,
+        name: str,
+        *,
+        distribution: str,
+        starting_directory: Optional[str] = None,
+        connect: bool = False,
+    ) -> str:
+        """Fill the editor for a WSL connection and save (or Save & Connect).
+
+        ``distribution`` selects the ``field-distribution`` option (a distro name
+        from ``wsl.exe --list``, e.g. ``"Ubuntu"``). WSL has no auth step, so
+        ``connect=True`` opens a live terminal directly with no password prompt.
+        ``starting_directory`` fills the optional ``field-startingDirectory``.
+        """
+        self.open_wsl_editor()
+        self.driver.type(self.EDITOR_NAME, name)
+        self._select_when_available(
+            "field-distribution",
+            distribution,
+            what=f"the {distribution!r} WSL distribution option to load",
+        )
+        if starting_directory is not None:
+            self._fill_starting_directory(starting_directory)
+        self.driver.click(self.EDITOR_SAVE_CONNECT if connect else self.EDITOR_SAVE)
+        self.require_connection(name)
+        return name
 
     # -- connecting --------------------------------------------------------------
     def connect_connection(self, name: str) -> None:
