@@ -254,6 +254,11 @@ pub struct JumpHostConfig {
     pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_path: Option<String>,
+    /// Per-hop connect/handshake timeout (seconds). `None` falls back to
+    /// [`DEFAULT_SSH_CONNECT_TIMEOUT_SECS`], mirroring [`SshConfig`], so a slow
+    /// bastion can be given a longer budget than a fast one (#951).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_timeout_secs: Option<u64>,
 }
 
 impl Default for JumpHostConfig {
@@ -266,6 +271,7 @@ impl Default for JumpHostConfig {
             auth_method: String::new(),
             password: None,
             key_path: None,
+            connect_timeout_secs: None,
         }
     }
 }
@@ -282,6 +288,7 @@ impl JumpHostConfig {
             auth_method: self.auth_method.clone(),
             password: self.password.clone(),
             key_path: self.key_path.clone(),
+            connect_timeout_secs: self.connect_timeout_secs,
             ..SshConfig::default()
         }
     }

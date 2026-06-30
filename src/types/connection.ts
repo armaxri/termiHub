@@ -38,6 +38,11 @@ export interface JumpHostConfig {
   authMethod: string;
   password?: string;
   keyPath?: string;
+  /**
+   * Per-hop connect/handshake timeout (seconds). Unset falls back to the default
+   * SSH connect timeout, mirroring the target's `connectTimeoutSecs` (#951).
+   */
+  connectTimeoutSecs?: number;
 }
 
 export type ConnectionTreeItem =
