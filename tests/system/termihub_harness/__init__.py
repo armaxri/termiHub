@@ -41,6 +41,7 @@ from .manual import (
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .systemtest import SystemTest, unique_name
 from .ui import (
+    AgentUi,
     ConfigRecoveryUi,
     ConnectionsUi,
     CredentialStoreUi,
@@ -78,6 +79,7 @@ __all__ = [
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
+    "AgentUi",
     "ConfigRecoveryUi",
     "ConnectionsUi",
     "CredentialStoreUi",
