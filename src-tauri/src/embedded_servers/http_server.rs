@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Request, StatusCode};
+use axum::handler::Handler;
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::{middleware, Router};
@@ -106,10 +107,14 @@ fn directory_listing_html(
     ))
 }
 
-/// Handler for directory listing requests.
+/// Handler invoked for paths that `ServeDir` could not serve as a file.
+///
+/// For real directories it renders an HTML index; for anything else it returns
+/// `404`. File requests never reach this handler — `ServeDir` serves them
+/// directly (see [`build_router`]).
 async fn dir_listing_handler(
+    axum::extract::State(root): axum::extract::State<PathBuf>,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    axum::extract::Extension(root): axum::extract::Extension<PathBuf>,
 ) -> Response {
     let url_path = uri.path();
     // Resolve the filesystem path, rejecting traversal outside root.
@@ -128,7 +133,7 @@ async fn dir_listing_handler(
         return StatusCode::FORBIDDEN.into_response();
     }
     if !full_path.is_dir() {
-        // Not a directory — let ServeDir handle it.
+        // Not a directory (e.g. a genuinely missing path) — 404.
         return StatusCode::NOT_FOUND.into_response();
     }
     match directory_listing_html(&full_path, url_path) {
@@ -138,21 +143,24 @@ async fn dir_listing_handler(
 }
 
 /// Build the HTTP router serving files from `root`.
+///
+/// When `directory_listing` is enabled, files are served by [`ServeDir`] and any
+/// path it cannot serve as a file (directories, missing paths) falls through to
+/// [`dir_listing_handler`], which renders a directory index for real
+/// directories. Index-file auto-serving is disabled so directories always render
+/// the generated listing. When disabled, only [`ServeDir`] is used.
 fn build_router(
     root: PathBuf,
     directory_listing: bool,
     tracking_state: TrackingState,
 ) -> Router {
-    let serve_dir = ServeDir::new(root.clone());
-
     let router = if directory_listing {
-        Router::new()
-            .route("/*path", axum::routing::get(dir_listing_handler))
-            .route("/", axum::routing::get(dir_listing_handler))
-            .layer(axum::Extension(root.clone()))
-            .fallback_service(serve_dir)
-    } else {
+        let serve_dir = ServeDir::new(root.clone())
+            .append_index_html_on_directories(false)
+            .fallback(dir_listing_handler.with_state(root));
         Router::new().fallback_service(serve_dir)
+    } else {
+        Router::new().fallback_service(ServeDir::new(root))
     };
 
     router.layer(middleware::from_fn_with_state(
