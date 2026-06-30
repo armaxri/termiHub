@@ -538,11 +538,17 @@ mod tests {
         let target = target_with_hops("10.255.255.1", 22, vec![hop]);
 
         let mut events: Vec<HopProgress> = Vec::new();
-        let result =
-            probe_connection_path(&target, None, &mut |p| events.push(p)).await;
+        let result = probe_connection_path(&target, None, &mut |p| events.push(p)).await;
 
-        assert!(result.is_err(), "unreachable first hop should fail the probe");
-        assert_eq!(events.len(), 2, "expected Connecting + Failed, got {events:?}");
+        assert!(
+            result.is_err(),
+            "unreachable first hop should fail the probe"
+        );
+        assert_eq!(
+            events.len(),
+            2,
+            "expected Connecting + Failed, got {events:?}"
+        );
 
         assert_eq!(events[0].index, 0);
         assert_eq!(events[0].total, 2, "1 hop + target");
@@ -570,8 +576,7 @@ mod tests {
         let target = target_with_hops("127.0.0.1", 1, vec![]);
 
         let mut events: Vec<HopProgress> = Vec::new();
-        let result =
-            probe_connection_path(&target, None, &mut |p| events.push(p)).await;
+        let result = probe_connection_path(&target, None, &mut |p| events.push(p)).await;
 
         assert!(result.is_err());
         assert_eq!(events.len(), 2, "Connecting + Failed for the single node");
