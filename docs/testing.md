@@ -741,19 +741,19 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 
 **100 manual test items remain** across 14 YAML files. These cannot be automated due to:
 
-| Reason                                | Items | Examples                                                                 |
-| ------------------------------------- | ----- | ------------------------------------------------------------------------ |
-| Visual rendering verification         | ~16   | Powerline glyphs, white flash, 1px borders, cursor blink                 |
-| Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                            |
-| OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater            |
-| Native OS dialogs (file picker, save) | ~10   | Import/export, encrypted import, Save As, portable export, external file |
-| Drag-and-drop                         | ~7    | Split view drag, cross-group tab drag, connection folder drag            |
-| External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed                    |
-| Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence                      |
-| Credential store (master password)    | ~3    | Setup, unlock, auto-lock, wrong password, change password                |
-| Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths          |
-| Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                                    |
-| Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526)        |
+| Reason                                | Items | Examples                                                          |
+| ------------------------------------- | ----- | ----------------------------------------------------------------- |
+| Visual rendering verification         | ~16   | Powerline glyphs, white flash, 1px borders, cursor blink          |
+| Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                     |
+| OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater     |
+| Native OS dialogs (file picker, save) | ~6    | Import/export connections, SSH key browse, save terminal to file  |
+| Drag-and-drop                         | ~7    | Split view drag, cross-group tab drag, connection folder drag     |
+| External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed             |
+| Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence               |
+| Credential store (master password)    | ~3    | Setup, unlock, auto-lock, wrong password, change password         |
+| Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths   |
+| Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
+| Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
 E2E test coverage: a shrinking set of WebdriverIO files (performance + the `infrastructure/` remote-agent and Windows-shells specs) — the remainder is being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`, MT-NET-10/12/14/17/18) were ported to `tests/system/tests/test_network_tools_live.py` and removed (#946).
 
@@ -783,13 +783,44 @@ At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` r
 
 Migrated guided-manual suites so far:
 
-| Suite                                                                        | Covers (manual IDs)                                                     | The human step                                                                                                                                                                                                                        |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                       | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                        |
-| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17/12..16/23, MT-TAB-08/17/18/19, MT-PORT-04              | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store (incl. encrypted import, Save As, portable export, external file — #1004)                                                       |
-| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02..                     | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar) — screenshot attached                                                                                                                      |
-| [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04  | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect)                                            |
-| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)       | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20 | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder) |
+| Suite                                                                        | Covers (manual IDs)                                                              | The human step                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                                | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                        |
+| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17/12..16/23, MT-TAB-08/17/18/19, MT-PORT-04                       | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store (incl. encrypted import, Save As, portable export, external file — #1004)                                                       |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.., MT-UI-01/16/19, MT-LOCAL-05 | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar, no startup/connect white-flash, no black bottom bar, OS app icon) — screenshot attached                                                    |
+| [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04           | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect)                                            |
+| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)       | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20          | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder) |
+
+> **MT-UI-01/16/19, MT-LOCAL-05 — startup/connect white-flash + app icon (#1003).**
+> Follow-up to #915 (delivered in PR #943): the remaining timing- and OS-level
+> visual items were added to
+> [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py).
+> They are paint-timing / OS-chrome artefacts the DOM/store bridge cannot assert,
+> so each stays operator-confirmed, but the harness still automates everything
+> around the look:
+>
+> - **MT-UI-01 (no startup white-flash).** The harness does a real
+>   kill-and-relaunch (`restart_app`); the operator confirms the window came up
+>   with the dark background (#1e1e1e) already painted — no white flash before the
+>   app's first paint. Watch the window during the relaunch (re-run if you looked
+>   away).
+> - **MT-LOCAL-05 (no SSH connect / setup-command flash).** The harness drives the
+>   full password-SSH connect (create → Save & Connect → answer the prompt → land
+>   in the terminal); the operator confirms the remote prompt appeared cleanly with
+>   no flash of setup/wrapper commands and no white/black flicker. Needs the Docker
+>   SSH password container (`ssh_fixtures`); skips when no container runtime is
+>   available.
+> - **MT-UI-16 (no black bar at the terminal bottom).** The harness opens a
+>   terminal and prints a line; the operator confirms the terminal background fills
+>   to the bottom of the pane — no black strip between the last row and the pane
+>   edge / status bar.
+> - **MT-UI-19 (OS app icon).** The harness ensures the app is running and focused;
+>   the operator checks the dock (macOS) / taskbar (Windows) / launcher (Linux) and
+>   confirms the custom termiHub icon is shown, not a generic default.
+>
+> Run them under `./pytest.sh --manual -k visual -s` with an operator.
+
+<!-- -->
 
 > **MT-CRED-01/02/03 — OS credential stores (PR #956).** As of #956 the app has a
 > native **OS Keychain** credential mode (alongside `master_password` and `none`),
