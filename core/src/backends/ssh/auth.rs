@@ -142,6 +142,11 @@ where
 /// targeting the next hop or the final target `host:port`. The russh handshake
 /// runs over the channel's byte stream — the same `into_stream()` transport that
 /// SFTP, X11, and the tunnel forwarders use. Used by the jump-host connect path.
+///
+/// Unlike [`connect_and_authenticate_cancellable`], this has **no built-in
+/// timeout or cancellation** — a hop that accepts the channel but never speaks
+/// SSH would hang. The caller must bound it; the jump-host path does so per hop
+/// via `run_hop_step`.
 pub async fn connect_and_authenticate_over_channel(
     config: &SshConfig,
     channel: russh::Channel<russh::client::Msg>,
