@@ -72,6 +72,9 @@ pub enum CredentialStoreStatus {
 pub enum StorageMode {
     /// Encrypt credentials with a user-provided master password.
     MasterPassword,
+    /// Store credentials in the native OS credential store (macOS Keychain,
+    /// Windows Credential Manager, or Linux Secret Service).
+    OsKeychain,
     /// Do not persist credentials (current default behavior).
     None,
 }
@@ -79,11 +82,12 @@ pub enum StorageMode {
 impl StorageMode {
     /// Parse the `credential_storage_mode` setting string into a [`StorageMode`].
     ///
-    /// Accepts `"master_password"`, `"none"`, or `None` (which maps to
-    /// [`StorageMode::None`]).
+    /// Accepts `"master_password"`, `"os_keychain"`, `"none"`, or `None`
+    /// (which maps to [`StorageMode::None`]).
     pub fn from_settings_str(s: Option<&str>) -> Self {
         match s {
             Some("master_password") => StorageMode::MasterPassword,
+            Some("os_keychain") => StorageMode::OsKeychain,
             _ => StorageMode::None,
         }
     }
@@ -92,6 +96,7 @@ impl StorageMode {
     pub fn to_settings_str(&self) -> &str {
         match self {
             StorageMode::MasterPassword => "master_password",
+            StorageMode::OsKeychain => "os_keychain",
             StorageMode::None => "none",
         }
     }
@@ -221,10 +226,27 @@ mod tests {
 
     #[test]
     fn storage_mode_to_settings_str_round_trip() {
-        for mode in &[StorageMode::MasterPassword, StorageMode::None] {
+        for mode in &[
+            StorageMode::MasterPassword,
+            StorageMode::None,
+            StorageMode::OsKeychain,
+        ] {
             let s = mode.to_settings_str();
             let parsed = StorageMode::from_settings_str(Some(s));
             assert_eq!(&parsed, mode);
         }
+    }
+
+    #[test]
+    fn storage_mode_from_settings_str_os_keychain() {
+        assert_eq!(
+            StorageMode::from_settings_str(Some("os_keychain")),
+            StorageMode::OsKeychain
+        );
+    }
+
+    #[test]
+    fn storage_mode_to_settings_str_os_keychain() {
+        assert_eq!(StorageMode::OsKeychain.to_settings_str(), "os_keychain");
     }
 }

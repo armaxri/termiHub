@@ -26,12 +26,24 @@ const STORAGE_MODE_OPTIONS: StorageModeOption[] = [
     testId: "storage-mode-master-password",
   },
   {
+    value: "os_keychain",
+    label: "OS Keychain",
+    description:
+      "Store credentials in the native OS credential store (macOS Keychain, Windows Credential Manager, or Linux Secret Service). The OS manages access — no master password needed.",
+    testId: "storage-mode-os-keychain",
+  },
+  {
     value: "none",
     label: "None",
     description: "Don't store credentials. You'll be prompted for passwords each time you connect.",
     testId: "storage-mode-none",
   },
 ];
+
+/** Human-readable label for a credential storage mode, used in dialog copy. */
+function modeLabel(mode: CredentialStorageMode): string {
+  return STORAGE_MODE_OPTIONS.find((o) => o.value === mode)?.label ?? mode;
+}
 
 interface AutoLockOption {
   value: number;
@@ -255,9 +267,13 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
           {confirmSwitch && confirmSwitch !== "master_password" && (
             <div className="settings-panel__inline-dialog" data-testid="confirm-switch-dialog">
-              <h4 className="settings-panel__inline-dialog-title">Switch to No Storage?</h4>
+              <h4 className="settings-panel__inline-dialog-title">
+                Switch to {modeLabel(confirmSwitch)}?
+              </h4>
               <p className="settings-panel__inline-dialog-text">
-                Existing credentials will be migrated to the new storage backend.
+                {confirmSwitch === "none"
+                  ? "Existing credentials will be removed and no longer stored."
+                  : "Existing credentials will be migrated to the OS credential store."}
               </p>
               {passwordError && (
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>

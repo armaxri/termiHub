@@ -791,11 +791,28 @@ Migrated guided-manual suites so far:
 | [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04  | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect)                                            |
 | [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)       | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20 | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder) |
 
-> **Note (MT-CRED-01/02/03 — OS credential stores).** Not applicable: the app
-> implements only `master_password` (encrypted vault) and `none` credential
-> modes — there is no native OS keychain / Credential Manager / Secret Service
-> backend, so there is nothing to verify in an OS store. The real saved-credential
-> behaviour is covered by [`test_credential_store.py`](../tests/system/tests/test_credential_store.py).
+> **MT-CRED-01/02/03 — OS credential stores (PR #956).** As of #956 the app has a
+> native **OS Keychain** credential mode (alongside `master_password` and `none`),
+> backed by the `keyring` crate. These are platform-scoped guided-manual checks —
+> the harness can drive the in-app side (switch to OS Keychain mode in
+> Settings → Security, save a connection with "Save password"), but confirming the
+> secret actually landed in the OS store is the irreducibly-manual step:
+>
+> - **MT-CRED-02 (macOS Keychain).** After saving a credential in OS Keychain mode,
+>   open **Keychain Access** and search for service **`termiHub`** — confirm an entry
+>   exists whose account is `<connection-id>:password` (or `:key_passphrase`).
+> - **MT-CRED-01 (Windows Credential Manager).** Open **Control Panel → Credential
+>   Manager → Windows Credentials** (or `cmdkey /list`) and confirm a generic
+>   credential under the **`termiHub`** target with the matching account.
+> - **MT-CRED-03 (Linux Secret Service).** With a Secret Service provider running
+>   (GNOME Keyring / KWallet), use **`secret-tool search service termiHub`** (or
+>   Seahorse) and confirm the stored secret appears.
+>
+> The cross-platform saved-credential _behaviour_ (round-trips, re-prompt, removal)
+> is covered by [`test_credential_store.py`](../tests/system/tests/test_credential_store.py);
+> only the "appears in the OS store" assertion is manual. Migration _out of_ the OS
+> Keychain mode is not yet implemented (the OS stores are not portably enumerable),
+> so switching away from it does not migrate existing entries.
 
 New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
 

@@ -240,7 +240,7 @@ export interface AppSettings {
    */
   restoreLastSessionOnStartup?: boolean;
   layout?: LayoutConfig;
-  credentialStorageMode?: "master_password" | "none";
+  credentialStorageMode?: "master_password" | "os_keychain" | "none";
   credentialAutoLockMinutes?: number;
   rightClickBehavior?: "contextMenu" | "quickAction";
   /**

@@ -1,13 +1,17 @@
 import { useCallback } from "react";
-import { Lock, LockOpen } from "lucide-react";
+import { KeyRound, Lock, LockOpen } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { lockCredentialStore } from "@/services/api";
 import "./CredentialStoreIndicator.css";
 
 /**
- * Status bar indicator showing the lock state of the credential store.
- * Only visible when the credential store mode is "master_password".
- * Clicking toggles between locked (opens unlock dialog) and unlocked (locks store).
+ * Status bar indicator showing the state of the credential store.
+ *
+ * For "master_password" mode it shows the lock state and toggles between
+ * locked (opens the unlock dialog) and unlocked (locks the store) on click.
+ * For "os_keychain" mode it shows a static, non-interactive "Keychain"
+ * indicator (the OS manages access, so there is no in-app lock toggle).
+ * It is hidden for "none" mode.
  */
 export function CredentialStoreIndicator() {
   const status = useAppStore((s) => s.credentialStoreStatus);
@@ -26,7 +30,22 @@ export function CredentialStoreIndicator() {
     }
   }, [status, setUnlockDialogOpen]);
 
-  if (!status || status.mode !== "master_password") return null;
+  if (!status) return null;
+
+  if (status.mode === "os_keychain") {
+    return (
+      <span
+        className="status-bar__item credential-indicator"
+        title="Credentials are stored in the native OS credential store"
+        data-testid="credential-store-indicator"
+      >
+        <KeyRound size={12} />
+        Keychain
+      </span>
+    );
+  }
+
+  if (status.mode !== "master_password") return null;
 
   const isLocked = status.status === "locked";
 

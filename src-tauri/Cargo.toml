@@ -57,14 +57,35 @@ tauri-plugin-cli = "2"
 if-addrs = "0.6"
 libunftp = "0.20"
 unftp-sbe-fs = "0.2"
+# Native OS credential store (macOS Keychain / Windows Credential Manager /
+# Linux Secret Service). Platform backends are enabled per-target below; the
+# base crate always provides the `mock` backend used in unit tests.
+keyring = { version = "3", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString"] }
+# macOS Keychain backend for the `keyring` crate.
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_System_Console",
     "Win32_Foundation",
+] }
+# Windows Credential Manager backend for the `keyring` crate.
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux Secret Service backend. The `async-secret-service` backend talks to the
+# Secret Service over the pure-Rust `zbus` transport (no `libdbus-sys` C
+# dependency), so it compiles in CI without `libdbus-1-dev` and without a live
+# D-Bus session at build time (D-Bus is only contacted at runtime). `crypto-rust`
+# keeps the session encryption pure-Rust and `tokio` drives the async backend
+# from keyring's synchronous `Entry` API.
+keyring = { version = "3", default-features = false, features = [
+    "async-secret-service",
+    "crypto-rust",
+    "tokio",
 ] }
 
 [dev-dependencies]

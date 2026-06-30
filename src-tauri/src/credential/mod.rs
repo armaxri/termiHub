@@ -3,6 +3,7 @@ pub mod crypto;
 pub mod manager;
 pub mod master_password;
 pub mod null;
+pub mod os_keychain;
 pub mod types;
 
 use anyhow::Result;
@@ -11,6 +12,7 @@ pub use auto_lock::AutoLockTimer;
 pub use manager::CredentialManager;
 pub use master_password::MasterPasswordStore;
 pub use null::NullStore;
+pub use os_keychain::OsKeychainStore;
 pub use types::{CredentialKey, CredentialStoreStatus, CredentialType, StorageMode};
 
 /// Abstraction over credential storage backends.
