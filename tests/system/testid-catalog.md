@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**444** literal · **122** dynamic · **11** indirect.
+**446** literal · **122** dynamic · **11** indirect.
 
 ## Literal test IDs
 
@@ -171,6 +171,8 @@ Fixed strings — match exactly.
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-remote-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-save-error-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-scratch-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-type-add-btn` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-add-error` | `src/components/Settings/FileTypeSettings.tsx` |
