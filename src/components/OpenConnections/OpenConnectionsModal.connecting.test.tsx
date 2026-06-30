@@ -9,7 +9,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { TerminalTab } from "@/types/terminal";
 
-const cancelConnecting = vi.fn(() => Promise.resolve(true));
+const cancelConnecting = vi.fn((_id: string) => Promise.resolve(true));
 vi.mock("@/services/api", () => ({
   listLocalSessions: vi.fn(() => Promise.resolve([])),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
