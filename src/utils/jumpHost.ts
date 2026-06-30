@@ -9,7 +9,7 @@
  * popover, so every surface renders the chain the same way.
  */
 
-import { JumpHostConfig, SavedConnection } from "@/types/connection";
+import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
 
 /**
@@ -94,4 +94,48 @@ export function jumpHostGatewayConnection(connection: SavedConnection): SavedCon
     name: `${gateway.host} (jump host)`,
     config: { type: "ssh", config: settings },
   };
+}
+
+/** A saved SSH connection offered as a jump-host hop in the editor dropdown. */
+export interface SavedConnectionOption {
+  /** The connection's id, stored as the hop's `connectionId`. */
+  id: string;
+  /** `Folder / Sub / Name` path, disambiguating equally-named connections. */
+  label: string;
+}
+
+/** Build the `Folder / Sub / Name` path label for a connection. */
+export function connectionPathLabel(
+  connection: SavedConnection,
+  folders: ConnectionFolder[]
+): string {
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const parts: string[] = [connection.name];
+  let folderId = connection.folderId;
+  // Walk parents to the root, guarding against malformed cycles.
+  const seen = new Set<string>();
+  while (folderId && !seen.has(folderId)) {
+    seen.add(folderId);
+    const folder = byId.get(folderId);
+    if (!folder) break;
+    parts.unshift(folder.name);
+    folderId = folder.parentId;
+  }
+  return parts.join(" / ");
+}
+
+/**
+ * SSH-type saved connections offered as jump-host hops, each labelled with its
+ * folder path. `excludeId` drops the connection being edited so it cannot
+ * reference itself.
+ */
+export function sshJumpHostOptions(
+  connections: SavedConnection[],
+  folders: ConnectionFolder[],
+  excludeId?: string
+): SavedConnectionOption[] {
+  return connections
+    .filter((c) => c.config.type === "ssh" && c.id !== excludeId)
+    .map((c) => ({ id: c.id, label: connectionPathLabel(c, folders) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
