@@ -461,3 +461,49 @@ export async function onPersistentSessionStateChanged(
     }
   );
 }
+
+/** Live status of a single node during a connection-path probe (#962). */
+export type HopProbeStatus = "connecting" | "connected" | "failed";
+
+/** Payload of a `jump-host-hop-status` event (already camelCase from Rust). */
+export interface HopStatusPayload {
+  probeId: string;
+  /** Zero-based node index along the path (gateway hops first, target last). */
+  index: number;
+  /** Total probed nodes (gateway hops + target). */
+  total: number;
+  host: string;
+  port: number;
+  status: HopProbeStatus;
+  /** Failure reason for a `failed` status; empty otherwise. */
+  message: string;
+}
+
+/** Payload of a `jump-host-probe-complete` event. */
+export interface ProbeCompletePayload {
+  probeId: string;
+  /** `true` when every node was reached; `false` when a hop failed. */
+  success: boolean;
+}
+
+/**
+ * Subscribe to per-hop status updates emitted while probing a connection path
+ * (the "Show Connection Path" popover). Each node fires `connecting` then a
+ * resolved `connected` / `failed`, keyed by the probe's `probeId` (#962).
+ */
+export async function onJumpHostHopStatus(
+  callback: (payload: HopStatusPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<HopStatusPayload>("jump-host-hop-status", (event) => {
+    callback(event.payload);
+  });
+}
+
+/** Subscribe to the one-shot `jump-host-probe-complete` event for a probe (#962). */
+export async function onJumpHostProbeComplete(
+  callback: (payload: ProbeCompletePayload) => void
+): Promise<UnlistenFn> {
+  return await listen<ProbeCompletePayload>("jump-host-probe-complete", (event) => {
+    callback(event.payload);
+  });
+}

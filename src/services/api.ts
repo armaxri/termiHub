@@ -65,6 +65,32 @@ export async function cancelConnecting(connectId: string): Promise<boolean> {
 }
 
 /**
+ * Start a live probe of an SSH connection's full path (jump-host hops + target)
+ * for the "Show Connection Path" popover (#962).
+ *
+ * `settings` is the SSH connection's config object (`connection.config.config`).
+ * Per-hop status streams back as `jump-host-hop-status` events and a
+ * `jump-host-probe-complete` event closes the run, both keyed by `probeId` — use
+ * {@link onJumpHostHopStatus} / {@link onJumpHostProbeComplete} to receive them.
+ * Cancel an in-flight probe with {@link cancelConnectionPathProbe}.
+ */
+export async function probeConnectionPath(
+  probeId: string,
+  settings: Record<string, unknown>
+): Promise<void> {
+  await invoke("probe_connection_path_cmd", { probeId, settings });
+}
+
+/**
+ * Cancel an in-flight connection-path probe by its `probeId` (fired when the
+ * "Show Connection Path" popover closes). No-op if the probe already finished.
+ * Returns whether a probe was active.
+ */
+export async function cancelConnectionPathProbe(probeId: string): Promise<boolean> {
+  return await invoke<boolean>("cancel_connection_path_probe", { probeId });
+}
+
+/**
  * Create a new terminal session from a ConnectionConfig.
  *
  * For `remote-session` type: extracts `agentId` and `sessionType` from config

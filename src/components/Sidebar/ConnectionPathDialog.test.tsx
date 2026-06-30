@@ -197,4 +197,16 @@ describe("ConnectionPathDialog — live per-hop status", () => {
 
     expect(cancelConnectionPathProbe).toHaveBeenCalledWith(probeId);
   });
+
+  it("subscribes to the probe-complete event without throwing", async () => {
+    open();
+    await act(async () => {});
+    expect(probeCompleteCb).not.toBeNull();
+
+    // Firing completion is a no-op for rendering but must not throw.
+    act(() => {
+      probeCompleteCb?.({ probeId: probeConnectionPath.mock.calls[0][0], success: true });
+    });
+    expect(pathNodes()).toHaveLength(3);
+  });
 });
