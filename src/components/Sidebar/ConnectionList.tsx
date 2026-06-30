@@ -27,6 +27,7 @@ import {
   Activity,
   Server,
   ArrowLeftRight,
+  Route,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ShellType } from "@/types/terminal";
@@ -45,8 +46,9 @@ import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
-import { getJumpHosts, jumpHostTooltip } from "@/utils/jumpHost";
+import { getJumpHosts, jumpHostTooltip, jumpHostGatewayConnection } from "@/utils/jumpHost";
 import { AgentNode } from "./AgentNode";
+import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
@@ -238,81 +240,114 @@ function ConnectionItem({
   if (isSelected) className += " connection-tree__item--selected";
 
   const jumpHosts = getJumpHosts(connection.config);
+  const [showConnectionPath, setShowConnectionPath] = useState(false);
 
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
-        <button
-          ref={setDragRef}
-          className={className}
-          style={{ paddingLeft: `${depth * 16 + 8}px` }}
-          onClick={(e) => onConnectionClick(connection.id, e)}
-          onDoubleClick={() => onConnect(connection)}
-          title={`Double-click to connect: ${connection.name}`}
-          data-testid={`connection-item-${connection.id}`}
-          {...attributes}
-          {...listeners}
-        >
-          <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
-          <span className="connection-tree__label">{connection.name}</span>
-          {jumpHosts.length > 0 && (
-            <span
-              className="connection-tree__jump-badge"
-              title={jumpHostTooltip(jumpHosts, connection.name)}
-              data-testid={`connection-jump-badge-${connection.id}`}
-            >
-              <ArrowLeftRight size={12} />
-              {jumpHosts.length > 1 && (
-                <span className="connection-tree__jump-count">{jumpHosts.length}</span>
-              )}
-            </span>
-          )}
-          <span className="connection-tree__type">{connection.config.type}</span>
-        </button>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onConnect(connection)}
-            data-testid="context-connection-connect"
+    <>
+      {showConnectionPath && (
+        <ConnectionPathDialog
+          open={showConnectionPath}
+          connection={connection}
+          onClose={() => setShowConnectionPath(false)}
+        />
+      )}
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
+          <button
+            ref={setDragRef}
+            className={className}
+            style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            onClick={(e) => onConnectionClick(connection.id, e)}
+            onDoubleClick={() => onConnect(connection)}
+            title={`Double-click to connect: ${connection.name}`}
+            data-testid={`connection-item-${connection.id}`}
+            {...attributes}
+            {...listeners}
           >
-            <Play size={14} /> Connect
-          </ContextMenu.Item>
-          {!!(connection.config.config as unknown as Record<string, unknown>).host && (
+            <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
+            <span className="connection-tree__label">{connection.name}</span>
+            {jumpHosts.length > 0 && (
+              <span
+                className="connection-tree__jump-badge"
+                title={jumpHostTooltip(jumpHosts, connection.name)}
+                data-testid={`connection-jump-badge-${connection.id}`}
+              >
+                <ArrowLeftRight size={12} />
+                {jumpHosts.length > 1 && (
+                  <span className="connection-tree__jump-count">{jumpHosts.length}</span>
+                )}
+              </span>
+            )}
+            <span className="connection-tree__type">{connection.config.type}</span>
+          </button>
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => onPingHost(connection)}
-              data-testid="context-connection-ping"
+              onSelect={() => onConnect(connection)}
+              data-testid="context-connection-connect"
             >
-              <Activity size={14} /> Ping Host
+              <Play size={14} /> Connect
             </ContextMenu.Item>
-          )}
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onEdit(connection.id)}
-            data-testid="context-connection-edit"
-          >
-            <Pencil size={14} /> Edit
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onDuplicate(connection.id)}
-            data-testid="context-connection-duplicate"
-          >
-            <Copy size={14} /> Duplicate
-          </ContextMenu.Item>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item context-menu__item--danger"
-            onSelect={() => onDelete(connection.id)}
-            data-testid="context-connection-delete"
-          >
-            <Trash2 size={14} /> Delete
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+            {!!(connection.config.config as unknown as Record<string, unknown>).host && (
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => onPingHost(connection)}
+                data-testid="context-connection-ping"
+              >
+                <Activity size={14} /> Ping Host
+              </ContextMenu.Item>
+            )}
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onEdit(connection.id)}
+              data-testid="context-connection-edit"
+            >
+              <Pencil size={14} /> Edit
+            </ContextMenu.Item>
+            {jumpHosts.length > 0 && (
+              <>
+                <ContextMenu.Separator className="context-menu__separator" />
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => {
+                    const gateway = jumpHostGatewayConnection(connection);
+                    if (gateway) onConnect(gateway);
+                  }}
+                  data-testid="context-connection-open-jump-host"
+                >
+                  <Server size={14} /> Open Jump Host Terminal
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => setShowConnectionPath(true)}
+                  data-testid="context-connection-show-path"
+                >
+                  <Route size={14} /> Show Connection Path
+                </ContextMenu.Item>
+              </>
+            )}
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onDuplicate(connection.id)}
+              data-testid="context-connection-duplicate"
+            >
+              <Copy size={14} /> Duplicate
+            </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
+              className="context-menu__item context-menu__item--danger"
+              onSelect={() => onDelete(connection.id)}
+              data-testid="context-connection-delete"
+            >
+              <Trash2 size={14} /> Delete
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+    </>
   );
 }
 

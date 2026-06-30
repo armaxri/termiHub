@@ -5,8 +5,9 @@ import {
   jumpHostShortLabel,
   jumpHostTooltip,
   jumpHostStatusLabel,
+  jumpHostGatewayConnection,
 } from "./jumpHost";
-import { JumpHostConfig } from "@/types/connection";
+import { JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
 
 function hop(host: string, username = "admin"): JumpHostConfig {
@@ -107,5 +108,40 @@ describe("jumpHostStatusLabel", () => {
 
   it("is empty without a jump host", () => {
     expect(jumpHostStatusLabel(sshConfig({ host: "app-server" }))).toBe("");
+  });
+});
+
+describe("jumpHostGatewayConnection", () => {
+  function savedConn(settings: Record<string, unknown>): SavedConnection {
+    return {
+      id: "Work/app-server",
+      name: "app-server",
+      folderId: null,
+      config: sshConfig(settings),
+    };
+  }
+
+  it("targets the (single) bastion directly with no further hops", () => {
+    const gw = jumpHostGatewayConnection(
+      savedConn({ host: "app-server", username: "deploy", proxyJump: [hop("bastion")] })
+    );
+    expect(gw).not.toBeNull();
+    expect(gw!.config.config.host).toBe("bastion");
+    expect(gw!.config.config.proxyJump).toBeUndefined();
+    expect(gw!.id).toBe("Work/app-server::jump-host");
+    expect(gw!.name).toContain("bastion");
+  });
+
+  it("targets the innermost gateway through the remaining outer hops", () => {
+    const gw = jumpHostGatewayConnection(
+      savedConn({ host: "db", username: "deploy", proxyJump: [hop("edge"), hop("bastion")] })
+    );
+    expect(gw!.config.config.host).toBe("bastion");
+    expect(gw!.config.config.proxyJump).toHaveLength(1);
+    expect((gw!.config.config.proxyJump as JumpHostConfig[])[0].host).toBe("edge");
+  });
+
+  it("returns null when there is no jump host", () => {
+    expect(jumpHostGatewayConnection(savedConn({ host: "app-server" }))).toBeNull();
   });
 });

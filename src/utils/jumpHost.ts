@@ -9,7 +9,7 @@
  * popover, so every surface renders the chain the same way.
  */
 
-import { JumpHostConfig } from "@/types/connection";
+import { JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
 
 /**
@@ -72,4 +72,36 @@ export function jumpHostStatusLabel(config: ConnectionConfig | undefined | null)
   const target = username ? `${username}@${host}` : host;
   const gateways = hops.map(hopLabel).join(" → ");
   return target ? `${target} via ${gateways}` : `via ${gateways}`;
+}
+
+/**
+ * Build a synthetic SSH connection that opens a terminal directly on the
+ * innermost gateway of `connection`'s jump-host chain (for debugging gateway
+ * connectivity). The gateway is reached through the same outer hops, so it
+ * shares the pooled gateway session with the original connection.
+ *
+ * Returns `null` when the connection has no jump host.
+ */
+export function jumpHostGatewayConnection(connection: SavedConnection): SavedConnection | null {
+  const hops = getJumpHosts(connection.config);
+  if (hops.length === 0) return null;
+
+  const gateway = hops[hops.length - 1];
+  const outerHops = hops.slice(0, -1);
+  const settings: Record<string, unknown> = {
+    host: gateway.host,
+    port: gateway.port,
+    username: gateway.username,
+    authMethod: gateway.authMethod,
+  };
+  if (gateway.password !== undefined) settings.password = gateway.password;
+  if (gateway.keyPath !== undefined) settings.keyPath = gateway.keyPath;
+  if (outerHops.length > 0) settings.proxyJump = outerHops;
+
+  return {
+    ...connection,
+    id: `${connection.id}::jump-host`,
+    name: `${gateway.host} (jump host)`,
+    config: { type: "ssh", config: settings },
+  };
 }
