@@ -58,7 +58,7 @@ impl OsKeychainStore {
         let mut entries = self
             .entries
             .lock()
-            .map_err(|_| anyhow::anyhow!("OS keychain entry cache lock poisoned"))?;
+            .expect("OS keychain entry cache lock poisoned");
         if let Some(entry) = entries.get(&account) {
             return Ok(entry.clone());
         }
