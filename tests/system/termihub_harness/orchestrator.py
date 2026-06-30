@@ -151,6 +151,11 @@ class AppInstance:
         return self._config_dir
 
     @property
+    def bridge_port(self) -> Optional[int]:
+        """The bridge port the app was last started against (``None`` if never)."""
+        return self._bridge_port
+
+    @property
     def log_path(self) -> Path:
         """Path of the file the app's stdout/stderr is captured to."""
         return self._log_path
