@@ -177,24 +177,28 @@ class TestWsl(
 ):
     """WSL sessions via the dedicated ``wsl`` type: spawn, cwd, path translation."""
 
+    def _open_wsl_terminal(self, purpose: str) -> str:
+        """Create + open a WSL terminal on the default distro and await its prompt.
+
+        Returns the connection name. Uses **Save & Connect** — WSL has no auth
+        step, so the session opens directly with no password prompt.
+        """
+        self.close_all_tabs()
+        name = unique_name(purpose)
+        self.create_wsl_connection(name, distribution=_WSL_DISTRO, connect=True)
+        self.wait(self.has_terminal, what="the WSL shell to be readable")
+        return name
+
     # ── MT-LOCAL-12: a WSL distro launches and accepts POSIX input ──────────────
     def test_wsl_session_renders_and_accepts_input(self):
-        self.close_all_tabs()
-        name = unique_name("wsl-launch")
-        self.create_wsl_connection(name, distribution=_WSL_DISTRO)
-        self.switch_to_connections_sidebar()
-        self.connect_connection(name)
-
-        self.wait(self.has_terminal, what="the WSL shell to be readable")
+        self._open_wsl_terminal("wsl-launch")
         marker = "WSL_MARKER"
         self.run_command(f"echo {marker}")
         assert marker in self.wait_for_output(marker)
 
     # ── MT-LOCAL-20: WSL startup has no "clear: command not found" error ────────
     def test_wsl_has_no_clear_command_error(self):
-        self.close_all_tabs()
-        name = unique_name("wsl-clear")
-        self.create_wsl_connection(name, distribution=_WSL_DISTRO, connect=True)
+        self._open_wsl_terminal("wsl-clear")
         text = self.wait(
             lambda: (lambda t: t if t.strip() else None)(self.driver.read_terminal()),
             what="the WSL shell to print its prompt",
@@ -203,10 +207,7 @@ class TestWsl(
 
     # ── MT-LOCAL-17: the WSL file browser shows an absolute initial path ────────
     def test_wsl_file_browser_shows_initial_path(self):
-        self.close_all_tabs()
-        name = unique_name("wsl-fb-init")
-        self.create_wsl_connection(name, distribution=_WSL_DISTRO, connect=True)
-        self.wait(self.has_terminal, what="the WSL shell to be readable")
+        self._open_wsl_terminal("wsl-fb-init")
         path = self.open_file_browser()
         # WSL paths surface as a UNC share (\\wsl$\<distro>\... or \\wsl.localhost\)
         # or a drive mount; all are absolute.
@@ -215,10 +216,7 @@ class TestWsl(
 
     # ── MT-LOCAL-18: the WSL file browser follows a `cd` in the shell ───────────
     def test_wsl_file_browser_follows_cd(self):
-        self.close_all_tabs()
-        name = unique_name("wsl-fb-cd")
-        self.create_wsl_connection(name, distribution=_WSL_DISTRO, connect=True)
-        self.wait(self.has_terminal, what="the WSL shell to be readable")
+        self._open_wsl_terminal("wsl-fb-cd")
         self.open_file_browser()
         # The terminal stays active while the Files sidebar is shown, so input
         # reaches it; OSC 7 emits the new cwd on the next prompt and the browser
@@ -229,10 +227,7 @@ class TestWsl(
 
     # ── MT-LOCAL-19: /mnt/<drive> shows the native Windows path ─────────────────
     def test_wsl_file_browser_translates_mnt_drive(self):
-        self.close_all_tabs()
-        name = unique_name("wsl-fb-mnt")
-        self.create_wsl_connection(name, distribution=_WSL_DISTRO, connect=True)
-        self.wait(self.has_terminal, what="the WSL shell to be readable")
+        self._open_wsl_terminal("wsl-fb-mnt")
         self.open_file_browser()
         # /mnt/c is a Windows drive mount; the browser shows it as a native drive
         # path (C:/...) rather than the inaccessible \\wsl$\ UNC view.
