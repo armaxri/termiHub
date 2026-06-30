@@ -21,7 +21,6 @@ class NetworkToolsUi(HarnessMixin):
     if TYPE_CHECKING:  # borrowed from the mixins suites combine this with
         def enable_experimental_features(self) -> None: ...
         def _ensure_sidebar(self, view: str, test_id: str) -> None: ...
-        def switch_to_connections_sidebar(self) -> None: ...
 
     def open_network_tools_sidebar(self) -> None:
         """Reveal and show the Network Tools sidebar (idempotent)."""
@@ -88,15 +87,3 @@ class NetworkToolsUi(HarnessMixin):
         """Stop a running HTTP monitor, if the Stop button is present."""
         if self.driver.exists("http-monitor-stop"):
             self.driver.click("http-monitor-stop")
-
-    def reload_network_tools_sidebar(self) -> None:
-        """Force the Network Tools sidebar to remount so it refetches its monitors.
-
-        The sidebar loads its monitor list only on mount (plus the manual Refresh
-        button and on stop) — it does not live-update when a monitor is started
-        while it is already open (#986). Toggling the activity-bar view away and
-        back triggers a remount, so the running monitor shows up. Drop this once
-        #986 makes the sidebar update reactively.
-        """
-        self.switch_to_connections_sidebar()
-        self.open_network_tools_sidebar()
