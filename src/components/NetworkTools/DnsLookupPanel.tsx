@@ -124,6 +124,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       <DiagnosticResultsTable
         columns={columns}
         rows={formattedRows}
+        rowTestIdPrefix="dns-result"
         footer={
           queryMs != null
             ? `Query time: ${queryMs}ms · ${records.length} record(s) found`

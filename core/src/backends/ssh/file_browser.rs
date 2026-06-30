@@ -14,12 +14,15 @@ use crate::errors::FileError;
 use crate::files::utils::{chrono_from_epoch, format_permissions};
 use crate::files::{FileBrowser, FileEntry};
 
-use super::auth::connect_and_authenticate;
 use super::handler::SshSession;
+use super::jump_host::{connect_target, GatewayHold};
 
 /// State of a connected SFTP session.
 struct SftpState {
     _session: SshSession,
+    /// Pooled gateway hold for a jump-host connection (`None` when direct); kept
+    /// alive so the bastion session carrying this SFTP session stays open (#939).
+    _gateway: Option<GatewayHold>,
     sftp: SftpSession,
 }
 
@@ -50,7 +53,9 @@ impl SftpFileBrowser {
             return Ok(());
         }
 
-        let (session, _registry) = connect_and_authenticate(config)
+        // Reach the target directly, or through its pooled jump-host gateway when
+        // a ProxyJump chain is configured (#939).
+        let (session, _registry, gateway) = connect_target(config)
             .await
             .map_err(|e| FileError::OperationFailed(format!("SFTP connection failed: {e}")))?;
 
@@ -69,6 +74,7 @@ impl SftpFileBrowser {
 
         *guard = Some(SftpState {
             _session: session,
+            _gateway: gateway,
             sftp,
         });
 

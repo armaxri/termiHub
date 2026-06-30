@@ -143,7 +143,11 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         <span className="network-panel__title">Ping</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <button className="network-panel__btn network-panel__btn--stop" onClick={handleStop}>
+            <button
+              className="network-panel__btn network-panel__btn--stop"
+              onClick={handleStop}
+              data-testid="ping-stop"
+            >
               <StopCircle size={14} />
               Stop
             </button>
@@ -201,14 +205,14 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       {error && <div className="network-panel__error">{error}</div>}
 
       {results.length > 0 && (
-        <div className="network-panel__chart-section">
+        <div className="network-panel__chart-section" data-testid="ping-chart">
           <span className="network-panel__chart-title">Latency Graph</span>
           <LatencyChart points={latencyPoints} intervalMs={intervalMs} />
         </div>
       )}
 
       {(stats || status === "running") && (
-        <div className="network-panel__stats">
+        <div className="network-panel__stats" data-testid="ping-stats">
           {stats && (
             <>
               <span>
