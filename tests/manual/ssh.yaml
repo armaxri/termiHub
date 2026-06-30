@@ -393,3 +393,25 @@ tests:
       - "The Open Connections panel shows the in-flight session under a 'Connecting' section, and its Cancel button aborts the connect"
     verification: manual
     tags: [jump-host]
+
+  # --- Live per-hop status in the Connection Path popover (PR #968) ---
+
+  - id: MT-SSH-46
+    name: "Show Connection Path popover live-probes each hop's status"
+    pr: 968
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Create a multi-hop SSH connection (target reached through a reachable bastion, e.g. the Docker SSH fixtures) and right-click it -> 'Show Connection Path'"
+      - "Watch the per-node status indicators while the dialog is open"
+      - "Close and reopen, this time with a chain whose SECOND hop is unreachable (e.g. inner hop host 10.255.255.1 with a short per-hop Connect Timeout)"
+      - "Open a path with a slow/blocked hop and close the dialog while a node still shows the connecting spinner"
+    expected:
+      - "On open, every node starts with a dim pending dot; the 'You' origin shows a green check immediately"
+      - "Each node steps live: a spinner while connecting, then a green check (connected) or a red X (failed)"
+      - "For the broken chain, the unreachable hop turns red with its failure reason shown beneath it, and the nodes AFTER it stay pending (no spinner, no check)"
+      - "Closing the dialog mid-probe stops the probe (no lingering connection appears in the Open Connections panel)"
+    verification: manual
+    tags: [jump-host, visual]

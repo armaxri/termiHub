@@ -46,6 +46,188 @@ pub struct JumpHostConnection {
     pub intermediates: Vec<SshSession>,
 }
 
+/// The connect state of a single node on a jump-host path during a live probe.
+///
+/// Drives the per-hop status indicators in the **Show Connection Path** popover
+/// (#962): each node starts implicitly *pending* (no event yet), flips to
+/// [`Connecting`](HopStatus::Connecting) when the probe begins that step, then
+/// resolves to [`Connected`](HopStatus::Connected) or [`Failed`](HopStatus::Failed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HopStatus {
+    /// The probe is currently establishing this node's connection.
+    Connecting,
+    /// This node was reached and authenticated successfully.
+    Connected,
+    /// This node could not be reached / authenticated.
+    Failed,
+}
+
+/// A single per-hop status update emitted while probing a connection path.
+///
+/// `index` is the node's zero-based position along the path **excluding** the
+/// local "You" origin: gateway hops come first (outermost → innermost), and the
+/// final target is the last index (`index == total - 1`). `total` is the count of
+/// such nodes (gateway hops + target), so the UI can map an update straight onto
+/// the rendered chain. `message` carries the failure reason for
+/// [`HopStatus::Failed`] and is empty otherwise.
+#[derive(Debug, Clone)]
+pub struct HopProgress {
+    /// Zero-based node index along the path (gateway hops then target).
+    pub index: usize,
+    /// Total probed nodes (gateway hops + target).
+    pub total: usize,
+    /// Node host.
+    pub host: String,
+    /// Node port.
+    pub port: u16,
+    /// Current connect status of this node.
+    pub status: HopStatus,
+    /// Failure reason for [`HopStatus::Failed`]; empty otherwise.
+    pub message: String,
+}
+
+/// Probe the full connection path to `target` — every jump-host hop in order and
+/// then the target itself — reporting each node's live status through
+/// `on_progress`, and tearing the probe connections down again when done.
+///
+/// This backs the **Show Connection Path** popover's live per-hop status (#962).
+/// It reuses the same per-hop connect primitives as the real connect path
+/// ([`connect_gateway_chain`] semantics: first hop direct, subsequent hops over
+/// `direct-tcpip` channels, the target over the innermost gateway) so a probe
+/// exercises the exact reachability/auth the eventual session would, but it does
+/// **not** touch the shared gateway pool and drops everything on return — it is a
+/// transient reachability check, not a session.
+///
+/// For each node the callback fires once with [`HopStatus::Connecting`] before the
+/// attempt and once with the resolved [`HopStatus::Connected`] /
+/// [`HopStatus::Failed`] after. On the first failure the probe stops and returns
+/// the error; nodes past the failure get no event (the UI leaves them pending).
+/// `cancel` aborts an in-flight probe promptly (see [`run_hop_step`]).
+///
+/// A direct (no jump host) target is a single-node path (`total == 1`).
+pub async fn probe_connection_path(
+    target: &SshConfig,
+    cancel: Option<&CancellationToken>,
+    on_progress: &mut (dyn FnMut(HopProgress) + Send),
+) -> Result<(), SessionError> {
+    let hops = &target.proxy_jump;
+    let total = hops.len() + 1;
+
+    // Walk the gateway chain, reporting each hop, keeping intermediate sessions
+    // alive so the next hop's channel can be opened over the previous one.
+    let mut current: Option<SshSession> = None;
+    // Earlier hop sessions whose channels carry the chain; dropped at the end.
+    let mut keep_alive: Vec<SshSession> = Vec::new();
+
+    for (idx, hop) in hops.iter().enumerate() {
+        let cfg = hop.to_ssh_config();
+        on_progress(HopProgress {
+            index: idx,
+            total,
+            host: cfg.host.clone(),
+            port: cfg.port,
+            status: HopStatus::Connecting,
+            message: String::new(),
+        });
+
+        let label = hop_label(idx + 1, &cfg.host, cfg.port);
+        let result = match current.take() {
+            // First hop: direct TCP connect + auth, bounded by its timeout/cancel.
+            None => run_hop_step(&label, cfg.connect_timeout(), cancel, async {
+                connect_and_authenticate_cancellable(&cfg, cancel.cloned()).await
+            })
+            .await
+            .map(|(session, _registry)| session),
+            // Subsequent hops: tunnel over the preceding hop's session.
+            Some(prev) => {
+                let res = connect_hop_over_channel(&prev, &cfg, &label, cancel)
+                    .await
+                    .map(|(session, _registry)| session);
+                keep_alive.push(prev);
+                res
+            }
+        };
+
+        match result {
+            Ok(session) => {
+                on_progress(HopProgress {
+                    index: idx,
+                    total,
+                    host: cfg.host.clone(),
+                    port: cfg.port,
+                    status: HopStatus::Connected,
+                    message: String::new(),
+                });
+                current = Some(session);
+            }
+            Err(e) => {
+                on_progress(HopProgress {
+                    index: idx,
+                    total,
+                    host: cfg.host.clone(),
+                    port: cfg.port,
+                    status: HopStatus::Failed,
+                    message: e.to_string(),
+                });
+                return Err(e);
+            }
+        }
+    }
+
+    // Final node: the target itself (direct when there were no hops, otherwise
+    // reached over the innermost gateway session).
+    let target_index = total - 1;
+    on_progress(HopProgress {
+        index: target_index,
+        total,
+        host: target.host.clone(),
+        port: target.port,
+        status: HopStatus::Connecting,
+        message: String::new(),
+    });
+
+    let target_result = match current.take() {
+        None => connect_and_authenticate_cancellable(target, cancel.cloned())
+            .await
+            .map(|(session, _registry)| session),
+        Some(gateway) => {
+            let label = format!("target {}:{}", target.host, target.port);
+            let res = connect_hop_over_channel(&gateway, target, &label, cancel)
+                .await
+                .map(|(session, _registry)| session);
+            keep_alive.push(gateway);
+            res
+        }
+    };
+
+    match target_result {
+        Ok(_session) => {
+            on_progress(HopProgress {
+                index: target_index,
+                total,
+                host: target.host.clone(),
+                port: target.port,
+                status: HopStatus::Connected,
+                message: String::new(),
+            });
+            Ok(())
+        }
+        Err(e) => {
+            on_progress(HopProgress {
+                index: target_index,
+                total,
+                host: target.host.clone(),
+                port: target.port,
+                status: HopStatus::Failed,
+                message: e.to_string(),
+            });
+            Err(e)
+        }
+    }
+    // `keep_alive`, `current`, and the target session drop here, tearing the probe
+    // connections down — the probe leaves no lingering sessions.
+}
+
 /// Bound a single hop's connect step by a per-hop timeout and an optional
 /// cancellation token, naming the hop in any failure.
 ///
@@ -329,6 +511,78 @@ mod tests {
             auth_method: "agent".to_string(),
             ..JumpHostConfig::default()
         }
+    }
+
+    /// Build an SSH target config with the given inline jump-host chain. A short
+    /// per-hop connect timeout keeps the probe tests fast.
+    fn target_with_hops(host: &str, port: u16, hops: Vec<JumpHostConfig>) -> SshConfig {
+        SshConfig {
+            host: host.to_string(),
+            port,
+            username: "u".to_string(),
+            auth_method: "agent".to_string(),
+            connect_timeout_secs: Some(2),
+            proxy_jump: hops,
+            ..SshConfig::default()
+        }
+    }
+
+    /// Probing a target whose first jump host is unreachable must report that hop
+    /// `Connecting` then `Failed`, stop there (no event for later nodes), and
+    /// return the error. `total` reflects gateway hops + target (#962).
+    #[tokio::test]
+    async fn probe_reports_connecting_then_failed_on_unreachable_first_hop() {
+        // Port 1 is reserved and refuses connections fast → quick deterministic fail.
+        let mut hop = hop("127.0.0.1", 1, "u");
+        hop.connect_timeout_secs = Some(2);
+        let target = target_with_hops("10.255.255.1", 22, vec![hop]);
+
+        let mut events: Vec<HopProgress> = Vec::new();
+        let result = probe_connection_path(&target, None, &mut |p| events.push(p)).await;
+
+        assert!(
+            result.is_err(),
+            "unreachable first hop should fail the probe"
+        );
+        assert_eq!(
+            events.len(),
+            2,
+            "expected Connecting + Failed, got {events:?}"
+        );
+
+        assert_eq!(events[0].index, 0);
+        assert_eq!(events[0].total, 2, "1 hop + target");
+        assert_eq!(events[0].host, "127.0.0.1");
+        assert_eq!(events[0].status, HopStatus::Connecting);
+
+        assert_eq!(events[1].index, 0);
+        assert_eq!(events[1].status, HopStatus::Failed);
+        assert!(
+            !events[1].message.is_empty(),
+            "failure should carry a reason"
+        );
+
+        // The target node (index 1) must never have been touched.
+        assert!(
+            events.iter().all(|e| e.index == 0),
+            "probe must stop at the failed hop: {events:?}"
+        );
+    }
+
+    /// A direct (no jump host) target whose host is unreachable is a single-node
+    /// path (`total == 1`): the target node reports `Connecting` then `Failed`.
+    #[tokio::test]
+    async fn probe_direct_target_is_single_node_path() {
+        let target = target_with_hops("127.0.0.1", 1, vec![]);
+
+        let mut events: Vec<HopProgress> = Vec::new();
+        let result = probe_connection_path(&target, None, &mut |p| events.push(p)).await;
+
+        assert!(result.is_err());
+        assert_eq!(events.len(), 2, "Connecting + Failed for the single node");
+        assert!(events.iter().all(|e| e.index == 0 && e.total == 1));
+        assert_eq!(events[0].status, HopStatus::Connecting);
+        assert_eq!(events[1].status, HopStatus::Failed);
     }
 
     #[test]

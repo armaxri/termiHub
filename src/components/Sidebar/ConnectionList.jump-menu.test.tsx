@@ -20,6 +20,15 @@ vi.mock("@/services/api", () => ({
   storeCredential: vi.fn(),
   isSshKeyEncrypted: vi.fn(() => Promise.resolve(false)),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
+  // The Connection Path dialog (opened by this menu) probes the path on open.
+  probeConnectionPath: vi.fn(() => Promise.resolve()),
+  cancelConnectionPathProbe: vi.fn(() => Promise.resolve(true)),
+}));
+
+// The Connection Path dialog subscribes to probe events while open.
+vi.mock("@/services/events", () => ({
+  onJumpHostHopStatus: vi.fn(() => Promise.resolve(() => {})),
+  onJumpHostProbeComplete: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 const mockedResolveCredential = vi.mocked(resolveCredential);

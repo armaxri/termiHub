@@ -71,6 +71,43 @@
   white-space: nowrap;
 }
 
+.connection-path-dialog__status {
+  flex-shrink: 0;
+}
+
+.connection-path-dialog__status--pending {
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+.connection-path-dialog__status--connecting {
+  color: var(--accent-color);
+}
+
+.connection-path-dialog__status--connected {
+  color: var(--status-success, #4caf50);
+}
+
+.connection-path-dialog__status--failed {
+  color: var(--status-error, #f44336);
+}
+
+.connection-path-dialog__status--spin {
+  animation: connection-path-spin 1s linear infinite;
+}
+
+@keyframes connection-path-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.connection-path-dialog__error {
+  margin: 2px 0 0 30px;
+  color: var(--status-error, #f44336);
+  font-size: 11px;
+}
+
 .connection-path-dialog__arrow {
   color: var(--text-secondary);
   margin: 2px 0 2px 14px;
