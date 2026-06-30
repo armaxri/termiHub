@@ -128,7 +128,7 @@ export function NetworkToolsSidebar() {
       </div>
 
       {/* HTTP Monitors */}
-      <div className="network-sidebar__section">
+      <div className="network-sidebar__section" data-testid="network-monitors-section">
         <div className="network-sidebar__section-title">
           Monitors
           <button

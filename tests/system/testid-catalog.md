@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**432** literal · **119** dynamic · **8** indirect.
+**439** literal · **121** dynamic · **10** indirect.
 
 ## Literal test IDs
 
@@ -172,8 +172,11 @@ Fixed strings — match exactly.
 | `file-type-add-error` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-language-input` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-pattern-input` | `src/components/Settings/FileTypeSettings.tsx` |
+| `http-monitor-chart` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-history` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-panel` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-start` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-stop` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-url` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `icon-picker-apply` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
 | `icon-picker-clear` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
@@ -250,6 +253,7 @@ Fixed strings — match exactly.
 | `multi-select-cut` | `src/components/Sidebar/FileBrowser.tsx` |
 | `multi-select-delete` | `src/components/Sidebar/FileBrowser.tsx` |
 | `multi-select-paste` | `src/components/Sidebar/FileBrowser.tsx` |
+| `network-monitors-section` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-new-monitor` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-tools-sidebar` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `open-ports-panel` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
@@ -263,9 +267,12 @@ Fixed strings — match exactly.
 | `password-prompt-input` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `password-prompt-save-checkbox` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `password-prompt-save-label` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
+| `ping-chart` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-host` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-panel` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-start` | `src/components/NetworkTools/PingPanel.tsx` |
+| `ping-stats` | `src/components/NetworkTools/PingPanel.tsx` |
+| `ping-stop` | `src/components/NetworkTools/PingPanel.tsx` |
 | `port-scanner-host` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-panel` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-ports` | `src/components/NetworkTools/PortScannerPanel.tsx` |
@@ -457,6 +464,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 
 | pattern | example template | source |
 | ------- | ---------------- | ------ |
+| `*-*` | `${rowTestIdPrefix}-${index}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `*-copy` | `${testIdPrefix}-copy` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-name` | `${testIdPrefix}-copy-name` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-path` | `${testIdPrefix}-copy-path` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -515,6 +523,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `file-type-remove-*` | `file-type-remove-${pattern}` | `src/components/Settings/FileTypeSettings.tsx` |
 | `folder-toggle-*` | `folder-toggle-${folder.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `form-group-*` | `form-group-${group.key}` | `src/components/DynamicForm/ConnectionSettingsForm.tsx` |
+| `http-monitor-entry-*` | `http-monitor-entry-${i}` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `icon-picker-cell-*` | `icon-picker-cell-${entry.name}` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
 | `indent-spaces-*` | `indent-spaces-${size}` | `src/components/StatusBar/StatusBar.tsx` |
 | `indent-tabs-*` | `indent-tabs-${size}` | `src/components/StatusBar/StatusBar.tsx` |
@@ -586,7 +595,9 @@ where the component is used, not at the `data-testid` site.
 | ---------- | ------ |
 | `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
+| `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
+| `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("host")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("password")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
