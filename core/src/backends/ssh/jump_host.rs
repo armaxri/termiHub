@@ -272,7 +272,8 @@ pub async fn connect_target(
     cancel: Option<&CancellationToken>,
 ) -> Result<(SshSession, ForwardedChannelRegistry, Option<GatewayHold>), SessionError> {
     if target.proxy_jump.is_empty() {
-        let (session, registry) = connect_and_authenticate_cancellable(target, cancel.cloned()).await?;
+        let (session, registry) =
+            connect_and_authenticate_cancellable(target, cancel.cloned()).await?;
         Ok((session, registry, None))
     } else {
         let (session, registry, gateway) =
