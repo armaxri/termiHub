@@ -2,7 +2,11 @@ import { useCallback, useEffect } from "react";
 import "./NetworkTools.css";
 import { Play, RefreshCw, Plus, Circle, StopCircle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { networkHttpMonitorList, networkHttpMonitorStop } from "@/services/networkApi";
+import {
+  networkHttpMonitorList,
+  networkHttpMonitorStop,
+  onHttpMonitorCheck,
+} from "@/services/networkApi";
 import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
@@ -95,6 +99,32 @@ export function NetworkToolsSidebar() {
 
   useEffect(() => {
     void refreshMonitors();
+  }, [refreshMonitors]);
+
+  // Stay live: a monitor started while the sidebar is already mounted emits
+  // `network-http-monitor-check` events (the first fires immediately on start).
+  // Refetch on every check so a newly started monitor appears, and so running
+  // monitors' status/latency stay current — without this the list only updated
+  // on mount, manual Refresh, or stop (#986).
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    onHttpMonitorCheck(() => {
+      void refreshMonitors();
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch((err) => frontendLog("network_sidebar", `Failed to subscribe to checks: ${err}`));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [refreshMonitors]);
 
   const handleStopMonitor = useCallback(
