@@ -188,8 +188,16 @@ class TestEmbeddedServices(
         self.start_server(server["id"])
         assert self.server_running(server["id"])
 
-    # ── SVC-10: File Browser quick-share via HTTP ────────────────────────────
-    def test_quick_share_via_http(self):
+    # ── SVC-10 / SVC-14 / SVC-15: File Browser quick-share (HTTP/FTP/TFTP) ────
+    def _quick_share_folder(self, proto: str) -> dict:
+        """Quick-share a fresh local folder via ``proto`` and return the server.
+
+        Mirrors the in-app File Browser flow: a local terminal supplies a
+        directory, ``context-file-share-<proto>`` switches to the Services sidebar
+        and creates+starts a server bound to ``127.0.0.1`` on the protocol's
+        default unprivileged port (HTTP 8080 / FTP 2121 / TFTP 6969). Returns the
+        started server's store config.
+        """
         # A local terminal gives the file browser a directory to share.
         self.ensure_terminal()
         self.open_file_browser()
@@ -197,16 +205,66 @@ class TestEmbeddedServices(
         self.create_folder_via_browser(folder)
 
         self.open_file_menu(folder)
+        menu_item = f"context-file-share-{proto}"
         self.wait(
-            lambda: self.driver.exists("context-file-share-http"),
-            what="the Share via HTTP menu item",
+            lambda: self.driver.exists(menu_item),
+            what=f"the Share via {proto.upper()} menu item",
         )
-        self.driver.click("context-file-share-http")
+        self.driver.click(menu_item)
 
         # Quick-share switches to the Services sidebar and starts a server.
         self.wait(lambda: self.driver.exists(self.SIDEBAR), what="the Services sidebar")
-        server = self.wait(lambda: self.servers()[0] if self.servers() else None, what="a shared server")
+        server = self.wait(
+            lambda: self.servers()[0] if self.servers() else None, what="a shared server"
+        )
         self.wait(lambda: self.server_running(server["id"]), what="the shared server to start")
+        return server
+
+    def test_quick_share_via_http(self):
+        server = self._quick_share_folder("http")
+        assert server["serverType"] == "http"
+
+    def test_quick_share_via_ftp(self):
+        """SVC-14 — Share via FTP from the File Browser starts an FTP server."""
+        server = self._quick_share_folder("ftp")
+        assert server["serverType"] == "ftp"
+
+    def test_quick_share_via_tftp(self):
+        """SVC-15 — Share via TFTP from the File Browser starts a TFTP server."""
+        server = self._quick_share_folder("tftp")
+        assert server["serverType"] == "tftp"
+
+    def test_quick_share_ftp_serves_the_folder(self):
+        """SVC-14b — the FTP server the quick-share starts actually serves files.
+
+        Drops a file into the shared folder from the terminal, then downloads it
+        with the stdlib ``ftplib`` checker against the running quick-share server
+        (``127.0.0.1`` on the FTP default port) — verifying a real transfer, not
+        just that the server reached ``running``.
+        """
+        server = self._quick_share_folder("ftp")
+        root, port = server["rootDirectory"], server["port"]
+        Path(root, "share.txt").write_text("termihub-quickshare-ftp-ok\n", encoding="utf-8")
+
+        downloaded = ftp_download("127.0.0.1", port, "share.txt")
+        assert downloaded.decode("utf-8").strip() == "termihub-quickshare-ftp-ok"
+
+    def test_quick_share_tftp_serves_the_folder(self):
+        """SVC-15b — the TFTP server the quick-share starts actually serves files.
+
+        Same as the FTP variant but over a real ``tftpy`` RRQ; skipped only if the
+        optional ``tftpy`` dependency is missing (never on a host with the harness
+        requirements installed).
+        """
+        server = self._quick_share_folder("tftp")
+        root, port = server["rootDirectory"], server["port"]
+        Path(root, "boot.txt").write_text("termihub-quickshare-tftp-ok\n", encoding="utf-8")
+
+        try:
+            downloaded = tftp_download("127.0.0.1", port, "boot.txt")
+        except TftpUnavailable as exc:  # pragma: no cover — only if dep missing
+            pytest.skip(str(exc))
+        assert downloaded.decode("utf-8").strip() == "termihub-quickshare-tftp-ok"
 
     # ── SVC-11: bind-address dropdown + LAN security warning ─────────────────
     def test_bind_address_lan_warning(self):
@@ -263,3 +321,64 @@ class TestEmbeddedServices(
         except TftpUnavailable as exc:  # pragma: no cover — only if dep missing
             pytest.skip(str(exc))
         assert downloaded.decode("utf-8").strip() == "termihub-tftp-transfer-ok"
+
+    # ── SVC-16: per-server context menu — start / stop ───────────────────────
+    def test_context_menu_start_and_stop(self):
+        """The right-click menu's Start/Stop drive the same lifecycle as the
+        inline buttons. The menu swaps Start↔Stop with running state, so this
+        exercises both menu items on one server."""
+        server = self.create_server(unique_name("ctx"), proto="http", port=self.free_port())
+        self.ctx_start_server(server["id"])
+        assert self.server_running(server["id"]), "ctx Start should start the server"
+        self.ctx_stop_server(server["id"])
+        assert not self.server_running(server["id"]), "ctx Stop should stop the server"
+
+    # ── SVC-17: per-server context menu — delete ─────────────────────────────
+    def test_context_menu_delete(self):
+        """The right-click menu's Delete removes the server (and, as the last one,
+        restores the empty state)."""
+        name = unique_name("ctx-del")
+        server = self.create_server(name, proto="http", port=self.free_port())
+        self.ctx_delete_server(server["id"], name)
+        assert self.find_server(name) is None, "ctx Delete should remove the server"
+        assert self.driver.exists(self.EMPTY), "empty-state should return after deleting the last server"
+
+    # ── SVC-18: per-server context menu — copy URL ───────────────────────────
+    def test_context_menu_copy_url(self):
+        """Copy URL is always present in the menu and selectable without error.
+
+        The action writes to the OS clipboard via a Tauri plugin (best-effort,
+        swallowing failures), so the clipboard contents are not asserted here —
+        the check is that the item exists and the menu closes after selecting it.
+        """
+        server = self.create_server(unique_name("ctx-url"), proto="http", port=self.free_port())
+        self.open_server_menu(server["id"])
+        assert self.driver.exists(f"ctx-copy-url-{server['id']}")
+        self.driver.click(f"ctx-copy-url-{server['id']}")
+        self.wait(
+            lambda: not self.driver.exists(f"ctx-copy-url-{server['id']}"),
+            what="the context menu to close after Copy URL",
+        )
+
+    # ── SVC-19: per-server context menu — Open in Browser (HTTP only) ─────────
+    def test_context_menu_open_in_browser_http_only(self):
+        """``Open in Browser`` is offered for HTTP servers and absent for FTP.
+
+        Selecting it opens the URL via a Tauri opener plugin (best-effort); we
+        assert the item is present for HTTP, selectable, and that the menu closes —
+        and that the item is *not* rendered for a non-HTTP (FTP) server.
+        """
+        http = self.create_server(unique_name("ctx-http"), proto="http", port=self.free_port())
+        self.open_server_menu(http["id"])
+        assert self.driver.exists(f"ctx-open-browser-{http['id']}"), "HTTP should offer Open in Browser"
+        self.driver.click(f"ctx-open-browser-{http['id']}")
+        self.wait(
+            lambda: not self.driver.exists(f"ctx-open-browser-{http['id']}"),
+            what="the context menu to close after Open in Browser",
+        )
+
+        ftp = self.create_server(unique_name("ctx-ftp"), proto="ftp", port=self.free_port())
+        self.open_server_menu(ftp["id"])
+        assert not self.driver.exists(
+            f"ctx-open-browser-{ftp['id']}"
+        ), "Open in Browser must not be offered for non-HTTP servers"
