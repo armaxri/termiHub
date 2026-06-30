@@ -85,6 +85,14 @@
   transform: translateY(1px) scale(0.98);
 }
 
+.connection-editor__setup-agent-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-color);
+}
+
 .connection-editor__color-row {
   display: flex;
   align-items: center;
