@@ -334,7 +334,7 @@ each published SSH port to accept a connection. When no container runtime is
 available the suite **skips cleanly** rather than failing, so a plain `pytest`
 still works on a machine without one.
 
-**Docker or Podman** — the runtime is detected like `scripts/test-system.sh`:
+**Docker or Podman** — the runtime is detected like `scripts/test-system-linux.sh`:
 a `CONTAINER_CMD` env override wins; otherwise Docker is preferred and Podman is
 the fallback, choosing whichever CLI exists _and_ whose daemon/machine answers
 `<cmd> info`. (Readiness is a TCP port probe, not `compose --wait`, because

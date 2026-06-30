@@ -183,8 +183,9 @@ CI and for tests authored without a local run. **Effort:** small–medium.
 
 ### P3 — A one-command runner for the Python harness ✅ done (#898)
 
-There is no top-level entry point for the **bridge** harness (the existing
-`scripts/test-system.sh` drives the legacy `tauri-driver` flow).
+There was no top-level entry point for the **bridge** harness (the now-removed
+`scripts/test-system.sh` drove the legacy `tauri-driver` flow, retired with the
+wdio suites in #1015).
 **[`scripts/test-system-py.sh`](../scripts/test-system-py.sh)** (+ `.cmd`)
 builds the app if missing/stale (honoring `--debug`), brings up only the
 requested `--fixtures`, then forwards args to `pytest.sh` — one command instead

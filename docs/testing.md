@@ -112,25 +112,27 @@ describe("Terminal Creation Flow", () => {
 });
 ```
 
-### Running E2E Tests
+### Running E2E / System Tests
+
+The example above shows the legacy WebdriverIO API. All previously-shipped
+WebdriverIO specs (UI, local, infrastructure, performance) were ported to the
+**Python bridge harness** under `tests/system/` (epic #799); `wdio.conf.js`
+remains only as a scaffold for future tauri-driver UI specs (it currently
+matches zero specs). System and infrastructure coverage now runs through the
+Python harness, which works on macOS, Linux, and Windows:
 
 ```bash
-# Run all E2E tests (Linux/Windows only — tauri-driver required)
+# Python bridge system-test harness — builds the app if needed, brings up the
+# named Docker fixtures, then runs pytest (see tests/system/README.md)
+./scripts/test-system-py.sh --debug -k ssh -x -s
+./scripts/test-system-py.sh --fixtures "ssh-password ssh-keys" -m integration -k ssh
+
+# Per-machine orchestration (unit + Rust integration tests against Docker infra)
+./scripts/test-system-linux.sh
+./scripts/test-system-windows.sh
+
+# The wdio scaffold (no specs ship today; Linux/Windows only, tauri-driver required)
 pnpm test:e2e
-
-# Run specific test file
-pnpm test:e2e -- --spec tests/e2e/infrastructure/windows-shells.test.js
-
-# Run in headless mode (CI)
-pnpm test:e2e:ci
-
-# Run with UI (helpful for debugging)
-pnpm test:e2e:ui
-
-# Run system tests with infrastructure (SSH, Telnet, serial)
-# On macOS: runs inside Docker (Linux) automatically
-# On Linux: runs natively with tauri-driver
-./scripts/test-system.sh
 ```
 
 ### Recording Interactions (Manual → Automated)
@@ -387,9 +389,10 @@ jobs:
       - uses: codecov/codecov-action@v3
 
   e2e-tests:
-    # NOTE: E2E tests only run on Linux and Windows.
-    # tauri-driver does not support macOS (no WKWebView driver).
-    # See ADR-5 in architecture.md for details.
+    # NOTE: `wdio.conf.js` is currently an empty scaffold (all specs were ported
+    # to the Python bridge harness, tests/system/); this job is a placeholder for
+    # future tauri-driver UI specs. tauri-driver only runs on Linux and Windows
+    # (no macOS WKWebView driver) — see ADR-5 in architecture.md.
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -400,7 +403,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: npm run build
-      - run: npm run test:e2e:ci
+      - run: npm run test:e2e
 ```
 
 ### Windows Agent CI Coverage
@@ -492,8 +495,6 @@ vi.mock("@tauri-apps/api/fs", () => ({
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "wdio run ./wdio.conf.js",
-    "test:e2e:ci": "wdio run ./wdio.conf.js --headless",
-    "test:e2e:ui": "wdio run ./wdio.conf.js --debug",
     "test:visual": "playwright test",
     "test:all": "pnpm test && pnpm test:e2e"
   }
@@ -662,17 +663,21 @@ set `TERMIHUB_TEST_SSH_PASSWORD_PORT` to match in that checkout's environment.
 Platform-specific orchestration scripts that start Docker containers, run all applicable tests, and tear down infrastructure:
 
 ```bash
-# macOS (no E2E — tauri-driver unsupported)
+# macOS (unit + Rust integration tests)
 ./scripts/test-system-mac.sh
 ./scripts/test-system-mac.sh --with-all --keep-infra
 
-# Linux (full suite including E2E if tauri-driver installed)
+# Linux (unit + Rust integration tests)
 ./scripts/test-system-linux.sh
 ./scripts/test-system-linux.sh --with-fault --with-stress
 
 # Windows (via WSL or Git Bash)
 ./scripts/test-system-windows.sh
 ```
+
+> UI/infrastructure E2E coverage moved to the Python bridge harness — run it
+> with [`./scripts/test-system-py.sh`](../scripts/test-system-py.sh) (see
+> [tests/system/README.md](../tests/system/README.md)).
 
 Common flags: `--skip-build`, `--skip-unit`, `--skip-serial`, `--with-fault`, `--with-stress`, `--with-all`, `--keep-infra`.
 
@@ -737,7 +742,7 @@ Manual test procedures for verifying user-facing features before releases and af
 
 ### E2E Automation Coverage
 
-Manual tests that can be automated have been moved to WebdriverIO E2E tests. The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to E2E test files.
+Manual tests that can be automated have been moved to the Python bridge system-test harness (`tests/system/`). The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to the automated test files.
 
 **100 manual test items remain** across 14 YAML files. These cannot be automated due to:
 
@@ -755,14 +760,14 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: a shrinking set of WebdriverIO files (performance + the `infrastructure/` remote-agent and Windows-shells specs) — the remainder is being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`, MT-NET-10/12/14/17/18) were ported to `tests/system/tests/test_network_tools_live.py` and removed (#946).
+E2E test coverage: all WebdriverIO specs have been ported to the cross-platform Python bridge harness in `tests/system/` (epic #799), leaving `wdio.conf.js` as an empty scaffold for any future tauri-driver UI specs. The last specs ported and removed include the SSH tunnels editor/list and Network Tools panel-UI suites → `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` (#810), the live-network cases → `test_network_tools_live.py` (#946), the remote-agent and Windows-shells/WSL infrastructure suites (#974, #975), and finally the now-empty `infra` wdio suite itself (#1015).
 
 ### Test Environment Setup
 
 - Build the release app with `pnpm tauri build`
 - For SSH/Telnet testing: Docker containers from `tests/docker/` (see [tests/docker/README.md](../tests/docker/README.md))
 - Pre-generated SSH test keys in `tests/fixtures/ssh-keys/`
-- For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system.sh` (see also `examples/serial/`)
+- For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
 ### Guided-Manual Tests in the Python Harness (preferred)
@@ -904,7 +909,7 @@ When adding new manual tests, add the YAML definition to the appropriate file in
 
 ### E2E Coverage Map
 
-Mapping of manual test IDs that have been automated to their E2E test files:
+Mapping of manual test IDs that have been automated to their Python harness test files:
 
 | Manual Test IDs                  | E2E Test File                                                                                                          |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
