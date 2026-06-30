@@ -294,7 +294,7 @@ Use these skills with `/skill-name` during development:
   - Config changes separate from source changes
   - Formatting/lint fixes separate from functional changes
 - **Never pull or fetch before committing**: always commit local changes first before any git operations that touch the remote (fetch, pull, merge). Uncommitted work must never be at risk from remote operations.
-- **Update CHANGELOG.md** for every user-facing change (Keep a Changelog format, under `[Unreleased]`)
+- **Record user-facing changes in a per-branch fragment, not `CHANGELOG.md`**: on a `develop`-targeted branch, add your Keep a Changelog notes to `docs/changes/<branch-name>.md` (e.g. `docs/changes/feature/1234-new-thing.md`) — never edit `CHANGELOG.md` directly. Per-branch files avoid the constant `CHANGELOG.md` merge conflicts; the fragments are consolidated into `CHANGELOG.md` at release time (`develop` → `main`). Skip the fragment for non-user-facing work (refactors, CI, internal docs, test-only). Only hotfix branches cut directly from a `main` tag edit `CHANGELOG.md` directly. See [`docs/changes/README.md`](../docs/changes/README.md).
 - **Merge `origin/develop` before creating a PR** (never rebase): before pushing the final branch and opening a PR, always `git fetch origin && git merge origin/develop` into the feature branch, resolve any conflicts, and re-run tests/checks to ensure the branch is up to date and clean. Always use merge, never rebase.
 
 ---
@@ -326,7 +326,7 @@ A PostToolUse hook in `.claude/settings.json` runs `scripts/internal/autoformat.
 
 **Before pushing or creating a PR**, complete all outstanding internal tasks first. Do not defer these to after pushing. When the user asks to push, **stop and report** which of the following items are still pending, then ask for permission before proceeding:
 
-1. **CHANGELOG.md** — updated for every user-facing change (under `[Unreleased]`)
+1. **Change fragment** — for every user-facing change, `docs/changes/<branch-name>.md` exists with the Keep a Changelog notes (not `CHANGELOG.md`; see [Git Workflow](#git-workflow))
 2. **docs/testing.md (Manual Testing section)** — updated if the PR includes manual test steps
 3. **Concept documents** — if working on a `Concept` issue, ensure `docs/concepts/<name>.md` is written and committed
 4. **Other documentation** — any doc updates implied by the changes (architecture.md, README references, JSDoc, doc comments, etc.)

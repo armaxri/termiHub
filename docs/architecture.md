@@ -86,11 +86,11 @@
 
 ### Convention Constraints
 
-| Constraint           | Detail                                                       |
-| -------------------- | ------------------------------------------------------------ |
-| Conventional Commits | All commit messages follow the `type(scope): subject` format |
-| Keep a Changelog     | User-facing changes documented in CHANGELOG.md               |
-| Merge commits only   | No squash or rebase merges — preserve full commit history    |
+| Constraint           | Detail                                                                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Conventional Commits | All commit messages follow the `type(scope): subject` format                                                         |
+| Keep a Changelog     | User-facing changes recorded as per-branch fragments in `docs/changes/`, consolidated into `CHANGELOG.md` at release |
+| Merge commits only   | No squash or rebase merges — preserve full commit history                                                            |
 
 ---
 

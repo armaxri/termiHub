@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!--
+  Do NOT add entries here on a develop-targeted branch. Record user-facing changes in a
+  per-branch fragment under docs/changes/<branch-name>.md instead — see docs/changes/README.md.
+  Fragments are consolidated into this section at release time. Only hotfix branches cut
+  directly from a main tag edit this file directly.
+-->
+
 ### Added
 
 - Testing: **guided-manual native-dialog follow-ups** (#1004, the items deferred from #916 / delivered alongside the #931 suite). `tests/system/tests/test_native_dialogs.py` gains the four remaining native-OS-dialog flows that the in-webview bridge cannot drive: **encrypted export+import round-trip** (MT-CONN-12..16) — the harness sets up a master-password store, saves an SSH password into it, exports **with credentials** (typing the export password) and imports the same file back, asserting the import dialog reports the credential imported, so the real Argon2id + AES-256-GCM round-trip is exercised rather than re-implemented in a fixture; **Open in Editor → Save As + the unsaved-changes warning** (MT-TAB-17/18/19) — captures terminal scrollback into a scratch editor, asserts the Unsaved badge, Save As writes the buffer and clears the dirty state, and a second unsaved capture's close raises the unsaved-changes dialog (Cancel keeps / Just Close discards); **portable config export to a directory** (MT-PORT-04) — drives Settings → Portable Mode export + the migration Copy dialog and asserts the files land in the chosen directory; and **add external connection file** (MT-CONN-23) — registers an external-store JSON fixture and asserts it appears in settings and its connection loads. Following the guided-manual contract, the harness automates every bridge-drivable half and asserts the in-app outcome (imported credential, saved-file content, copied config files, registered external file); the operator performs **only** the native file pick / save. Two `data-testid`s were added — `external-files-add` (the External Files "Add File" button) and `import-dialog-success` (the import-result message). Marked `manual` + `integration`, so they skip on CI / normal runs and run under `./pytest.sh --manual -k native_dialog -s`. [docs/testing.md](docs/testing.md) (Closes #1004)
