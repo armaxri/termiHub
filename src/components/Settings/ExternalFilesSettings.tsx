@@ -122,6 +122,7 @@ export function ExternalFilesSettings() {
               className="settings-panel__btn settings-panel__btn--primary"
               onClick={handleAddFile}
               title="Add external connection file"
+              data-testid="external-files-add"
             >
               <Plus size={14} />
               Add File

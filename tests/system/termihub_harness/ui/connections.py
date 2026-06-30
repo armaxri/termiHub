@@ -191,27 +191,6 @@ class ConnectionsUi(HarnessMixin):
         self.require_connection(name)
         return name
 
-    def connect_connection(self, name: str) -> None:
-        """Open a session for an existing connection by double-clicking its item.
-
-        The connection list opens a session on *double*-click (single-click only
-        selects/edits), so this resolves the connection's id by name on every
-        poll — a save can reload connections from disk and reassign ids — and
-        double-clicks the current item once it is in the DOM.
-        """
-
-        def opened() -> bool:
-            conn = self.find_connection(name)
-            if conn is None:
-                return False
-            item = connection_item_testid(conn["id"])
-            if not self.driver.exists(item):
-                return False
-            self.driver.double_click(item)
-            return True
-
-        self.wait(opened, what=f"the {name!r} connection to open")
-
     def create_ssh_connection(
         self,
         name: str,
@@ -400,25 +379,18 @@ class ConnectionsUi(HarnessMixin):
     def open_connection_menu(self, name: str) -> None:
         """Right-click a connection by name and wait for its menu to mount.
 
-        A save makes the store update *before* the sidebar settles: it reloads
-        connections from disk a few times, and a connection's **id can change**
-        across that reload. So the connection id is re-resolved by name on every
-        poll (never cached) and the right-click is dispatched only once the
-        *current* item is in the DOM — otherwise the gesture races a reload that
-        replaced or unmounted the element.
+        Delegates to :meth:`HarnessMixin.open_named_context_menu`: the connection
+        id is re-resolved by name on every poll (a save reloads connections from
+        disk a few times and an id can change across that reload), and the
+        right-click is dispatched only once the *current* item is in the DOM —
+        otherwise the gesture races a reload that replaced or unmounted it.
         """
-
-        def menu_open() -> bool:
-            conn = self.find_connection(name)
-            if conn is None:
-                return False
-            item = connection_item_testid(conn["id"])
-            if not self.driver.exists(item):
-                return False
-            self.driver.context_menu(item)
-            return self.driver.exists(self.CTX_EDIT)
-
-        self.wait(menu_open, what=f"the {name!r} connection context menu")
+        self.open_named_context_menu(
+            resolve=lambda: self.find_connection(name),
+            testid_for=connection_item_testid,
+            sentinel=self.CTX_EDIT,
+            what=f"the {name!r} connection context menu",
+        )
 
     def connection_context_action(self, name: str, action_test_id: str) -> None:
         """Right-click a connection by name and click a context-menu action."""

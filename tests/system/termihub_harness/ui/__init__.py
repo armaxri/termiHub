@@ -25,6 +25,7 @@ Mixin → concern:
 - :class:`SettingsUi`        — the Settings editor
 - :class:`ManualUi`          — operator prompts for guided-manual tests (#914)
 - :class:`NetworkToolsUi`    — the Network Tools sidebar + diagnostic panels
+- :class:`AgentUi`           — remote-agent create / connect / error dialog / setup
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
 testid helpers) stay functions so they remain unit-testable without an app.
@@ -32,6 +33,7 @@ testid helpers) stay functions so they remain unit-testable without an app.
 
 from __future__ import annotations
 
+from .agent import AgentUi
 from .config_recovery import ConfigRecoveryUi
 from .connections import ConnectionsUi
 from .credential_store import CredentialStoreUi
@@ -61,6 +63,7 @@ from .tabs import TabsUi
 from .terminal import TerminalUi
 
 __all__ = [
+    "AgentUi",
     "ConfigRecoveryUi",
     "ConnectionsUi",
     "CredentialStoreUi",

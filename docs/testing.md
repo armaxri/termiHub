@@ -119,7 +119,7 @@ describe("Terminal Creation Flow", () => {
 pnpm test:e2e
 
 # Run specific test file
-pnpm test:e2e -- --spec tests/e2e/infrastructure/remote-agent.test.js
+pnpm test:e2e -- --spec tests/e2e/infrastructure/windows-shells.test.js
 
 # Run in headless mode (CI)
 pnpm test:e2e:ci
@@ -741,19 +741,19 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 
 **100 manual test items remain** across 14 YAML files. These cannot be automated due to:
 
-| Reason                                | Items | Examples                                                          |
-| ------------------------------------- | ----- | ----------------------------------------------------------------- |
-| Visual rendering verification         | ~16   | Powerline glyphs, white flash, 1px borders, cursor blink          |
-| Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                     |
-| OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater     |
-| Native OS dialogs (file picker, save) | ~6    | Import/export connections, SSH key browse, save terminal to file  |
-| Drag-and-drop                         | ~7    | Split view drag, cross-group tab drag, connection folder drag     |
-| External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed             |
-| Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence               |
-| Credential store (master password)    | ~3    | Setup, unlock, auto-lock, wrong password, change password         |
-| Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths   |
-| Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
-| Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
+| Reason                                | Items | Examples                                                                 |
+| ------------------------------------- | ----- | ------------------------------------------------------------------------ |
+| Visual rendering verification         | ~16   | Powerline glyphs, white flash, 1px borders, cursor blink                 |
+| Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                            |
+| OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater            |
+| Native OS dialogs (file picker, save) | ~10   | Import/export, encrypted import, Save As, portable export, external file |
+| Drag-and-drop                         | ~7    | Split view drag, cross-group tab drag, connection folder drag            |
+| External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed                    |
+| Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence                      |
+| Credential store (master password)    | ~3    | Setup, unlock, auto-lock, wrong password, change password                |
+| Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths          |
+| Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                                    |
+| Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526)        |
 
 E2E test coverage: a shrinking set of WebdriverIO files (performance + the `infrastructure/` remote-agent and Windows-shells specs) — the remainder is being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`, MT-NET-10/12/14/17/18) were ported to `tests/system/tests/test_network_tools_live.py` and removed (#946).
 
@@ -786,7 +786,7 @@ Migrated guided-manual suites so far:
 | Suite                                                                        | Covers (manual IDs)                                                     | The human step                                                                                                                                                                                                                        |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                       | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                        |
-| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17, MT-TAB-08                                             | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store                                                                                                                                 |
+| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17/12..16/23, MT-TAB-08/17/18/19, MT-PORT-04              | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store (incl. encrypted import, Save As, portable export, external file — #1004)                                                       |
 | [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02..                     | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar) — screenshot attached                                                                                                                      |
 | [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04  | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect)                                            |
 | [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)       | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20 | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder) |
@@ -875,41 +875,42 @@ When adding new manual tests, add the YAML definition to the appropriate file in
 
 Mapping of manual test IDs that have been automated to their E2E test files:
 
-| Manual Test IDs                 | E2E Test File                                                                                                          |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| MT-LOCAL-01, 07                 | `tests/system/tests/test_local_shell.py`                                                                               |
-| MT-LOCAL-09, 10                 | `tests/system/tests/test_cross_platform.py`                                                                            |
-| MT-LOCAL-02, 04, 06, 11–20      | `tests/system/tests/test_windows_shells.py` (Windows-only; WSL cases skip without WSL2)                                |
-| MT-SSH-04–06, 10–12, 20–33, 35  | `tests/system/tests/test_ssh*.py`                                                                                      |
-| MT-SSH-19 (X11 backward-compat) | `tests/system/tests/test_connection_forms.py`                                                                          |
-| MT-SSH-08 (agent-auth warning)  | _dropped_ (`agent` is no longer a selectable SSH auth method)                                                          |
-| MT-SSH-13, 17, 34               | `tests/system/tests/test_ssh_extended.py`                                                                              |
-| SERIAL-01, 05 + custom path     | `tests/system/tests/test_serial.py`                                                                                    |
-| MT-SER-09 (live serial I/O)     | _manual_ (no host socat echo fixture in harness yet, #859)                                                             |
-| TELNET-01–03                    | `tests/system/tests/test_telnet.py`                                                                                    |
-| MT-TAB-01–05, 15, 18            | `tests/system/tests/test_tab_management.py`                                                                            |
-| MT-TAB-08–14, 19–21             | `tests/system/tests/test_tab_horizontal_scroll.py`                                                                     |
-| MT-CONN-02–07, 25–30            | `test_connection_crud.py`, `test_connection_forms.py`, `test_connection_editor.py`                                     |
-| MT-CONN-10–11, 13               | `tests/system/tests/test_export_import.py`                                                                             |
-| MT-CONN-12, 14–16 (enc. import) | _manual_ (import opens a native OS file picker)                                                                        |
-| MT-CONN-20–22, 31               | `tests/system/tests/test_external_files.py`                                                                            |
-| MT-FB-01, 02                    | `tests/system/tests/test_file_browser_local.py`                                                                        |
-| MT-FB-03, 13, 19                | `tests/system/tests/test_sftp_infra.py`                                                                                |
-| MT-FB-06, 17                    | _manual_ (serial not bridge-selectable; SFTP fault injection)                                                          |
-| MT-FB-05, 11, 18                | `tests/system/tests/test_file_browser_local.py`                                                                        |
-| EDITOR-01/STATUS/INDENT/LANG    | `tests/system/tests/test_editor.py`                                                                                    |
-| #504 (terminal auto-scroll)     | `tests/system/tests/test_terminal_auto_scroll.py`                                                                      |
-| MT-UI-06–08                     | `tests/system/tests/test_ui_state.py`                                                                                  |
-| MT-UI-17, 18, 20                | _manual_ (OS window resize / dev favicon — not bridge-drivable)                                                        |
-| MT-UI-21                        | `tests/system/tests/test_sidebar_sections.py`                                                                          |
-| MT-UI-22–25                     | _manual_ (separator size/cursor, overflow scroll — visual)                                                             |
-| MT-AGENT-01–03, 05, 06, 08      | `infrastructure/remote-agent.test.js`                                                                                  |
-| MT-CRED-04–08                   | `tests/system/tests/test_credential_store.py`                                                                          |
-| MT-RECOVERY-01–06               | `tests/system/tests/test_config_recovery.py`                                                                           |
-| MT-RECOVERY-07–12               | covered by `test_connection_crud.py` / `test_credential_store.py` / `test_export_import.py` / `test_external_files.py` |
-| MT-XPLAT-01, 02                 | `tests/system/tests/test_cross_platform.py`                                                                            |
-| MT-SVC-01, 02, 03               | `tests/system/tests/test_embedded_services.py` (SVC-01..11)                                                            |
-| MT-SVC-04, 05 (transfer)        | `tests/system/tests/test_embedded_services.py` (SVC-12 FTP, SVC-13 TFTP via curl)                                      |
-| MT-NET-01–09                    | `tests/system/tests/test_network_tools.py`                                                                             |
-| MT-NET-10, 12, 14, 17, 18       | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)         |
-| MT-NET-13                       | _manual_ (large-range warning is a native `window.confirm()`, no `data-testid`)                                        |
+| Manual Test IDs                  | E2E Test File                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| MT-LOCAL-01, 07                  | `tests/system/tests/test_local_shell.py`                                                                               |
+| MT-LOCAL-09, 10                  | `tests/system/tests/test_cross_platform.py`                                                                            |
+| MT-LOCAL-02, 04, 06, 11–20       | `tests/system/tests/test_windows_shells.py` (Windows-only; WSL cases skip without WSL2)                                |
+| MT-SSH-04–06, 10–12, 20–33, 35   | `tests/system/tests/test_ssh*.py`                                                                                      |
+| MT-SSH-19 (X11 backward-compat)  | `tests/system/tests/test_connection_forms.py`                                                                          |
+| MT-SSH-08 (agent-auth warning)   | _dropped_ (`agent` is no longer a selectable SSH auth method)                                                          |
+| MT-SSH-13, 17, 34                | `tests/system/tests/test_ssh_extended.py`                                                                              |
+| SERIAL-01, 05 + custom path      | `tests/system/tests/test_serial.py`                                                                                    |
+| MT-SER-09 (live serial I/O)      | _manual_ (no host socat echo fixture in harness yet, #859)                                                             |
+| TELNET-01–03                     | `tests/system/tests/test_telnet.py`                                                                                    |
+| MT-TAB-01–05, 15, 18             | `tests/system/tests/test_tab_management.py`                                                                            |
+| MT-TAB-08–14, 19–21              | `tests/system/tests/test_tab_horizontal_scroll.py`                                                                     |
+| MT-CONN-02–07, 25–30             | `test_connection_crud.py`, `test_connection_forms.py`, `test_connection_editor.py`                                     |
+| MT-CONN-10–11, 13                | `tests/system/tests/test_export_import.py`                                                                             |
+| MT-CONN-12, 14–16 (enc. import)  | _manual_ (import opens a native OS file picker)                                                                        |
+| MT-CONN-20–22, 31                | `tests/system/tests/test_external_files.py`                                                                            |
+| MT-FB-01, 02                     | `tests/system/tests/test_file_browser_local.py`                                                                        |
+| MT-FB-03, 13, 19                 | `tests/system/tests/test_sftp_infra.py`                                                                                |
+| MT-FB-06, 17                     | _manual_ (serial not bridge-selectable; SFTP fault injection)                                                          |
+| MT-FB-05, 11, 18                 | `tests/system/tests/test_file_browser_local.py`                                                                        |
+| EDITOR-01/STATUS/INDENT/LANG     | `tests/system/tests/test_editor.py`                                                                                    |
+| #504 (terminal auto-scroll)      | `tests/system/tests/test_terminal_auto_scroll.py`                                                                      |
+| MT-UI-06–08                      | `tests/system/tests/test_ui_state.py`                                                                                  |
+| MT-UI-17, 18, 20                 | _manual_ (OS window resize / dev favicon — not bridge-drivable)                                                        |
+| MT-UI-21                         | `tests/system/tests/test_sidebar_sections.py`                                                                          |
+| MT-UI-22–25                      | _manual_ (separator size/cursor, overflow scroll — visual)                                                             |
+| MT-AGENT (create/error/setup)    | `tests/system/tests/test_remote_agent.py` (create, error dialog, setup wizard vs. the password container)              |
+| MT-AGENT (live connect/sessions) | _deferred_ (#995 — needs a deployed-agent Docker fixture)                                                              |
+| MT-CRED-04–08                    | `tests/system/tests/test_credential_store.py`                                                                          |
+| MT-RECOVERY-01–06                | `tests/system/tests/test_config_recovery.py`                                                                           |
+| MT-RECOVERY-07–12                | covered by `test_connection_crud.py` / `test_credential_store.py` / `test_export_import.py` / `test_external_files.py` |
+| MT-XPLAT-01, 02                  | `tests/system/tests/test_cross_platform.py`                                                                            |
+| MT-SVC-01, 02, 03                | `tests/system/tests/test_embedded_services.py` (SVC-01..11)                                                            |
+| MT-SVC-04, 05 (transfer)         | `tests/system/tests/test_embedded_services.py` (SVC-12 FTP, SVC-13 TFTP via curl)                                      |
+| MT-NET-01–09                     | `tests/system/tests/test_network_tools.py`                                                                             |
+| MT-NET-10, 12, 14, 17, 18        | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)         |
+| MT-NET-13                        | _manual_ (large-range warning is a native `window.confirm()`, no `data-testid`)                                        |
