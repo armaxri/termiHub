@@ -780,11 +780,18 @@ At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` r
 
 Migrated guided-manual suites so far:
 
-| Suite                                                                        | Covers (manual IDs)                                 | The human step                                                                                                   |
-| ---------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                   | eyeball colours / drive a save dialog / yes-no                                                                   |
-| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17, MT-TAB-08                         | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store            |
-| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.. | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar) — screenshot attached |
+| Suite                                                                        | Covers (manual IDs)                                                    | The human step                                                                                                                                                                             |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                      | eyeball colours / drive a save dialog / yes-no                                                                                                                                             |
+| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17, MT-TAB-08                                            | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store                                                                                      |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02..                    | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar) — screenshot attached                                                                           |
+| [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04 | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect) |
+
+> **Note (MT-CRED-01/02/03 — OS credential stores).** Not applicable: the app
+> implements only `master_password` (encrypted vault) and `none` credential
+> modes — there is no native OS keychain / Credential Manager / Secret Service
+> backend, so there is nothing to verify in an OS store. The real saved-credential
+> behaviour is covered by [`test_credential_store.py`](../tests/system/tests/test_credential_store.py).
 
 New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
 
