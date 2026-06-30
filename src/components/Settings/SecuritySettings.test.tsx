@@ -43,7 +43,7 @@ describe("SecuritySettings", () => {
     vi.clearAllMocks();
   });
 
-  it("renders two storage mode radio options", () => {
+  it("renders three storage mode radio options", () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
@@ -51,7 +51,44 @@ describe("SecuritySettings", () => {
     render();
 
     expect(query("storage-mode-master-password")).not.toBeNull();
+    expect(query("storage-mode-os-keychain")).not.toBeNull();
     expect(query("storage-mode-none")).not.toBeNull();
+  });
+
+  it("switching to os_keychain calls switch_credential_store without a password", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "none", status: "unlocked" },
+    });
+
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "switch_credential_store") {
+        return Promise.resolve({ migratedCount: 0, warnings: [] });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render();
+
+    const option = query("storage-mode-os-keychain") as HTMLElement;
+    await act(async () => {
+      option.click();
+    });
+
+    // No master-password setup dialog for the OS keychain mode.
+    expect(query("master-password-setup")).toBeNull();
+
+    // A confirm dialog appears; confirm the switch.
+    const confirmBtn = query("confirm-switch-confirm-btn") as HTMLElement;
+    expect(confirmBtn).not.toBeNull();
+    await act(async () => {
+      confirmBtn.click();
+    });
+
+    const switchCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "switch_credential_store");
+    expect(switchCalls.length).toBeGreaterThan(0);
+    // The new mode is passed and no password is sent.
+    const [, args] = switchCalls[0];
+    expect(args).toMatchObject({ newMode: "os_keychain", masterPassword: null });
   });
 
   it("shows auto-lock dropdown only when mode is master_password", () => {
