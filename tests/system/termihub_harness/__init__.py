@@ -42,6 +42,7 @@ from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_bin
 from .systemtest import SystemTest, unique_name
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
 from .ui import (
+    AgentUi,
     ConfigRecoveryUi,
     ConnectionsUi,
     CredentialStoreUi,
@@ -79,6 +80,7 @@ __all__ = [
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
+    "AgentUi",
     "ConfigRecoveryUi",
     "ConnectionsUi",
     "CredentialStoreUi",
