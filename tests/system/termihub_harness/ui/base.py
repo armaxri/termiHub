@@ -14,7 +14,7 @@ real ``SystemTest`` members during method resolution.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 from ..bridge import Driver
 
@@ -43,3 +43,44 @@ class HarnessMixin:
         empty string, absent → ``None``), so a non-``None`` value means disabled.
         """
         return self.driver.get_attribute(test_id, "disabled") is not None
+
+    def open_named_context_menu(
+        self,
+        *,
+        resolve: Callable[[], Optional[dict[str, Any]]],
+        testid_for: Callable[[str], str],
+        sentinel: str,
+        what: str,
+    ) -> None:
+        """Right-click a store item resolved by name and wait for its menu to mount.
+
+        This is the harness's most race-sensitive gesture, shared by every
+        name-addressed context menu (connections, remote agents, …). A save makes
+        the store update *before* the sidebar settles: it reloads from disk a few
+        times, and an item's **id can change** across that reload. So the id is
+        re-resolved on every poll (never cached) via ``resolve`` and the
+        right-click is dispatched on ``testid_for(item["id"])`` — the actual
+        ``ContextMenu.Trigger`` — only once that element is in the DOM, otherwise
+        the gesture races a reload that replaced or unmounted it. The poll
+        succeeds when ``sentinel`` (a menu item testid) appears, i.e. the menu is
+        actually open.
+
+        Args:
+            resolve: Re-reads the store and returns the item dict (must carry an
+                ``"id"``) or ``None`` while it is not yet present.
+            testid_for: Builds the trigger element's testid from the item id.
+            sentinel: A menu-item testid that exists only once the menu is open.
+            what: Human-readable subject for the :meth:`wait` timeout message.
+        """
+
+        def menu_open() -> bool:
+            item = resolve()
+            if item is None:
+                return False
+            trigger = testid_for(item["id"])
+            if not self.driver.exists(trigger):
+                return False
+            self.driver.context_menu(trigger)
+            return self.driver.exists(sentinel)
+
+        self.wait(menu_open, what=what)
