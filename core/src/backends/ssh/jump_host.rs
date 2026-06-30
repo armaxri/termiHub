@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{JumpHostConfig, SshConfig};
 use crate::errors::SessionError;
 
-use super::auth::{connect_and_authenticate, connect_and_authenticate_over_channel};
+use super::auth::{connect_and_authenticate_cancellable, connect_and_authenticate_over_channel};
 use super::handler::{ForwardedChannelRegistry, SshSession};
 use super::session_pool::{shared_gateway_pool, PooledRef, SshGateway};
 
@@ -146,29 +146,34 @@ pub fn gateway_pool_key(hops: &[JumpHostConfig]) -> String {
 /// its budget instead of hanging the whole chain (#938).
 ///
 /// Returns an error if `hops` is empty.
-pub async fn connect_gateway_chain(hops: &[JumpHostConfig]) -> Result<SshGateway, SessionError> {
+pub async fn connect_gateway_chain(
+    hops: &[JumpHostConfig],
+    cancel: Option<&CancellationToken>,
+) -> Result<SshGateway, SessionError> {
     let first = hops
         .first()
         .ok_or_else(|| SessionError::SpawnFailed("Jump host chain is empty".to_string()))?;
 
-    // First hop: an ordinary direct TCP connection, already bounded by its
-    // connect timeout (#841). Label any failure with the hop.
+    // First hop: an ordinary direct TCP connection, bounded by its connect
+    // timeout (#841) and abortable via `cancel` (#952). Label any failure.
     let first_cfg = first.to_ssh_config();
-    let (mut current, mut registry) = connect_and_authenticate(&first_cfg).await.map_err(|e| {
-        SessionError::SpawnFailed(format!(
-            "Jump host {}: {e}",
-            hop_label(1, &first_cfg.host, first_cfg.port)
-        ))
-    })?;
+    let (mut current, mut registry) = connect_and_authenticate_cancellable(&first_cfg, cancel.cloned())
+        .await
+        .map_err(|e| {
+            SessionError::SpawnFailed(format!(
+                "Jump host {}: {e}",
+                hop_label(1, &first_cfg.host, first_cfg.port)
+            ))
+        })?;
     let mut intermediate_sessions: Vec<SshSession> = Vec::new();
 
     // Each subsequent hop: open a direct-tcpip channel on the current session to
     // the next hop, then handshake/authenticate the next session over it — the
-    // whole step bounded by the hop's timeout.
+    // whole step bounded by the hop's timeout and `cancel`.
     for (idx, hop) in hops.iter().enumerate().skip(1) {
         let cfg = hop.to_ssh_config();
         let label = hop_label(idx + 1, &cfg.host, cfg.port);
-        let (next, next_registry) = connect_hop_over_channel(&current, &cfg, &label, None).await?;
+        let (next, next_registry) = connect_hop_over_channel(&current, &cfg, &label, cancel).await?;
         intermediate_sessions.push(current);
         current = next;
         registry = next_registry;
@@ -182,13 +187,15 @@ pub async fn connect_gateway_chain(hops: &[JumpHostConfig]) -> Result<SshGateway
 }
 
 /// Open a `direct-tcpip` channel from `gateway` to `target` and authenticate the
-/// target session over it, bounded by the target's connect timeout (#938).
+/// target session over it, bounded by the target's connect timeout (#938) and
+/// `cancel` (#952).
 async fn open_target_over_gateway(
     gateway: &SshSession,
     target: &SshConfig,
+    cancel: Option<&CancellationToken>,
 ) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
     let label = format!("target {}:{}", target.host, target.port);
-    connect_hop_over_channel(gateway, target, &label, None).await
+    connect_hop_over_channel(gateway, target, &label, cancel).await
 }
 
 /// Connect to `target` through its [`SshConfig::proxy_jump`] chain, reusing a
@@ -203,8 +210,13 @@ async fn open_target_over_gateway(
 /// The returned [`PooledRef`] holds the gateway reference: keep it alive for the
 /// lifetime of the returned session and drop it (after the session ends) to
 /// release the gateway back to the pool. `target.proxy_jump` must be non-empty.
+///
+/// `cancel` aborts an in-flight connect — both the (single-flight) gateway-chain
+/// creation and the target handshake — promptly instead of waiting out the
+/// per-hop timeouts (#952).
 pub async fn connect_target_through_pooled_gateway(
     target: &SshConfig,
+    cancel: Option<&CancellationToken>,
 ) -> Result<
     (
         SshSession,
@@ -218,13 +230,13 @@ pub async fn connect_target_through_pooled_gateway(
 
     let gateway = pool
         .get_or_create(&key, || async {
-            connect_gateway_chain(&target.proxy_jump)
+            connect_gateway_chain(&target.proxy_jump, cancel)
                 .await
                 .map(Arc::new)
         })
         .await?;
 
-    let (session, registry) = open_target_over_gateway(&gateway.session, target).await?;
+    let (session, registry) = open_target_over_gateway(&gateway.session, target, cancel).await?;
     Ok((session, registry, gateway))
 }
 
@@ -241,9 +253,9 @@ pub async fn connect_through_jump_hosts(
         session: gateway,
         registry: _gateway_registry,
         mut intermediate_sessions,
-    } = connect_gateway_chain(&target.proxy_jump).await?;
+    } = connect_gateway_chain(&target.proxy_jump, None).await?;
 
-    let (session, registry) = open_target_over_gateway(&gateway, target).await?;
+    let (session, registry) = open_target_over_gateway(&gateway, target, None).await?;
 
     // Retain the innermost gateway alongside the outer hops: dropping any of them
     // would close the direct-tcpip channels carrying the target session.

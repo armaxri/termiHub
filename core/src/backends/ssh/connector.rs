@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
@@ -58,10 +60,16 @@ pub struct SshShellHandle {
 /// SSH connection + shell-channel factory.
 #[async_trait::async_trait]
 pub trait SshConnector: Send + Sync + 'static {
+    /// Establish the SSH connection and open a PTY shell channel.
+    ///
+    /// `cancel`, when supplied, aborts an in-flight connect (TCP / handshake /
+    /// each jump-host hop) promptly instead of waiting out the connect timeout —
+    /// used to cancel a *connecting* shell session (#952).
     async fn open_shell(
         &self,
         config: &SshConfig,
         alive: Arc<AtomicBool>,
+        cancel: Option<&CancellationToken>,
     ) -> Result<SshShellHandle, SessionError>;
 }
 
@@ -146,8 +154,9 @@ impl SshConnector for RusshSshConnector {
         &self,
         config: &SshConfig,
         alive: Arc<AtomicBool>,
+        cancel: Option<&CancellationToken>,
     ) -> Result<SshShellHandle, SessionError> {
-        use super::auth::connect_and_authenticate;
+        use super::auth::connect_and_authenticate_cancellable;
         use super::jump_host::connect_target_through_pooled_gateway;
         use super::x11::X11Forwarder;
         use russh::ChannelMsg;
@@ -155,12 +164,13 @@ impl SshConnector for RusshSshConnector {
         // Opaque resources kept alive for the session lifetime.
         let mut extensions: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
 
-        // Connect directly, or through a ProxyJump chain when one is configured.
+        // Connect directly, or through a ProxyJump chain when one is configured —
+        // abortable via `cancel` so a Stop while connecting interrupts promptly.
         let (mut session, registry) = if config.proxy_jump.is_empty() {
-            connect_and_authenticate(config).await?
+            connect_and_authenticate_cancellable(config, cancel.cloned()).await?
         } else {
             let (session, registry, gateway_ref) =
-                connect_target_through_pooled_gateway(config).await?;
+                connect_target_through_pooled_gateway(config, cancel).await?;
             // Hold the pooled gateway reference for the session lifetime. It keeps
             // the shared bastion session (and its direct-tcpip channel carrying
             // this target session) alive; dropping it with `extensions` releases

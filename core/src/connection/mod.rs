@@ -25,6 +25,7 @@ use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 /// Async receiver for terminal output bytes from a connection.
 ///
@@ -100,6 +101,22 @@ pub trait ConnectionType: Send {
     /// method. Each backend internally deserializes the JSON to its own
     /// typed config struct.
     async fn connect(&mut self, settings: serde_json::Value) -> Result<(), SessionError>;
+
+    /// Connect, abortable via an optional cancellation token.
+    ///
+    /// Cancelling the token aborts an in-flight connect (TCP / handshake / each
+    /// jump-host hop) promptly instead of waiting out the connect timeout — used
+    /// to cancel a session that is still *connecting* (#952). The default
+    /// implementation ignores the token and delegates to
+    /// [`connect`](Self::connect); backends that support mid-connect cancellation
+    /// (SSH) override it.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        _cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        self.connect(settings).await
+    }
 
     /// Disconnect and clean up resources.
     async fn disconnect(&mut self) -> Result<(), SessionError>;
