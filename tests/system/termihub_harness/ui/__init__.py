@@ -14,6 +14,7 @@ Mixin → concern:
 - :class:`LayoutUi`          — split-leaf count + sidebar visibility toggle
 - :class:`SidebarUi`         — switch the activity-bar sidebar *view*
 - :class:`ConnectionsUi`     — connection editor + connection-list flows
+- :class:`ConfigRecoveryUi`  — corrupt a config file, restart, inspect recovery
 - :class:`CredentialStoreUi` — switch/unlock the master-password credential store
 - :class:`PasswordPromptUi`  — the SSH password-prompt modal
 - :class:`SshUi`             — the one-call password-SSH connect flow
@@ -31,6 +32,7 @@ testid helpers) stay functions so they remain unit-testable without an app.
 
 from __future__ import annotations
 
+from .config_recovery import ConfigRecoveryUi
 from .connections import ConnectionsUi
 from .credential_store import CredentialStoreUi
 from .editor import EditorUi
@@ -59,6 +61,7 @@ from .tabs import TabsUi
 from .terminal import TerminalUi
 
 __all__ = [
+    "ConfigRecoveryUi",
     "ConnectionsUi",
     "CredentialStoreUi",
     "TerminalUi",

@@ -98,6 +98,38 @@
   color: var(--color-error, #e05252);
 }
 
+/* Dismissible save-failure banner (does not replace the editor). */
+.file-editor__save-error {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background-color: var(--color-error-bg, rgba(224, 82, 82, 0.12));
+  border-bottom: 1px solid var(--color-error, #e05252);
+  color: var(--color-error, #e05252);
+  font-size: var(--font-size-sm);
+}
+
+.file-editor__save-error-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-editor__save-error-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.file-editor__save-error-dismiss:hover {
+  color: var(--text-primary);
+}
+
 @keyframes file-editor-spin {
   from {
     transform: rotate(0deg);
