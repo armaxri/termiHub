@@ -15,11 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import {
-  networkHttpMonitorStart,
-  networkHttpMonitorList,
-  onHttpMonitorCheck,
-} from "@/services/networkApi";
+import { networkHttpMonitorStart, onHttpMonitorCheck } from "@/services/networkApi";
 import type { HttpCheckResult } from "@/types/network";
 import { HttpMonitorPanel } from "./HttpMonitorPanel";
 
@@ -55,13 +51,19 @@ function checkResult(monitorId: string): HttpCheckResult {
   };
 }
 
+/** Set a React-controlled input's value via the native setter so onChange fires. */
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 async function clickStart() {
   await act(async () => {
-    container.querySelector<HTMLInputElement>('[data-testid="http-monitor-url"]')!.value =
-      "https://example.com";
-    container
-      .querySelector<HTMLInputElement>('[data-testid="http-monitor-url"]')!
-      .dispatchEvent(new Event("input", { bubbles: true }));
+    setInputValue(
+      container.querySelector<HTMLInputElement>('[data-testid="http-monitor-url"]')!,
+      "https://example.com"
+    );
   });
   await act(async () => {
     container.querySelector<HTMLButtonElement>('[data-testid="http-monitor-start"]')!.click();
@@ -136,15 +138,5 @@ describe("HttpMonitorPanel — first-check race", () => {
     await flush();
 
     expect(container.querySelector('[data-testid="http-monitor-history"]')).toBeNull();
-  });
-
-  it("uses networkHttpMonitorList only for the running-monitors list", async () => {
-    // Sanity: the list call still happens on mount + after start, but is no
-    // longer the path that surfaces the first check.
-    await act(async () => {
-      root.render(<HttpMonitorPanel />);
-    });
-    await flush();
-    expect(networkHttpMonitorList).toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, StopCircle, RefreshCw } from "lucide-react";
 import {
   networkHttpMonitorStart,
@@ -25,6 +25,13 @@ export function HttpMonitorPanel() {
   const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // The check listener filters by the active monitor id; a ref mirrors the state
+  // so the callback (registered before start) always reads the current id without
+  // re-subscribing. `unlistenCheckRef` lets us tear the listener down on
+  // stop/unmount/restart.
+  const activeMonitorIdRef = useRef<string | null>(null);
+  const unlistenCheckRef = useRef<(() => void) | null>(null);
+
   const loadMonitors = useCallback(async () => {
     try {
       const list = await networkHttpMonitorList();
@@ -38,31 +45,38 @@ export function HttpMonitorPanel() {
     void loadMonitors();
   }, [loadMonitors]);
 
-  // Subscribe to check results for the active monitor
-  useEffect(() => {
-    if (!activeMonitorId) return;
-    let unlisten: (() => void) | null = null;
-    onHttpMonitorCheck((result: HttpCheckResult) => {
-      if (result.monitorId !== activeMonitorId) return;
-      setHistory((prev) =>
-        prev.length >= MAX_HISTORY ? [...prev.slice(1), result] : [...prev, result]
-      );
-    })
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch((err) => frontendLog("http_monitor", `Subscribe failed: ${err}`));
+  const stopListening = useCallback(() => {
+    unlistenCheckRef.current?.();
+    unlistenCheckRef.current = null;
+  }, []);
 
-    return () => {
-      unlisten?.();
-    };
-  }, [activeMonitorId]);
+  const clearActiveMonitor = useCallback(() => {
+    activeMonitorIdRef.current = null;
+    setActiveMonitorId(null);
+    stopListening();
+  }, [stopListening]);
 
   const handleStart = useCallback(async () => {
     if (!url.trim()) return;
     setError(null);
     setHistory([]);
+    stopListening();
     try {
+      // Register the check listener BEFORE starting. The backend runs an
+      // immediate first check (run_monitor calls check_once before the first
+      // interval sleep) and emits it as soon as the spawned task runs, so a
+      // listener attached only after start — as the old activeMonitorId-gated
+      // effect did — could miss that first check and leave the panel blank for
+      // up to one interval (#1002). The id is set synchronously the moment start
+      // resolves, before any emitted event can be processed, so filtering by it
+      // never drops the first check.
+      unlistenCheckRef.current = await onHttpMonitorCheck((result: HttpCheckResult) => {
+        if (result.monitorId !== activeMonitorIdRef.current) return;
+        setHistory((prev) =>
+          prev.length >= MAX_HISTORY ? [...prev.slice(1), result] : [...prev, result]
+        );
+      });
+
       const monitorId = await networkHttpMonitorStart(
         url.trim(),
         intervalSecs * 1000,
@@ -70,37 +84,42 @@ export function HttpMonitorPanel() {
         expectedStatus !== "" ? expectedStatus : undefined,
         timeoutSecs * 1000
       );
+      activeMonitorIdRef.current = monitorId;
       setActiveMonitorId(monitorId);
       await loadMonitors();
     } catch (err) {
+      stopListening();
       setError(String(err));
       frontendLog("http_monitor", `Start failed: ${err}`);
     }
-  }, [url, intervalSecs, method, expectedStatus, timeoutSecs, loadMonitors]);
+  }, [url, intervalSecs, method, expectedStatus, timeoutSecs, loadMonitors, stopListening]);
 
   const handleStop = useCallback(async () => {
-    if (!activeMonitorId) return;
+    if (!activeMonitorIdRef.current) return;
     try {
-      await networkHttpMonitorStop(activeMonitorId);
-      setActiveMonitorId(null);
+      await networkHttpMonitorStop(activeMonitorIdRef.current);
+      clearActiveMonitor();
       await loadMonitors();
     } catch (err) {
       setError(String(err));
     }
-  }, [activeMonitorId, loadMonitors]);
+  }, [loadMonitors, clearActiveMonitor]);
 
   const handleStopMonitor = useCallback(
     async (id: string) => {
       try {
         await networkHttpMonitorStop(id);
-        if (id === activeMonitorId) setActiveMonitorId(null);
+        if (id === activeMonitorIdRef.current) clearActiveMonitor();
         await loadMonitors();
       } catch (err) {
         setError(String(err));
       }
     },
-    [activeMonitorId, loadMonitors]
+    [loadMonitors, clearActiveMonitor]
   );
+
+  // Tear the listener down on unmount.
+  useEffect(() => stopListening, [stopListening]);
 
   const latencyPoints = history.map((r) => r.latencyMs ?? null);
   // Chart x axis uses the active monitor's real check interval (not the form field).
