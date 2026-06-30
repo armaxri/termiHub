@@ -96,6 +96,25 @@ export function jumpHostGatewayConnection(connection: SavedConnection): SavedCon
   };
 }
 
+/**
+ * Find connections that reference any of `targetIds` as a saved-connection jump
+ * host (a `proxyJump` hop with `connectionId` in `targetIds`). Connections in the
+ * target set are excluded — when deleting them together, their references to each
+ * other are moot. Used to warn before deleting a connection used as a jump host
+ * elsewhere (#941).
+ */
+export function findJumpHostDependents(
+  connections: SavedConnection[],
+  targetIds: string[]
+): SavedConnection[] {
+  const targets = new Set(targetIds);
+  return connections.filter(
+    (c) =>
+      !targets.has(c.id) &&
+      getJumpHosts(c.config).some((hop) => hop.connectionId && targets.has(hop.connectionId))
+  );
+}
+
 /** A saved SSH connection offered as a jump-host hop in the editor dropdown. */
 export interface SavedConnectionOption {
   /** The connection's id, stored as the hop's `connectionId`. */
