@@ -197,7 +197,7 @@ graph LR
 | Backend extensibility | **`ConnectionType` trait + registry** | Schema-driven connection types in `termihub-core` — each backend declares its settings schema, capabilities, and lifecycle; the UI renders forms dynamically (see [ADR-7](#adr-7-connectiontype-trait-and-registry)) |
 | IPC pattern           | **Commands + Events**                 | Commands for request-response (create terminal, send input), events for streaming (terminal output)                                                                                                                  |
 | Connection storage    | **JSON files with generic config**    | Connections stored as `{type, config}` pairs where config is a type-specific JSON object; schemas define validation                                                                                                  |
-| Credential handling   | **Optional credential store**         | Master password encryption or no-storage (prompt-only); Argon2id key derivation + AES-256-GCM                                                                                                                        |
+| Credential handling   | **Optional credential store**         | Master password encryption (Argon2id key derivation + AES-256-GCM), native OS keychain (macOS Keychain / Windows Credential Manager / Linux Secret Service via the `keyring` crate), or no-storage (prompt-only)     |
 
 ---
 
