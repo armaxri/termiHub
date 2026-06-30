@@ -83,7 +83,11 @@ pub fn start_monitor(config: HttpMonitorConfig, app: AppHandle) -> HttpMonitorHa
     let config_clone = config.clone();
     let last_result_clone = std::sync::Arc::clone(&last_result);
 
-    tokio::spawn(async move {
+    // Use Tauri's managed runtime rather than `tokio::spawn`: this function is
+    // reached from a synchronous Tauri command (`network_http_monitor_start`),
+    // which runs on a plain thread with no Tokio reactor. `tauri::async_runtime::spawn`
+    // works from any thread, whereas `tokio::spawn` would panic ("no reactor running").
+    tauri::async_runtime::spawn(async move {
         run_monitor(config_clone, app, cancel_clone, last_result_clone).await;
     });
 
