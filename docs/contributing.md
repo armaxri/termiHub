@@ -312,6 +312,19 @@ Fixes #34
 4. Reference issues: `Closes #N` or `Fixes #N`
 5. **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase
 
+### Automatic Issue Closing
+
+GitHub only auto-closes a `Closes #N` / `Fixes #N` / `Resolves #N` issue when the
+PR merges into the **default branch** (`main`). Because day-to-day work merges
+into **`develop`**, the [Auto-Close Referenced Issues workflow](../.github/workflows/auto-close-issues.yml)
+reproduces that behaviour: when a `develop`-targeted PR is merged, it parses the
+PR title and body for the standard closing keywords and closes those issues with
+a comment linking the PR. PRs targeting `main` are left to GitHub's native
+handling. The keyword parser lives in
+[`scripts/internal/parse-issue-refs.mjs`](../scripts/internal/parse-issue-refs.mjs)
+(unit-tested in `parse-issue-refs.test.mjs`). Just keep using `Closes #N` in your
+PR descriptions — no manual close needed.
+
 ---
 
 ## Coding Standards

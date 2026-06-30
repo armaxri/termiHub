@@ -1,0 +1,54 @@
+name: Auto-Close Referenced Issues
+
+# GitHub only auto-closes "Closes #N" issues when a PR merges into the default
+# branch (main). termiHub merges day-to-day work into `develop`, so without this
+# workflow those issues linger open and get re-investigated. This reproduces
+# GitHub's behaviour for develop-targeted PRs.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  close-referenced-issues:
+    name: Close issues referenced by the merged PR
+    runs-on: ubuntu-latest
+    # Only when the PR actually merged AND it targeted develop. PRs into main are
+    # already handled by GitHub's native auto-close.
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'develop'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Close referenced issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          ISSUES=$(node scripts/internal/parse-issue-refs.mjs)
+          if [ -z "$ISSUES" ]; then
+            echo "No closing references found in PR #${PR_NUMBER}."
+            exit 0
+          fi
+          echo "PR #${PR_NUMBER} references issue(s):"
+          echo "$ISSUES"
+          while IFS= read -r issue; do
+            [ -z "$issue" ] && continue
+            state=$(gh issue view "$issue" --json state -q .state 2>/dev/null || echo "MISSING")
+            if [ "$state" != "OPEN" ]; then
+              echo "Skipping #${issue} (state: ${state})."
+              continue
+            fi
+            echo "Closing #${issue}..."
+            gh issue close "$issue" \
+              --comment "Resolved by PR #${PR_NUMBER} (merged into \`develop\`)." \
+              --reason completed
+          done <<< "$ISSUES"
