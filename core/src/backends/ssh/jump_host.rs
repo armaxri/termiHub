@@ -75,6 +75,29 @@ where
     }
 }
 
+/// Reach `cfg` over a `direct-tcpip` channel opened on `current`, bounded by the
+/// hop's per-hop timeout and `cancel` (see [`run_hop_step`]).
+///
+/// Shared by every channel-tunnelled step — each intermediate hop and the final
+/// target — which differ only in the config and the label.
+async fn connect_hop_over_channel(
+    current: &SshSession,
+    cfg: &SshConfig,
+    label: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    run_hop_step(label, cfg.connect_timeout(), cancel, async {
+        let channel = current
+            .channel_open_direct_tcpip(&cfg.host, cfg.port as u32, "localhost", 0)
+            .await
+            .map_err(|e| {
+                SessionError::SpawnFailed(format!("Jump host {label} channel failed: {e}"))
+            })?;
+        connect_and_authenticate_over_channel(cfg, channel).await
+    })
+    .await
+}
+
 /// Connect to `target` through its [`SshConfig::proxy_jump`] chain.
 ///
 /// Hops are ordered outermost → innermost (`ssh -J edge,bastion` ⇒
@@ -112,15 +135,14 @@ pub async fn connect_through_jump_hosts_cancellable(
     // First hop: an ordinary direct TCP connection, already bounded by its
     // connect timeout and cancellation (#841). Label failures with the hop.
     let first_cfg = first.to_ssh_config();
-    let (mut current, _registry) =
-        connect_and_authenticate_cancellable(&first_cfg, cancel.clone())
-            .await
-            .map_err(|e| {
-                SessionError::SpawnFailed(format!(
-                    "Jump host {}: {e}",
-                    hop_label(1, &first_cfg.host, first_cfg.port)
-                ))
-            })?;
+    let (mut current, _) = connect_and_authenticate_cancellable(&first_cfg, cancel.clone())
+        .await
+        .map_err(|e| {
+            SessionError::SpawnFailed(format!(
+                "Jump host {}: {e}",
+                hop_label(1, &first_cfg.host, first_cfg.port)
+            ))
+        })?;
     let mut intermediates: Vec<SshSession> = Vec::new();
 
     // Each subsequent hop: open a direct-tcpip channel on the current session to
@@ -129,45 +151,15 @@ pub async fn connect_through_jump_hosts_cancellable(
     for (idx, hop) in hops.iter().enumerate().skip(1) {
         let cfg = hop.to_ssh_config();
         let label = hop_label(idx + 1, &cfg.host, cfg.port);
-        let (next, _registry) = run_hop_step(
-            &label,
-            cfg.connect_timeout(),
-            cancel.as_ref(),
-            async {
-                let channel = current
-                    .channel_open_direct_tcpip(&cfg.host, cfg.port as u32, "localhost", 0)
-                    .await
-                    .map_err(|e| {
-                        SessionError::SpawnFailed(format!("{label} channel failed: {e}"))
-                    })?;
-                connect_and_authenticate_over_channel(&cfg, channel).await
-            },
-        )
-        .await?;
+        let (next, _) = connect_hop_over_channel(&current, &cfg, &label, cancel.as_ref()).await?;
         intermediates.push(current);
         current = next;
     }
 
-    // Final hop → target: tunnel the target session over the innermost hop,
-    // bounded by the target's connect timeout and cancellation.
+    // Final hop → target: tunnel the target session over the innermost hop.
     let target_label = format!("target {}:{}", target.host, target.port);
-    let (session, registry) = run_hop_step(
-        &target_label,
-        target.connect_timeout(),
-        cancel.as_ref(),
-        async {
-            let channel = current
-                .channel_open_direct_tcpip(&target.host, target.port as u32, "localhost", 0)
-                .await
-                .map_err(|e| {
-                    SessionError::SpawnFailed(format!(
-                        "Direct-tcpip channel to {target_label} failed: {e}"
-                    ))
-                })?;
-            connect_and_authenticate_over_channel(target, channel).await
-        },
-    )
-    .await?;
+    let (session, registry) =
+        connect_hop_over_channel(&current, target, &target_label, cancel.as_ref()).await?;
     intermediates.push(current);
 
     Ok(JumpHostConnection {
@@ -195,17 +187,13 @@ mod tests {
     async fn hop_step_times_out_and_names_the_hop() {
         let label = "hop 2 (bastion:22)";
         let start = Instant::now();
-        let result: Result<(), SessionError> = run_hop_step(
-            label,
-            Duration::from_secs(1),
-            None,
-            async {
+        let result: Result<(), SessionError> =
+            run_hop_step(label, Duration::from_secs(1), None, async {
                 // A blackholed intermediate hop never completes the handshake.
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 Ok(())
-            },
-        )
-        .await;
+            })
+            .await;
         let elapsed = start.elapsed();
 
         let err = result.expect_err("hung hop should time out");
@@ -231,16 +219,12 @@ mod tests {
         });
 
         let start = Instant::now();
-        let result: Result<(), SessionError> = run_hop_step(
-            label,
-            Duration::from_secs(30),
-            Some(&token),
-            async {
+        let result: Result<(), SessionError> =
+            run_hop_step(label, Duration::from_secs(30), Some(&token), async {
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 Ok(())
-            },
-        )
-        .await;
+            })
+            .await;
         let elapsed = start.elapsed();
 
         let err = result.expect_err("cancelled hop should fail");
@@ -258,11 +242,13 @@ mod tests {
     #[tokio::test]
     async fn hop_step_passes_through_on_success() {
         let token = CancellationToken::new();
-        let result =
-            run_hop_step("hop 2 (bastion:22)", Duration::from_secs(1), Some(&token), async {
-                Ok::<_, SessionError>(42)
-            })
-            .await;
+        let result = run_hop_step(
+            "hop 2 (bastion:22)",
+            Duration::from_secs(1),
+            Some(&token),
+            async { Ok::<_, SessionError>(42) },
+        )
+        .await;
         assert_eq!(result.expect("hop should succeed"), 42);
     }
 }
