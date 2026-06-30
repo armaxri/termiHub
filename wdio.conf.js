@@ -58,7 +58,8 @@ export const config = {
       "./tests/e2e/encrypted-export-import.test.js",
       // external-files.test.js was ported to the Python harness
       // (tests/system/tests/test_external_files.py) and removed — see #809.
-      "./tests/e2e/embedded-services.test.js",
+      // embedded-services.test.js (SVC-01..13) was ported to the Python harness
+      // (tests/system/tests/test_embedded_services.py) and removed — see #947.
     ],
     // The local UI suite (local-shell, local-shell-extended, file-browser-local,
     // file-browser-extended, editor, terminal-auto-scroll) was ported to the

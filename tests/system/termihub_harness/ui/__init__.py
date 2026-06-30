@@ -34,6 +34,7 @@ from __future__ import annotations
 from .connections import ConnectionsUi
 from .credential_store import CredentialStoreUi
 from .editor import EditorUi
+from .embedded_services import EmbeddedServicesUi
 from .files import FilesUi, file_row_testid
 from .layout import LayoutUi
 from .manual import ManualUi
@@ -73,6 +74,7 @@ __all__ = [
     "SettingsUi",
     "ManualUi",
     "NetworkToolsUi",
+    "EmbeddedServicesUi",
     "ShellFsUi",
     "connections",
     "find_connection",
