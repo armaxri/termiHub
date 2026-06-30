@@ -227,6 +227,8 @@ export function Terminal({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  // True only while a backend connect is in flight, so teardown can abort it (#952).
+  const connectInFlightRef = useRef(false);
   const horizontalScrollingRef = useRef(false);
   const userScrolledUpRef = useRef(false);
   const lastInputTimeRef = useRef(0);
@@ -422,7 +424,12 @@ export function Terminal({
               ptyRows = xterm.rows;
               // Pass the tab id as the connect id so closing the tab while
               // connecting can abort the in-flight handshake (#952).
-              resolved = await createTerminal(sessionConfig, tabId);
+              connectInFlightRef.current = true;
+              try {
+                resolved = await createTerminal(sessionConfig, tabId);
+              } finally {
+                connectInFlightRef.current = false;
+              }
 
               if (isCanceled()) {
                 closeTerminal(resolved);
@@ -988,9 +995,10 @@ export function Terminal({
 
     return () => {
       canceled = true;
-      // If the tab is torn down while still connecting, abort the backend's
-      // in-flight handshake instead of leaving it to run to completion (#952).
-      if (useAppStore.getState().terminalConnecting[tabId]) {
+      // If the tab is torn down while a connect is in flight (e.g. the user hit
+      // Cancel on the connecting overlay), abort the backend's handshake instead
+      // of leaving it to run to completion (#952).
+      if (connectInFlightRef.current) {
         void cancelConnecting(tabId).catch(() => {});
       }
       resizeObserver.disconnect();

@@ -8,13 +8,16 @@ import {
   Activity,
   X,
   MonitorStop,
+  Loader2,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { getAllLeaves } from "@/utils/panelTree";
 import {
   listLocalSessions,
   listAgentSessions,
   closeTerminal,
   closeAgentSession,
+  cancelConnecting,
   LocalSessionInfo,
   AgentSessionInfo,
 } from "@/services/api";
@@ -47,6 +50,15 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
+  const rootPanel = useAppStore((s) => s.rootPanel);
+  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
+  const closeTab = useAppStore((s) => s.closeTab);
+
+  // Sessions still establishing their connection (visible as connecting tabs).
+  // Cancelling aborts the in-flight handshake instead of waiting it out (#952).
+  const connectingTabs = getAllLeaves(rootPanel)
+    .flatMap((leaf) => leaf.tabs)
+    .filter((tab) => terminalConnecting[tab.id]);
 
   const [localSessions, setLocalSessions] = useState<LocalSessionInfo[]>([]);
   const [proxySessions, setProxySessions] = useState<ProxySessionsState>({});
@@ -102,6 +114,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   });
 
   const totalCount =
+    connectingTabs.length +
     localSessions.length +
     connectedAgents.length +
     Object.values(proxySessions).reduce((s, arr) => s + arr.length, 0) +
@@ -109,6 +122,16 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     activeTunnels.length +
     (sftpConnectedHost ? 1 : 0) +
     (monitoringHost ? 1 : 0);
+
+  const handleCancelConnecting = async (tabId: string, panelId: string) => {
+    await cancelConnecting(tabId).catch(() => {});
+    closeTab(tabId, panelId);
+  };
+
+  const handleCancelAllConnecting = async () => {
+    await Promise.all(connectingTabs.map((t) => cancelConnecting(t.id).catch(() => {})));
+    connectingTabs.forEach((t) => closeTab(t.id, t.panelId));
+  };
 
   const handleKillLocal = async (id: string) => {
     await closeTerminal(id).catch(() => {});
@@ -197,6 +220,26 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             {loading && totalCount === 0 && <div className="open-connections__empty">Loading…</div>}
             {!loading && totalCount === 0 && (
               <div className="open-connections__empty">No open connections.</div>
+            )}
+
+            {/* Connecting (in-flight handshakes) */}
+            {connectingTabs.length > 0 && (
+              <Section
+                title="Connecting"
+                icon={<Loader2 size={14} />}
+                count={connectingTabs.length}
+                onKillAll={handleCancelAllConnecting}
+              >
+                {connectingTabs.map((tab) => (
+                  <ConnectionRow
+                    key={tab.id}
+                    icon={<Loader2 size={14} />}
+                    title={tab.title}
+                    badge="connecting"
+                    onKill={() => handleCancelConnecting(tab.id, tab.panelId)}
+                  />
+                ))}
+              </Section>
             )}
 
             {/* Local Sessions */}
