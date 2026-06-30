@@ -1,5 +1,5 @@
 /** Credential storage backend mode. */
-export type CredentialStorageMode = "master_password" | "none";
+export type CredentialStorageMode = "master_password" | "os_keychain" | "none";
 
 /** Runtime status of the credential store. */
 export type CredentialStoreStatus = "unlocked" | "locked" | "unavailable";
