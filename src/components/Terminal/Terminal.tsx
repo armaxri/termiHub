@@ -8,6 +8,7 @@ import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
 import {
   createTerminal,
+  cancelConnecting,
   sendInput,
   setSessionLineEnding,
   resizeTerminal,
@@ -419,7 +420,9 @@ export function Terminal({
               // createTerminal is awaiting if a container resize fires).
               ptyCols = xterm.cols;
               ptyRows = xterm.rows;
-              resolved = await createTerminal(sessionConfig);
+              // Pass the tab id as the connect id so closing the tab while
+              // connecting can abort the in-flight handshake (#952).
+              resolved = await createTerminal(sessionConfig, tabId);
 
               if (isCanceled()) {
                 closeTerminal(resolved);
@@ -985,6 +988,11 @@ export function Terminal({
 
     return () => {
       canceled = true;
+      // If the tab is torn down while still connecting, abort the backend's
+      // in-flight handshake instead of leaving it to run to completion (#952).
+      if (useAppStore.getState().terminalConnecting[tabId]) {
+        void cancelConnecting(tabId).catch(() => {});
+      }
       resizeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);
       onScrollDisposable.dispose();

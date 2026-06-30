@@ -11,6 +11,7 @@ const mockedInvoke = vi.mocked(invoke);
 import {
   createTerminal,
   createConnection,
+  cancelConnecting,
   getConnectionTypes,
   sendInput,
   resizeTerminal,
@@ -84,6 +85,7 @@ describe("api service", () => {
         typeId: "ssh",
         settings: { host: "pi.local", port: 22 },
         agentId: null,
+        connectId: null,
       });
       expect(result).toBe("session-456");
     });
@@ -97,8 +99,45 @@ describe("api service", () => {
         typeId: "local",
         settings: { shell: "bash" },
         agentId: "agent-1",
+        connectId: null,
       });
       expect(result).toBe("session-789");
+    });
+
+    it("createConnection forwards connectId for mid-connect cancellation", async () => {
+      mockedInvoke.mockResolvedValue("session-c");
+
+      await createConnection("ssh", { host: "h" }, undefined, "tab-7");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "ssh",
+        settings: { host: "h" },
+        agentId: null,
+        connectId: "tab-7",
+      });
+    });
+
+    it("createTerminal forwards connectId to create_connection", async () => {
+      mockedInvoke.mockResolvedValue("session-c2");
+      const config = { type: "ssh", config: { host: "h" } };
+
+      await createTerminal(config, "tab-9");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "ssh",
+        settings: { host: "h" },
+        agentId: null,
+        connectId: "tab-9",
+      });
+    });
+
+    it("cancelConnecting invokes cancel_connecting with the connectId", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await cancelConnecting("tab-7");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("cancel_connecting", { connectId: "tab-7" });
+      expect(result).toBe(true);
     });
 
     it("getConnectionTypes returns available types", async () => {
@@ -123,6 +162,7 @@ describe("api service", () => {
         typeId: "local",
         settings: { shell: "bash" },
         agentId: null,
+        connectId: null,
       });
       expect(result).toBe("session-123");
     });
@@ -145,6 +185,7 @@ describe("api service", () => {
         typeId: "shell",
         settings: { shell: "/bin/bash", persistent: false },
         agentId: "agent-1",
+        connectId: null,
       });
       expect(result).toBe("session-remote");
     });
