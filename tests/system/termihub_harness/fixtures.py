@@ -26,24 +26,31 @@ import time
 from pathlib import Path
 from typing import Optional, Sequence
 
+from . import dev_local
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "tests" / "docker" / "docker-compose.yml"
 
 # ── SSH fixture coordinates (mirror tests/docker/docker-compose.yml) ──────────
+# Ports honour the per-checkout offset (see ``termihub_harness.dev_local`` and
+# ``docs/testing.md`` → Parallel test isolation): each is ``base + test_port_offset``
+# (or an explicit ``TERMIHUB_TEST_*_PORT`` env override), matching the port the
+# compose file publishes under this checkout's project, so parallel checkouts
+# never share a container.
 #: Host the published container ports are reachable on.
 SSH_HOST = "127.0.0.1"
 #: Service + host port for the password-auth SSH container.
 SSH_PASSWORD_SERVICE = "ssh-password"
-SSH_PASSWORD_PORT = 2201
+SSH_PASSWORD_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_PASSWORD_PORT", 2201)
 #: Service + host port for the key-auth-only SSH container.
 SSH_KEYS_SERVICE = "ssh-keys"
-SSH_KEYS_PORT = 2203
+SSH_KEYS_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_KEYS_PORT", 2203)
 #: Service + host port for the pre-auth-banner / MOTD SSH container.
 SSH_BANNER_SERVICE = "ssh-banner"
-SSH_BANNER_PORT = 2206
+SSH_BANNER_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_BANNER_PORT", 2206)
 #: Service + host port for the tunnel-target SSH container (internal HTTP :8080).
 SSH_TUNNEL_SERVICE = "ssh-tunnel-target"
-SSH_TUNNEL_PORT = 2207
+SSH_TUNNEL_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_TUNNEL_PORT", 2207)
 #: Credentials shared by the test SSH containers.
 SSH_USERNAME = "testuser"
 SSH_PASSWORD = "testpass"
@@ -58,7 +65,7 @@ SSH_KEY_PASSPHRASE = "testpass123"
 TELNET_HOST = "127.0.0.1"
 #: Service + host port for the telnet container (in.telnetd via xinetd on :23).
 TELNET_SERVICE = "telnet-server"
-TELNET_PORT = 2301
+TELNET_PORT = dev_local.service_port("TERMIHUB_TEST_TELNET_PORT", 2301)
 
 
 class ContainerRuntimeUnavailable(RuntimeError):
@@ -133,10 +140,19 @@ class ComposeFixture:
                 "no container runtime available — need Docker or Podman "
                 "(override the choice with CONTAINER_CMD=podman)"
             )
-        cmd = [runtime, "compose", "-f", str(self._compose_file), "up", "-d", *services]
+        # Run compose under this checkout's project name and with its offset port
+        # overlay, so parallel checkouts bring up isolated containers on distinct
+        # host ports (see ``dev_local`` / docs "Parallel test isolation"). The
+        # ``ports`` we then probe are computed from the same offset, so they match.
+        project = dev_local.compose_project()
+        cmd = [
+            runtime, "compose", "-p", project,
+            "-f", str(self._compose_file), "up", "-d", *services,
+        ]
+        env = {**os.environ, **dev_local.compose_env()}
         try:
             subprocess.run(
-                cmd, check=True, timeout=up_timeout, capture_output=True, text=True
+                cmd, check=True, timeout=up_timeout, capture_output=True, text=True, env=env
             )
         except subprocess.CalledProcessError as exc:
             raise ContainerRuntimeUnavailable(

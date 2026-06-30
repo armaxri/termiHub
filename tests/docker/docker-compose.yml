@@ -28,9 +28,9 @@ services:
   # Standard SSH with password auth (OpenSSH latest / Ubuntu 24.04)
   ssh-password:
     build: ./ssh-password
-    container_name: termihub-ssh-password
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-password
     ports:
-      - "127.0.0.1:2201:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_PASSWORD_PORT:-2201}:22"
     networks:
       - test-net
     healthcheck:
@@ -45,9 +45,9 @@ services:
       context: ./ssh-legacy
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-ssh-legacy
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-legacy
     ports:
-      - "127.0.0.1:2202:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_LEGACY_PORT:-2202}:22"
     networks:
       - test-net
     healthcheck:
@@ -62,9 +62,9 @@ services:
       context: ./ssh-keys
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-ssh-keys
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-keys
     ports:
-      - "127.0.0.1:2203:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_KEYS_PORT:-2203}:22"
     networks:
       - test-net
     healthcheck:
@@ -79,9 +79,9 @@ services:
       context: ./ssh-jumphost-bastion
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-ssh-bastion
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-bastion
     ports:
-      - "127.0.0.1:2204:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_BASTION_PORT:-2204}:22"
     networks:
       - test-net
       - jumphost-net
@@ -97,7 +97,7 @@ services:
       context: ./ssh-jumphost-target
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-ssh-target
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-target
     # No host port exposure — only reachable via bastion
     networks:
       - jumphost-net
@@ -110,9 +110,9 @@ services:
   # Restricted shell (rbash) for testing limited environments
   ssh-restricted:
     build: ./ssh-restricted
-    container_name: termihub-ssh-restricted
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-restricted
     ports:
-      - "127.0.0.1:2205:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_RESTRICTED_PORT:-2205}:22"
     networks:
       - test-net
     healthcheck:
@@ -124,9 +124,9 @@ services:
   # SSH with pre-auth banner and MOTD
   ssh-banner:
     build: ./ssh-banner
-    container_name: termihub-ssh-banner
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-banner
     ports:
-      - "127.0.0.1:2206:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_BANNER_PORT:-2206}:22"
     networks:
       - test-net
     healthcheck:
@@ -141,9 +141,9 @@ services:
       context: ./ssh-tunnel-target
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-ssh-tunnel
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-tunnel
     ports:
-      - "127.0.0.1:2207:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_TUNNEL_PORT:-2207}:22"
     networks:
       - test-net
     healthcheck:
@@ -158,9 +158,9 @@ services:
       context: ./ssh-x11
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-ssh-x11
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-x11
     ports:
-      - "127.0.0.1:2208:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_X11_PORT:-2208}:22"
     networks:
       - test-net
     healthcheck:
@@ -175,9 +175,9 @@ services:
       context: ./remote-agent
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-remote-agent
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-remote-agent
     ports:
-      - "127.0.0.1:2211:22"
+      - "127.0.0.1:${TERMIHUB_TEST_REMOTE_AGENT_PORT:-2211}:22"
     networks:
       - test-net
     profiles:
@@ -195,9 +195,9 @@ services:
 
   telnet-server:
     build: ./telnet-server
-    container_name: termihub-telnet
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-telnet
     ports:
-      - "127.0.0.1:2301:23"
+      - "127.0.0.1:${TERMIHUB_TEST_TELNET_PORT:-2301}:23"
     networks:
       - test-net
     healthcheck:
@@ -217,9 +217,9 @@ services:
   # Exposed on 127.0.0.1:8080 (HTTP) and known SSH port for port scanning.
   network-target:
     image: nginx:alpine
-    container_name: termihub-network-target
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-network-target
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:${TERMIHUB_TEST_NETWORK_TARGET_PORT:-8080}:80"
     networks:
       - test-net
     profiles:
@@ -240,9 +240,9 @@ services:
       context: ./network-fault-proxy
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-network-fault
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-network-fault
     ports:
-      - "127.0.0.1:2209:22"
+      - "127.0.0.1:${TERMIHUB_TEST_NETWORK_FAULT_PORT:-2209}:22"
     cap_add:
       - NET_ADMIN
     networks:
@@ -265,9 +265,9 @@ services:
       context: ./sftp-stress
       additional_contexts:
         keys: ../fixtures/ssh-keys
-    container_name: termihub-sftp-stress
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-sftp-stress
     ports:
-      - "127.0.0.1:2210:22"
+      - "127.0.0.1:${TERMIHUB_TEST_SFTP_STRESS_PORT:-2210}:22"
     networks:
       - test-net
     profiles:
@@ -281,9 +281,9 @@ services:
 
 networks:
   test-net:
-    name: termihub-test-net
+    name: ${TERMIHUB_TEST_PROJECT:-termihub}-test-net
     driver: bridge
   jumphost-net:
-    name: termihub-jumphost-net
+    name: ${TERMIHUB_TEST_PROJECT:-termihub}-jumphost-net
     driver: bridge
     internal: true  # No external access — only bastion bridges to test-net
