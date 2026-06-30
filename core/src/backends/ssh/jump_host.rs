@@ -149,11 +149,12 @@ pub async fn connect_target_through_pooled_gateway(
 > {
     let pool = shared_gateway_pool();
     let key = gateway_pool_key(&target.proxy_jump);
-    let hops = target.proxy_jump.clone();
 
     let gateway = pool
-        .get_or_create(&key, || async move {
-            connect_gateway_chain(&hops).await.map(Arc::new)
+        .get_or_create(&key, || async {
+            connect_gateway_chain(&target.proxy_jump)
+                .await
+                .map(Arc::new)
         })
         .await?;
 

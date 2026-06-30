@@ -52,6 +52,24 @@ struct PooledSessionGuards {
     gateway: Option<PooledRef<Arc<SshGateway>>>,
 }
 
+impl PooledSessionGuards {
+    /// Hold a pooled per-connection endpoint session.
+    fn endpoint(endpoint: PooledRef<Arc<SshSession>>) -> Self {
+        Self {
+            endpoint: Some(endpoint),
+            gateway: None,
+        }
+    }
+
+    /// Hold a pooled jump-host gateway session.
+    fn gateway(gateway: PooledRef<Arc<SshGateway>>) -> Self {
+        Self {
+            endpoint: None,
+            gateway: Some(gateway),
+        }
+    }
+}
+
 /// An active tunnel with its forwarder.
 enum ActiveForwarder {
     Local(LocalForwarder),
@@ -358,30 +376,17 @@ impl TunnelManager {
     ) -> Result<(Arc<SshSession>, PooledSessionGuards), TerminalError> {
         if jumped {
             let (session, _registry, gateway) = self.connect_through_gateway(ssh_config, cancel)?;
-            Ok((
-                Arc::new(session),
-                PooledSessionGuards {
-                    endpoint: None,
-                    gateway: Some(gateway),
-                },
-            ))
+            Ok((Arc::new(session), PooledSessionGuards::gateway(gateway)))
         } else {
-            let cfg = ssh_config.clone();
             let endpoint =
                 block_on_runtime(self.endpoint_pool.get_or_create(conn_id, || async move {
-                    core_connect_cancellable(&cfg, Some(cancel))
+                    core_connect_cancellable(ssh_config, Some(cancel))
                         .await
                         .map(|(session, _registry)| Arc::new(session))
                         .map_err(|e| TerminalError::SshError(e.to_string()))
                 }))?;
             let session = (*endpoint).clone();
-            Ok((
-                session,
-                PooledSessionGuards {
-                    endpoint: Some(endpoint),
-                    gateway: None,
-                },
-            ))
+            Ok((session, PooledSessionGuards::endpoint(endpoint)))
         }
     }
 
@@ -395,14 +400,7 @@ impl TunnelManager {
     ) -> Result<(SshSession, ForwardedChannelRegistry, PooledSessionGuards), TerminalError> {
         if jumped {
             let (session, registry, gateway) = self.connect_through_gateway(ssh_config, cancel)?;
-            Ok((
-                session,
-                registry,
-                PooledSessionGuards {
-                    endpoint: None,
-                    gateway: Some(gateway),
-                },
-            ))
+            Ok((session, registry, PooledSessionGuards::gateway(gateway)))
         } else {
             let (session, registry) = connect_with_registry_cancellable(ssh_config, cancel)
                 .map_err(|e| TerminalError::TunnelError(format!("SSH connect failed: {}", e)))?;
@@ -424,14 +422,13 @@ impl TunnelManager {
         ),
         TerminalError,
     > {
-        let cfg = ssh_config.clone();
         block_on_runtime(async move {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => {
                     Err(TerminalError::TunnelError("SSH connect cancelled".to_string()))
                 }
-                res = connect_target_through_pooled_gateway(&cfg) => {
+                res = connect_target_through_pooled_gateway(ssh_config) => {
                     res.map_err(|e| TerminalError::SshError(e.to_string()))
                 }
             }
@@ -445,9 +442,9 @@ impl TunnelManager {
             ActiveForwarder::Remote(f) => f.stop(),
             ActiveForwarder::Dynamic(f) => f.stop(),
         }
-        drop(forwarder);
-        // Dropping the guards releases the pooled endpoint / gateway references,
-        // draining sessions no longer used by any tunnel or terminal.
+        // Dropping the guards (at end of scope) releases the pooled endpoint /
+        // gateway references, draining sessions no longer used by any tunnel or
+        // terminal.
         drop(guards);
     }
 
