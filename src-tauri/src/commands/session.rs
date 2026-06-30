@@ -26,13 +26,19 @@ use crate::utils::shell_detect;
 #[tauri::command]
 pub async fn create_connection(
     type_id: String,
-    settings: Value,
+    mut settings: Value,
     agent_id: Option<String>,
     connect_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
+    conn_manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
     info!(type_id, agent_id = ?agent_id, "Creating connection");
+    // Expand any saved-connection jump-host references to inline hops before the
+    // settings reach core (which only connects with inline hops) — #940.
+    conn_manager
+        .resolve_jump_host_refs(&mut settings, None)
+        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
     manager
         .create_connection(
             &type_id,
@@ -347,12 +353,19 @@ pub async fn session_monitoring_close(
 pub async fn start_persistent_session(
     connection_id: String,
     type_id: String,
-    settings: Value,
+    mut settings: Value,
     agent_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
+    conn_manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
     info!(connection_id, type_id, agent_id = ?agent_id, "Starting persistent session");
+    // Expand saved-connection jump-host references to inline hops before core
+    // sees them; seed the visited set with this connection so a hop that
+    // references itself is rejected as circular (#940).
+    conn_manager
+        .resolve_jump_host_refs(&mut settings, Some(&connection_id))
+        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
     manager
         .start_persistent_session(
             &connection_id,

@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**448** literal · **122** dynamic · **11** indirect.
+**448** literal · **122** dynamic · **14** indirect.
 
 ## Literal test IDs
 
@@ -610,7 +610,10 @@ where the component is used, not at the `data-testid` site.
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("connection")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("host")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("password")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("port")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("source-inline")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
+| `{tid("source-saved")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("username")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |

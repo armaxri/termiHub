@@ -5,8 +5,10 @@ import {
   jumpHostTooltip,
   jumpHostStatusLabel,
   jumpHostGatewayConnection,
+  connectionPathLabel,
+  sshJumpHostOptions,
 } from "./jumpHost";
-import { JumpHostConfig, SavedConnection } from "@/types/connection";
+import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
 
 function hop(host: string, username = "admin"): JumpHostConfig {
@@ -128,5 +130,66 @@ describe("jumpHostGatewayConnection", () => {
 
   it("returns null when there is no jump host", () => {
     expect(jumpHostGatewayConnection(savedConn({ host: "app-server" }))).toBeNull();
+  });
+});
+
+describe("connectionPathLabel", () => {
+  const folders: ConnectionFolder[] = [
+    { id: "Work", name: "Work", parentId: null, isExpanded: true },
+    { id: "Work/Dev", name: "Dev", parentId: "Work", isExpanded: true },
+  ];
+  const conn = (id: string, name: string, folderId: string | null): SavedConnection => ({
+    id,
+    name,
+    folderId,
+    config: sshConfig({ host: "h" }),
+  });
+
+  it("builds a Folder / Sub / Name path", () => {
+    expect(connectionPathLabel(conn("Work/Dev/bastion", "bastion", "Work/Dev"), folders)).toBe(
+      "Work / Dev / bastion"
+    );
+  });
+
+  it("uses just the name for a root connection", () => {
+    expect(connectionPathLabel(conn("bastion", "bastion", null), folders)).toBe("bastion");
+  });
+});
+
+describe("sshJumpHostOptions", () => {
+  const folders: ConnectionFolder[] = [
+    { id: "Work", name: "Work", parentId: null, isExpanded: true },
+  ];
+  const sshConn = (id: string, name: string, folderId: string | null): SavedConnection => ({
+    id,
+    name,
+    folderId,
+    config: sshConfig({ host: "h" }),
+  });
+  const localConn: SavedConnection = {
+    id: "local",
+    name: "local",
+    folderId: null,
+    config: { type: "local", config: {} },
+  };
+
+  it("lists only SSH connections, labelled by path, sorted", () => {
+    const opts = sshJumpHostOptions(
+      [sshConn("Work/b", "b", "Work"), localConn, sshConn("a", "a", null)],
+      folders
+    );
+    expect(opts).toEqual([
+      { id: "a", label: "a" },
+      { id: "Work/b", label: "Work / b" },
+    ]);
+  });
+
+  it("excludes the connection being edited (no self-reference)", () => {
+    const opts = sshJumpHostOptions(
+      [sshConn("me", "me", null), sshConn("gw", "gw", null)],
+      [],
+      "me"
+    );
+    expect(opts.map((o) => o.id)).toEqual(["gw"]);
   });
 });
