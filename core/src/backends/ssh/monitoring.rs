@@ -17,8 +17,8 @@ use crate::monitoring::{
     MONITORING_COMMAND,
 };
 
-use super::auth::connect_and_authenticate;
 use super::handler::SshSession;
+use super::jump_host::connect_target;
 
 /// Polling interval for collecting system stats.
 const MONITORING_INTERVAL: Duration = Duration::from_secs(2);
@@ -100,7 +100,10 @@ impl MonitoringProvider for SshMonitoringProvider {
         let alive_clone = alive.clone();
 
         tokio::spawn(async move {
-            let (session, _registry) = match connect_and_authenticate(&config).await {
+            // Reach the target directly, or through its pooled jump-host gateway
+            // when a ProxyJump chain is configured (#939). `_gateway` is held for
+            // the task's lifetime so the bastion session stays open.
+            let (session, _registry, _gateway) = match connect_target(&config).await {
                 Ok(s) => s,
                 Err(e) => {
                     warn!("Monitoring SSH connection failed: {e}");

@@ -15,9 +15,12 @@ use common::{
     require_docker, ssh_exec, ssh_key_config, ssh_keys_dir, ssh_password_config, PORT_SSH_BASTION,
     PORT_SSH_RESTRICTED, PORT_SSH_TUNNEL,
 };
+use std::time::Duration;
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 use termihub_core::backends::ssh::jump_host::connect_through_jump_hosts;
+use termihub_core::backends::ssh::Ssh;
 use termihub_core::config::{JumpHostConfig, SshConfig};
+use termihub_core::connection::ConnectionType;
 
 // ── SSH-JUMP-01: ProxyJump through a bastion to an internal target ─────
 
@@ -373,5 +376,95 @@ async fn ssh_tunnel_02_tcp_echo_via_tunnel() {
     assert!(
         response.contains("ECHO_TEST_12345"),
         "SSH-TUNNEL-02: Echo should return test data, got: {response}"
+    );
+}
+
+// ── SSH-JUMP-04/05: SFTP & monitoring routed through the jump host ────
+
+/// Build SSH connection settings for the internal target reached through the
+/// bastion (the same chain as SSH-JUMP-01), toggling the SFTP file browser and
+/// monitoring providers.
+fn jump_host_target_settings(
+    enable_monitoring: bool,
+    enable_file_browser: bool,
+) -> serde_json::Value {
+    let key = ssh_keys_dir().join("ed25519");
+    let key = key.to_str().expect("key path is valid UTF-8");
+    serde_json::json!({
+        "host": "termihub-ssh-target",
+        "port": 22,
+        "username": "testuser",
+        "authMethod": "key",
+        "keyPath": key,
+        "enableMonitoring": enable_monitoring,
+        "enableFileBrowser": enable_file_browser,
+        "proxyJump": [{
+            "host": "127.0.0.1",
+            "port": PORT_SSH_BASTION,
+            "username": "testuser",
+            "authMethod": "key",
+            "keyPath": key,
+        }],
+    })
+}
+
+/// SSH-JUMP-04: the **SFTP file browser** must reach a jump-host target through
+/// the bastion. The target (`termihub-ssh-target`) has no host port and is only
+/// reachable via the bastion, so listing its filesystem proves the SFTP session
+/// was tunnelled through the gateway rather than attempting a (failing) direct
+/// connection (#939).
+#[tokio::test]
+async fn ssh_jump_04_sftp_through_jump_host() {
+    require_docker!(PORT_SSH_BASTION);
+
+    let mut ssh = Ssh::new();
+    ssh.connect(jump_host_target_settings(false, true))
+        .await
+        .expect("SSH-JUMP-04: jump-host connection should succeed");
+
+    let browser = ssh
+        .file_browser()
+        .expect("SSH-JUMP-04: file browser should be available");
+    let entries = browser
+        .list_dir("/home/testuser")
+        .await
+        .expect("SSH-JUMP-04: listing the target home through the jump host should succeed");
+
+    assert!(
+        entries.iter().any(|e| e.name == "marker.txt"),
+        "SSH-JUMP-04: expected marker.txt in the target's home, got: {:?}",
+        entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>()
+    );
+}
+
+/// SSH-JUMP-05: **monitoring** must reach a jump-host target through the bastion.
+/// The monitoring task connects its own SSH session; for a jump-host target a
+/// direct connect would fail silently and yield no samples, so receiving a stats
+/// sample proves the monitoring session was routed through the gateway (#939).
+#[tokio::test]
+async fn ssh_jump_05_monitoring_through_jump_host() {
+    require_docker!(PORT_SSH_BASTION);
+
+    let mut ssh = Ssh::new();
+    ssh.connect(jump_host_target_settings(true, false))
+        .await
+        .expect("SSH-JUMP-05: jump-host connection should succeed");
+
+    let monitoring = ssh
+        .monitoring()
+        .expect("SSH-JUMP-05: monitoring should be available");
+    let mut rx = monitoring
+        .subscribe()
+        .await
+        .expect("SSH-JUMP-05: monitoring subscribe should succeed");
+
+    let stats = tokio::time::timeout(Duration::from_secs(20), rx.recv())
+        .await
+        .expect("SSH-JUMP-05: a monitoring sample should arrive through the jump host within 20s")
+        .expect("SSH-JUMP-05: monitoring channel should yield a sample");
+
+    assert!(
+        !stats.hostname.is_empty() || stats.memory_total_kb > 0,
+        "SSH-JUMP-05: expected a populated stats sample, got: {stats:?}"
     );
 }
