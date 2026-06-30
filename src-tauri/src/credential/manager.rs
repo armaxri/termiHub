@@ -7,7 +7,7 @@ use tracing::warn;
 
 use super::auto_lock::AutoLockTimer;
 use super::types::{CredentialKey, CredentialStoreStatus, StorageMode};
-use super::{CredentialStore, MasterPasswordStore, NullStore};
+use super::{CredentialStore, MasterPasswordStore, NullStore, OsKeychainStore};
 
 /// Event emitted when a credential is requested but the store is locked.
 const EVENT_STORE_UNLOCK_NEEDED: &str = "credential-store-unlock-needed";
@@ -17,6 +17,7 @@ const EVENT_STORE_UNLOCK_NEEDED: &str = "credential-store-unlock-needed";
 enum StoreBackend {
     Null(NullStore),
     MasterPassword(MasterPasswordStore),
+    OsKeychain(OsKeychainStore),
 }
 
 /// Manages the active credential store backend and allows runtime switching.
@@ -53,6 +54,7 @@ impl CredentialManager {
         match *inner {
             StoreBackend::Null(_) => StorageMode::None,
             StoreBackend::MasterPassword(_) => StorageMode::MasterPassword,
+            StoreBackend::OsKeychain(_) => StorageMode::OsKeychain,
         }
     }
 
@@ -160,6 +162,7 @@ impl CredentialManager {
                 let file_path = config_dir.join("credentials.enc");
                 StoreBackend::MasterPassword(MasterPasswordStore::new(file_path))
             }
+            StorageMode::OsKeychain => StoreBackend::OsKeychain(OsKeychainStore::new()),
             StorageMode::None => StoreBackend::Null(NullStore),
         }
     }
@@ -172,6 +175,7 @@ impl CredentialStore for CredentialManager {
         let result = match *inner {
             StoreBackend::Null(ref s) => s.get(key),
             StoreBackend::MasterPassword(ref s) => s.get(key),
+            StoreBackend::OsKeychain(ref s) => s.get(key),
         };
         drop(inner);
         if result.is_err() && is_master_password_mode {
@@ -189,6 +193,7 @@ impl CredentialStore for CredentialManager {
         let result = match *inner {
             StoreBackend::Null(ref s) => s.set(key, value),
             StoreBackend::MasterPassword(ref s) => s.set(key, value),
+            StoreBackend::OsKeychain(ref s) => s.set(key, value),
         };
         drop(inner);
         self.record_activity();
@@ -200,6 +205,7 @@ impl CredentialStore for CredentialManager {
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove(key),
             StoreBackend::MasterPassword(ref s) => s.remove(key),
+            StoreBackend::OsKeychain(ref s) => s.remove(key),
         };
         drop(inner);
         self.record_activity();
@@ -211,6 +217,7 @@ impl CredentialStore for CredentialManager {
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove_all_for_connection(connection_id),
             StoreBackend::MasterPassword(ref s) => s.remove_all_for_connection(connection_id),
+            StoreBackend::OsKeychain(ref s) => s.remove_all_for_connection(connection_id),
         };
         drop(inner);
         self.record_activity();
@@ -222,6 +229,7 @@ impl CredentialStore for CredentialManager {
         let result = match *inner {
             StoreBackend::Null(ref s) => s.list_keys(),
             StoreBackend::MasterPassword(ref s) => s.list_keys(),
+            StoreBackend::OsKeychain(ref s) => s.list_keys(),
         };
         drop(inner);
         self.record_activity();
@@ -233,6 +241,7 @@ impl CredentialStore for CredentialManager {
         match *inner {
             StoreBackend::Null(ref s) => s.status(),
             StoreBackend::MasterPassword(ref s) => s.status(),
+            StoreBackend::OsKeychain(ref s) => s.status(),
         }
     }
 }
@@ -260,6 +269,15 @@ mod tests {
     }
 
     #[test]
+    fn new_creates_os_keychain_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
+        assert_eq!(mgr.get_mode(), StorageMode::OsKeychain);
+        // A native store has no in-app lock state — always unlocked.
+        assert_eq!(mgr.status(), CredentialStoreStatus::Unlocked);
+    }
+
+    #[test]
     fn switch_store_changes_mode() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = CredentialManager::new(StorageMode::None, dir.path().to_path_buf());
@@ -268,8 +286,28 @@ mod tests {
         mgr.switch_store(StorageMode::MasterPassword).unwrap();
         assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
 
+        mgr.switch_store(StorageMode::OsKeychain).unwrap();
+        assert_eq!(mgr.get_mode(), StorageMode::OsKeychain);
+
         mgr.switch_store(StorageMode::None).unwrap();
         assert_eq!(mgr.get_mode(), StorageMode::None);
+    }
+
+    #[test]
+    fn credential_store_trait_delegates_to_os_keychain() {
+        // Install the process-global keyring mock backend (serialized so it is
+        // not swapped out by a concurrently running keychain test).
+        let _mock = crate::credential::os_keychain::test_support::install_mock();
+
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
+
+        let key = CredentialKey::new("conn-mgr-keychain", CredentialType::Password);
+        mgr.set(&key, "keychain-secret").unwrap();
+        assert_eq!(mgr.get(&key).unwrap(), Some("keychain-secret".to_string()));
+
+        mgr.remove(&key).unwrap();
+        assert_eq!(mgr.get(&key).unwrap(), None);
     }
 
     #[test]
