@@ -173,3 +173,44 @@ def test_sequential_connections_survive_restart(bridge):
     with FakeApp(bridge.port, dispatcher_like(terminal_text="second\n")):
         driver_b = bridge.wait_for_app(timeout=5)
         assert "second" in driver_b.read_terminal()
+
+
+# ── Startup-reconnect resilience (#1019): bind to the surviving connection ──────
+def test_wait_for_app_prefers_a_newer_connection(bridge):
+    # Two connections arrive close together (a startup reload connects, then
+    # reconnects). wait_for_app must return the *newer* one, since the first is
+    # the transient that will be discarded — not whichever arrived first.
+    transient = FakeApp(bridge.port, dispatcher_like(terminal_text="transient\n"))
+    stable = FakeApp(bridge.port, dispatcher_like(terminal_text="stable\n"))
+    with transient, stable:  # `transient` connects first, then `stable`
+        driver = bridge.wait_for_app(timeout=5)
+        assert "stable" in driver.read_terminal()
+
+
+def test_wait_for_app_skips_a_dead_transient_connection(bridge):
+    # The first connection has already dropped by the time we acquire (the
+    # classic startup-reload race). wait_for_app must wait past the dead one and
+    # return the live replacement rather than handing back a closed socket.
+    transient = FakeApp(bridge.port, dispatcher_like(terminal_text="transient\n")).start()
+    transient.stop()  # it connected, then immediately went away
+    with FakeApp(bridge.port, dispatcher_like(terminal_text="stable\n")):
+        driver = bridge.wait_for_app(timeout=5)
+        assert "stable" in driver.read_terminal()
+
+
+def test_wait_for_app_returns_a_lone_stable_connection(bridge):
+    # The common case: exactly one connection, which stays up. The settle window
+    # must not discard it — it is returned (after the brief settle).
+    with FakeApp(bridge.port, dispatcher_like(terminal_text="only\n")):
+        driver = bridge.wait_for_app(timeout=5)
+        assert "only" in driver.read_terminal()
+
+
+def test_wait_for_app_settle_zero_takes_the_first_arrival(bridge):
+    # settle=0 opts out of the preference window: the first connection is taken
+    # immediately even when a second is already waiting behind it.
+    first = FakeApp(bridge.port, dispatcher_like(terminal_text="first\n"))
+    second = FakeApp(bridge.port, dispatcher_like(terminal_text="second\n"))
+    with first, second:
+        driver = bridge.wait_for_app(timeout=5, settle=0)
+        assert "first" in driver.read_terminal()
