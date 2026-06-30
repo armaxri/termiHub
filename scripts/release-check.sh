@@ -42,6 +42,20 @@ VERSION="$PKG_VER"
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== Tauri npm/crate Version Drift ==="
+
+# `pnpm tauri build` refuses to build when an @tauri-apps/* npm package and its
+# Rust crate drift apart on major/minor (issue #1014). Catch it here instead.
+if DRIFT_OUTPUT=$(node scripts/internal/check-tauri-version-drift.mjs 2>&1); then
+    echo "$DRIFT_OUTPUT" | sed 's/^/  /'
+    pass "Tauri npm packages and Rust crates are aligned"
+else
+    echo "$DRIFT_OUTPUT" | sed 's/^/  /'
+    fail "Tauri npm/crate version drift would block 'pnpm tauri build'"
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== CHANGELOG Dated Section ==="
 
 if grep -qE "^## \[$VERSION\] - [0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
