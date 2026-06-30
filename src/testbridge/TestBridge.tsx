@@ -5,10 +5,34 @@ import { useAppStore, getActiveTab } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
-import { runBridgeWebSocketClient } from "./wsClient";
+import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
 
 /** Protocol revision exposed via `window.__termihubTestBridge.version`. */
 const BRIDGE_VERSION = 1;
+
+/** A command dispatched in-process; resolves to a {@link BridgeResponse}. */
+type BridgeDispatch = (
+  command: Parameters<typeof dispatchCommand>[0]
+) => ReturnType<typeof dispatchCommand>;
+
+/**
+ * The runner WebSocket is scoped to the **page**, not to this component.
+ *
+ * `TestBridge` renders inside `TerminalView`, which can remount during startup
+ * (the layout subtree re-mounts once as the persisted config settles). Tying the
+ * socket to the component lifecycle meant a remount ran the effect cleanup —
+ * closing the runner's connection — and then opened a fresh one, so a test runner
+ * bound to the first connection saw it drop ("bridge connection closed") moments
+ * after the app appeared. On a slow WebView2 cold start the socket connects
+ * before the layout settles, so the drop is reliable on Windows (issue #1019).
+ *
+ * Keeping one module-level client for the page's lifetime fixes that: a transient
+ * remount no longer touches the socket. `latestDispatch` is swapped to the
+ * current mount's dispatch on every (re)mount, so commands always run against the
+ * live terminal registry even though the socket itself is created only once.
+ */
+let runnerClient: BridgeWebSocketClient | undefined;
+let latestDispatch: BridgeDispatch | undefined;
 
 /**
  * Installs the in-app test bridge on `window` when test mode is active.
@@ -48,8 +72,11 @@ export function TestBridge() {
       },
     };
 
-    const dispatch = (command: Parameters<typeof dispatchCommand>[0]) =>
-      dispatchCommand(command, deps);
+    const dispatch: BridgeDispatch = (command) => dispatchCommand(command, deps);
+
+    // Point the page-lifetime runner socket at this mount's dispatch, so commands
+    // always reach the current terminal registry even across a remount.
+    latestDispatch = dispatch;
 
     window.__termihubTestBridge = {
       ready: true,
@@ -60,23 +87,29 @@ export function TestBridge() {
 
     // When the backend supplied a runner port, also connect out over WebSocket so
     // an external test runner can drive the app on every platform — including
-    // macOS, where no WKWebView WebDriver exists (ADR-5).
+    // macOS, where no WKWebView WebDriver exists (ADR-5). The socket is opened
+    // once per page load and reused across remounts (see the module note above),
+    // so a transient remount never drops the runner's connection.
     const port = getTestBridgePort();
-    // Loopback by design: the runner launches the app on the same host, so the
-    // server it hosts is always reachable at 127.0.0.1 — no host config needed.
-    const wsClient = port
-      ? runBridgeWebSocketClient({
-          url: `ws://127.0.0.1:${port}`,
-          dispatch,
-          onOpen: () => frontendLog("test_bridge", `ws connected to runner on :${port}`),
-          onClose: () => frontendLog("test_bridge", "ws disconnected from runner"),
-          onError: () => frontendLog("test_bridge", `ws error connecting to runner on :${port}`),
-        })
-      : undefined;
-    if (port) frontendLog("test_bridge", `ws client connecting to runner on :${port}`);
+    if (port && !runnerClient) {
+      // Loopback by design: the runner launches the app on the same host, so the
+      // server it hosts is always reachable at 127.0.0.1 — no host config needed.
+      runnerClient = runBridgeWebSocketClient({
+        url: `ws://127.0.0.1:${port}`,
+        // Indirect through the holder so the live (latest) dispatch is used.
+        dispatch: (command) => latestDispatch!(command),
+        onOpen: () => frontendLog("test_bridge", `ws connected to runner on :${port}`),
+        onClose: () => frontendLog("test_bridge", "ws disconnected from runner"),
+        onError: () => frontendLog("test_bridge", `ws error connecting to runner on :${port}`),
+      });
+      // Close the socket only when the page itself goes away.
+      window.addEventListener("beforeunload", () => runnerClient?.close());
+      frontendLog("test_bridge", `ws client connecting to runner on :${port}`);
+    }
 
     return () => {
-      wsClient?.close();
+      // Only the in-process global is per-mount; the runner socket lives for the
+      // whole page (closed on unload above), so a transient remount never drops it.
       delete window.__termihubTestBridge;
       frontendLog("test_bridge", "removed");
     };

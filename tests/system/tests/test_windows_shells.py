@@ -58,7 +58,44 @@ skip_on_non_windows = pytest.mark.skipif(
 # absent — the same `wsl.exe --list --quiet` the backend uses to populate the
 # distribution dropdown, so the gate and the app agree on availability.
 _WSL_DISTROS = detect_wsl_distros() if _IS_WINDOWS else []
-_WSL_DISTRO = _WSL_DISTROS[0] if _WSL_DISTROS else None
+
+# Name fragments of general-purpose Linux distros. `wsl.exe --list` also surfaces
+# utility/appliance distros (docker-desktop, podman-machine, rancher, and vendor
+# packaging environments) whose default shells lack a normal interactive setup or
+# `/mnt/<drive>` automount — unsuitable for exercising shell I/O and cwd/path
+# translation. Prefer a real distro for the suite; the backend's own default is
+# just `distros[0]`, which these tests do not assert.
+_GENERAL_PURPOSE_DISTROS = (
+    "ubuntu",
+    "debian",
+    "kali",
+    "fedora",
+    "opensuse",
+    "suse",
+    "alma",
+    "rocky",
+    "oracle",
+    "arch",
+    "mint",
+)
+
+
+def _pick_wsl_distro(distros: list[str]) -> str | None:
+    """Choose a general-purpose distro for the suite, falling back to the first.
+
+    Iterates the families in priority order (Ubuntu/Debian first — the canonical
+    WSL distros) and returns the first installed distro matching the
+    highest-priority family, so the suite verifies WSL behavior against a
+    representative distro rather than whichever happens to enumerate first.
+    """
+    for family in _GENERAL_PURPOSE_DISTROS:
+        for distro in distros:
+            if family in distro.lower():
+                return distro
+    return distros[0] if distros else None
+
+
+_WSL_DISTRO = _pick_wsl_distro(_WSL_DISTROS)
 
 skip_without_wsl = pytest.mark.skipif(
     not _WSL_DISTROS, reason="no WSL2 distribution installed on this host"
@@ -184,9 +221,30 @@ class TestWsl(
         step, so the session opens directly with no password prompt.
         """
         self.close_all_tabs()
+        # Connecting a terminal can leave the sidebar on the Files view; the
+        # editor's New Connection button only exists on the Connections view, so
+        # ensure it before creating (idempotent).
+        self.switch_to_connections_sidebar()
         name = unique_name(purpose)
         self.create_wsl_connection(name, distribution=_WSL_DISTRO, connect=True)
         self.wait(self.has_terminal, what="the WSL shell to be readable")
+        # Gate on a confirmed *interactive* session before any cwd work: a cold
+        # WSL distro can lag in registering the session for input and sourcing its
+        # shell integration, longer than the default wait. Echo a marker once (the
+        # first time the session accepts input) and wait for it to round-trip, so
+        # later run_command/cd calls and OSC 7 cwd-following operate on a ready
+        # session rather than racing startup.
+        marker = f"WSLRDY{name[-8:]}"
+        sent = False
+
+        def interactive() -> bool:
+            nonlocal sent
+            if not sent:
+                self.driver.terminal_input(f"echo {marker}")  # raises until registered
+                sent = True  # set only after a successful send (no double-send)
+            return marker in self.driver.read_terminal()
+
+        self.wait(interactive, timeout=45, what="the WSL session to accept input")
         return name
 
     # ── MT-LOCAL-12: a WSL distro launches and accepts POSIX input ──────────────
@@ -205,37 +263,32 @@ class TestWsl(
         )
         assert "clear: command not found" not in text
 
-    # ── MT-LOCAL-17: the WSL file browser shows an absolute initial path ────────
-    def test_wsl_file_browser_shows_initial_path(self):
-        self._open_wsl_terminal("wsl-fb-init")
-        path = self.open_file_browser()
-        # WSL paths surface as a UNC share (\\wsl$\<distro>\... or \\wsl.localhost\)
-        # or a drive mount; all are absolute.
-        assert is_absolute_path(path)
-        self.switch_to_connections_sidebar()
+    # ── MT-LOCAL-17/18/19: the WSL file browser follows the shell's cwd ─────────
+    def test_wsl_file_browser_follows_cwd(self):
+        # All three cwd facets run on a single warm WSL session: spinning up a
+        # fresh distro per assertion churned WSL hard enough to make OSC 7 lag on
+        # the later cases. Each `cd` emits OSC 7 on the next prompt, which the
+        # browser follows; the waits allow headroom for that emission.
+        self._open_wsl_terminal("wsl-fb")
 
-    # ── MT-LOCAL-18: the WSL file browser follows a `cd` in the shell ───────────
-    def test_wsl_file_browser_follows_cd(self):
-        self._open_wsl_terminal("wsl-fb-cd")
-        self.open_file_browser()
-        # The terminal stays active while the Files sidebar is shown, so input
-        # reaches it; OSC 7 emits the new cwd on the next prompt and the browser
-        # follows it.
+        # MT-LOCAL-17: the initial path is absolute — a UNC share
+        # (\\wsl$\<distro>\... or \\wsl.localhost\) or a drive mount.
+        initial = self.open_file_browser()
+        assert is_absolute_path(initial)
+
+        # MT-LOCAL-18: a `cd` into a normal Linux dir is followed (the terminal
+        # stays active while the Files sidebar is shown, so input reaches it).
         self.run_command("cd /tmp")
-        path = self.wait_for_path_contains("tmp")
-        assert "tmp" in path
+        assert "tmp" in self.wait_for_path_contains("tmp", timeout=40)
 
-    # ── MT-LOCAL-19: /mnt/<drive> shows the native Windows path ─────────────────
-    def test_wsl_file_browser_translates_mnt_drive(self):
-        self._open_wsl_terminal("wsl-fb-mnt")
-        self.open_file_browser()
-        # /mnt/c is a Windows drive mount; the browser shows it as a native drive
+        # MT-LOCAL-19: /mnt/c is a Windows drive mount, shown as a native drive
         # path (C:/...) rather than the inaccessible \\wsl$\ UNC view.
         self.run_command("cd /mnt/c")
-        path = self.wait(
+        drive_path = self.wait(
             lambda: (lambda p: p if re.search(r"[A-Za-z]:", p) else None)(
                 self.file_browser_path()
             ),
+            timeout=40,
             what="a Windows drive path in the file browser",
         )
-        assert re.search(r"[Cc]:", path)
+        assert re.search(r"[Cc]:", drive_path)
