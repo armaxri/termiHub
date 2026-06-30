@@ -874,7 +874,7 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-CRED-04–08                   | `tests/system/tests/test_credential_store.py`, `credential-store-infra.test.js`    |
 | MT-RECOVERY-01–12               | `infrastructure/config-recovery.test.js`                                           |
 | MT-XPLAT-01, 02                 | `tests/system/tests/test_cross_platform.py`                                        |
-| MT-SVC-01, 02, 03               | `embedded-services.test.js`                                                        |
-| MT-SVC-04, 05 (transfer)        | `embedded-services.test.js` (SVC-12, SVC-13 via curl)                              |
+| MT-SVC-01, 02, 03               | `tests/system/tests/test_embedded_services.py` (SVC-01..11)                        |
+| MT-SVC-04, 05 (transfer)        | `tests/system/tests/test_embedded_services.py` (SVC-12 FTP, SVC-13 TFTP via curl)  |
 | MT-NET-01–09                    | `tests/system/tests/test_network_tools.py`                                         |
 | MT-NET-10, 12, 13, 14, 17, 18   | `network-tools-live.test.js` (requires `network` profile; port blocked on #934)    |

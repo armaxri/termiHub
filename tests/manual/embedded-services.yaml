@@ -2,7 +2,8 @@ category: embedded-services
 display_name: "Embedded Network Services"
 
 tests:
-  # MT-SVC-01, MT-SVC-02, MT-SVC-03 are covered by tests/e2e/embedded-services.test.js (PR #567)
+  # MT-SVC-01, MT-SVC-02, MT-SVC-03 are covered by the Python harness
+  # (tests/system/tests/test_embedded_services.py, SVC-01..13) — see #947.
 
   - id: MT-SVC-04
     name: "FTP server basic transfer"
