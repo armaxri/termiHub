@@ -173,6 +173,11 @@ async fn ssh_jump_03_shared_gateway_session_pooling() {
         auth_method: "key".to_string(),
         key_path: Some(key.clone()),
         proxy_jump: vec![JumpHostConfig {
+            // Unique connection_id so this test's gateway gets its own pool key,
+            // isolated from the other jump-host tests that share the process-wide
+            // pool through the same bastion (they would otherwise contend the same
+            // ref-counted entry when run in parallel).
+            connection_id: Some("ssh-jump-03-pool-test".to_string()),
             host: "127.0.0.1".to_string(),
             port: PORT_SSH_BASTION,
             username: "testuser".to_string(),
@@ -192,7 +197,7 @@ async fn ssh_jump_03_shared_gateway_session_pooling() {
     );
 
     // First connection: creates and pools the gateway session.
-    let (session_a, _registry_a, gateway_a) = connect_target_through_pooled_gateway(&target)
+    let (session_a, _registry_a, gateway_a) = connect_target_through_pooled_gateway(&target, None)
         .await
         .expect("SSH-JUMP-03: first pooled connection should succeed");
     assert_eq!(
@@ -202,7 +207,7 @@ async fn ssh_jump_03_shared_gateway_session_pooling() {
     );
 
     // Second connection through the same bastion: reuses the pooled gateway.
-    let (session_b, _registry_b, gateway_b) = connect_target_through_pooled_gateway(&target)
+    let (session_b, _registry_b, gateway_b) = connect_target_through_pooled_gateway(&target, None)
         .await
         .expect("SSH-JUMP-03: second pooled connection should succeed");
     assert_eq!(

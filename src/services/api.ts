@@ -43,13 +43,25 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
 export async function createConnection(
   typeId: string,
   settings: Record<string, unknown>,
-  agentId?: string
+  agentId?: string,
+  connectId?: string
 ): Promise<SessionId> {
   return await invoke<string>("create_connection", {
     typeId,
     settings,
     agentId: agentId ?? null,
+    connectId: connectId ?? null,
   });
+}
+
+/**
+ * Cancel a session that is still connecting, identified by the `connectId`
+ * passed to {@link createTerminal}. Aborts the in-flight handshake promptly
+ * instead of waiting out the connect timeout (#952). No-op if the connect
+ * already finished. Returns whether a connecting session was found.
+ */
+export async function cancelConnecting(connectId: string): Promise<boolean> {
+  return await invoke<boolean>("cancel_connecting", { connectId });
 }
 
 /**
@@ -57,17 +69,23 @@ export async function createConnection(
  *
  * For `remote-session` type: extracts `agentId` and `sessionType` from config
  * and forwards the rest as settings. For other types: passes config directly.
+ *
+ * `connectId` (when provided) lets the caller cancel a still-connecting session
+ * via {@link cancelConnecting} — pass a stable per-attempt id such as the tab id.
  */
-export async function createTerminal(config: ConnectionConfig): Promise<SessionId> {
+export async function createTerminal(
+  config: ConnectionConfig,
+  connectId?: string
+): Promise<SessionId> {
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
       agentId: string;
       sessionType: string;
       [key: string]: unknown;
     };
-    return await createConnection(sessionType, rest, agentId);
+    return await createConnection(sessionType, rest, agentId, connectId);
   }
-  return await createConnection(config.type, config.config);
+  return await createConnection(config.type, config.config, undefined, connectId);
 }
 
 /** Send input data to a terminal session */

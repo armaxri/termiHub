@@ -18,6 +18,8 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use tokio_util::sync::CancellationToken;
+
 use tracing::{debug, info};
 
 use crate::config::{JumpHostConfig, SshConfig};
@@ -444,6 +446,14 @@ impl ConnectionType for Ssh {
     }
 
     async fn connect(&mut self, settings: serde_json::Value) -> Result<(), SessionError> {
+        self.connect_cancellable(settings, None).await
+    }
+
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
         if self.state.is_some() {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
@@ -466,7 +476,10 @@ impl ConnectionType for Ssh {
         );
 
         let alive = Arc::new(AtomicBool::new(true));
-        let handle = self.connector.open_shell(&config, alive.clone()).await?;
+        let handle = self
+            .connector
+            .open_shell(&config, alive.clone(), cancel.as_ref())
+            .await?;
 
         // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking when enabled.
         if shell_integration {
@@ -641,7 +654,15 @@ mod tests {
             &self,
             _config: &SshConfig,
             alive: Arc<AtomicBool>,
+            cancel: Option<&CancellationToken>,
         ) -> Result<SshShellHandle, SessionError> {
+            // Honour a token that is already cancelled so the cancellation wiring
+            // (connect_cancellable → open_shell) can be unit-tested without a server.
+            if cancel.is_some_and(|t| t.is_cancelled()) {
+                return Err(SessionError::SpawnFailed(
+                    "mock: connect cancelled".to_string(),
+                ));
+            }
             if self.should_fail {
                 return Err(SessionError::SpawnFailed(
                     "mock: connection refused".to_string(),
@@ -1265,6 +1286,35 @@ mod tests {
         let result = ssh.connect(mock_settings()).await;
         assert!(result.is_err(), "expected connection failure");
         assert!(!ssh.is_connected());
+    }
+
+    /// `connect_cancellable` must thread the token into `open_shell`: a token that
+    /// is already cancelled aborts the connect instead of establishing it (#952).
+    #[tokio::test]
+    async fn connect_cancellable_aborts_when_token_cancelled() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let result = ssh.connect_cancellable(mock_settings(), Some(token)).await;
+        assert!(
+            result.is_err(),
+            "a pre-cancelled token must abort the connect"
+        );
+        assert!(!ssh.is_connected());
+    }
+
+    /// `connect_cancellable` with a live (uncancelled) token connects normally —
+    /// the token only matters if it fires.
+    #[tokio::test]
+    async fn connect_cancellable_with_live_token_succeeds() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        let token = CancellationToken::new();
+        ssh.connect_cancellable(mock_settings(), Some(token))
+            .await
+            .unwrap();
+        assert!(ssh.is_connected());
+        ssh.disconnect().await.unwrap();
     }
 
     #[tokio::test]

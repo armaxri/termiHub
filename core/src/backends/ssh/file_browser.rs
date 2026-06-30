@@ -55,7 +55,7 @@ impl SftpFileBrowser {
 
         // Reach the target directly, or through its pooled jump-host gateway when
         // a ProxyJump chain is configured (#939).
-        let (session, _registry, gateway) = connect_target(config)
+        let (session, _registry, gateway) = connect_target(config, None)
             .await
             .map_err(|e| FileError::OperationFailed(format!("SFTP connection failed: {e}")))?;
 

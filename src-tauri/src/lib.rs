@@ -386,6 +386,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
+            commands::session::cancel_connecting,
             commands::session::get_connection_types,
             commands::session::send_input,
             commands::session::set_session_line_ending,

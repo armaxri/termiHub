@@ -428,7 +428,7 @@ impl TunnelManager {
                 _ = cancel.cancelled() => {
                     Err(TerminalError::TunnelError("SSH connect cancelled".to_string()))
                 }
-                res = connect_target_through_pooled_gateway(ssh_config) => {
+                res = connect_target_through_pooled_gateway(ssh_config, Some(&cancel)) => {
                     res.map_err(|e| TerminalError::SshError(e.to_string()))
                 }
             }

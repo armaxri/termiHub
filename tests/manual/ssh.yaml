@@ -374,3 +374,22 @@ tests:
       - "Both terminals reconnecting at once create only one new gateway session (verify in the Open Connections panel)"
     verification: manual
     tags: [jump-host]
+
+  # --- Cancelling a connecting session (PR #967) ---
+
+  - id: MT-SSH-45
+    name: "Cancel aborts a slow/blocked SSH connect instead of waiting the timeout"
+    pr: 967
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create an SSH connection to an unreachable-but-routable host (e.g. 10.255.255.1) OR a target behind an unreachable jump host; set Connection -> Advanced -> Connect Timeout (s) to 30"
+      - "Open the connection so the terminal shows the 'Connecting…' overlay"
+      - "Click 'Cancel' on the overlay (or close the tab) well before the 30s timeout"
+      - "Open a second such connection, then open the Open Connections panel (Settings wheel) while it is still connecting"
+    expected:
+      - "Clicking Cancel (or closing the tab) tears the connecting tab down immediately — it does NOT hang until the 30s connect timeout"
+      - "The Open Connections panel shows the in-flight session under a 'Connecting' section, and its Cancel button aborts the connect"
+    verification: manual
+    tags: [jump-host]

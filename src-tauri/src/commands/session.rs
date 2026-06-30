@@ -28,13 +28,35 @@ pub async fn create_connection(
     type_id: String,
     settings: Value,
     agent_id: Option<String>,
+    connect_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<String, TerminalError> {
     info!(type_id, agent_id = ?agent_id, "Creating connection");
     manager
-        .create_connection(&type_id, settings, agent_id.as_deref(), app_handle)
+        .create_connection(
+            &type_id,
+            settings,
+            agent_id.as_deref(),
+            connect_id.as_deref(),
+            app_handle,
+        )
         .await
+}
+
+/// Cancel an in-flight (still connecting) session by its `connect_id`.
+///
+/// Fires the cancellation token registered by [`create_connection`] so a Stop /
+/// tab-close while a session is connecting aborts the handshake promptly instead
+/// of waiting out the connect timeout (#952). No-op if the connect already
+/// finished. Returns whether a connecting session was found.
+#[tauri::command]
+pub fn cancel_connecting(
+    connect_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<bool, TerminalError> {
+    info!(connect_id, "Cancelling connecting session");
+    Ok(manager.cancel_connecting(&connect_id))
 }
 
 /// Get the list of available connection types with their schemas.

@@ -103,7 +103,7 @@ impl MonitoringProvider for SshMonitoringProvider {
             // Reach the target directly, or through its pooled jump-host gateway
             // when a ProxyJump chain is configured (#939). `_gateway` is held for
             // the task's lifetime so the bastion session stays open.
-            let (session, _registry, _gateway) = match connect_target(&config).await {
+            let (session, _registry, _gateway) = match connect_target(&config, None).await {
                 Ok(s) => s,
                 Err(e) => {
                     warn!("Monitoring SSH connection failed: {e}");
