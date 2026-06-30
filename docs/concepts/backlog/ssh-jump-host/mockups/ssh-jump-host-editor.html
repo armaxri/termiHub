@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- SSH Jump Host — connection editor "Jump Host" collapsible section. Layout altitude, real class names + lucide icons. -->
+<!-- SSH Jump Host — connection editor "Jump Host" category. Layout altitude, real class names + lucide icons. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -29,38 +29,24 @@
         padding-bottom: 6px;
         border-bottom: 1px solid var(--border-secondary);
       }
-      /* Collapsible group header (clickable) */
-      .collapsible {
-        border: 1px solid var(--border-primary);
-        border-radius: var(--radius-md);
-        background: var(--bg-secondary);
+      /* Flat editor category — mirrors the real .settings-panel__category /
+         .settings-panel__category-title (the editor has no collapsible groups). */
+      .category {
         margin: 0 0 18px;
       }
-      .collapsible__header {
+      .category__title {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 9px 12px;
-        cursor: pointer;
-        user-select: none;
-      }
-      .collapsible__header .li {
-        color: var(--text-secondary);
-      }
-      .collapsible__title {
-        font-size: 11px;
+        gap: 6px;
+        font-size: 13px;
         font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--text-secondary);
+        color: var(--text-primary);
+        margin: 0 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border-secondary);
       }
-      .collapsible__chevron {
-        margin-left: auto;
-        color: var(--text-secondary);
-      }
-      .collapsible__body {
-        padding: 12px;
-        border-top: 1px solid var(--border-secondary);
+      .category__body {
+        padding: 0;
       }
       .field {
         display: flex;
@@ -290,6 +276,10 @@
         <path d="m16 21 4-4-4-4" />
         <path d="M20 17H4" />
       </symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="m12 5 7 7-7 7" />
+      </symbol>
       <symbol id="i-server" viewBox="0 0 24 24">
         <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
         <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
@@ -320,19 +310,20 @@
     </p>
 
     <div class="mockup-note">
-      The Connection Editor opens as a tab in the main area. The new <strong>Jump Host</strong>
-      collapsible group sits between Authentication and Advanced. Four states below: collapsed,
-      saved-connection mode, inline mode, and multi-hop with a connection-path summary + validation
-      error.
+      The Connection Editor opens as a tab in the main area. The <strong>Jump Host</strong> category
+      is a flat <code>settings-panel__category</code> (the editor has no collapsible groups), after
+      the connection/authentication fields and before the SSH Agent category. Four states below:
+      disabled, saved-connection mode, inline mode, and multi-hop with a connection-path summary +
+      validation error.
     </div>
 
     <!-- ── State 1: collapsed ─────────────────────────────────────────── -->
     <section class="mockup-section">
-      <h2>1 · Jump Host section collapsed (default)</h2>
+      <h2>1 · Jump Host section disabled (default)</h2>
       <div class="mockup-note">
-        Full app shell. The editor tab is active; the Jump Host group
-        <span class="callout">A</span> is collapsed — only its header row with the "Connect through
-        a jump host" checkbox (unchecked) is visible.
+        Full app shell. The editor tab is active; the Jump Host category
+        <span class="callout">A</span> shows only its title and the "Connect through a jump host"
+        checkbox (unchecked) — the body stays hidden until it is enabled.
       </div>
       <div class="app" style="height: 520px">
         <div class="app__body">
@@ -411,34 +402,26 @@
                 </div>
               </div>
 
-              <!-- Jump Host group: collapsed -->
-              <div class="collapsible">
-                <div class="collapsible__header">
+              <!-- Jump Host category: disabled (only title + checkbox) -->
+              <div class="category">
+                <div class="category__title">
                   <span class="callout">A</span>
                   <svg class="li"><use href="#i-arrow-left-right" /></svg>
-                  <span class="collapsible__title">Jump Host</span>
-                  <span class="collapsible__chevron">
-                    <svg class="li"><use href="#i-chevron-right" /></svg>
-                  </span>
+                  Jump Host
                 </div>
-                <div class="collapsible__body" style="padding-top: 10px; padding-bottom: 10px">
-                  <div class="checkrow" style="margin: 0">
-                    <span
-                      class="checkbox"
-                      style="background: none; border-color: var(--text-secondary)"
-                    ></span>
-                    Connect through a jump host
-                  </div>
+                <div class="checkrow" style="margin: 0">
+                  <span
+                    class="checkbox"
+                    style="background: none; border-color: var(--text-secondary)"
+                  ></span>
+                  Connect through a jump host
                 </div>
               </div>
 
-              <div class="collapsible">
-                <div class="collapsible__header">
+              <div class="category">
+                <div class="category__title">
                   <svg class="li"><use href="#i-settings" /></svg>
-                  <span class="collapsible__title">Advanced</span>
-                  <span class="collapsible__chevron">
-                    <svg class="li"><use href="#i-chevron-right" /></svg>
-                  </span>
+                  Session
                 </div>
               </div>
             </div>
@@ -458,9 +441,10 @@
       <div class="legend">
         <ul>
           <li>
-            <span class="callout">A</span> Jump Host collapsible group — lucide
-            <code>ArrowLeftRight</code> header icon, sits between Authentication and Advanced.
-            Collapsed: only the enable checkbox shows.
+            <span class="callout">A</span> Jump Host category — flat
+            <code>settings-panel__category</code> with the lucide <code>ArrowLeftRight</code> icon
+            on its checkbox label, after the auth fields and before the SSH Agent / Session
+            categories. Disabled: only the title + enable checkbox show.
           </li>
         </ul>
       </div>
@@ -468,21 +452,18 @@
 
     <!-- ── State 2: saved-connection mode ─────────────────────────────── -->
     <section class="mockup-section">
-      <h2>2 · Expanded — saved connection reference</h2>
+      <h2>2 · Enabled — saved connection reference</h2>
       <div class="mockup-note">
-        Checkbox enabled <span class="callout">B</span> expands the body. Source segmented control
-        <span class="callout">C</span> is set to "Saved connection"; the Gateway dropdown
+        Checkbox enabled <span class="callout">B</span> reveals the body. Source segmented control
+        <span class="callout">C</span> is set to "Saved connection"; the Connection dropdown
         <span class="callout">D</span> lists SSH-type saved connections by full path.
       </div>
-      <div class="collapsible" style="max-width: 620px">
-        <div class="collapsible__header">
+      <div class="category" style="max-width: 620px">
+        <div class="category__title">
           <svg class="li"><use href="#i-arrow-left-right" /></svg>
-          <span class="collapsible__title">Jump Host</span>
-          <span class="collapsible__chevron"
-            ><svg class="li"><use href="#i-chevron-down" /></svg
-          ></span>
+          Jump Host
         </div>
-        <div class="collapsible__body">
+        <div class="category__body">
           <div class="checkrow">
             <span class="callout">B</span>
             <span class="checkbox"
@@ -499,7 +480,7 @@
             </span>
           </div>
           <div class="field">
-            <span class="field__label">Gateway</span>
+            <span class="field__label">Connection</span>
             <span class="select">
               <span
                 ><span class="callout" style="margin-right: 6px">D</span>Work / bastion.example.com
@@ -508,15 +489,19 @@
               <svg class="li"><use href="#i-chevron-down" /></svg>
             </span>
           </div>
+          <div class="field">
+            <span class="field__label">Timeout (s)</span>
+            <span class="input input--sm">20</span>
+          </div>
           <button class="add-hop">
             <svg class="li"><use href="#i-plus" /></svg> Add another hop
           </button>
           <div class="path-line">
-            <span class="path-line__label">Connection path:</span>
+            <span class="path-line__label">Connection path</span>
             You
-            <svg class="li"><use href="#i-arrow-left-right" /></svg>
+            <svg class="li"><use href="#i-arrow-right" /></svg>
             bastion.example.com
-            <svg class="li"><use href="#i-arrow-left-right" /></svg>
+            <svg class="li"><use href="#i-arrow-right" /></svg>
             <span class="path-line__target">app-server.internal</span>
           </div>
         </div>
@@ -528,11 +513,11 @@
           </li>
           <li>
             <span class="callout">C</span> Source segmented control: Saved connection / Inline
-            configuration.
+            configuration. "Saved connection" is disabled when there are no other SSH connections.
           </li>
           <li>
-            <span class="callout">D</span> Gateway dropdown — SSH-type saved connections only, shown
-            as <code>folder / name</code>.
+            <span class="callout">D</span> Connection dropdown — SSH-type saved connections only,
+            shown as <code>folder / sub / name</code> (the edited connection excluded).
           </li>
         </ul>
       </div>
@@ -545,15 +530,12 @@
         Source toggled to "Inline configuration" <span class="callout">E</span> reveals direct SSH
         fields <span class="callout">F</span> for a one-off gateway.
       </div>
-      <div class="collapsible" style="max-width: 620px">
-        <div class="collapsible__header">
+      <div class="category" style="max-width: 620px">
+        <div class="category__title">
           <svg class="li"><use href="#i-arrow-left-right" /></svg>
-          <span class="collapsible__title">Jump Host</span>
-          <span class="collapsible__chevron"
-            ><svg class="li"><use href="#i-chevron-down" /></svg
-          ></span>
+          Jump Host
         </div>
-        <div class="collapsible__body">
+        <div class="category__body">
           <div class="checkrow">
             <span class="checkbox"
               ><svg class="li"><use href="#i-check" /></svg
@@ -600,15 +582,19 @@
               <span class="browse-btn">Browse</span>
             </div>
           </div>
-          <button class="add-hop" style="margin-top: 10px">
+          <div class="field" style="margin-top: 10px">
+            <span class="field__label">Timeout (s)</span>
+            <span class="input input--sm" style="color: var(--text-secondary)">Default (20 s)</span>
+          </div>
+          <button class="add-hop" style="margin-top: 4px">
             <svg class="li"><use href="#i-plus" /></svg> Add another hop
           </button>
           <div class="path-line">
-            <span class="path-line__label">Connection path:</span>
+            <span class="path-line__label">Connection path</span>
             You
-            <svg class="li"><use href="#i-arrow-left-right" /></svg>
+            <svg class="li"><use href="#i-arrow-right" /></svg>
             bastion.example.com
-            <svg class="li"><use href="#i-arrow-left-right" /></svg>
+            <svg class="li"><use href="#i-arrow-right" /></svg>
             <span class="path-line__target">app-server.internal</span>
           </div>
         </div>
@@ -633,15 +619,12 @@
         <span class="callout">I</span>, and an inline validation error
         <span class="callout">J</span> (referenced gateway was deleted) that blocks Save.
       </div>
-      <div class="collapsible" style="max-width: 620px">
-        <div class="collapsible__header">
+      <div class="category" style="max-width: 620px">
+        <div class="category__title">
           <svg class="li"><use href="#i-arrow-left-right" /></svg>
-          <span class="collapsible__title">Jump Host</span>
-          <span class="collapsible__chevron"
-            ><svg class="li"><use href="#i-chevron-down" /></svg
-          ></span>
+          Jump Host
         </div>
-        <div class="collapsible__body">
+        <div class="category__body">
           <div class="checkrow">
             <span class="checkbox"
               ><svg class="li"><use href="#i-check" /></svg
@@ -662,11 +645,11 @@
               <span class="field__label">Source</span>
               <span class="seg">
                 <span class="seg__opt seg__opt--active">Saved connection</span>
-                <span class="seg__opt">Inline</span>
+                <span class="seg__opt">Inline configuration</span>
               </span>
             </div>
             <div class="field" style="margin-bottom: 0">
-              <span class="field__label">Gateway</span>
+              <span class="field__label">Connection</span>
               <span class="select"
                 >Work / edge-gateway.example.com (SSH)
                 <svg class="li"><use href="#i-chevron-down" /></svg
@@ -677,7 +660,7 @@
           <div class="hop-card">
             <div class="hop-card__head">
               <svg class="li"><use href="#i-server" /></svg>
-              Hop 2
+              Hop 2 (innermost)
               <button class="hop-card__remove">
                 <svg class="li"><use href="#i-trash" /></svg> Remove
               </button>
@@ -686,16 +669,16 @@
               <span class="field__label">Source</span>
               <span class="seg">
                 <span class="seg__opt seg__opt--active">Saved connection</span>
-                <span class="seg__opt">Inline</span>
+                <span class="seg__opt">Inline configuration</span>
               </span>
             </div>
             <div class="field" style="margin-bottom: 0">
-              <span class="field__label">Gateway</span>
+              <span class="field__label">Connection</span>
               <span
                 class="select"
                 style="border-color: var(--color-error); color: var(--color-error)"
               >
-                ⟨deleted⟩ internal-bastion <svg class="li"><use href="#i-chevron-down" /></svg>
+                internal-bastion (not found) <svg class="li"><use href="#i-chevron-down" /></svg>
               </span>
             </div>
           </div>
@@ -706,20 +689,20 @@
 
           <div class="path-line">
             <span class="callout" style="margin-right: 4px">I</span>
-            <span class="path-line__label">Connection path:</span>
+            <span class="path-line__label">Connection path</span>
             You
-            <svg class="li"><use href="#i-arrow-left-right" /></svg>
+            <svg class="li"><use href="#i-arrow-right" /></svg>
             edge-gateway
-            <svg class="li"><use href="#i-arrow-left-right" /></svg>
+            <svg class="li"><use href="#i-arrow-right" /></svg>
             internal-bastion
-            <svg class="li"><use href="#i-arrow-left-right" /></svg>
+            <svg class="li"><use href="#i-arrow-right" /></svg>
             <span class="path-line__target">app-server.internal</span>
           </div>
 
           <div class="validation-error">
             <span class="callout">J</span>
             <svg class="li"><use href="#i-circle-alert" /></svg>
-            Hop 2: referenced connection "internal-bastion" not found. Pick an existing SSH
+            Hop 2: referenced connection not found (it may have been deleted). Pick an existing SSH
             connection or switch to inline configuration.
           </div>
 
@@ -735,7 +718,7 @@
           <li><span class="callout">H</span> Per-hop Remove control (error color).</li>
           <li>
             <span class="callout">I</span> Connection-path summary — <code>You → … → target</code>,
-            hops joined by the <code>ArrowLeftRight</code> icon (target in accent).
+            hops joined by the directional <code>ArrowRight</code> icon (target in accent).
           </li>
           <li>
             <span class="callout">J</span> Inline validation error (error color) — deleted/missing
