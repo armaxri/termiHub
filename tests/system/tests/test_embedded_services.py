@@ -10,14 +10,15 @@ status-dot class, so the assertions track real behaviour.
 The live transfer cases (SVC-03 HTTP response, SVC-12 FTP, SVC-13 TFTP) run a
 real client against the server the app starts on ``127.0.0.1`` — the app and the
 test share a host, so no Docker fixture is needed. HTTP uses stdlib ``urllib``;
-FTP/TFTP use ``curl`` (matching the original spec; the stdlib has no TFTP
-client), skipping if ``curl`` is unavailable or lacks the protocol.
+FTP uses stdlib ``ftplib`` and TFTP uses the maintained ``tftpy`` library
+(``termihub_harness.transfers``). These replace the old ``curl`` dependency,
+whose TFTP/FTP support is build-dependent and could silently skip SVC-13 on
+hosts shipping a ``curl`` without ``tftp://`` (issue #964).
 """
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -34,23 +35,14 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.transfers import (
+    TftpUnavailable,
+    ftp_download,
+    ftp_list,
+    tftp_download,
+)
 
 pytestmark = pytest.mark.integration
-
-
-def _curl(url: str) -> subprocess.CompletedProcess[str]:
-    """Run curl against a localhost embedded server, skipping if unusable."""
-    try:
-        return subprocess.run(
-            ["curl", "--silent", "--connect-timeout", "5", "--max-time", "10", url],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except FileNotFoundError:
-        pytest.skip("curl is not installed on this host")
-    except subprocess.TimeoutExpired:
-        pytest.fail(f"curl timed out fetching {url}")
 
 
 class TestEmbeddedServices(
@@ -240,29 +232,34 @@ class TestEmbeddedServices(
         server = self.require_server(name)
         assert server.get("bindHost") == "0.0.0.0", "confirmed bind should be 0.0.0.0"
 
-    # ── SVC-12: FTP actual file transfer (curl) ──────────────────────────────
+    # ── SVC-12: FTP actual file transfer (stdlib ftplib) ─────────────────────
     def test_ftp_file_transfer(self):
         root = self._serve_dir("hello.txt", "termihub-ftp-transfer-ok\n")
         port = self.free_port()
         server = self.create_server(unique_name("ftp"), proto="ftp", root=str(root), port=port)
         self.start_server(server["id"])
 
-        download = _curl(f"ftp://127.0.0.1:{port}/hello.txt")
-        if download.returncode != 0:
-            pytest.skip(f"curl FTP unsupported/failed: {download.stderr.strip()}")
-        assert download.stdout.strip() == "termihub-ftp-transfer-ok"
+        # stdlib ftplib is always available, so the download is verified on every
+        # host (no host-curl-build dependency).
+        downloaded = ftp_download("127.0.0.1", port, "hello.txt")
+        assert downloaded.decode("utf-8").strip() == "termihub-ftp-transfer-ok"
 
-        listing = _curl(f"ftp://127.0.0.1:{port}/")
-        assert "hello.txt" in listing.stdout, "FTP directory listing should include the file"
+        names = ftp_list("127.0.0.1", port, "/")
+        assert any(
+            Path(n).name == "hello.txt" for n in names
+        ), "FTP directory listing should include the file"
 
-    # ── SVC-13: TFTP actual file transfer (curl) ─────────────────────────────
+    # ── SVC-13: TFTP actual file transfer (tftpy RRQ) ────────────────────────
     def test_tftp_file_transfer(self):
         root = self._serve_dir("boot.txt", "termihub-tftp-transfer-ok\n")
         port = self.free_port()
         server = self.create_server(unique_name("tftp"), proto="tftp", root=str(root), port=port)
         self.start_server(server["id"])
 
-        download = _curl(f"tftp://127.0.0.1:{port}/boot.txt")
-        if download.returncode != 0:
-            pytest.skip(f"curl TFTP unsupported/failed: {download.stderr.strip()}")
-        assert download.stdout.strip() == "termihub-tftp-transfer-ok"
+        # tftpy performs a real RRQ, so this is verified everywhere the harness
+        # deps are installed — never silently skipped on a curl without tftp://.
+        try:
+            downloaded = tftp_download("127.0.0.1", port, "boot.txt")
+        except TftpUnavailable as exc:  # pragma: no cover — only if dep missing
+            pytest.skip(str(exc))
+        assert downloaded.decode("utf-8").strip() == "termihub-tftp-transfer-ok"
