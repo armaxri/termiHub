@@ -725,14 +725,36 @@ sudo usermod -a -G dialout $USER
 
 ## Changelog
 
-Update `CHANGELOG.md` for every user-facing change following [Keep a Changelog](https://keepachangelog.com/) format:
+Day-to-day branches **do not edit `CHANGELOG.md`** — that file was the single biggest
+source of merge conflicts, because every PR changed the same `[Unreleased]` lines (and each
+conflict resolution triggered another full CI run). Instead, each `develop`-targeted branch
+records its user-facing notes in a **per-branch fragment** under `docs/changes/`, and the
+fragments are consolidated into `CHANGELOG.md` at release time.
 
-- Add entries under `[Unreleased]`
-- Use categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
-- Write user-facing descriptions (not implementation details)
+For a user-facing change, add a fragment named after your branch:
+
+```bash
+mkdir -p "docs/changes/$(dirname "$(git branch --show-current)")"
+$EDITOR "docs/changes/$(git branch --show-current).md"
+```
+
+Use [Keep a Changelog](https://keepachangelog.com/) categories (`Added`, `Changed`,
+`Deprecated`, `Removed`, `Fixed`, `Security`) and write user-facing descriptions:
+
+```markdown
+### Added
+
+- Added support for Git Bash on Windows (#1234).
+```
 
 **Good**: "Added support for Git Bash on Windows"
 **Bad**: "Implemented GitBashDetector class in shell_detect.rs"
+
+Skip the fragment for changes that are not user-facing (refactors, CI, internal docs,
+test-only work). See [`docs/changes/README.md`](changes/README.md) for the full mechanism,
+template, and rationale (including why intermediate `develop` fixes are curated out of the
+released changelog). Hotfix branches cut directly from a `main` tag are the one exception —
+they edit `CHANGELOG.md` directly (see [Hotfix Process](#hotfix-process)).
 
 ---
 
@@ -752,7 +774,7 @@ Then verify:
 - [ ] No `.unwrap()` calls in Rust production code
 - [ ] No `any` types in TypeScript
 - [ ] Commit messages follow Conventional Commits
-- [ ] `CHANGELOG.md` updated for user-facing changes
+- [ ] Change fragment `docs/changes/<branch>.md` added for user-facing changes (not `CHANGELOG.md`)
 - [ ] Tested on your primary platform
 - [ ] PR description explains what changed and how to test
 
@@ -841,7 +863,7 @@ Before creating a release, run the quality scripts and verify:
 ```
 
 - [ ] All scripts pass without errors
-- [ ] `CHANGELOG.md` has been updated with all user-facing changes
+- [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] No known release-blocking issues remain
 
 ### Version Bump
@@ -861,21 +883,41 @@ Use [Semantic Versioning](https://semver.org/):
 
 ### Finalize Changelog
 
-Move the `[Unreleased]` section to a versioned section:
+Releases are where the per-branch fragments in `docs/changes/` (see
+[`docs/changes/README.md`](changes/README.md)) become the user-facing changelog. This is a
+**curation** step, not a mechanical concatenation — the released changelog should describe
+the _net_ user-facing change, not the development path:
 
-```markdown
-## [Unreleased]
+1. **Review every fragment** under `docs/changes/` (`docs/changes/**/*.md`, excluding
+   `README.md`).
+2. **Curate.** Collapse intermediate `develop`-only churn: if a feature and the fixes made
+   against it before it ever shipped all land in this release, write the single net entry
+   ("X added"), not the feature plus each fix. Keep a `Fixed` entry only when it fixes
+   something **already released on `main`**.
+3. **Write the consolidated section** into `CHANGELOG.md`, moving `[Unreleased]` down and
+   adding a dated version section grouped by Keep a Changelog category:
 
-## [X.Y.Z] - YYYY-MM-DD
+   ```markdown
+   ## [Unreleased]
 
-### Added
+   ## [X.Y.Z] - YYYY-MM-DD
 
-- ...
+   ### Added
 
-### Fixed
+   - ...
 
-- ...
-```
+   ### Fixed
+
+   - ...
+   ```
+
+4. **Delete the consumed fragments** so `docs/changes/` holds only `README.md`:
+
+   ```bash
+   git rm docs/changes/**/*.md   # leaves docs/changes/README.md
+   ```
+
+   `./scripts/release-check.sh` warns if any unconsolidated fragments remain.
 
 ### Commit, Tag, and Push
 
@@ -915,7 +957,8 @@ For urgent bug fixes on a released version:
 1. Create a branch from the release tag: `git checkout -b bugfix/description vX.Y.Z`
 2. Fix the bug and add tests
 3. Bump the patch version (e.g., `X.Y.Z` → `X.Y.Z+1`)
-4. Update `CHANGELOG.md`
+4. Update `CHANGELOG.md` **directly** — hotfixes ship straight to `main`, so they skip the
+   `docs/changes/` fragment flow (there is no `develop` integration window to consolidate over)
 5. Merge to `main` via PR
 6. Tag and push (same process as above)
 

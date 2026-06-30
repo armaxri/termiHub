@@ -79,6 +79,21 @@ if %errorlevel%==0 (
     set FAILED=1
 )
 
+REM === Unconsolidated Change Fragments ===
+echo.
+echo === Unconsolidated Change Fragments ===
+
+REM Per-branch change fragments live in docs\changes\ (see docs\changes\README.md).
+REM At release they must be consolidated into CHANGELOG.md and deleted; README.md stays.
+dir /b /s docs\changes\*.md 2>nul | findstr /v /i "\\README.md" >nul 2>&1
+if %errorlevel%==0 (
+    echo   WARN: Unconsolidated change fragments remain in docs\changes\ - consolidate into CHANGELOG.md and delete:
+    dir /b /s docs\changes\*.md 2>nul | findstr /v /i "\\README.md"
+    set /a WARNINGS+=1
+) else (
+    echo   PASS: No unconsolidated change fragments under docs\changes\
+)
+
 REM === Tests ===
 echo.
 echo === Tests ===

@@ -67,6 +67,21 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== Unconsolidated Change Fragments ==="
+
+# Per-branch change fragments live in docs/changes/ (see docs/changes/README.md).
+# At release they must be consolidated into CHANGELOG.md and deleted; README.md stays.
+FRAGMENTS=$(find docs/changes -type f -name '*.md' ! -name 'README.md' 2>/dev/null || true)
+
+if [ -n "$FRAGMENTS" ]; then
+    warn "Unconsolidated change fragments remain in docs/changes/ — consolidate into CHANGELOG.md and delete:"
+    echo "$FRAGMENTS" | sed 's/^/    /'
+else
+    pass "No unconsolidated change fragments under docs/changes/"
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== Tests ==="
 
 if pnpm test 2>&1; then

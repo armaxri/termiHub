@@ -142,13 +142,20 @@ as you go.
 
 ### 3.1 Finalize CHANGELOG.md (~30 min)
 
-1. Move all `[Unreleased]` entries into a new `[0.1.0] - 2026-MM-DD` section
-2. Review every entry for clarity and user-facing language
-3. Group entries logically (Added, Changed, Fixed, etc.)
-4. Remove duplicate categories (current CHANGELOG has two `### Added`,
+1. Consolidate every per-branch fragment in `docs/changes/` (see
+   [`docs/changes/README.md`](changes/README.md)) plus any existing `[Unreleased]`
+   entries into a new `[0.1.0] - 2026-MM-DD` section
+2. Curate for the **net** user-facing change — collapse intermediate `develop`-only
+   fixes against features that never shipped; keep `Fixed` entries only for things
+   already released on `main`
+3. Review every entry for clarity and user-facing language
+4. Group entries logically (Added, Changed, Fixed, etc.)
+5. Remove duplicate categories (current CHANGELOG has two `### Added`,
    two `### Fixed`, two `### Changed` blocks — merge them)
-5. Add a brief release summary paragraph at the top of the version section
-6. Leave an empty `[Unreleased]` section above for future changes
+6. Add a brief release summary paragraph at the top of the version section
+7. Leave an empty `[Unreleased]` section above for future changes
+8. `git rm docs/changes/**/*.md` (leaves `docs/changes/README.md`); confirm
+   `./scripts/release-check.sh` reports no unconsolidated fragments
 
 ### 3.2 Version Bump Verification (~10 min)
 

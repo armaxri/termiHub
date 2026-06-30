@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!--
+  Do NOT add entries here on a develop-targeted branch. Record user-facing changes in a
+  per-branch fragment under docs/changes/<branch-name>.md instead — see docs/changes/README.md.
+  Fragments are consolidated into this section at release time. Only hotfix branches cut
+  directly from a main tag edit this file directly.
+-->
+
 ### Added
 
 - Testing: **ported the Windows-shells & WSL infrastructure suite to the Python bridge harness** (#975, part of #814 / #803, epic #799). The old `tests/e2e/infrastructure/windows-shells.test.js` (MT-LOCAL-02/04/06/11..20) could only assert that the `.xterm` element existed — it could not read the GPU canvas — so most of its cases degenerated into "a terminal opened". The new `tests/system/tests/test_windows_shells.py` reads the reconstructed terminal buffer and asserts the **actual** behaviour: a selected shell spawns, accepts input, and echoes a marker (PowerShell / cmd.exe), the Local editor's shell dropdown defaults to PowerShell and offers the Windows shells, rapidly-created shells each accept input, the toolbar opens the default shell, and the local file browser follows a Windows shell's cwd. A second class drives **WSL** through the dedicated, Windows-only `wsl` connection type (the codebase moved WSL out of the Local shell dropdown into its own type with a `field-distribution` selector): launch + POSIX input, no `clear: command not found` startup error, the file browser's WSL initial path, cwd-following on `cd`, and `/mnt/<drive>` → native Windows-path translation. The whole module is **Windows-only** (the inverse of `test_cross_platform.py`'s skip), and the WSL cases skip cleanly when no WSL2 distribution is installed — gated by a new pure `parse_wsl_distros` helper (mirrors the backend's `parse_wsl_output`, unit-tested in `test_wsl_detect.py`) over `wsl.exe --list --quiet`. New `ConnectionsUi` helpers back the suite: a `shell=` argument + `select_shell` on `create_local_connection`, and `open_wsl_editor` / `create_wsl_connection`. The original WebdriverIO spec is removed and [docs/testing.md](docs/testing.md)'s coverage map points at the new home. (Closes #975)
