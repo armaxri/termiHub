@@ -39,38 +39,51 @@ Add a first-class SSH gateway / jump host option directly in the SSH connection 
 The visual surfaces are specified by the mockups — open them in a browser to review layout and
 states. This section describes them; the mockups are authoritative for layout.
 
-| Mockup                                                                           | Shows                                                                                                               |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| [`mockups/ssh-jump-host-editor.html`](mockups/ssh-jump-host-editor.html)         | Connection editor "Jump Host" collapsible section: collapsed, saved-connection mode, inline mode, multi-hop + error |
-| [`mockups/ssh-jump-host-indicators.html`](mockups/ssh-jump-host-indicators.html) | Sidebar hop badges + tooltip, status-bar hop-chain display, and the jump-host context menu                          |
+| Mockup                                                                           | Shows                                                                                                   |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [`mockups/ssh-jump-host-editor.html`](mockups/ssh-jump-host-editor.html)         | Connection editor "Jump Host" category: disabled, saved-connection mode, inline mode, multi-hop + error |
+| [`mockups/ssh-jump-host-indicators.html`](mockups/ssh-jump-host-indicators.html) | Sidebar hop badges + tooltip, status-bar hop-chain display, and the jump-host context menu              |
 
 ### Connection Editor — Jump Host Section
 
-A new collapsible **"Jump Host"** section appears in the SSH connection editor, between the
-Authentication and Advanced groups. Collapsed by default; a single **"Connect through a jump host"**
-checkbox expands the body. See `mockups/ssh-jump-host-editor.html` states 1–4.
+A **"Jump Host"** section appears in the SSH connection editor as a flat category
+(`settings-panel__category`, the same pattern as the other editor categories — "General",
+"SSH Agent", "Session"), after the connection/authentication fields and before the SSH Agent
+category. A single **"Connect through a jump host"** checkbox (with the `ArrowLeftRight` icon)
+reveals the body. The section has no separate "Advanced" group and is not a collapsible chevron
+group — the connection editor uses flat categories throughout. See
+`mockups/ssh-jump-host-editor.html` states 1–4.
+
+Each hop carries a **source segmented control** ("Saved connection" / "Inline configuration")
+selecting one of the two modes below. The "Saved connection" option is disabled when there are no
+other SSH connections to reference. A per-hop **Connect Timeout (s)** field applies to either mode
+(blank = the default SSH connect timeout).
 
 #### Mode 1: Saved Connection Reference
 
 The user selects an existing SSH connection from a dropdown. This is the quickest option when the
 bastion host is already configured as a saved connection. The dropdown only shows SSH-type saved
-connections and displays the full path (folder / name) to disambiguate connections with the same
-name. See state 2.
+connections and displays the full path (`folder / sub / name`) to disambiguate connections with the
+same name; the connection being edited is excluded so it cannot reference itself. A reference whose
+target was deleted/renamed is shown as `… (not found)` and flagged by validation. See state 2.
 
 #### Mode 2: Inline Configuration
 
 The user configures the gateway directly within the connection editor (host, port, username, auth
-method, key), without needing a separate saved connection. Useful for one-off gateways or when the
-bastion host isn't worth saving standalone. See state 3.
+method, key/password), without needing a separate saved connection. Useful for one-off gateways or
+when the bastion host isn't worth saving standalone. See state 3.
 
 #### Multi-Hop Chaining
 
-Clicking "Add another hop" appends an additional jump host entry. Hops are numbered and ordered from
-outermost (first connection) to innermost (closest to target), each with its own Remove control. A
-**"Connection path"** summary line at the bottom (`You → edge-gateway → internal-bastion → target`)
-provides a visual summary of the full hop chain for easy verification. When the chain is invalid
-(missing/deleted reference, circular reference, missing inline fields), an inline **validation
-error** is shown in the error color and Save is blocked. See state 4.
+Clicking "Add another hop" appends an additional jump host entry. A lone hop renders as a plain
+field group; as soon as there are two or more hops, each renders as a **numbered, removable hop
+card** ("Hop 1 (outermost)", "Hop 2 (intermediate)", …, "Hop N (innermost)") with its own Remove
+control. Hops are ordered from outermost (first connection) to innermost (closest to target). A
+**"Connection path"** summary line (`You → edge-gateway → internal-bastion → target`) provides a
+visual summary of the full hop chain for easy verification, with the target node in the accent
+color. Non-blocking **warnings** (e.g. deep chains) appear as hints; when the chain is invalid
+(missing/deleted reference, circular reference, missing inline host/username), an inline
+**validation error** block is shown in the error color and Save is blocked. See state 4.
 
 ### Connection Sidebar — Visual Indicator
 
@@ -316,57 +329,74 @@ struct PooledSession {
 
 #### Connection Editor Changes
 
-Extend the SSH settings schema to include the jump host section:
+The SSH connection settings carry a single `proxyJump` array of hop configs — there is **no**
+separate `jumpHostEnabled` flag and **no** `source` discriminator field. Both are derived state:
+
+- **Enabled** ⇔ the `proxyJump` array is non-empty. Ticking "Connect through a jump host" seeds one
+  default inline hop; unticking clears the array (emits `undefined`).
+- **Mode** ⇔ a hop is "saved" iff it carries a `connectionId`; otherwise it is "inline". Switching
+  the source toggle sets/clears `connectionId` (and clears stale inline `host`/`username`).
 
 ```typescript
-// New fields in SSH connection settings schema
-interface JumpHostEntry {
-  /** "saved" or "inline" */
-  source: "saved" | "inline";
-  /** Connection ID when source is "saved" */
+// In src/types/connection.ts — one entry per hop, ordered outermost → innermost.
+interface JumpHostConfig {
+  /** Reference to a saved SSH connection; present ⇒ "saved" mode, absent ⇒ "inline". */
   connectionId?: string;
-  /** Inline config fields when source is "inline" */
-  host?: string;
-  port?: number;
-  username?: string;
-  authMethod?: string;
+  host: string;
+  port: number;
+  username: string;
+  /** "key" | "password" | "agent". */
+  authMethod: string;
   password?: string;
   keyPath?: string;
-  savePassword?: boolean;
+  /** Per-hop connect/handshake timeout (s); unset ⇒ default SSH connect timeout (#951). */
+  connectTimeoutSecs?: number;
 }
 
-// Added to SSH connection config
+// SSH connection settings (no `jumpHostEnabled`): the chain lives in `proxyJump`.
 interface SshConnectionConfig {
   // ... existing fields ...
-  jumpHostEnabled: boolean;
-  jumpHosts: JumpHostEntry[];
+  /** OpenSSH `-J` / ProxyJump chain; empty/absent ⇒ direct connection. */
+  proxyJump?: JumpHostConfig[];
 }
 ```
+
+> The Rust model serializes the chain as `proxyJump` with a serde `alias = "jumpHosts"`; the
+> frontend tolerates both keys (`getJumpHosts` in `src/utils/jumpHost.ts`).
 
 #### New Components
 
 ```
 src/components/ConnectionEditor/
-  JumpHostSection.tsx        # Collapsible jump host configuration section
-  JumpHostEntry.tsx          # Single hop entry (saved ref or inline config)
+  JumpHostSection.tsx        # Jump host editor category (enable checkbox, hops, path, validation)
+  JumpHostEntry.tsx          # Single hop entry (source toggle + saved dropdown or inline fields)
   JumpHostPathDisplay.tsx    # Visual "You → hop1 → hop2 → target" display
+src/utils/
+  jumpHost.ts                # Chain extraction + display helpers (badge/status/path/gateway/deps)
+  validateProxyJump.ts       # Save-time validation (inline fields, missing/non-SSH refs, cycles, depth)
 ```
 
-`JumpHostSection.tsx` follows the collapsible group pattern already used in the connection editor (Authentication, Advanced). Each `JumpHostEntry` renders either a saved connection dropdown or inline SSH fields.
+`JumpHostSection.tsx` follows the flat `settings-panel__category` pattern used by the other editor
+categories (General, SSH Agent, Session). Each `JumpHostEntry` renders the source segmented control
+and then either a saved-connection dropdown or the inline SSH fields, plus the per-hop connect
+timeout.
 
 #### Sidebar Visual Indicator
 
-Modify the connection tree rendering in `src/components/Sidebar/` to show a hop badge (lucide
-`arrow-left-right` icon) on connections with jump hosts configured:
+The connection tree rendering in `src/components/Sidebar/ConnectionList.tsx` shows a hop badge
+(lucide `ArrowLeftRight`) on connections whose config has a non-empty `proxyJump` chain, using the
+`hasJumpHost` / `getJumpHosts` / `jumpHostTooltip` helpers from `src/utils/jumpHost.ts`. Multi-hop
+connections add a small hop-count label:
 
 ```typescript
-// In connection tree item rendering
-{connection.config.jumpHosts?.length > 0 && (
+// In connection tree item rendering (ConnectionList.tsx)
+{hasJumpHost(connection.config) && (
   <span
-    className="connection-item__jump-badge"
-    title={`Via: ${jumpHostNames.join(" → ")}`}
+    className="connection-tree__jump-badge"
+    title={jumpHostTooltip(getJumpHosts(connection.config), connection.name)}
   >
     <ArrowLeftRight size={12} />
+    {hopCount > 1 && <span className="connection-tree__hop-count">{hopCount}</span>}
   </span>
 )}
 ```
@@ -377,17 +407,24 @@ Minimal changes needed — the jump host config is part of the connection config
 
 #### API Layer (`src/services/api.ts`)
 
-No new Tauri commands needed for basic jump host support — the jump host config is part of the SSH connection config that flows through the existing `connect_session` command. The backend resolves and connects through the chain internally.
+No new Tauri commands needed for jump host support — the jump host config is part of the SSH
+connection config that flows through the existing connect command. The backend resolves and connects
+through the chain internally (`src-tauri/src/connection/jump_host_resolver.rs`), and is the
+authoritative safety net for cycles/missing references at connect time.
 
-New command only for validation:
+Save-time validation is done **client-side** by `validateProxyJump` (`src/utils/validateProxyJump.ts`)
+rather than via a round-trip Tauri command — it returns `{ errors, warnings }`, where `errors` block
+Save and `warnings` are advisory:
 
 ```typescript
-/** Validate a jump host chain (check for circular refs, missing connections). */
-export function validateJumpHostChain(
-  connectionId: string,
-  jumpHosts: JumpHostEntry[]
-): Promise<ValidationResult>;
+export function validateProxyJump(
+  hops: JumpHostConfig[],
+  ctx?: { connections: SavedConnection[]; currentConnectionId?: string }
+): { errors: string[]; warnings: string[] };
 ```
+
+Reference and circular-chain checks run only when `ctx` (the saved connections) is supplied; inline
+hops are validated for required host/username regardless.
 
 #### Types (`src/types/connection.ts`)
 
@@ -496,5 +533,11 @@ flag as the rest of `ssh_advanced.rs`.
 
 ## Implementation Status
 
-Not started — this is a `backlog/` concept. Once implementation begins, run
-`/sync-concept ssh-jump-host` after each change to keep [`sync.md`](sync.md) current.
+Substantially implemented. The core connect path (russh chain over `channel_open_direct_tcpip`),
+session pooling (#924), the connection-editor "Jump Host" category with saved/inline modes,
+multi-hop cards, per-hop connect timeout (#951), client-side validation, deletion protection
+(#941), and the visual indicators (sidebar badge, status-bar chain, context menu, connection-path
+dialog) have shipped. The editor UI was reconciled with these artifacts in #937 (see
+[`sync.md`](sync.md), Resolved R1–R5). Remaining open items are connect-time per-hop error UX and
+the per-terminal reconnection banner (tracked in [`sync.md`](sync.md) Open divergences). Run
+`/sync-concept ssh-jump-host` after each further change to keep [`sync.md`](sync.md) current.
