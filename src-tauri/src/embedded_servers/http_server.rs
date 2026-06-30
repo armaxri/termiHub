@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::State;
+use axum::handler::Handler;
 use axum::http::{Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
@@ -106,10 +107,14 @@ fn directory_listing_html(
     ))
 }
 
-/// Handler for directory listing requests.
+/// Handler invoked for paths that `ServeDir` could not serve as a file.
+///
+/// For real directories it renders an HTML index; for anything else it returns
+/// `404`. File requests never reach this handler — `ServeDir` serves them
+/// directly (see [`build_router`]).
 async fn dir_listing_handler(
+    axum::extract::State(root): axum::extract::State<PathBuf>,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    axum::extract::Extension(root): axum::extract::Extension<PathBuf>,
 ) -> Response {
     let url_path = uri.path();
     // Resolve the filesystem path, rejecting traversal outside root.
@@ -128,13 +133,36 @@ async fn dir_listing_handler(
         return StatusCode::FORBIDDEN.into_response();
     }
     if !full_path.is_dir() {
-        // Not a directory — let ServeDir handle it.
+        // Not a directory (e.g. a genuinely missing path) — 404.
         return StatusCode::NOT_FOUND.into_response();
     }
     match directory_listing_html(&full_path, url_path) {
         Ok(html) => Html(html).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+/// Build the HTTP router serving files from `root`.
+///
+/// When `directory_listing` is enabled, files are served by [`ServeDir`] and any
+/// path it cannot serve as a file (directories, missing paths) falls through to
+/// [`dir_listing_handler`], which renders a directory index for real
+/// directories. Index-file auto-serving is disabled so directories always render
+/// the generated listing. When disabled, only [`ServeDir`] is used.
+fn build_router(root: PathBuf, directory_listing: bool, tracking_state: TrackingState) -> Router {
+    let router = if directory_listing {
+        let serve_dir = ServeDir::new(root.clone())
+            .append_index_html_on_directories(false)
+            .fallback(dir_listing_handler.with_state(root));
+        Router::new().fallback_service(serve_dir)
+    } else {
+        Router::new().fallback_service(ServeDir::new(root))
+    };
+
+    router.layer(middleware::from_fn_with_state(
+        tracking_state,
+        track_connections,
+    ))
 }
 
 /// Start and run the HTTP server, blocking until the shutdown flag is set.
@@ -167,22 +195,7 @@ pub fn start_http_server(
             .await
             .context("Failed to bind HTTP server")?;
 
-        let serve_dir = ServeDir::new(root.clone());
-
-        let mut router = if directory_listing {
-            Router::new()
-                .route("/*path", axum::routing::get(dir_listing_handler))
-                .route("/", axum::routing::get(dir_listing_handler))
-                .layer(axum::Extension(root.clone()))
-                .fallback_service(serve_dir)
-        } else {
-            Router::new().fallback_service(serve_dir)
-        };
-
-        router = router.layer(middleware::from_fn_with_state(
-            tracking_state,
-            track_connections,
-        ));
+        let router = build_router(root, directory_listing, tracking_state);
 
         tracing::info!(addr = %addr, "HTTP server listening");
 
@@ -202,4 +215,74 @@ pub fn start_http_server(
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    /// Build a router over a temp dir containing a single `hello.txt` file.
+    fn router_with_hello(directory_listing: bool) -> (tempfile::TempDir, Router) {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        std::fs::write(dir.path().join("hello.txt"), "hello world").expect("write file");
+        let tracking_state = TrackingState {
+            stats: AtomicServerStats::new(),
+        };
+        let router = build_router(dir.path().to_path_buf(), directory_listing, tracking_state);
+        (dir, router)
+    }
+
+    async fn get(router: Router, uri: &str) -> (StatusCode, String) {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("router response");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Regression test for #961: with directory listing enabled, downloading an
+    /// individual file must still succeed (previously returned 404).
+    #[tokio::test]
+    async fn listing_on_serves_file() {
+        let (_dir, router) = router_with_hello(true);
+        let (status, body) = get(router, "/hello.txt").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "hello world");
+    }
+
+    #[tokio::test]
+    async fn listing_on_renders_directory_index() {
+        let (_dir, router) = router_with_hello(true);
+        let (status, body) = get(router, "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("hello.txt"), "index should list hello.txt");
+        assert!(body.contains("Index of /"), "index should have a heading");
+    }
+
+    #[tokio::test]
+    async fn listing_off_serves_file() {
+        let (_dir, router) = router_with_hello(false);
+        let (status, body) = get(router, "/hello.txt").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "hello world");
+    }
+
+    #[tokio::test]
+    async fn listing_on_missing_file_returns_404() {
+        let (_dir, router) = router_with_hello(true);
+        let (status, _) = get(router, "/nope.txt").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
 }
