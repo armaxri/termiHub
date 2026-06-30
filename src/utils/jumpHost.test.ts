@@ -7,6 +7,7 @@ import {
   jumpHostGatewayConnection,
   connectionPathLabel,
   sshJumpHostOptions,
+  findJumpHostDependents,
 } from "./jumpHost";
 import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
@@ -191,5 +192,57 @@ describe("sshJumpHostOptions", () => {
       "me"
     );
     expect(opts.map((o) => o.id)).toEqual(["gw"]);
+  });
+});
+
+describe("findJumpHostDependents (#941)", () => {
+  /** An SSH connection whose proxyJump chain is `chain`. */
+  const conn = (id: string, chain: JumpHostConfig[]): SavedConnection => ({
+    id,
+    name: id,
+    folderId: null,
+    config: sshConfig(chain.length ? { proxyJump: chain } : {}),
+  });
+  const ref = (connectionId: string): JumpHostConfig => ({
+    connectionId,
+    host: "",
+    port: 22,
+    username: "",
+    authMethod: "key",
+  });
+
+  it("finds connections that reference the target as a jump host", () => {
+    const a = conn("A", [ref("bastion")]);
+    const b = conn("B", [hop("inline-host"), ref("bastion")]);
+    const c = conn("C", [hop("other")]);
+    const deps = findJumpHostDependents([a, b, c, conn("bastion", [])], ["bastion"]);
+    expect(deps.map((d) => d.id).sort()).toEqual(["A", "B"]);
+  });
+
+  it("returns nothing for an unreferenced connection (no false positives on inline hops)", () => {
+    const a = conn("A", [hop("inline-bastion")]);
+    expect(findJumpHostDependents([a, conn("lonely", [])], ["lonely"])).toEqual([]);
+  });
+
+  it("excludes connections within the deletion set (intra-set references don't count)", () => {
+    // Deleting A and bastion together; A references bastion, but A is also going.
+    const a = conn("A", [ref("bastion")]);
+    const deps = findJumpHostDependents([a, conn("bastion", [])], ["A", "bastion"]);
+    expect(deps).toEqual([]);
+  });
+
+  it("ignores a hop that references the target inline (no connectionId)", () => {
+    const a = conn("A", [hop("bastion")]); // host "bastion", not a saved reference
+    expect(findJumpHostDependents([a, conn("bastion", [])], ["bastion"])).toEqual([]);
+  });
+
+  it("tolerates the legacy jumpHosts key", () => {
+    const legacy: SavedConnection = {
+      id: "L",
+      name: "L",
+      folderId: null,
+      config: { type: "ssh", config: { jumpHosts: [ref("bastion")] } },
+    };
+    expect(findJumpHostDependents([legacy], ["bastion"]).map((d) => d.id)).toEqual(["L"]);
   });
 });

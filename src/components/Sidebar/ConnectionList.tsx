@@ -46,7 +46,13 @@ import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
-import { getJumpHosts, jumpHostTooltip, jumpHostGatewayConnection } from "@/utils/jumpHost";
+import {
+  getJumpHosts,
+  jumpHostTooltip,
+  jumpHostGatewayConnection,
+  findJumpHostDependents,
+} from "@/utils/jumpHost";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
@@ -366,6 +372,11 @@ export function ConnectionList() {
   const [draggingAgentName, setDraggingAgentName] = useState<string | null>(null);
   const [draggingAgentDef, setDraggingAgentDef] = useState<AgentDefinitionInfo | null>(null);
   const [draggingSelectionCount, setDraggingSelectionCount] = useState(0);
+  /** Pending jump-host delete confirmation (set when the target is referenced). */
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
   const folders = useAppStore((s) => s.folders);
   const connections = useAppStore((s) => s.connections);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
@@ -577,14 +588,41 @@ export function ConnectionList() {
 
   const handleDelete = useCallback(
     (connectionId: string) => {
-      if (selectedConnectionIds.size > 1 && selectedConnectionIds.has(connectionId)) {
-        bulkDeleteConnections([...selectedConnectionIds]);
-        clearConnectionSelection();
-      } else {
-        deleteConnection(connectionId);
+      const bulk = selectedConnectionIds.size > 1 && selectedConnectionIds.has(connectionId);
+      const targetIds = bulk ? [...selectedConnectionIds] : [connectionId];
+      const doDelete = () => {
+        if (bulk) {
+          bulkDeleteConnections(targetIds);
+          clearConnectionSelection();
+        } else {
+          deleteConnection(connectionId);
+        }
+      };
+
+      // Warn before deleting a connection still used as a jump host elsewhere — it
+      // would silently break those connections' chains (#941).
+      const dependents = findJumpHostDependents(connections, targetIds);
+      if (dependents.length > 0) {
+        const names = dependents.map((d) => d.name).join(", ");
+        const subject = bulk ? "These connections are" : "This connection is";
+        setDeleteConfirm({
+          message: `${subject} used as a jump host by ${dependents.length} other connection(s): ${names}. Delete anyway?`,
+          onConfirm: () => {
+            setDeleteConfirm(null);
+            doDelete();
+          },
+        });
+        return;
       }
+      doDelete();
     },
-    [deleteConnection, bulkDeleteConnections, selectedConnectionIds, clearConnectionSelection]
+    [
+      deleteConnection,
+      bulkDeleteConnections,
+      selectedConnectionIds,
+      clearConnectionSelection,
+      connections,
+    ]
   );
 
   const handleDuplicate = useCallback(
@@ -1027,6 +1065,12 @@ export function ConnectionList() {
           ) : null}
         </DragOverlay>
       </DndContext>
+      <ConfirmDeleteDialog
+        open={deleteConfirm !== null}
+        message={deleteConfirm?.message ?? ""}
+        onConfirm={() => deleteConfirm?.onConfirm()}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </div>
   );
 }
