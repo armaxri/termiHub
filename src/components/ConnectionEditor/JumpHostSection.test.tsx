@@ -168,6 +168,30 @@ describe("JumpHostSection", () => {
     expect(onChange).toHaveBeenCalledWith([{ ...HOP, authMethod: "password" }]);
   });
 
+  it("renders the per-hop connect timeout populated from the hop", () => {
+    render([{ ...HOP, connectTimeoutSecs: 45 }], vi.fn());
+    expect((query("jump-host-connect-timeout-0") as HTMLInputElement).value).toBe("45");
+  });
+
+  it("shows an empty connect timeout when unset", () => {
+    render([HOP], vi.fn());
+    expect((query("jump-host-connect-timeout-0") as HTMLInputElement).value).toBe("");
+  });
+
+  it("editing the connect timeout merges a number into the hop", () => {
+    const onChange = vi.fn();
+    render([HOP], onChange);
+    setValue(query("jump-host-connect-timeout-0") as HTMLInputElement, "60");
+    expect(onChange).toHaveBeenCalledWith([{ ...HOP, connectTimeoutSecs: 60 }]);
+  });
+
+  it("clearing the connect timeout resets it to undefined (default)", () => {
+    const onChange = vi.fn();
+    render([{ ...HOP, connectTimeoutSecs: 45 }], onChange);
+    setValue(query("jump-host-connect-timeout-0") as HTMLInputElement, "");
+    expect(onChange).toHaveBeenCalledWith([{ ...HOP, connectTimeoutSecs: undefined }]);
+  });
+
   it("disabling clears the jump-host config", () => {
     const onChange = vi.fn();
     render([HOP], onChange);
