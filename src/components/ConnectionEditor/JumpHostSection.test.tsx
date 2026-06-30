@@ -59,7 +59,12 @@ function query(testId: string): HTMLElement | null {
 function render(
   value: JumpHostConfig[] | undefined,
   onChange: (hops: JumpHostConfig[] | undefined) => void,
-  opts: { targetHost?: string; errors?: string[]; warnings?: string[] } = {}
+  opts: {
+    targetHost?: string;
+    errors?: string[];
+    warnings?: string[];
+    savedConnections?: { id: string; label: string }[];
+  } = {}
 ) {
   act(() => {
     root.render(
@@ -67,6 +72,7 @@ function render(
         value={value}
         targetHost={opts.targetHost ?? "target.internal"}
         onChange={onChange}
+        savedConnections={opts.savedConnections}
         errors={opts.errors}
         warnings={opts.warnings}
       />
@@ -271,5 +277,67 @@ describe("JumpHostSection", () => {
     expect(query("jump-host-warning")?.textContent).toContain("Deep chains");
     // A warning is not an error block.
     expect(query("jump-host-errors")).toBeNull();
+  });
+
+  // ── Source toggle: saved-connection reference vs inline (#940) ──────
+
+  const OPTIONS = [
+    { id: "Work/edge", label: "Work / edge" },
+    { id: "Work/bastion", label: "Work / bastion" },
+  ];
+
+  it("defaults a fresh hop to inline mode with the inline fields shown", () => {
+    render([HOP], vi.fn(), { savedConnections: OPTIONS });
+    expect(
+      (query("jump-host-source-inline-0") as HTMLButtonElement).getAttribute("aria-checked")
+    ).toBe("true");
+    expect(query("jump-host-host-0")).toBeTruthy();
+    expect(query("jump-host-connection-0")).toBeNull();
+  });
+
+  it("switching to saved mode selects the first connection and clears inline host/username", () => {
+    const onChange = vi.fn();
+    render([HOP], onChange, { savedConnections: OPTIONS });
+    act(() => {
+      (query("jump-host-source-saved-0") as HTMLButtonElement).click();
+    });
+    expect(onChange).toHaveBeenCalledWith([
+      { ...HOP, connectionId: "Work/edge", host: "", username: "" },
+    ]);
+  });
+
+  it("disables the saved option when there are no SSH connections to reference", () => {
+    render([HOP], vi.fn(), { savedConnections: [] });
+    expect((query("jump-host-source-saved-0") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("renders the dropdown (not inline fields) for a saved-connection hop", () => {
+    render([{ ...HOP, connectionId: "Work/bastion" }], vi.fn(), { savedConnections: OPTIONS });
+    const select = query("jump-host-connection-0") as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    expect(select.value).toBe("Work/bastion");
+    expect(query("jump-host-host-0")).toBeNull();
+  });
+
+  it("picking a different connection updates connectionId", () => {
+    const onChange = vi.fn();
+    render([{ ...HOP, connectionId: "Work/bastion" }], onChange, { savedConnections: OPTIONS });
+    setValue(query("jump-host-connection-0") as HTMLSelectElement, "Work/edge", "change");
+    expect(onChange).toHaveBeenCalledWith([{ ...HOP, connectionId: "Work/edge" }]);
+  });
+
+  it("switching back to inline clears the connectionId", () => {
+    const onChange = vi.fn();
+    render([{ ...HOP, connectionId: "Work/bastion" }], onChange, { savedConnections: OPTIONS });
+    act(() => {
+      (query("jump-host-source-inline-0") as HTMLButtonElement).click();
+    });
+    expect(onChange).toHaveBeenCalledWith([{ ...HOP, connectionId: undefined }]);
+  });
+
+  it("shows a 'not found' option for a reference whose connection is gone", () => {
+    render([{ ...HOP, connectionId: "deleted-id" }], vi.fn(), { savedConnections: OPTIONS });
+    const select = query("jump-host-connection-0") as HTMLSelectElement;
+    expect(select.textContent).toContain("not found");
   });
 });
