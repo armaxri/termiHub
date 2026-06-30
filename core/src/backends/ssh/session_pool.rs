@@ -104,7 +104,10 @@ impl<T: Clone> RefPool<T> {
     }
 
     fn gate_for(&self, key: &str) -> Arc<AsyncMutex<()>> {
-        let mut gates = self.gates.lock().expect("session pool gates mutex poisoned");
+        let mut gates = self
+            .gates
+            .lock()
+            .expect("session pool gates mutex poisoned");
         gates
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
@@ -315,7 +318,10 @@ mod tests {
         let pool = RefPool::<Arc<Tracked>>::new();
         let d = drops.clone();
         let r = pool
-            .get_or_create("k", move || async move { Ok::<_, ()>(Arc::new(Tracked(d))) })
+            .get_or_create(
+                "k",
+                move || async move { Ok::<_, ()>(Arc::new(Tracked(d))) },
+            )
             .await
             .unwrap();
         assert_eq!(drops.load(Ordering::SeqCst), 0);

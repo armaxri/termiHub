@@ -367,12 +367,13 @@ impl TunnelManager {
             ))
         } else {
             let cfg = ssh_config.clone();
-            let endpoint = block_on_runtime(self.endpoint_pool.get_or_create(conn_id, || async move {
-                core_connect_cancellable(&cfg, Some(cancel))
-                    .await
-                    .map(|(session, _registry)| Arc::new(session))
-                    .map_err(|e| TerminalError::SshError(e.to_string()))
-            }))?;
+            let endpoint =
+                block_on_runtime(self.endpoint_pool.get_or_create(conn_id, || async move {
+                    core_connect_cancellable(&cfg, Some(cancel))
+                        .await
+                        .map(|(session, _registry)| Arc::new(session))
+                        .map_err(|e| TerminalError::SshError(e.to_string()))
+                }))?;
             let session = (*endpoint).clone();
             Ok((
                 session,
@@ -415,8 +416,14 @@ impl TunnelManager {
         &self,
         ssh_config: &SshConfig,
         cancel: CancellationToken,
-    ) -> Result<(SshSession, ForwardedChannelRegistry, PooledRef<Arc<SshGateway>>), TerminalError>
-    {
+    ) -> Result<
+        (
+            SshSession,
+            ForwardedChannelRegistry,
+            PooledRef<Arc<SshGateway>>,
+        ),
+        TerminalError,
+    > {
         let cfg = ssh_config.clone();
         block_on_runtime(async move {
             tokio::select! {
