@@ -23,7 +23,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import IO, Optional
+from typing import Callable, IO, Optional
 
 import psutil
 
@@ -151,11 +151,6 @@ class AppInstance:
         return self._config_dir
 
     @property
-    def bridge_port(self) -> Optional[int]:
-        """The bridge port the app was last started against (``None`` if never)."""
-        return self._bridge_port
-
-    @property
     def log_path(self) -> Path:
         """Path of the file the app's stdout/stderr is captured to."""
         return self._log_path
@@ -238,12 +233,19 @@ class AppInstance:
                 pass
             self._log_file = None
 
-    def restart(self) -> None:
-        """Kill and relaunch against the same bridge port and config dir."""
+    def restart(self, between: Optional[Callable[[], None]] = None) -> None:
+        """Kill and relaunch against the same bridge port and config dir.
+
+        ``between`` runs while the app is down (after ``stop``, before ``start``)
+        — used to tamper with on-disk config so the relaunch exercises startup
+        recovery, which can only be done while no app holds the files.
+        """
         if self._bridge_port is None:
             raise RuntimeError("app was never started")
         port = self._bridge_port
         self.stop()
+        if between is not None:
+            between()
         self.start(port)
 
     @property

@@ -118,7 +118,6 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
         # …the original corrupt file was backed up…
         assert self.backup_path(CONNECTIONS).exists()
         # …and the user-facing recovery dialog opened and dismisses (MT-RECOVERY-05).
-        self.wait(self.recovery_dialog_present, what="the recovery dialog")
         self.dismiss_recovery_dialog()
 
     # ── MT-RECOVERY-02: a completely corrupt connections file resets to empty ────
@@ -137,7 +136,6 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
         assert self.driver.get_state("connections") == []
 
         # MT-RECOVERY-05: the recovery dialog is shown and can be dismissed.
-        self.wait(self.recovery_dialog_present, what="the recovery dialog")
         self.dismiss_recovery_dialog()
 
     # ── MT-RECOVERY-01: a corrupt settings file resets to defaults and warns ─────

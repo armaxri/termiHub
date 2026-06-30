@@ -149,7 +149,17 @@ class SystemTest:
         time.sleep(seconds)
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
-    def restart_app(self) -> None:
-        """Kill and relaunch the app, then re-acquire the bridge for the suite."""
-        self.app.restart()
+    @property
+    def config_dir(self):
+        """The suite app's isolated config dir (``TERMIHUB_CONFIG_DIR``)."""
+        return self.app.config_dir
+
+    def restart_app(self, between: Optional[Callable[[], None]] = None) -> None:
+        """Kill and relaunch the app, then re-acquire the bridge for the suite.
+
+        ``between`` runs while the app is down — e.g. to corrupt a config file so
+        the relaunch exercises startup recovery (see
+        :class:`~termihub_harness.ui.ConfigRecoveryUi`).
+        """
+        self.app.restart(between)
         type(self).driver = self.bridge.wait_for_app()
