@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**448** literal · **122** dynamic · **14** indirect.
+**450** literal · **123** dynamic · **14** indirect.
 
 ## Literal test IDs
 
@@ -91,6 +91,7 @@ Fixed strings — match exactly.
 | `connection-list-remote-agents-toggle` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-path-close` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
 | `connection-path-dialog` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
+| `connection-path-node` | `src/components/Sidebar/ConnectionPathDialog.tsx` |
 | `connection-picker` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-close` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-inline` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
@@ -350,6 +351,7 @@ Fixed strings — match exactly.
 | `sidebar-group-header-remote-agents` | `src/components/Sidebar/ConnectionList.tsx` |
 | `sidebar-outer-separator` | `src/components/Sidebar/ConnectionList.tsx` |
 | `sidebar-resize-handle` | `src/App.tsx` |
+| `split-view-resize-handle` | `src/components/SplitView/SplitView.tsx` |
 | `ssh-agent-setup-section` | `src/components/ConnectionEditor/ConnectionEditor.tsx` |
 | `ssh-setup-agent` | `src/components/ConnectionEditor/ConnectionEditor.tsx` |
 | `status-bar` | `src/components/StatusBar/StatusBar.tsx` |
@@ -577,6 +579,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `tab-*` | `tab-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `tab-close-*` | `tab-close-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `tab-group-chip-*` | `tab-group-chip-${group.id}` | `src/components/Terminal/TabGroupChips.tsx` |
+| `terminal-context-trigger-*` | `terminal-context-trigger-${tab.id}` | `src/components/SplitView/SplitView.tsx` |
 | `tunnel-delete-*` | `tunnel-delete-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-duplicate-*` | `tunnel-duplicate-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-edit-*` | `tunnel-edit-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |

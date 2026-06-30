@@ -22,6 +22,7 @@ contract, kept in parity with the TypeScript dispatcher (`src/testbridge/`). See
 | `termihub_harness/bridge.py`       | WebSocket bridge server + synchronous `Driver`                           |
 | `termihub_harness/orchestrator.py` | `AppInstance` / `AgentInstance` process lifecycle                        |
 | `termihub_harness/fixtures.py`     | Docker/Podman container fixtures (SSH, …)                                |
+| `termihub_harness/transfers.py`    | FTP (stdlib `ftplib`) / TFTP (`tftpy`) download checkers (SVC-12/13)     |
 | `tests/`                           | pytest tests + `fake_app.py` (a WS client stand-in)                      |
 | `conftest.py`                      | `bridge` / `app` / `agent` / `ssh_fixtures` / `telnet_fixtures` fixtures |
 | `pytest.sh` / `pytest.cmd`         | venv-bootstrapping wrapper around `python -m pytest`                     |
@@ -123,6 +124,11 @@ cd tests/system
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
+
+`requirements.txt` includes `tftpy` (a real TFTP client for the SVC-13 transfer
+check) and `pyftpdlib` (an in-process FTP server used only by the
+app-independent `test_transfer_checkers.py` tests). The Embedded Services FTP
+check itself relies only on the always-present stdlib `ftplib`.
 
 All commands below run from `tests/system/`. They use `./.venv/bin/python -m
 pytest`; if you `source .venv/bin/activate` first, you can drop that prefix and

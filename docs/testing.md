@@ -119,7 +119,7 @@ describe("Terminal Creation Flow", () => {
 pnpm test:e2e
 
 # Run specific test file
-pnpm test:e2e -- --spec tests/e2e/network-tools-live.test.js
+pnpm test:e2e -- --spec tests/e2e/infrastructure/windows-shells.test.js
 
 # Run in headless mode (CI)
 pnpm test:e2e:ci
@@ -755,7 +755,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: **8 WebdriverIO files** (4 in `tests/e2e/`, 4 in `tests/e2e/infrastructure/`) — the remainder still being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`) remain pending #934.
+E2E test coverage: a shrinking set of WebdriverIO files (performance + the `infrastructure/` remote-agent and Windows-shells specs) — the remainder is being ported to the cross-platform Python bridge harness in `tests/system/` (epic #799). The SSH tunnels editor/list suite (`ssh-tunnels.test.js`) and the Network Tools panel-UI suite (`network-tools.test.js`, NT-01..09) were ported to `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` and removed (#810); the live-network cases (`network-tools-live.test.js`, MT-NET-10/12/14/17/18) were ported to `tests/system/tests/test_network_tools_live.py` and removed (#946).
 
 ### Test Environment Setup
 
@@ -783,20 +783,50 @@ At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` r
 
 Migrated guided-manual suites so far:
 
-| Suite                                                                        | Covers (manual IDs)                                                    | The human step                                                                                                                                                                             |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                      | eyeball colours / drive a save dialog / yes-no                                                                                                                                             |
-| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17, MT-TAB-08                                            | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store                                                                                      |
-| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02..                    | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar) — screenshot attached                                                                           |
-| [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04 | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect) |
+| Suite                                                                        | Covers (manual IDs)                                                     | The human step                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                       | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                        |
+| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17, MT-TAB-08                                             | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store                                                                                                                                 |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02..                     | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar) — screenshot attached                                                                                                                      |
+| [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04  | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect)                                            |
+| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)       | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20 | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder) |
 
-> **Note (MT-CRED-01/02/03 — OS credential stores).** Not applicable: the app
-> implements only `master_password` (encrypted vault) and `none` credential
-> modes — there is no native OS keychain / Credential Manager / Secret Service
-> backend, so there is nothing to verify in an OS store. The real saved-credential
-> behaviour is covered by [`test_credential_store.py`](../tests/system/tests/test_credential_store.py).
+> **MT-CRED-01/02/03 — OS credential stores (PR #956).** As of #956 the app has a
+> native **OS Keychain** credential mode (alongside `master_password` and `none`),
+> backed by the `keyring` crate. These are platform-scoped guided-manual checks —
+> the harness can drive the in-app side (switch to OS Keychain mode in
+> Settings → Security, save a connection with "Save password"), but confirming the
+> secret actually landed in the OS store is the irreducibly-manual step:
+>
+> - **MT-CRED-02 (macOS Keychain).** After saving a credential in OS Keychain mode,
+>   open **Keychain Access** and search for service **`termiHub`** — confirm an entry
+>   exists whose account is `<connection-id>:password` (or `:key_passphrase`).
+> - **MT-CRED-01 (Windows Credential Manager).** Open **Control Panel → Credential
+>   Manager → Windows Credentials** (or `cmdkey /list`) and confirm a generic
+>   credential under the **`termiHub`** target with the matching account.
+> - **MT-CRED-03 (Linux Secret Service).** With a Secret Service provider running
+>   (GNOME Keyring / KWallet), use **`secret-tool search service termiHub`** (or
+>   Seahorse) and confirm the stored secret appears.
+>
+> The cross-platform saved-credential _behaviour_ (round-trips, re-prompt, removal)
+> is covered by [`test_credential_store.py`](../tests/system/tests/test_credential_store.py);
+> only the "appears in the OS store" assertion is manual. Migration _out of_ the OS
+> Keychain mode is not yet implemented (the OS stores are not portably enumerable),
+> so switching away from it does not migrate existing entries.
 
 New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
+
+#### SSH tunnel start/stop on macOS (manual carve-out, #933)
+
+The three **live** SSH tunnel tests in [`test_ssh_tunnels.py`](../tests/system/tests/test_ssh_tunnels.py) — `test_save_and_start_connects`, `test_start_then_stop`, `test_tunnel_runs_alongside_an_ssh_session` — **skip on macOS** and run only in the Linux integration-fixtures CI lane. Docker Desktop on macOS runs containers inside a Linux VM with no host networking, so the host-native app's russh local-forward to the published `ssh-tunnel-target` port does not drive the live tunnel to a running state the way it does under Linux Docker. The editor/list tests (TUNNEL-01..10) need no running tunnel and stay enabled on every platform. This mirrors the [`tauri-driver` macOS carve-out](#platform-support) (ADR-5).
+
+To verify SSH tunnels actually work on macOS, do this manually against the tunnel-target container:
+
+1. Start the fixture: `docker compose -f tests/docker/docker-compose.yml up -d ssh-tunnel-target` (published on `127.0.0.1:2207`, internal HTTP on `:8080`).
+2. In termiHub, enable experimental features, create a **key-auth** SSH connection to `127.0.0.1:2207` (user `testuser`, key `tests/fixtures/ssh-keys/ed25519`).
+3. Open the **Tunnels** sidebar → New Tunnel → **Local** forward: local `127.0.0.1:18083` → remote `localhost:8080`, referencing the SSH connection above. **Save & Start**.
+4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
+5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
 
 ### Legacy Guided Manual Test Runner (YAML)
 
@@ -882,4 +912,5 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-SVC-01, 02, 03                | `tests/system/tests/test_embedded_services.py` (SVC-01..11)                                                            |
 | MT-SVC-04, 05 (transfer)         | `tests/system/tests/test_embedded_services.py` (SVC-12 FTP, SVC-13 TFTP via curl)                                      |
 | MT-NET-01–09                     | `tests/system/tests/test_network_tools.py`                                                                             |
-| MT-NET-10, 12, 13, 14, 17, 18    | `network-tools-live.test.js` (requires `network` profile; port blocked on #934)                                        |
+| MT-NET-10, 12, 14, 17, 18        | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)         |
+| MT-NET-13                        | _manual_ (large-range warning is a native `window.confirm()`, no `data-testid`)                                        |

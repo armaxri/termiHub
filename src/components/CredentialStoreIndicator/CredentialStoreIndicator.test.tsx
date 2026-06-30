@@ -102,6 +102,42 @@ describe("CredentialStoreIndicator", () => {
     expect(indicator!.textContent).toContain("Unlocked");
   });
 
+  it("renders a keychain indicator for os_keychain mode", () => {
+    const status: CredentialStoreStatusInfo = {
+      mode: "os_keychain",
+      status: "unlocked",
+    };
+    useAppStore.setState({ credentialStoreStatus: status });
+
+    act(() => {
+      root.render(<CredentialStoreIndicator />);
+    });
+
+    const indicator = query("credential-store-indicator");
+    expect(indicator).not.toBeNull();
+    expect(indicator!.textContent).toContain("Keychain");
+  });
+
+  it("clicking os_keychain indicator does not lock or open the unlock dialog", () => {
+    const status: CredentialStoreStatusInfo = {
+      mode: "os_keychain",
+      status: "unlocked",
+    };
+    useAppStore.setState({ credentialStoreStatus: status, unlockDialogOpen: false });
+
+    act(() => {
+      root.render(<CredentialStoreIndicator />);
+    });
+
+    const indicator = query("credential-store-indicator") as HTMLButtonElement;
+    act(() => {
+      indicator.click();
+    });
+
+    expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+    expect(mockedLock).not.toHaveBeenCalled();
+  });
+
   it("clicking locked indicator opens unlock dialog", () => {
     const status: CredentialStoreStatusInfo = {
       mode: "master_password",

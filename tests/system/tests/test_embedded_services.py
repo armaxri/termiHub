@@ -10,14 +10,15 @@ status-dot class, so the assertions track real behaviour.
 The live transfer cases (SVC-03 HTTP response, SVC-12 FTP, SVC-13 TFTP) run a
 real client against the server the app starts on ``127.0.0.1`` — the app and the
 test share a host, so no Docker fixture is needed. HTTP uses stdlib ``urllib``;
-FTP/TFTP use ``curl`` (matching the original spec; the stdlib has no TFTP
-client), skipping if ``curl`` is unavailable or lacks the protocol.
+FTP uses stdlib ``ftplib`` and TFTP uses the maintained ``tftpy`` library
+(``termihub_harness.transfers``). These replace the old ``curl`` dependency,
+whose TFTP/FTP support is build-dependent and could silently skip SVC-13 on
+hosts shipping a ``curl`` without ``tftp://`` (issue #964).
 """
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -34,23 +35,14 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.transfers import (
+    TftpUnavailable,
+    ftp_download,
+    ftp_list,
+    tftp_download,
+)
 
 pytestmark = pytest.mark.integration
-
-
-def _curl(url: str) -> subprocess.CompletedProcess[str]:
-    """Run curl against a localhost embedded server, skipping if unusable."""
-    try:
-        return subprocess.run(
-            ["curl", "--silent", "--connect-timeout", "5", "--max-time", "10", url],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except FileNotFoundError:
-        pytest.skip("curl is not installed on this host")
-    except subprocess.TimeoutExpired:
-        pytest.fail(f"curl timed out fetching {url}")
 
 
 class TestEmbeddedServices(
@@ -196,8 +188,16 @@ class TestEmbeddedServices(
         self.start_server(server["id"])
         assert self.server_running(server["id"])
 
-    # ── SVC-10: File Browser quick-share via HTTP ────────────────────────────
-    def test_quick_share_via_http(self):
+    # ── SVC-10 / SVC-14 / SVC-15: File Browser quick-share (HTTP/FTP/TFTP) ────
+    def _quick_share_folder(self, proto: str) -> dict:
+        """Quick-share a fresh local folder via ``proto`` and return the server.
+
+        Mirrors the in-app File Browser flow: a local terminal supplies a
+        directory, ``context-file-share-<proto>`` switches to the Services sidebar
+        and creates+starts a server bound to ``127.0.0.1`` on the protocol's
+        default unprivileged port (HTTP 8080 / FTP 2121 / TFTP 6969). Returns the
+        started server's store config.
+        """
         # A local terminal gives the file browser a directory to share.
         self.ensure_terminal()
         self.open_file_browser()
@@ -205,16 +205,66 @@ class TestEmbeddedServices(
         self.create_folder_via_browser(folder)
 
         self.open_file_menu(folder)
+        menu_item = f"context-file-share-{proto}"
         self.wait(
-            lambda: self.driver.exists("context-file-share-http"),
-            what="the Share via HTTP menu item",
+            lambda: self.driver.exists(menu_item),
+            what=f"the Share via {proto.upper()} menu item",
         )
-        self.driver.click("context-file-share-http")
+        self.driver.click(menu_item)
 
         # Quick-share switches to the Services sidebar and starts a server.
         self.wait(lambda: self.driver.exists(self.SIDEBAR), what="the Services sidebar")
-        server = self.wait(lambda: self.servers()[0] if self.servers() else None, what="a shared server")
+        server = self.wait(
+            lambda: self.servers()[0] if self.servers() else None, what="a shared server"
+        )
         self.wait(lambda: self.server_running(server["id"]), what="the shared server to start")
+        return server
+
+    def test_quick_share_via_http(self):
+        server = self._quick_share_folder("http")
+        assert server["serverType"] == "http"
+
+    def test_quick_share_via_ftp(self):
+        """SVC-14 — Share via FTP from the File Browser starts an FTP server."""
+        server = self._quick_share_folder("ftp")
+        assert server["serverType"] == "ftp"
+
+    def test_quick_share_via_tftp(self):
+        """SVC-15 — Share via TFTP from the File Browser starts a TFTP server."""
+        server = self._quick_share_folder("tftp")
+        assert server["serverType"] == "tftp"
+
+    def test_quick_share_ftp_serves_the_folder(self):
+        """SVC-14b — the FTP server the quick-share starts actually serves files.
+
+        Drops a file into the shared folder from the terminal, then downloads it
+        with the stdlib ``ftplib`` checker against the running quick-share server
+        (``127.0.0.1`` on the FTP default port) — verifying a real transfer, not
+        just that the server reached ``running``.
+        """
+        server = self._quick_share_folder("ftp")
+        root, port = server["rootDirectory"], server["port"]
+        Path(root, "share.txt").write_text("termihub-quickshare-ftp-ok\n", encoding="utf-8")
+
+        downloaded = ftp_download("127.0.0.1", port, "share.txt")
+        assert downloaded.decode("utf-8").strip() == "termihub-quickshare-ftp-ok"
+
+    def test_quick_share_tftp_serves_the_folder(self):
+        """SVC-15b — the TFTP server the quick-share starts actually serves files.
+
+        Same as the FTP variant but over a real ``tftpy`` RRQ; skipped only if the
+        optional ``tftpy`` dependency is missing (never on a host with the harness
+        requirements installed).
+        """
+        server = self._quick_share_folder("tftp")
+        root, port = server["rootDirectory"], server["port"]
+        Path(root, "boot.txt").write_text("termihub-quickshare-tftp-ok\n", encoding="utf-8")
+
+        try:
+            downloaded = tftp_download("127.0.0.1", port, "boot.txt")
+        except TftpUnavailable as exc:  # pragma: no cover — only if dep missing
+            pytest.skip(str(exc))
+        assert downloaded.decode("utf-8").strip() == "termihub-quickshare-tftp-ok"
 
     # ── SVC-11: bind-address dropdown + LAN security warning ─────────────────
     def test_bind_address_lan_warning(self):
@@ -240,29 +290,95 @@ class TestEmbeddedServices(
         server = self.require_server(name)
         assert server.get("bindHost") == "0.0.0.0", "confirmed bind should be 0.0.0.0"
 
-    # ── SVC-12: FTP actual file transfer (curl) ──────────────────────────────
+    # ── SVC-12: FTP actual file transfer (stdlib ftplib) ─────────────────────
     def test_ftp_file_transfer(self):
         root = self._serve_dir("hello.txt", "termihub-ftp-transfer-ok\n")
         port = self.free_port()
         server = self.create_server(unique_name("ftp"), proto="ftp", root=str(root), port=port)
         self.start_server(server["id"])
 
-        download = _curl(f"ftp://127.0.0.1:{port}/hello.txt")
-        if download.returncode != 0:
-            pytest.skip(f"curl FTP unsupported/failed: {download.stderr.strip()}")
-        assert download.stdout.strip() == "termihub-ftp-transfer-ok"
+        # stdlib ftplib is always available, so the download is verified on every
+        # host (no host-curl-build dependency).
+        downloaded = ftp_download("127.0.0.1", port, "hello.txt")
+        assert downloaded.decode("utf-8").strip() == "termihub-ftp-transfer-ok"
 
-        listing = _curl(f"ftp://127.0.0.1:{port}/")
-        assert "hello.txt" in listing.stdout, "FTP directory listing should include the file"
+        names = ftp_list("127.0.0.1", port, "/")
+        assert any(
+            Path(n).name == "hello.txt" for n in names
+        ), "FTP directory listing should include the file"
 
-    # ── SVC-13: TFTP actual file transfer (curl) ─────────────────────────────
+    # ── SVC-13: TFTP actual file transfer (tftpy RRQ) ────────────────────────
     def test_tftp_file_transfer(self):
         root = self._serve_dir("boot.txt", "termihub-tftp-transfer-ok\n")
         port = self.free_port()
         server = self.create_server(unique_name("tftp"), proto="tftp", root=str(root), port=port)
         self.start_server(server["id"])
 
-        download = _curl(f"tftp://127.0.0.1:{port}/boot.txt")
-        if download.returncode != 0:
-            pytest.skip(f"curl TFTP unsupported/failed: {download.stderr.strip()}")
-        assert download.stdout.strip() == "termihub-tftp-transfer-ok"
+        # tftpy performs a real RRQ, so this is verified everywhere the harness
+        # deps are installed — never silently skipped on a curl without tftp://.
+        try:
+            downloaded = tftp_download("127.0.0.1", port, "boot.txt")
+        except TftpUnavailable as exc:  # pragma: no cover — only if dep missing
+            pytest.skip(str(exc))
+        assert downloaded.decode("utf-8").strip() == "termihub-tftp-transfer-ok"
+
+    # ── SVC-16: per-server context menu — start / stop ───────────────────────
+    def test_context_menu_start_and_stop(self):
+        """The right-click menu's Start/Stop drive the same lifecycle as the
+        inline buttons. The menu swaps Start↔Stop with running state, so this
+        exercises both menu items on one server."""
+        server = self.create_server(unique_name("ctx"), proto="http", port=self.free_port())
+        self.ctx_start_server(server["id"])
+        assert self.server_running(server["id"]), "ctx Start should start the server"
+        self.ctx_stop_server(server["id"])
+        assert not self.server_running(server["id"]), "ctx Stop should stop the server"
+
+    # ── SVC-17: per-server context menu — delete ─────────────────────────────
+    def test_context_menu_delete(self):
+        """The right-click menu's Delete removes the server (and, as the last one,
+        restores the empty state)."""
+        name = unique_name("ctx-del")
+        server = self.create_server(name, proto="http", port=self.free_port())
+        self.ctx_delete_server(server["id"], name)
+        assert self.find_server(name) is None, "ctx Delete should remove the server"
+        assert self.driver.exists(self.EMPTY), "empty-state should return after deleting the last server"
+
+    # ── SVC-18: per-server context menu — copy URL ───────────────────────────
+    def test_context_menu_copy_url(self):
+        """Copy URL is always present in the menu and selectable without error.
+
+        The action writes to the OS clipboard via a Tauri plugin (best-effort,
+        swallowing failures), so the clipboard contents are not asserted here —
+        the check is that the item exists and the menu closes after selecting it.
+        """
+        server = self.create_server(unique_name("ctx-url"), proto="http", port=self.free_port())
+        self.open_server_menu(server["id"])
+        assert self.driver.exists(f"ctx-copy-url-{server['id']}")
+        self.driver.click(f"ctx-copy-url-{server['id']}")
+        self.wait(
+            lambda: not self.driver.exists(f"ctx-copy-url-{server['id']}"),
+            what="the context menu to close after Copy URL",
+        )
+
+    # ── SVC-19: per-server context menu — Open in Browser (HTTP only) ─────────
+    def test_context_menu_open_in_browser_http_only(self):
+        """``Open in Browser`` is offered for HTTP servers and absent for FTP.
+
+        Selecting it opens the URL via a Tauri opener plugin (best-effort); we
+        assert the item is present for HTTP, selectable, and that the menu closes —
+        and that the item is *not* rendered for a non-HTTP (FTP) server.
+        """
+        http = self.create_server(unique_name("ctx-http"), proto="http", port=self.free_port())
+        self.open_server_menu(http["id"])
+        assert self.driver.exists(f"ctx-open-browser-{http['id']}"), "HTTP should offer Open in Browser"
+        self.driver.click(f"ctx-open-browser-{http['id']}")
+        self.wait(
+            lambda: not self.driver.exists(f"ctx-open-browser-{http['id']}"),
+            what="the context menu to close after Open in Browser",
+        )
+
+        ftp = self.create_server(unique_name("ctx-ftp"), proto="ftp", port=self.free_port())
+        self.open_server_menu(ftp["id"])
+        assert not self.driver.exists(
+            f"ctx-open-browser-{ftp['id']}"
+        ), "Open in Browser must not be offered for non-HTTP servers"

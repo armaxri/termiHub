@@ -42,6 +42,23 @@ pytestmark = pytest.mark.integration
 HOST = "127.0.0.1"
 RUNNING = {"connecting", "connected", "reconnecting"}
 
+# macOS Docker Desktop runs containers inside a Linux VM, so — unlike Linux Docker
+# (host networking) — the host-native app's russh local-forward to the published
+# SSH port never drives the live tunnel to a running state in this harness, and
+# the three tests that actually *start* a tunnel time out (#933). The editor/list
+# tests (TUNNEL-01..10) need no running tunnel and stay enabled everywhere; only
+# the live-start tests are gated, and they keep running in the Linux
+# integration-fixtures CI lane. This mirrors the E2E tauri-driver macOS carve-out
+# (ADR-5): macOS-specific behaviour is verified via the manual steps in
+# docs/testing.md instead.
+LIVE_TUNNEL_SKIP_REASON = (
+    "Live SSH tunnels time out on macOS Docker Desktop (containers run in a Linux "
+    "VM without host networking); covered by Linux CI + manual macOS steps (#933)."
+)
+skip_live_tunnel_on_macos = pytest.mark.skipif(
+    "sys.platform == 'darwin'", reason=LIVE_TUNNEL_SKIP_REASON
+)
+
 
 @pytest.mark.usefixtures("ssh_tunnel_fixtures")
 class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, SystemTest):
@@ -193,10 +210,12 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     # ── Live tunnel (needs the ssh-tunnel-target container) ──────────────────────
 
+    @skip_live_tunnel_on_macos
     def test_save_and_start_connects(self):
         tunnel = self._create_tunnel("tunnel-save-start", local_port=18083, start=True)
         self._assert_running(tunnel["id"])
 
+    @skip_live_tunnel_on_macos
     def test_start_then_stop(self):
         tid = self._create_tunnel("tunnel-startstop", local_port=18081)["id"]
         self.driver.click(f"tunnel-start-{tid}")  # key auth → no prompt
@@ -212,6 +231,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
             what="the start control to return",
         )
 
+    @skip_live_tunnel_on_macos
     def test_tunnel_runs_alongside_an_ssh_session(self):
         tunnel = self._create_tunnel("tunnel-traffic", local_port=18084, start=True)
         self._assert_running(tunnel["id"])

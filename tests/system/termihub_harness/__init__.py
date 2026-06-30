@@ -40,6 +40,7 @@ from .manual import (
 )
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .systemtest import SystemTest, unique_name
+from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
 from .ui import (
     AgentUi,
     ConfigRecoveryUi,
@@ -134,4 +135,8 @@ __all__ = [
     "TELNET_PORT",
     "SSH_KEY_PASSPHRASE",
     "SSH_KEY_PASSPHRASE_PATH",
+    "ftp_download",
+    "ftp_list",
+    "tftp_download",
+    "TftpUnavailable",
 ]
