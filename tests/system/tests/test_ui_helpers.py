@@ -120,13 +120,14 @@ def test_open_named_context_menu_waits_for_resolve_then_a_mounted_trigger():
     # DOM. Only once both hold is the right-click dispatched — never on a stale id.
     driver = MenuDriver(present=set(), sentinel="ctx-edit")
     harness = FakeHarness(driver)
-    polls = {"n": 0}
+    poll = 0
 
     def resolve():
-        polls["n"] += 1
-        if polls["n"] == 1:
+        nonlocal poll
+        poll += 1
+        if poll == 1:
             return None  # store not loaded yet
-        if polls["n"] == 2:
+        if poll == 2:
             return {"id": "9"}  # resolved, but trigger still unmounted (below)
         driver._present.add("trigger-9")  # trigger mounts from the 3rd poll on
         return {"id": "9"}
