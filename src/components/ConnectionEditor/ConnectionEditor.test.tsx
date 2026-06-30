@@ -1198,3 +1198,101 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     expect(saveCall).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// "Setup SSH Agent" helper button (#955)
+//
+// The button must surface in the editor when SSH + agent auth is selected, be
+// hidden for other auth methods, and open a "Setup SSH Agent" local tab that
+// runs the agent-setup helper command.
+// ---------------------------------------------------------------------------
+
+/** Existing SSH connection — agent auth. */
+const SSH_CONN_AGENT: SavedConnection = {
+  id: "ssh-agent-conn",
+  name: "My Agent SSH",
+  config: {
+    type: "ssh",
+    config: { host: "192.168.1.3", username: "admin", authMethod: "agent" },
+  },
+  folderId: null,
+};
+
+describe("ConnectionEditor — Setup SSH Agent button", () => {
+  function query(testId: string): HTMLElement | null {
+    return container.querySelector(`[data-testid="${testId}"]`);
+  }
+
+  const flush = () =>
+    act(async () => {
+      await Promise.resolve();
+    });
+
+  function renderFor(connId: string) {
+    act(() => {
+      root.render(
+        <ConnectionEditor
+          tabId="tab-agent-1"
+          meta={{ connectionId: connId, folderId: null }}
+          isVisible={true}
+        />
+      );
+    });
+  }
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "list_available_shells") return Promise.resolve(["zsh"]);
+      return Promise.resolve(null);
+    });
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [SSH_CONN_AGENT, SSH_CONN_PASSWORD, SSH_CONN_KEY],
+      connectionTypes: [SSH_TYPE_FULL],
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  it("shows the Setup SSH Agent button for agent auth", () => {
+    renderFor(SSH_CONN_AGENT.id);
+    expect(query("ssh-setup-agent")).toBeTruthy();
+  });
+
+  it("hides the Setup SSH Agent button for non-agent auth", () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    expect(query("ssh-setup-agent")).toBeNull();
+  });
+
+  it("opens a 'Setup SSH Agent' local tab when clicked", async () => {
+    const addTabSpy = vi.fn();
+    useAppStore.setState({ addTab: addTabSpy });
+
+    renderFor(SSH_CONN_AGENT.id);
+    await flush();
+
+    act(() => {
+      (query("ssh-setup-agent") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(addTabSpy).toHaveBeenCalledTimes(1);
+    const [title, type, payload] = addTabSpy.mock.calls[0];
+    expect(title).toBe("Setup SSH Agent");
+    expect(type).toBe("local");
+    expect((payload as { config: { initialCommand: string } }).config.initialCommand).toContain(
+      "ssh-add"
+    );
+  });
+});
