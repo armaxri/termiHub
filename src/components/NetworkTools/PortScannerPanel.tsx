@@ -185,6 +185,8 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
       <DiagnosticResultsTable
         columns={columns}
         rows={formattedRows}
+        rowTestIdPrefix="port-scanner-result"
+        footerTestId="port-scanner-footer"
         footer={
           summary
             ? `Scanned ${summary.total} ports in ${(summary.elapsedMs / 1000).toFixed(1)}s — ${summary.open} open, ${summary.closed} closed, ${summary.filtered} filtered${status === "canceled" ? " (scan canceled)" : ""}`

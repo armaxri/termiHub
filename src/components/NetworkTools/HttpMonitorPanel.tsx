@@ -127,7 +127,11 @@ export function HttpMonitorPanel() {
             <RefreshCw size={14} />
           </button>
           {activeMonitorId ? (
-            <button className="network-panel__btn network-panel__btn--stop" onClick={handleStop}>
+            <button
+              className="network-panel__btn network-panel__btn--stop"
+              onClick={handleStop}
+              data-testid="http-monitor-stop"
+            >
               <StopCircle size={14} />
               Stop
             </button>
@@ -205,7 +209,7 @@ export function HttpMonitorPanel() {
       {/* Active monitor stats */}
       {activeMonitorId && history.length > 0 && (
         <>
-          <div className="network-panel__chart-section">
+          <div className="network-panel__chart-section" data-testid="http-monitor-chart">
             <span className="network-panel__chart-title">Response Time</span>
             <LatencyChart points={latencyPoints} intervalMs={activeIntervalMs} />
           </div>
@@ -230,7 +234,7 @@ export function HttpMonitorPanel() {
 
           {/* Recent checks table */}
           <div className="network-panel__section-title">Recent Checks</div>
-          <div className="network-panel__table-wrapper">
+          <div className="network-panel__table-wrapper" data-testid="http-monitor-history">
             <table className="network-panel__table">
               <thead>
                 <tr>
@@ -245,7 +249,11 @@ export function HttpMonitorPanel() {
                   .reverse()
                   .slice(0, 20)
                   .map((r, i) => (
-                    <tr key={i} className={r.ok ? "" : "network-panel__row--error"}>
+                    <tr
+                      key={i}
+                      className={r.ok ? "" : "network-panel__row--error"}
+                      data-testid={`http-monitor-entry-${i}`}
+                    >
                       <td>{new Date(r.timestampMs).toLocaleTimeString()}</td>
                       <td>{r.statusCode ?? "—"}</td>
                       <td>{r.latencyMs != null ? `${r.latencyMs}ms` : "—"}</td>
