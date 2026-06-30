@@ -11,6 +11,7 @@ pub mod handler;
 pub mod jump_host;
 mod legacy_pem;
 mod monitoring;
+pub mod session_pool;
 pub mod x11;
 
 use std::io::Read;
