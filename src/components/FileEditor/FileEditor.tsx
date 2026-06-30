@@ -181,6 +181,22 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     setEditorDirty(tabId, isDirty);
   }, [isDirty, content, savedContent, tabId, setEditorDirty]);
 
+  // A file that failed to load (e.g. the connection dropped) shows the
+  // error-only view, which doesn't render the UnsavedChangesDialog. If such a
+  // tab were left marked dirty, TabBar would raise a close prompt that can never
+  // be answered, leaving the tab stuck open. It has nothing to save, so clear
+  // its dirty flag and resolve any already-pending close request by closing it
+  // outright. (#971)
+  useEffect(() => {
+    if (!error) return;
+    setEditorDirty(tabId, false);
+    if (pendingCloseRequest?.tabId === tabId) {
+      const req = pendingCloseRequest;
+      setPendingCloseRequest(null);
+      closeTab(req.tabId, req.panelId);
+    }
+  }, [error, tabId, pendingCloseRequest, setEditorDirty, setPendingCloseRequest, closeTab]);
+
   const handleSave = useCallback(async () => {
     if (content === null || saving) return;
 
