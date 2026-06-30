@@ -171,6 +171,8 @@ Fixed strings — match exactly.
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-remote-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-save-error-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-scratch-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-type-add-btn` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-add-error` | `src/components/Settings/FileTypeSettings.tsx` |
