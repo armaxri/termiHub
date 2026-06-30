@@ -21,6 +21,7 @@ class NetworkToolsUi(HarnessMixin):
     if TYPE_CHECKING:  # borrowed from the mixins suites combine this with
         def enable_experimental_features(self) -> None: ...
         def _ensure_sidebar(self, view: str, test_id: str) -> None: ...
+        def switch_to_connections_sidebar(self) -> None: ...
 
     def open_network_tools_sidebar(self) -> None:
         """Reveal and show the Network Tools sidebar (idempotent)."""
@@ -46,3 +47,56 @@ class NetworkToolsUi(HarnessMixin):
             lambda: self.driver.exists("http-monitor-panel"),
             what="the HTTP monitor panel",
         )
+
+    # ── live diagnostic flows (issue #946) ──────────────────────────────────────
+    # Each opens the tool's panel, fills its input(s), and triggers the run. The
+    # ``type`` bridge verb replaces the field value, so no clearing is needed.
+    # Results are DOM-only (component state fed by Tauri events), so callers
+    # assert on rendered rows/text rather than the store.
+
+    def start_ping(self, host: str) -> None:
+        """Open the Ping panel, target ``host``, and start pinging."""
+        self.open_tool_panel("ping", "ping-panel")
+        self.driver.type("ping-host", host)
+        self.driver.click("ping-start")
+
+    def stop_ping(self) -> None:
+        """Stop a running ping, if the Stop button is present."""
+        if self.driver.exists("ping-stop"):
+            self.driver.click("ping-stop")
+
+    def run_port_scan(self, host: str, ports: str) -> None:
+        """Open the Port Scanner panel and scan ``ports`` (e.g. ``"80,8080"``) on ``host``."""
+        self.open_tool_panel("port-scanner", "port-scanner-panel")
+        self.driver.type("port-scanner-host", host)
+        self.driver.type("port-scanner-ports", ports)
+        self.driver.click("port-scanner-run")
+
+    def run_dns_lookup(self, hostname: str) -> None:
+        """Open the DNS Lookup panel and resolve ``hostname``."""
+        self.open_tool_panel("dns-lookup", "dns-lookup-panel")
+        self.driver.type("dns-hostname", hostname)
+        self.driver.click("dns-run")
+
+    def start_http_monitor(self, url: str) -> None:
+        """Open the HTTP Monitor panel, target ``url``, and start monitoring."""
+        self.open_http_monitor()
+        self.driver.type("http-monitor-url", url)
+        self.driver.click("http-monitor-start")
+
+    def stop_http_monitor(self) -> None:
+        """Stop a running HTTP monitor, if the Stop button is present."""
+        if self.driver.exists("http-monitor-stop"):
+            self.driver.click("http-monitor-stop")
+
+    def reload_network_tools_sidebar(self) -> None:
+        """Force the Network Tools sidebar to remount so it refetches its monitors.
+
+        The sidebar loads its monitor list only on mount (plus the manual Refresh
+        button and on stop) — it does not live-update when a monitor is started
+        while it is already open (#986). Toggling the activity-bar view away and
+        back triggers a remount, so the running monitor shows up. Drop this once
+        #986 makes the sidebar update reactively.
+        """
+        self.switch_to_connections_sidebar()
+        self.open_network_tools_sidebar()
