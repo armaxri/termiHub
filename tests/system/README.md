@@ -25,7 +25,7 @@ contract, kept in parity with the TypeScript dispatcher (`src/testbridge/`). See
 | `termihub_harness/transfers.py`    | FTP (stdlib `ftplib`) / TFTP (`tftpy`) download checkers (SVC-12/13)     |
 | `tests/`                           | pytest tests + `fake_app.py` (a WS client stand-in)                      |
 | `conftest.py`                      | `bridge` / `app` / `agent` / `ssh_fixtures` / `telnet_fixtures` fixtures |
-| `pytest.sh` / `pytest.cmd`         | venv-bootstrapping wrapper around `python -m pytest`                     |
+| `pytest.sh` / `pytest.cmd`         | uv wrapper around `python -m pytest` (bootstraps the venv from uv.lock)  |
 
 ## How it works
 
@@ -51,9 +51,10 @@ def test_app_lifecycle(bridge, app):
 ## Quick start — the `pytest` wrapper
 
 The easiest entry point is the **`pytest.sh`** / **`pytest.cmd`** wrapper in this
-directory. It creates the virtualenv on first use (installing
-`requirements.txt`), then forwards **all arguments verbatim** to `python -m
-pytest` — so you never type the `.venv` path and never set up the env by hand:
+directory. It shells out to [uv](https://docs.astral.sh/uv/), which on first use
+creates the virtualenv and installs the exact dependency set pinned in
+`uv.lock`, then forwards **all arguments verbatim** to `python -m pytest` — so
+you never type the `.venv` path and never set up the env by hand:
 
 ```sh
 # Unix / macOS                         # Windows
@@ -62,10 +63,11 @@ pytest` — so you never type the `.venv` path and never set up the env by hand:
 ./pytest.sh --collect-only -q          pytest.cmd --collect-only -q
 ```
 
-The wrapper runs from `tests/system/` regardless of where you call it, is a
-no-op once the venv exists, and accepts `PYTHON=/path/to/python3` (or
-`set PYTHON=py` on Windows) to pick the base interpreter for the venv. Every
-`./.venv/bin/python -m pytest …` command below can be written as `./pytest.sh …`.
+The wrapper runs from `tests/system/` regardless of where you call it and is a
+near no-op once the env is in sync. It requires `uv` on your `PATH` (install:
+`curl -LsSf https://astral.sh/uv/install.sh | sh`, or the Windows installer);
+pick a specific base interpreter with `UV_PYTHON=3.12` (a version) or a full
+path. Every `uv run pytest …` command below can be written as `./pytest.sh …`.
 
 ## One command — `scripts/test-system-py.sh`
 
@@ -121,18 +123,19 @@ python scripts/build-testid-catalog.py --check     # what CI runs
 
 ```sh
 cd tests/system
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
+uv sync              # create .venv and install the locked dependency set
 ```
 
-`requirements.txt` includes `tftpy` (a real TFTP client for the SVC-13 transfer
-check) and `pyftpdlib` (an in-process FTP server used only by the
-app-independent `test_transfer_checkers.py` tests). The Embedded Services FTP
-check itself relies only on the always-present stdlib `ftplib`.
+The dependencies live in `pyproject.toml` (pinned in `uv.lock`): `tftpy` (a real
+TFTP client for the SVC-13 transfer check) and `pyftpdlib` (an in-process FTP
+server used only by the app-independent `test_transfer_checkers.py` tests). The
+Embedded Services FTP check itself relies only on the always-present stdlib
+`ftplib`. After changing a dependency, run `uv lock` to refresh the lockfile.
 
-All commands below run from `tests/system/`. They use `./.venv/bin/python -m
-pytest`; if you `source .venv/bin/activate` first, you can drop that prefix and
-just write `pytest`.
+All commands below run from `tests/system/`. They use `uv run pytest`, which
+keeps the env in sync from `uv.lock` automatically; after a `uv sync` you can
+also invoke `./.venv/bin/python -m pytest` directly, or `source
+.venv/bin/activate` and just write `pytest`.
 
 ## Test groups
 
@@ -163,35 +166,35 @@ plain `pytest` never errors for a missing build — it just skips them.
 ## Listing tests
 
 ```sh
-./.venv/bin/python -m pytest --collect-only -q     # every test id
-./.venv/bin/python -m pytest --markers             # marker groups (incl. integration)
+uv run pytest --collect-only -q     # every test id
+uv run pytest --markers             # marker groups (incl. integration)
 ```
 
 ## Running everything
 
 ```sh
-./.venv/bin/python -m pytest           # all (integration auto-skips if not built)
-./.venv/bin/python -m pytest -v        # one line per test
+uv run pytest           # all (integration auto-skips if not built)
+uv run pytest -v        # one line per test
 ```
 
 ## Running specific suites / tests
 
 ```sh
 # Only the fast machinery suite (fake app, no build, no window), by marker:
-./.venv/bin/python -m pytest -m "not integration"
+uv run pytest -m "not integration"
 
 # Only the integration suite (launches the real app; build it first), by marker:
-./.venv/bin/python -m pytest -m integration
+uv run pytest -m integration
 
 # A single file:
-./.venv/bin/python -m pytest tests/test_roundtrip.py
+uv run pytest tests/test_roundtrip.py
 
 # A single test by node id:
-./.venv/bin/python -m pytest tests/test_app_lifecycle.py::test_app_lifecycle
+uv run pytest tests/test_app_lifecycle.py::test_app_lifecycle
 
 # By name substring (matches across files):
-./.venv/bin/python -m pytest -k restart
-./.venv/bin/python -m pytest -k "roundtrip or protocol"
+uv run pytest -k restart
+uv run pytest -k "roundtrip or protocol"
 ```
 
 ## Running the integration suite
@@ -200,7 +203,7 @@ plain `pytest` never errors for a missing build — it just skips them.
 pnpm tauri build                         # from the repo root — build the app once
 cargo build --release -p termihub-agent  # only needed for agent tests
 cd tests/system
-./.venv/bin/python -m pytest -m integration -v -s
+uv run pytest -m integration -v -s
 ```
 
 ### Faster loop: build a debug app
@@ -382,7 +385,7 @@ delay and run at full speed. To actually watch the UI, add the boolean flag:
 
 ```sh
 # insert the delays so a human can see each step (use -s to also see the app):
-./.venv/bin/python -m pytest -m integration --delay4user -s
+uv run pytest -m integration --delay4user -s
 ```
 
 Each delay prints `⏸  delay4user: sleeping 2.0s — <reason>` so it is clear what
