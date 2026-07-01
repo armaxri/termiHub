@@ -171,6 +171,32 @@ jobs:
       - name: Run frontend tests
         run: pnpm test
 
+  # Python system-test harness — fast "machinery" suite (issue #801).
+  # These drive the harness plumbing (bridge server, Driver, protocol, transfer
+  # checkers) against a FakeApp, so they need no app build and no Docker — just
+  # uv + the locked deps in tests/system/uv.lock. The `integration` group (which
+  # launches the real desktop app) is excluded; it runs in the dedicated
+  # system-test lanes, not on every PR.
+  system-test-machinery:
+    name: System-Test Harness (machinery)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          # Pin the interpreter for reproducibility; dependencies are resolved
+          # from the committed tests/system/uv.lock (the wrapper uses --frozen).
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: tests/system/uv.lock
+
+      - name: Run machinery suite
+        run: ./tests/system/pytest.sh -m "not integration" -q
+
   # Dependency Security Audit
   security-audit:
     name: Security Audit
