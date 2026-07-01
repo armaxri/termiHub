@@ -51,7 +51,10 @@ export const config = {
   // goog:chromeOptions.debuggerAddress — that attaches to an already-running
   // Chrome DevTools port, which is unrelated to tauri-driver.
   hostname: "localhost",
-  port: 4444,
+  // Per-checkout offset (docs/testing.md "Parallel test isolation") so several
+  // checkouts' tauri-driver instances don't all fight over 4444. Falls back to
+  // 4444 when TERMIHUB_TAURI_DRIVER_PORT is unset (the resolver exports it).
+  port: parseInt(process.env.TERMIHUB_TAURI_DRIVER_PORT || "4444", 10),
   path: "/",
 
   maxInstances: 1,
@@ -110,7 +113,8 @@ export const config = {
           return "WebKitWebDriver";
         }
       })();
-    tauriDriver = spawn("tauri-driver", ["--native-driver", nativeDriver], {
+    const driverPort = process.env.TERMIHUB_TAURI_DRIVER_PORT || "4444";
+    tauriDriver = spawn("tauri-driver", ["--port", driverPort, "--native-driver", nativeDriver], {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env },
     });

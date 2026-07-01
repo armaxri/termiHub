@@ -31,6 +31,11 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# Resolve this checkout's test environment (Compose project, offset ports,
+# serial device paths, driver port) from dev.local.json, so several checkouts
+# can run all test environments at once. See docs/testing.md.
+source scripts/internal/dev-local-env.sh
+
 # ─── Parse arguments ────────────────────────────────────────────────────────
 
 SKIP_BUILD=0
@@ -107,7 +112,7 @@ cleanup() {
         wait "$SOCAT_PID" 2>/dev/null || true
     fi
 
-    rm -f /tmp/termihub-serial-a /tmp/termihub-serial-b
+    rm -f ${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a} ${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b}
 
     if [ "$DOCKER_STARTED" -eq 1 ] && [ "$KEEP_INFRA" -eq 0 ]; then
         echo "Stopping containers..."
@@ -236,8 +241,8 @@ if [ "$SKIP_SERIAL" -eq 0 ]; then
     echo ""
     echo "=== Setting up virtual serial ports ==="
 
-    PTY_A="/tmp/termihub-serial-a"
-    PTY_B="/tmp/termihub-serial-b"
+    PTY_A="${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a}"
+    PTY_B="${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b}"
 
     rm -f "$PTY_A" "$PTY_B"
 
@@ -283,8 +288,8 @@ echo "  Platform:   macOS ($(uname -m))"
 echo "  SSH:        127.0.0.1:2201-2208"
 echo "  Telnet:     127.0.0.1:2301"
 if [ "$SKIP_SERIAL" -eq 0 ]; then
-echo "  Serial A:   /tmp/termihub-serial-a"
-echo "  Serial B:   /tmp/termihub-serial-b (echo server)"
+echo "  Serial A:   ${TERMIHUB_SERIAL_A:-/tmp/termihub-serial-a}"
+echo "  Serial B:   ${TERMIHUB_SERIAL_B:-/tmp/termihub-serial-b} (echo server)"
 fi
 if [ "$WITH_FAULT" -eq 1 ]; then
 echo "  Fault:      127.0.0.1:2209 (network fault proxy)"

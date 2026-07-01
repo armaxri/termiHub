@@ -2,6 +2,8 @@ services:
   test-target:
     build: .
     ports:
-      - "2222:22"   # SSH
-      - "2323:23"   # Telnet
+      # Offset per checkout (docs/testing.md "Parallel test isolation"); a bare
+      # `docker compose up` keeps the historical 2222/2323.
+      - "${TERMIHUB_TEST_E2E_SSH_PORT:-2222}:22" # SSH
+      - "${TERMIHUB_TEST_E2E_TELNET_PORT:-2323}:23" # Telnet
     restart: unless-stopped

@@ -14,7 +14,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{require_docker, PORT_SSH_PASSWORD};
+use common::{port_ssh_password, require_docker};
 use termihub_core::backends::ssh::Ssh;
 use termihub_core::connection::ConnectionType;
 
@@ -23,7 +23,7 @@ async fn connect_with_monitoring() -> Ssh {
     let mut ssh = Ssh::new();
     let settings = serde_json::json!({
         "host": "127.0.0.1",
-        "port": PORT_SSH_PASSWORD,
+        "port": port_ssh_password(),
         "username": "testuser",
         "authMethod": "password",
         "password": "testpass",
@@ -39,7 +39,7 @@ async fn connect_with_monitoring() -> Ssh {
 
 #[tokio::test]
 async fn mon_01_cpu_stats() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
     let ssh = connect_with_monitoring().await;
     let provider = ssh
@@ -91,7 +91,7 @@ async fn mon_01_cpu_stats() {
 
 #[tokio::test]
 async fn mon_02_memory_stats() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
     let ssh = connect_with_monitoring().await;
     let provider = ssh
@@ -136,7 +136,7 @@ async fn mon_02_memory_stats() {
 
 #[tokio::test]
 async fn mon_03_disk_stats() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
     let ssh = connect_with_monitoring().await;
     let provider = ssh
@@ -181,7 +181,7 @@ async fn mon_03_disk_stats() {
 
 #[tokio::test]
 async fn mon_04_stats_under_load() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
     let ssh = connect_with_monitoring().await;
     let provider = ssh
@@ -194,7 +194,7 @@ async fn mon_04_stats_under_load() {
         .expect("Subscribe should succeed");
 
     // Generate CPU load in the container via a separate SSH session.
-    let config = common::ssh_password_config(PORT_SSH_PASSWORD);
+    let config = common::ssh_password_config(port_ssh_password());
     let (load_session, _) = termihub_core::backends::ssh::auth::connect_and_authenticate(&config)
         .await
         .expect("Load session should connect");

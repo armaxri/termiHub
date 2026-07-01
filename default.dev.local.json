@@ -1,0 +1,8 @@
+{
+  "_comment": "Template for the per-checkout, gitignored dev.local.json. Copy it (`cp default.dev.local.json dev.local.json`) and give EACH parallel checkout distinct values — see the 'Parallel test isolation' section in docs/testing.md for the recommended per-checkout table. Every key is optional; an omitted key falls back to a default that reproduces the historical single-checkout behaviour exactly. The values shown here are 'checkout 0'.",
+  "dev_port": 1420,
+  "dev_agent_port": 2222,
+  "dev_name": "dev0",
+  "compose_project": "termihub-test-0",
+  "test_port_offset": 0
+}
