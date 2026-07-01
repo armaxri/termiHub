@@ -162,15 +162,25 @@ pub async fn ssh_exec(session: &SshSession, command: &str) -> Result<String, Str
     Ok(output)
 }
 
-/// Guard that resets network faults on the `termihub-network-fault` container
-/// when dropped. Ensures fault state is always cleaned up, even on panic.
+/// Name of the network-fault container for the active checkout.
+///
+/// The container is namespaced by the Compose project (`TERMIHUB_TEST_PROJECT`,
+/// default `termihub`), so a `docker exec` must target this checkout's instance —
+/// `<project>-network-fault` — not a hardcoded name shared across checkouts.
+fn network_fault_container() -> String {
+    let project = std::env::var("TERMIHUB_TEST_PROJECT").unwrap_or_else(|_| "termihub".into());
+    format!("{project}-network-fault")
+}
+
+/// Guard that resets network faults on the network-fault container when dropped.
+/// Ensures fault state is always cleaned up, even on panic.
 pub struct FaultGuard;
 
 impl FaultGuard {
     pub fn new() -> Self {
         // Reset any leftover faults from previous runs.
         let _ = std::process::Command::new("docker")
-            .args(["exec", "termihub-network-fault", "reset-faults"])
+            .args(["exec", &network_fault_container(), "reset-faults"])
             .output();
         FaultGuard
     }
@@ -179,16 +189,16 @@ impl FaultGuard {
 impl Drop for FaultGuard {
     fn drop(&mut self) {
         let _ = std::process::Command::new("docker")
-            .args(["exec", "termihub-network-fault", "reset-faults"])
+            .args(["exec", &network_fault_container(), "reset-faults"])
             .output();
     }
 }
 
-/// Apply a network fault to the `termihub-network-fault` container.
+/// Apply a network fault to the network-fault container.
 pub fn apply_fault(args: &[&str]) -> Result<(), String> {
     let output = std::process::Command::new("docker")
         .arg("exec")
-        .arg("termihub-network-fault")
+        .arg(network_fault_container())
         .args(args)
         .output()
         .map_err(|e| format!("Failed to run docker exec: {e}"))?;
@@ -200,27 +210,71 @@ pub fn apply_fault(args: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-// --- Docker container port constants ---
+// --- Docker container ports (per-checkout offset aware) ---
+//
+// Each port is `base + offset`, where `offset` comes from
+// `TERMIHUB_TEST_PORT_OFFSET` (or an explicit per-service `TERMIHUB_TEST_*_PORT`
+// override) — the env the shell resolver `scripts/internal/dev-local-env.sh`
+// exports from `dev.local.json`. With no env (a lone checkout / bare `cargo
+// test`) every port falls back to its historical base, so behaviour is
+// unchanged. This keeps the integration tests pointed at *this* checkout's
+// containers so parallel checkouts never share one. See `docs/testing.md` →
+// "Parallel test isolation".
+
+/// Resolve a container host port: an explicit `env_var` wins, else `base` plus
+/// `TERMIHUB_TEST_PORT_OFFSET` (default offset `0`).
+fn resolve_port(env_var: &str, base: u16) -> u16 {
+    if let Some(p) = std::env::var(env_var).ok().and_then(|v| v.parse().ok()) {
+        return p;
+    }
+    let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    base + offset
+}
 
 /// ssh-password container (password auth, OpenSSH latest).
-pub const PORT_SSH_PASSWORD: u16 = 2201;
+pub fn port_ssh_password() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_PASSWORD_PORT", 2201)
+}
 /// ssh-legacy container (OpenSSH 7.x compatibility).
-pub const PORT_SSH_LEGACY: u16 = 2202;
+pub fn port_ssh_legacy() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_LEGACY_PORT", 2202)
+}
 /// ssh-keys container (key auth only, all key types).
-pub const PORT_SSH_KEYS: u16 = 2203;
+pub fn port_ssh_keys() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_KEYS_PORT", 2203)
+}
 /// ssh-jumphost-bastion container (ProxyJump entry point).
-pub const PORT_SSH_BASTION: u16 = 2204;
+pub fn port_ssh_bastion() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_BASTION_PORT", 2204)
+}
 /// ssh-restricted container (rbash limited shell).
-pub const PORT_SSH_RESTRICTED: u16 = 2205;
+pub fn port_ssh_restricted() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_RESTRICTED_PORT", 2205)
+}
 /// ssh-banner container (pre-auth banner + MOTD).
-pub const PORT_SSH_BANNER: u16 = 2206;
+pub fn port_ssh_banner() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_BANNER_PORT", 2206)
+}
 /// ssh-tunnel-target container (internal HTTP + echo services).
-pub const PORT_SSH_TUNNEL: u16 = 2207;
+pub fn port_ssh_tunnel() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_TUNNEL_PORT", 2207)
+}
 /// ssh-x11 container (X11 forwarding).
-pub const PORT_SSH_X11: u16 = 2208;
+pub fn port_ssh_x11() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_X11_PORT", 2208)
+}
 /// network-fault-proxy container (tc/netem fault injection).
-pub const PORT_NETWORK_FAULT: u16 = 2209;
+pub fn port_network_fault() -> u16 {
+    resolve_port("TERMIHUB_TEST_NETWORK_FAULT_PORT", 2209)
+}
 /// sftp-stress container (pre-populated SFTP test data).
-pub const PORT_SFTP_STRESS: u16 = 2210;
+pub fn port_sftp_stress() -> u16 {
+    resolve_port("TERMIHUB_TEST_SFTP_STRESS_PORT", 2210)
+}
 /// telnet-server container.
-pub const PORT_TELNET: u16 = 2301;
+pub fn port_telnet() -> u16 {
+    resolve_port("TERMIHUB_TEST_TELNET_PORT", 2301)
+}

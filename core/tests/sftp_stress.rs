@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{require_docker, PORT_SFTP_STRESS};
+use common::{port_sftp_stress, require_docker};
 use termihub_core::backends::ssh::Ssh;
 use termihub_core::connection::ConnectionType;
 
@@ -22,7 +22,7 @@ async fn connect_sftp() -> Ssh {
     let mut ssh = Ssh::new();
     let settings = serde_json::json!({
         "host": "127.0.0.1",
-        "port": PORT_SFTP_STRESS,
+        "port": port_sftp_stress(),
         "username": "testuser",
         "authMethod": "password",
         "password": "testpass",
@@ -38,7 +38,7 @@ async fn connect_sftp() -> Ssh {
 
 #[tokio::test]
 async fn sftp_stress_01_download_1mb() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -62,7 +62,7 @@ async fn sftp_stress_01_download_1mb() {
 
 #[tokio::test]
 async fn sftp_stress_02_download_10mb() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -86,7 +86,7 @@ async fn sftp_stress_02_download_10mb() {
 
 #[tokio::test]
 async fn sftp_stress_03_download_100mb() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -110,7 +110,7 @@ async fn sftp_stress_03_download_100mb() {
 
 #[tokio::test]
 async fn sftp_stress_04_upload_roundtrip() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -152,7 +152,7 @@ async fn sftp_stress_04_upload_roundtrip() {
 
 #[tokio::test]
 async fn sftp_stress_05_list_wide_directory() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -176,7 +176,7 @@ async fn sftp_stress_05_list_wide_directory() {
 
 #[tokio::test]
 async fn sftp_stress_06_deep_tree() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -206,7 +206,7 @@ async fn sftp_stress_06_deep_tree() {
 
 #[tokio::test]
 async fn sftp_stress_07_valid_file_symlink() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -228,7 +228,7 @@ async fn sftp_stress_07_valid_file_symlink() {
 
 #[tokio::test]
 async fn sftp_stress_08_valid_dir_symlink() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -250,7 +250,7 @@ async fn sftp_stress_08_valid_dir_symlink() {
 
 #[tokio::test]
 async fn sftp_stress_09_broken_symlink() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -271,7 +271,7 @@ async fn sftp_stress_09_broken_symlink() {
 
 #[tokio::test]
 async fn sftp_stress_10_circular_symlinks() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -293,7 +293,7 @@ async fn sftp_stress_10_circular_symlinks() {
 
 #[tokio::test]
 async fn sftp_stress_11_unicode_filename() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -315,7 +315,7 @@ async fn sftp_stress_11_unicode_filename() {
 
 #[tokio::test]
 async fn sftp_stress_12_filename_with_spaces() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -337,7 +337,7 @@ async fn sftp_stress_12_filename_with_spaces() {
 
 #[tokio::test]
 async fn sftp_stress_13_long_filename() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -363,7 +363,7 @@ async fn sftp_stress_13_long_filename() {
 
 #[tokio::test]
 async fn sftp_stress_14_hidden_dotfiles() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -387,7 +387,7 @@ async fn sftp_stress_14_hidden_dotfiles() {
 
 #[tokio::test]
 async fn sftp_stress_15_permission_000_file() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh
@@ -408,7 +408,7 @@ async fn sftp_stress_15_permission_000_file() {
 
 #[tokio::test]
 async fn sftp_stress_16_permission_000_directory() {
-    require_docker!(PORT_SFTP_STRESS);
+    require_docker!(port_sftp_stress());
 
     let ssh = connect_sftp().await;
     let browser = ssh

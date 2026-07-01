@@ -11,16 +11,16 @@
 
 mod common;
 
-use common::{require_docker, ssh_exec, ssh_key_config, ssh_password_config, PORT_SSH_LEGACY};
+use common::{port_ssh_legacy, require_docker, ssh_exec, ssh_key_config, ssh_password_config};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 // ── SSH-COMPAT-01: Legacy OpenSSH 7.x password auth ─────────────────
 
 #[tokio::test]
 async fn ssh_compat_01_legacy_password_auth() {
-    require_docker!(PORT_SSH_LEGACY);
+    require_docker!(port_ssh_legacy());
 
-    let config = ssh_password_config(PORT_SSH_LEGACY);
+    let config = ssh_password_config(port_ssh_legacy());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-COMPAT-01: Legacy SSH password auth should succeed");
@@ -39,9 +39,9 @@ async fn ssh_compat_01_legacy_password_auth() {
 
 #[tokio::test]
 async fn ssh_compat_02_legacy_key_auth() {
-    require_docker!(PORT_SSH_LEGACY);
+    require_docker!(port_ssh_legacy());
 
-    let config = ssh_key_config(PORT_SSH_LEGACY, "ed25519");
+    let config = ssh_key_config(port_ssh_legacy(), "ed25519");
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-COMPAT-02: Legacy SSH key auth should succeed");

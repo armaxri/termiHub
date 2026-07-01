@@ -15,6 +15,15 @@ docker compose -f tests/docker/docker-compose.yml --profile all up -d
 docker compose -f tests/docker/docker-compose.yml down
 ```
 
+> **Parallel checkouts.** Container/network names and published ports are
+> parameterised so several checkouts can run these containers at once. A bare
+> `docker compose up` (no env) uses the historical names (`termihub-ssh-password`,
+> …) and ports (`2201`, `2301`, `8080`, …). Set `TERMIHUB_TEST_PROJECT` and the
+> `TERMIHUB_TEST_*_PORT` vars (the test scripts export them from `dev.local.json`
+> via `scripts/internal/dev-local-env.sh`) to namespace and offset them — then the
+> `docker exec` / `ssh` examples below target `<project>-…` containers. See
+> [`docs/testing.md`](../../docs/testing.md) → _Parallel test isolation_.
+
 ## Podman
 
 The test infrastructure supports Podman as a drop-in replacement for Docker:

@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{require_docker, ssh_exec, ssh_password_config, PORT_SSH_PASSWORD};
+use common::{port_ssh_password, require_docker, ssh_exec, ssh_password_config};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 /// Install a tiny dummy script in `~/.local/bin/` and verify that a bare
@@ -21,9 +21,9 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 /// This reproduces the exact failure mode of #406.
 #[tokio::test]
 async fn ssh_exec_bare_name_not_in_path() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
-    let config = ssh_password_config(PORT_SSH_PASSWORD);
+    let config = ssh_password_config(port_ssh_password());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH auth should succeed");

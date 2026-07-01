@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{require_docker, ssh_exec, ssh_password_config, PORT_SSH_BANNER, PORT_SSH_PASSWORD};
+use common::{port_ssh_banner, port_ssh_password, require_docker, ssh_exec, ssh_password_config};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 // ── SSH-BANNER-01: Pre-auth banner delivered ─────────────────────────
@@ -23,9 +23,9 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 /// and is surfaced when running a shell command.
 #[tokio::test]
 async fn ssh_banner_01_banner_received() {
-    require_docker!(PORT_SSH_BANNER);
+    require_docker!(port_ssh_banner());
 
-    let config = ssh_password_config(PORT_SSH_BANNER);
+    let config = ssh_password_config(port_ssh_banner());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-BANNER-01: Should authenticate to the banner server");
@@ -46,9 +46,9 @@ async fn ssh_banner_01_banner_received() {
 /// and commands work normally (no banner interference).
 #[tokio::test]
 async fn ssh_banner_02_no_banner_on_standard_server() {
-    require_docker!(PORT_SSH_PASSWORD);
+    require_docker!(port_ssh_password());
 
-    let config = ssh_password_config(PORT_SSH_PASSWORD);
+    let config = ssh_password_config(port_ssh_password());
     let (session, _) = connect_and_authenticate(&config)
         .await
         .expect("SSH-BANNER-02: Should authenticate to the standard server");
@@ -68,13 +68,13 @@ async fn ssh_banner_02_no_banner_on_standard_server() {
 /// wrong credentials.
 #[tokio::test]
 async fn ssh_banner_03_failed_auth_rejected() {
-    require_docker!(PORT_SSH_BANNER);
+    require_docker!(port_ssh_banner());
 
     use termihub_core::config::SshConfig;
 
     let config = SshConfig {
         host: "127.0.0.1".to_string(),
-        port: PORT_SSH_BANNER,
+        port: port_ssh_banner(),
         username: "testuser".to_string(),
         auth_method: "password".to_string(),
         password: Some("definitely-wrong-password".to_string()),
