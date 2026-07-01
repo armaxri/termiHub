@@ -448,8 +448,8 @@ termiHub includes an automated performance test suite that validates 40 concurre
 
 ```bash
 # Run the performance suite (requires a built app; runs on all platforms)
-TERMIHUB_TEST_APP_BINARY=<path-to-built-app> tests/system/.venv/bin/python \
-  -m pytest tests/system/tests/test_performance.py -s
+TERMIHUB_TEST_APP_BINARY=<path-to-built-app> \
+  ./tests/system/pytest.sh tests/test_performance.py -s
 ```
 
 The suite (`tests/system/tests/test_performance.py`) covers:

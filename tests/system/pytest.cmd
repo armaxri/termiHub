@@ -1,32 +1,30 @@
 @echo off
-REM Run the termiHub Python system tests, creating the venv on first use.
+REM Run the termiHub Python system tests via uv.
 REM
-REM Wraps the harness virtualenv so you never type the .venv path. All arguments
-REM are forwarded verbatim to `python -m pytest`:
+REM Thin wrapper around `uv run pytest` that runs from tests\system regardless of
+REM where you call it, so you never manage the venv by hand. All arguments are
+REM forwarded verbatim to `python -m pytest`:
 REM
 REM   pytest.cmd -m "not integration" -v
 REM   pytest.cmd -m integration -k ssh -v -s
 REM   pytest.cmd --collect-only -q
 REM
-REM On first run it creates tests\system\.venv and installs requirements.txt;
-REM afterwards it just forwards to the existing venv. Override the base
-REM interpreter with `set PYTHON=py` (or a full path).
+REM On first run uv creates tests\system\.venv and installs the exact dependency
+REM set pinned in uv.lock (`--frozen` = use the committed lock, never re-resolve).
+REM After changing dependencies in pyproject.toml, run `uv lock` to refresh it.
+REM
+REM Pick a specific base interpreter with `set UV_PYTHON=3.12` (or a full path);
+REM the legacy `set PYTHON=py` override is honored for compatibility.
 setlocal
 cd /d "%~dp0"
 
-if "%PYTHON%"=="" set "PYTHON=python"
-set "VENV_PYTHON=.venv\Scripts\python.exe"
-
-if not exist "%VENV_PYTHON%" (
-    where "%PYTHON%" >nul 2>nul || (
-        echo error: '%PYTHON%' not found on PATH ^(set PYTHON=... to override^) 1>&2
-        exit /b 1
-    )
-    echo Creating Python virtualenv in %~dp0.venv ...
-    "%PYTHON%" -m venv .venv || exit /b 1
-    "%VENV_PYTHON%" -m pip install --quiet --upgrade pip || exit /b 1
-    "%VENV_PYTHON%" -m pip install --quiet -r requirements.txt || exit /b 1
-    echo virtualenv ready.
+where uv >nul 2>nul || (
+    echo error: 'uv' not found on PATH. 1>&2
+    echo   Install it from https://docs.astral.sh/uv/ ^(e.g. via the Windows installer at that page^). 1>&2
+    exit /b 1
 )
 
-"%VENV_PYTHON%" -m pytest %*
+REM Backward-compat: map the old PYTHON override onto uv's UV_PYTHON.
+if not "%PYTHON%"=="" if "%UV_PYTHON%"=="" set "UV_PYTHON=%PYTHON%"
+
+uv run --frozen pytest %*
