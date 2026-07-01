@@ -9,6 +9,16 @@
 //!
 //! Requires: `docker compose -f tests/docker/docker-compose.yml up -d`
 //! Skips gracefully if containers are not running.
+//!
+//! **IMPORTANT**: The SSH-JUMP-* tests all reach their target through the single
+//! shared `termihub-ssh-bastion` fixture. Running them concurrently opens many
+//! unauthenticated SSH handshakes against that one sshd at once, which trips its
+//! `MaxStartups` back-pressure and randomly drops connections — surfacing as
+//! intermittent `SFTP init failed: Timeout` or `SSH handshake failed: Disconnected`
+//! that move between tests under load (#1026). They are serialized in-source with
+//! `#[serial(ssh_bastion)]`, which keeps the suite parallel-safe regardless of
+//! `--test-threads`. The rbash and tunnel tests use their own fixtures and are left
+//! parallel.
 
 mod common;
 
@@ -16,6 +26,7 @@ use common::{
     port_ssh_bastion, port_ssh_restricted, port_ssh_tunnel, require_docker, ssh_exec,
     ssh_key_config, ssh_keys_dir, ssh_password_config,
 };
+use serial_test::serial;
 use std::time::Duration;
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 use termihub_core::backends::ssh::jump_host::connect_through_jump_hosts;
@@ -33,6 +44,7 @@ use termihub_core::connection::ConnectionType;
 /// the SSH handshake correctly, replacing the earlier `ssh`-shell-out
 /// reachability check (#872).
 #[tokio::test]
+#[serial(ssh_bastion)]
 async fn ssh_jump_01_two_hop_proxy_jump() {
     require_docker!(port_ssh_bastion());
 
@@ -95,6 +107,7 @@ async fn ssh_jump_01_two_hop_proxy_jump() {
 /// This drives the full loop (direct first hop, then two channel-tunnelled hops)
 /// without needing a second internal bastion container.
 #[tokio::test]
+#[serial(ssh_bastion)]
 async fn ssh_jump_02_multi_hop_proxy_jump() {
     require_docker!(port_ssh_bastion());
 
@@ -162,6 +175,7 @@ async fn ssh_jump_02_multi_hop_proxy_jump() {
 /// override), so the connect aborts in ~2 s, well under the multi-minute OS TCP
 /// timeout that would otherwise apply.
 #[tokio::test]
+#[serial(ssh_bastion)]
 async fn ssh_jump_06_hung_intermediate_hop_times_out() {
     require_docker!(port_ssh_bastion());
 
@@ -241,6 +255,7 @@ async fn ssh_jump_06_hung_intermediate_hop_times_out() {
 /// yields the *same* `SshGateway` (ref_count 2), and dropping both references
 /// removes the entry from the shared pool.
 #[tokio::test]
+#[serial(ssh_bastion)]
 async fn ssh_jump_03_shared_gateway_session_pooling() {
     use termihub_core::backends::ssh::jump_host::{
         connect_target_through_pooled_gateway, gateway_pool_key,
@@ -505,6 +520,7 @@ fn jump_host_target_settings(
 /// was tunnelled through the gateway rather than attempting a (failing) direct
 /// connection (#939).
 #[tokio::test]
+#[serial(ssh_bastion)]
 async fn ssh_jump_04_sftp_through_jump_host() {
     require_docker!(port_ssh_bastion());
 
@@ -533,6 +549,7 @@ async fn ssh_jump_04_sftp_through_jump_host() {
 /// direct connect would fail silently and yield no samples, so receiving a stats
 /// sample proves the monitoring session was routed through the gateway (#939).
 #[tokio::test]
+#[serial(ssh_bastion)]
 async fn ssh_jump_05_monitoring_through_jump_host() {
     require_docker!(port_ssh_bastion());
 
