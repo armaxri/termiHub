@@ -1,3 +1,28 @@
+[project]
+name = "termihub-system-tests"
+version = "0.0.0"
+description = "termiHub Python system-test harness (cross-platform WebSocket bridge tests)."
+# Broad floor so the harness runs on the varied dev/CI machines (incl. RPis);
+# the exact resolved versions are pinned in `uv.lock` for reproducibility.
+requires-python = ">=3.9"
+dependencies = [
+    "pytest>=8.0",
+    "websockets>=12.0",
+    "psutil>=5.9",
+    # tftpy: real TFTP RRQ client for the Embedded Services SVC-13 transfer check
+    # (replaces host-curl, whose tftp:// support is build-dependent — issue #964).
+    "tftpy>=0.8",
+    # pyftpdlib: in-process FTP server for the app-independent transfer-checker
+    # tests (test-only; the FTP checker itself uses only the stdlib ftplib).
+    "pyftpdlib>=1.5",
+]
+
+[tool.uv]
+# The harness (`termihub_harness`) is imported via `pythonpath = ["."]`, not
+# installed as a distribution — so uv manages only the dependencies and the
+# `.venv`, and never tries to build this directory as a package.
+package = false
+
 [tool.pytest.ini_options]
 # Run from tests/system. `pythonpath = .` makes `termihub_harness` importable;
 # test modules in tests/ import their local `fake_app` via pytest's prepend mode.

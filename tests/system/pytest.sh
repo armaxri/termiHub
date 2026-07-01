@@ -1,35 +1,35 @@
 #!/usr/bin/env bash
-# Run the termiHub Python system tests, creating the venv on first use.
+# Run the termiHub Python system tests via uv.
 #
-# Wraps the harness virtualenv so you never type the .venv path. All arguments
-# are forwarded verbatim to `python -m pytest`:
+# Thin wrapper around `uv run pytest` that runs from tests/system regardless of
+# where you call it, so you never manage the venv by hand. All arguments are
+# forwarded verbatim to `python -m pytest`:
 #
 #   ./pytest.sh -m "not integration" -v
 #   ./pytest.sh -m integration -k ssh -v -s
 #   ./pytest.sh --collect-only -q
 #
-# On first run it creates tests/system/.venv and installs requirements.txt;
-# afterwards it just forwards to the existing venv. Override the base
-# interpreter with PYTHON=/path/to/python3.
+# On first run uv creates tests/system/.venv and installs the exact dependency
+# set pinned in uv.lock (`--frozen` = use the committed lock, never re-resolve).
+# After changing dependencies in pyproject.toml, run `uv lock` to refresh it.
+#
+# Pick a specific base interpreter with UV_PYTHON=/path/to/python3 (or a version
+# like UV_PYTHON=3.12); the legacy PYTHON=... override is honored for
+# compatibility.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VENV_DIR=".venv"
-VENV_PYTHON="$VENV_DIR/bin/python"
-
-if [ ! -x "$VENV_PYTHON" ]; then
-    PYTHON_BIN="${PYTHON:-python3}"
-    if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-        echo "error: '$PYTHON_BIN' not found on PATH (set PYTHON=... to override)" >&2
-        exit 1
-    fi
-    echo "Creating Python virtualenv in $SCRIPT_DIR/$VENV_DIR ..."
-    "$PYTHON_BIN" -m venv "$VENV_DIR"
-    "$VENV_PYTHON" -m pip install --quiet --upgrade pip
-    "$VENV_PYTHON" -m pip install --quiet -r requirements.txt
-    echo "virtualenv ready."
+if ! command -v uv >/dev/null 2>&1; then
+    echo "error: 'uv' not found on PATH." >&2
+    echo "  Install it from https://docs.astral.sh/uv/ (e.g. 'curl -LsSf https://astral.sh/uv/install.sh | sh')." >&2
+    exit 1
 fi
 
-exec "$VENV_PYTHON" -m pytest "$@"
+# Backward-compat: map the old PYTHON override onto uv's UV_PYTHON.
+if [ -n "${PYTHON:-}" ] && [ -z "${UV_PYTHON:-}" ]; then
+    export UV_PYTHON="$PYTHON"
+fi
+
+exec uv run --frozen pytest "$@"
