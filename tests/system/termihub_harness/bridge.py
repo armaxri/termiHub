@@ -26,6 +26,13 @@ from .protocol import Command, Response, decode_response, encode_request
 
 DEFAULT_REQUEST_TIMEOUT = 10.0
 DEFAULT_APP_WAIT_TIMEOUT = 30.0
+#: After the first app connection arrives, briefly prefer a newer one that shows
+#: up within this window. An app's webview can connect and then reconnect during
+#: startup (a layout-driven remount or a page reload), so the first connection is
+#: sometimes transient and dies milliseconds later; binding the Driver to it
+#: would fail every command. The observed gap is ~20 ms, so a fraction of a
+#: second is ample headroom while keeping the per-acquire latency small.
+DEFAULT_APP_SETTLE = 0.5
 #: Cap for a single bridge frame. The default (1 MiB) is too small for a
 #: ``screenshot`` data URL of a large window, so allow generously larger frames.
 MAX_BRIDGE_FRAME_BYTES = 32 * 1024 * 1024
@@ -338,25 +345,66 @@ class Bridge:
             raise RuntimeError("bridge is not started")
         return self._port
 
-    def wait_for_app(self, timeout: float = DEFAULT_APP_WAIT_TIMEOUT) -> Driver:
+    def wait_for_app(
+        self,
+        timeout: float = DEFAULT_APP_WAIT_TIMEOUT,
+        settle: float = DEFAULT_APP_SETTLE,
+    ) -> Driver:
         """Block until the next app connects out, returning a :class:`Driver`.
 
         Each call consumes one connection in arrival order, so the first call
         returns the first app instance and a call after a restart returns the
         next one — the sequential-connection contract from issue #817.
+
+        Returns the connection that *survives* startup rather than blindly the
+        first to arrive: an app's webview can connect and then reconnect within
+        milliseconds (a layout-driven remount or a page reload), and the first,
+        transient connection then dies — so binding the Driver to it would make
+        every command fail with "bridge connection closed". After the first
+        connection arrives this prefers any newer one that shows up within
+        ``settle``, and if the current candidate has already closed it keeps
+        waiting (up to ``timeout``) for the replacement. Pass ``settle=0`` to opt
+        out (take the first arrival immediately). See :data:`DEFAULT_APP_SETTLE`.
         """
         if self._loop is None or self._conn_queue is None:
             raise RuntimeError("bridge is not started")
         cfut = asyncio.run_coroutine_threadsafe(
-            asyncio.wait_for(self._conn_queue.get(), timeout), self._loop
+            self._acquire_settled(timeout, settle), self._loop
         )
         try:
-            connection = cfut.result(timeout + 5)
+            connection = cfut.result(timeout + settle + 5)
         except asyncio.TimeoutError as exc:
             raise TimeoutError(
                 f"no app connected to the bridge within {timeout}s"
             ) from exc
         return Driver(connection, self._loop)
+
+    async def _acquire_settled(self, timeout: float, settle: float) -> "_Connection":
+        """Pop a connection, then prefer a newer/surviving one (see wait_for_app).
+
+        Runs on the bridge event loop. Blocks up to ``timeout`` for the first
+        connection, then: while the candidate is open, briefly (``settle``) take
+        any newer arrival that supersedes it; while the candidate is closed, wait
+        for its replacement until the overall ``timeout`` elapses.
+        """
+        assert self._conn_queue is not None
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        connection = await asyncio.wait_for(self._conn_queue.get(), timeout)
+        while True:
+            if connection._closed:
+                # The candidate is a dead transient connection — wait for the
+                # replacement up to the overall deadline.
+                window = max(0.0, deadline - loop.time())
+            else:
+                # A healthy candidate — only briefly look for a newer connection.
+                window = settle
+            if window <= 0.0:
+                return connection
+            try:
+                connection = await asyncio.wait_for(self._conn_queue.get(), window)
+            except asyncio.TimeoutError:
+                return connection
 
     def close(self) -> None:
         loop, stop = self._loop, self._stop_future
