@@ -606,7 +606,7 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 | ------------------- | ------------------------------------------- | ----- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SSH Auth            | `core/tests/ssh_auth.rs`                    | 15    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 5 passphrase keys, wrong credentials, wrong passphrase                                                                                                                                                                                                                                                                                         |
 | SSH Compat          | `core/tests/ssh_compat.rs`                  | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                                                                                                                                                                                                                                                                                                                      |
-| SSH Advanced        | `core/tests/ssh_advanced.rs`                | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                                                                                                                                                                                                                                                                                                                            |
+| SSH Advanced        | `core/tests/ssh_advanced.rs`                | 10    | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                                                                                                                                                                                                                                                                                                                            |
 | SSH Banner          | `core/tests/ssh_banner.rs`                  | 3     | ssh-banner:2206, ssh-password:2201         | Pre-auth banner text, no-banner on standard server, banner on failed auth                                                                                                                                                                                                                                                                                             |
 | Telnet              | `core/tests/telnet.rs`                      | 3     | telnet:2301                                | Connect, output subscribe, login flow                                                                                                                                                                                                                                                                                                                                 |
 | SFTP Stress         | `core/tests/sftp_stress.rs`                 | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions                                                                                                                                                                                                                                                                                                     |
@@ -617,6 +617,11 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 | SSH Keys (system)   | `tests/system/tests/test_ssh_keys.py`       | 4     | ssh-keys:2203                              | Key-based auth flows (ported from `ssh-keys.test.js`)                                                                                                                                                                                                                                                                                                                 |
 | SSH Infra (system)  | `tests/system/tests/test_ssh.py`            | 11    | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                                        |
 | Win Shells (system) | `tests/system/tests/test_windows_shells.py` | 11    | none                                       | PowerShell / cmd.exe selection, rendering, input, the shell selector, and WSL sessions (cwd / `/mnt` path translation). Windows-only; WSL cases skip without WSL2 (ported from `windows-shells.test.js`, #975)                                                                                                                                                        |
+
+> The **Tests** counts for rows backed by a dedicated test file are **generated** —
+> after adding or removing tests, run `python scripts/build-test-counts.py`
+> (verified in CI via `--check`). The count for the agent-deploy row is left as-is
+> because it is a single test inside a shared module, not a whole suite.
 
 ### Skip Behavior
 
@@ -890,9 +895,9 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Category              | YAML File                                                                  | ID Prefix  | Tests   |
 | --------------------- | -------------------------------------------------------------------------- | ---------- | ------- |
 | Local Shell           | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL` | 4       |
-| SSH                   | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`   | 20      |
-| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 9       |
-| Tab Management        | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`   | 14      |
+| SSH                   | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`   | 24      |
+| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 10      |
+| Tab Management        | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`   | 13      |
 | Connection Management | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`  | 12      |
 | File Browser + Editor | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    | 10      |
 | UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    | 27      |
@@ -903,9 +908,9 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4       |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3       |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 13      |
-| **Total**             |                                                                            |            | **155** |
+| **Total**             |                                                                            |            | **162** |
 
-When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
+When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing. The counts and **Total** above are **generated** from those files: run `python scripts/build-test-counts.py` after editing them (verified in CI via `--check`), so they can never drift or disagree with the total again.
 
 ### E2E Coverage Map
 

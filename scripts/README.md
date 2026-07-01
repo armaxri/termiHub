@@ -21,6 +21,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `smoke-test`              | Post-install smoke test — launches the built app, verifies basic UI functionality, and confirms clean shutdown                                                                                    |
 | `test-manual.py`          | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports                                                                        |
 | `build-testid-catalog.py` | Scan `src/**` for every `data-testid` into a checked-in catalog (`tests/system/testid-catalog.md`) so test authors confirm a selector without reading components; `--check` gates freshness in CI |
+| `build-test-counts.py`    | Regenerate the **Tests** count columns in `docs/testing.md` from source (manual-YAML `id:` entries + per-file test functions) so they never drift; `--check` gates freshness in CI                |
 
 ## Typical workflow
 
@@ -83,6 +84,10 @@ python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume pre
 python scripts/build-testid-catalog.py            # Regenerate tests/system/testid-catalog.md
 python scripts/build-testid-catalog.py --check    # Verify it is up to date (CI gate)
 python scripts/build-testid-catalog.py --stdout   # Print without writing
+
+# docs/testing.md test-count columns (derived from source)
+python scripts/build-test-counts.py               # Regenerate the Tests counts + Total
+python scripts/build-test-counts.py --check       # Verify they are up to date (CI gate)
 
 # Post-install smoke test
 ./scripts/smoke-test.sh ./src-tauri/target/release/termihub       # Linux
