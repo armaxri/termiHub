@@ -1114,8 +1114,11 @@ Experimental features may ship in public releases. The flag is not a hidden deve
 > suites have been migrated to the host-native **Python bridge harness**
 > (`tests/system/`, run via `./scripts/test-system-py.sh`), which works on
 > macOS, Linux, and Windows without Docker-in-the-loop for the app itself.
-> `wdio.conf.js` remains only as a scaffold for future tauri-driver UI specs.
-> The context and trade-offs below are retained as the original record.
+> The WebdriverIO scaffold was fully retired in #1027 (`wdio.conf.js`,
+> `tests/e2e/`, and the `@wdio/*` devDependencies removed); the only remaining
+> `tauri-driver` consumer is the smoke test (`scripts/smoke-test.sh`). The
+> context and trade-offs below are retained as the original record — they still
+> describe why `tauri-driver`-based UI checks are Linux/Windows-only.
 
 **Context:** Tauri's `tauri-driver` (the WebDriver proxy for E2E tests) only supports Linux (WebKitGTK) and Windows (Edge WebView2). On macOS, it prints "not supported on this platform" and exits because Apple provides no WKWebView driver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in apps. This is a known Tauri limitation ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)) with no upstream fix expected.
 

@@ -7,143 +7,55 @@ termiHub uses a multi-layered testing approach to ensure quality across the enti
 ## Testing Layers
 
 ```
-┌─────────────────────────────────────┐
-│   E2E Tests (WebdriverIO)           │  ← User flows, click automation
-├─────────────────────────────────────┤
-│   Integration Tests (Rust + React)  │  ← Component + Backend integration
-├─────────────────────────────────────┤
-│   Unit Tests                         │  ← Individual functions
-│   - Rust (cargo test)               │
-│   - React (Vitest)                   │
-└─────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│   System / E2E Tests (Python bridge)      │  ← User flows, click automation
+├──────────────────────────────────────────┤
+│   Integration Tests (Rust + React)        │  ← Component + Backend integration
+├──────────────────────────────────────────┤
+│   Unit Tests                               │  ← Individual functions
+│   - Rust (cargo test)                     │
+│   - React (Vitest)                         │
+└──────────────────────────────────────────┘
 ```
 
-## 1. E2E Testing with WebdriverIO
+## 1. System / E2E Testing (Python bridge harness)
 
-**What it does**: Automates complete user workflows
+**What it does**: Automates complete user workflows by driving a built app over
+the in-app test bridge (see [test-bridge.md](test-bridge.md)).
 **Use for**:
 
 - Creating terminal connections
 - Opening multiple tabs
-- Drag & drop functionality
 - Split view operations
-- File browser interactions
+- File browser / SFTP interactions
+- Infrastructure coverage against Docker fixtures (SSH, telnet, serial, …)
+
+The system/E2E layer is the **Python bridge harness** under `tests/system/`. It supersedes the retired WebdriverIO/`tauri-driver` suites: all previously-shipped wdio specs (UI, local, infrastructure, performance) were ported to it under epic #799, the last suite retired in #1015, and the empty scaffold (`wdio.conf.js`, `tests/e2e/`, the `@wdio/*` devDependencies) was removed in #1027. Unlike the old wdio path, the Python harness works on **macOS, Linux, and Windows** — it talks to the app over a WebSocket bridge rather than a native WebView driver, so it needs no `tauri-driver`.
 
 ### Platform Support
 
-> **Important:** `tauri-driver` (the WebDriver proxy that bridges WebdriverIO to Tauri's WebView) only supports **Linux** (WebKitGTK via `WebKitWebDriver`) and **Windows** (Edge WebView2 via `msedgedriver`). It does **not** support macOS because Apple provides no WKWebView driver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in apps. This is a known upstream limitation ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)).
->
-> **On macOS**, E2E tests run inside a Docker container with a Linux environment (Xvfb + WebKitGTK + tauri-driver). This tests the Linux build of the app, which shares the same React UI and Rust backend logic. macOS-specific rendering behavior (WKWebView quirks) must be verified via [manual testing](#manual-testing).
->
-> **Future:** The experimental [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) project (Feb 2026) aims to provide native WKWebView WebDriver support via a Tauri plugin. If it matures, it could enable native macOS E2E testing without Docker. See ADR-5 in [architecture.md](architecture.md).
+The only remaining `tauri-driver` consumer is the smoke test (`scripts/smoke-test.sh`), which drives it directly over the W3C WebDriver protocol on Linux/Windows and falls back to process/`osascript` checks on macOS. `tauri-driver` still has no macOS WKWebView driver ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)); macOS-specific rendering behavior (WKWebView quirks) must be verified via [manual testing](#manual-testing). See ADR-5 in [architecture.md](architecture.md).
 
-### Setup
+### Running System / E2E Tests
 
-```bash
-npm install --save-dev \
-  @wdio/cli \
-  @wdio/local-runner \
-  @wdio/mocha-framework \
-  @wdio/spec-reporter \
-  wdio-tauri-service
-```
-
-### Configuration (`wdio.conf.js`)
-
-See [`wdio.conf.js`](../wdio.conf.js) in the project root.
-
-### Example E2E Test
-
-```javascript
-// tests/e2e/terminal-creation.test.js
-describe("Terminal Creation Flow", () => {
-  it("should create a new local bash terminal", async () => {
-    // Open sidebar
-    await browser.$('[data-testid="activity-bar-connections"]').click();
-
-    // Click "New Connection"
-    await browser.$('[data-testid="new-connection-btn"]').click();
-
-    // Select connection type
-    await browser.$('[data-testid="connection-type-local"]').click();
-
-    // Select bash shell
-    await browser.$('[data-testid="shell-type-bash"]').click();
-
-    // Enter connection name
-    const nameInput = await browser.$('[data-testid="connection-name-input"]');
-    await nameInput.setValue("Test Bash Terminal");
-
-    // Save connection
-    await browser.$('[data-testid="save-connection-btn"]').click();
-
-    // Verify connection appears in list
-    const connection = await browser.$('[data-testid="connection-Test Bash Terminal"]');
-    await expect(connection).toExist();
-
-    // Double-click to open
-    await connection.doubleClick();
-
-    // Verify terminal tab opened
-    const tab = await browser.$('[data-testid="tab-Test Bash Terminal"]');
-    await expect(tab).toExist();
-
-    // Verify terminal is active
-    const terminal = await browser.$('[data-testid="terminal-active"]');
-    await expect(terminal).toExist();
-  });
-
-  it("should create SSH connection with X11 forwarding", async () => {
-    // Similar flow for SSH
-    await browser.$('[data-testid="connection-type-ssh"]').click();
-
-    // Fill SSH details
-    await browser.$('[data-testid="ssh-host"]').setValue("192.168.1.100");
-    await browser.$('[data-testid="ssh-port"]').setValue("22");
-    await browser.$('[data-testid="ssh-username"]').setValue("testuser");
-
-    // Enable X11
-    await browser.$('[data-testid="ssh-enable-x11"]').click();
-
-    // Verify X11 status indicator
-    const x11Status = await browser.$('[data-testid="x11-status"]');
-    await expect(x11Status).toHaveText("X Server Running");
-  });
-});
-```
-
-### Running E2E / System Tests
-
-The example above shows the legacy WebdriverIO API. All previously-shipped
-WebdriverIO specs (UI, local, infrastructure, performance) were ported to the
-**Python bridge harness** under `tests/system/` (epic #799); `wdio.conf.js`
-remains only as a scaffold for future tauri-driver UI specs (it currently
-matches zero specs). System and infrastructure coverage now runs through the
-Python harness, which works on macOS, Linux, and Windows:
+See [tests/system/README.md](../tests/system/README.md) for the full harness
+docs and the [Comprehensive System Tests](#comprehensive-system-tests) section
+below.
 
 ```bash
 # Python bridge system-test harness — builds the app if needed, brings up the
-# named Docker fixtures, then runs pytest (see tests/system/README.md)
+# named Docker fixtures, then runs pytest
 ./scripts/test-system-py.sh --debug -k ssh -x -s
 ./scripts/test-system-py.sh --fixtures "ssh-password ssh-keys" -m integration -k ssh
 
 # Per-machine orchestration (unit + Rust integration tests against Docker infra)
 ./scripts/test-system-linux.sh
 ./scripts/test-system-windows.sh
-
-# The wdio scaffold (no specs ship today; Linux/Windows only, tauri-driver required)
-pnpm test:e2e
 ```
 
-### Recording Interactions (Manual → Automated)
-
-**Use WebdriverIO's Inspector** to record actions:
-
-```bash
-npx wdio repl
-```
-
-Then manually perform actions in the app, and it generates test code!
+Selectors and UI-driving verbs live in the harness mixins (`tests/system/`); the
+bridge dispatcher in `src/testbridge/` exposes the DOM to those verbs. New E2E
+coverage is written as `pytest` tests there, not as native WebView specs.
 
 ## 2. Component Integration Tests
 
@@ -388,22 +300,19 @@ jobs:
       - run: npm run test:coverage
       - uses: codecov/codecov-action@v3
 
-  e2e-tests:
-    # NOTE: `wdio.conf.js` is currently an empty scaffold (all specs were ported
-    # to the Python bridge harness, tests/system/); this job is a placeholder for
-    # future tauri-driver UI specs. tauri-driver only runs on Linux and Windows
-    # (no macOS WKWebView driver) — see ADR-5 in architecture.md.
+  system-tests:
+    # System / E2E coverage runs through the Python bridge harness
+    # (tests/system/), which talks to the app over a WebSocket bridge and needs
+    # no tauri-driver — so it runs on all three OSes. See tests/system/README.md.
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
-      - run: npm run build
-      - run: npm run test:e2e
+      - run: ./scripts/test-system-py.sh -m integration
 ```
 
 ### Windows Agent CI Coverage
@@ -413,7 +322,7 @@ The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs
 - **Build + test** ([`agent.yml`](../.github/workflows/agent.yml)): the `build-windows` job runs on `windows-latest`, builds the agent for `x86_64-pc-windows-msvc` (native MSVC — cross-rs cannot build the MSVC ABI), and runs `cargo test -p termihub-agent -p termihub-core --all-features`. The full workspace test suite also runs on `windows-latest` via the [`code-quality.yml`](../.github/workflows/code-quality.yml) `tests` matrix.
 - **Release artifact** ([`release.yml`](../.github/workflows/release.yml)): the `agent-binaries-windows` job ships `termihub-agent-windows-x64.exe` alongside the Linux and macOS agent binaries on every tagged release.
 
-> **Platform caveat (ADR-5):** System/E2E tests (`tauri-driver` + Docker) remain **Linux-only** — `tauri-driver` has no macOS WKWebView driver, and the Docker E2E suite targets Linux. Windows **agent** verification is therefore limited to unit/integration tests (the jobs above) plus the manual tests in [`tests/manual/remote-agent.yaml`](../tests/manual/remote-agent.yaml). There is no automated end-to-end coverage of the Windows agent over a live SSH connection.
+> **Platform caveat (ADR-5):** the Python bridge system-test harness runs on all three OSes, but its Docker-backed **infrastructure** fixtures (SSH/telnet/serial containers) run against a Linux Docker daemon, and the smoke test's UI checks use `tauri-driver`, which has no macOS WKWebView driver. Windows **agent** verification is therefore limited to unit/integration tests (the jobs above) plus the manual tests in [`tests/manual/remote-agent.yaml`](../tests/manual/remote-agent.yaml). There is no automated end-to-end coverage of the Windows agent over a live SSH connection.
 
 ## Coverage Goals
 
@@ -494,24 +403,24 @@ vi.mock("@tauri-apps/api/fs", () => ({
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "wdio run ./wdio.conf.js",
-    "test:visual": "playwright test",
-    "test:all": "pnpm test && pnpm test:e2e"
+    "test:visual": "playwright test"
   }
 }
 ```
 
+System / E2E tests are not a `package.json` script — they run through the Python
+bridge harness via `./scripts/test-system-py.sh` (see
+[tests/system/README.md](../tests/system/README.md)).
+
 ## Debugging Tests
 
-### WebdriverIO Inspector
+### System-harness debugging
+
+Run the Python harness with `--debug` to keep the app window visible and stream
+bridge traffic, and pass pytest flags through for a single test:
 
 ```bash
-# Launch interactive session
-npx wdio repl
-
-# Then in REPL:
-> await browser.$('[data-testid="terminal"]').click()
-> await browser.debug()  // Pauses execution
+./scripts/test-system-py.sh --debug -k terminal_creation -x -s
 ```
 
 ### Vitest UI
@@ -801,7 +710,7 @@ scripts\smoke-test.cmd src-tauri\target\release\termihub.exe
 ## Related Documentation
 
 - [Contributing](contributing.md) — Development setup, building, workflow, coding standards, and performance profiling
-- [WebdriverIO Docs](https://webdriver.io/docs/gettingstarted)
+- [Test bridge protocol](test-bridge.md) — how the Python harness drives the app
 - [Tauri Testing Guide](https://tauri.app/v1/guides/testing/)
 - [React Testing Library](https://testing-library.com/react)
 - [Vitest](https://vitest.dev/)
@@ -832,7 +741,7 @@ Manual tests that can be automated have been moved to the Python bridge system-t
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: all WebdriverIO specs have been ported to the cross-platform Python bridge harness in `tests/system/` (epic #799), leaving `wdio.conf.js` as an empty scaffold for any future tauri-driver UI specs. The last specs ported and removed include the SSH tunnels editor/list and Network Tools panel-UI suites → `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` (#810), the live-network cases → `test_network_tools_live.py` (#946), the remote-agent and Windows-shells/WSL infrastructure suites (#974, #975), and finally the now-empty `infra` wdio suite itself (#1015).
+E2E test coverage: all WebdriverIO specs have been ported to the cross-platform Python bridge harness in `tests/system/` (epic #799), and the wdio harness has been fully retired — the empty `wdio.conf.js` scaffold, the `tests/e2e/` helper tree, and the `@wdio/*` devDependencies were removed in #1027. The last specs ported and removed include the SSH tunnels editor/list and Network Tools panel-UI suites → `tests/system/tests/test_ssh_tunnels.py` / `test_network_tools.py` (#810), the live-network cases → `test_network_tools_live.py` (#946), the remote-agent and Windows-shells/WSL infrastructure suites (#974, #975), and finally the now-empty `infra` wdio suite itself (#1015).
 
 ### Test Environment Setup
 

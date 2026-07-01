@@ -435,8 +435,9 @@ being migrated incrementally (epic #913).
 
 Tips:
 
-- **Find `data-testid`s** in the React components (`src/**`) or the existing
-  selectors in `tests/e2e/helpers/selectors.js`.
+- **Find `data-testid`s** in the React components (`src/**`), the
+  [`testid-catalog.md`](testid-catalog.md), or the selector constants reused by
+  the harness mixins (`termihub_harness/ui/`).
 - **Read app state** with `self.driver.get_state("some.dot.path")` to assert on
   the Zustand store (e.g. `activePanelId`).
 - **Fast tests without a build** — to exercise harness/protocol behavior, drive a

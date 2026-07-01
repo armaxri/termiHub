@@ -28,7 +28,7 @@ flowchart LR
     D --> E[Run one targeted test<br/>-x -s, --delay4user to watch]
     E -->|fail| F[Analyze: state dump,<br/>terminal buffer, app logs]
     F --> C
-    E -->|pass| G[Widen: run the suite,<br/>then remove the old WDIO spec]
+    E -->|pass| G[Widen: run the<br/>full suite]
     C -->|frontend testid change| A
 ```
 
@@ -83,12 +83,19 @@ full speed). Sprinkle these calls while developing a flow you can't yet trust.
 
 ---
 
-## 2. Implement — authoring a port
+## 2. Implement — authoring a test
 
-The porting contract lives in **#803** (Docker fixtures stay; map each
-`data-testid` interaction → a step and each assertion → a check; remove the old
-WebdriverIO spec once parity is reached; feed missing checkers back into #800).
-The mechanics:
+> **The WebdriverIO port is complete.** Every wdio spec was ported to the Python
+> bridge harness (epic #799) and the wdio scaffold was fully retired in #1027, so
+> there is no longer an "old spec" to inventory or delete. New coverage is
+> written directly as `pytest` tests here. The porting-flavored guidance below is
+> retained because the mechanics (reuse mixins, verify `data-testid`s against
+> current source, assert on store state, preflight with `--collect-only`) apply
+> equally to authoring a fresh test.
+
+The original porting contract lived in **#803** (Docker fixtures stay; map each
+`data-testid` interaction → a step and each assertion → a check; feed missing
+checkers back into #800). The mechanics:
 
 1. **Inventory the source spec first.** List its `it(...)` cases, the
    `data-testid`s it touches, the containers/ports it needs, and any interaction
@@ -102,8 +109,7 @@ The mechanics:
    existing ported test is the best template (e.g. `test_ssh_sftp_cwd.py` for
    SFTP-browser flows).
 
-3. **Verify every `data-testid` against current source, not the old spec.** The
-   WebdriverIO specs predate UI refactors, so their selectors drift. Confirm each
+3. **Verify every `data-testid` against current source.** Confirm each
    id still exists in `src/**` — many are **dynamic** (`${prefix}-download`,
    `file-row-${name}`), so a literal grep gives false negatives; grep the
    template and the prefix. Where the app lacks a stable id the test needs, add
@@ -121,8 +127,9 @@ The mechanics:
    without a build. This is the cheapest possible feedback and should run before
    any real execution.
 
-6. **Reach parity, then delete.** Only remove the old WDIO spec once its
-   portable scenarios are covered and its carve-outs are in the manual map.
+6. **Record manual carve-outs.** Anything that can only be verified visually or
+   via an OS-native dialog belongs in the manual coverage map in `docs/testing.md`
+   so coverage is never silently lost.
 
 ---
 

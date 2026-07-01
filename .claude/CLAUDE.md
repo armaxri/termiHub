@@ -157,7 +157,7 @@ scripts/                      # Dev helper scripts (.sh + .cmd variants)
   internal/                   # Non-user-facing helpers (autoformat hook, kill-port utility)
 docs/                         # All documentation
   concepts/                   # Concept documents for "Concept" labeled issues
-tests/e2e/                    # WebdriverIO E2E tests
+tests/system/                 # Python bridge system/E2E harness (WebSocket-driven; supersedes the retired wdio suite)
 tests/docker/                 # Comprehensive Docker test containers (SSH variants, telnet, serial, SFTP, fault injection)
 tests/fixtures/               # Test fixtures (SSH keys, config samples)
 tests/manual/                 # Manual test definitions
@@ -239,7 +239,7 @@ feat(scope): implement <feature name> (Closes #N)
 - For new features, add tests covering the core functionality and key edge cases
 - Run `./scripts/test.sh` after adding tests to verify they pass before committing
 - **Manual test tracking**: When a PR includes manual test steps (in the PR description's "Test plan" section), also add those steps to the Manual Testing section in `docs/testing.md` under the appropriate feature area heading, referencing the PR number. This keeps manual tests discoverable and prevents them from being forgotten after merge.
-- **E2E platform constraint**: `tauri-driver` only supports Linux and Windows — it does **not** work on macOS (no WKWebView driver exists). E2E system tests run inside Docker (Linux) on all platforms. See ADR-5 in [architecture.md](../docs/architecture.md). macOS-specific behavior must be verified via manual tests.
+- **System/E2E tests**: run through the **Python bridge harness** (`tests/system/`, via `./scripts/test-system-py.sh`), which drives the app over a WebSocket bridge and works on macOS, Linux, and Windows. The WebdriverIO/`tauri-driver` scaffold was fully retired (#1027). The only remaining `tauri-driver` consumer is the smoke test (`scripts/smoke-test.sh`); `tauri-driver` still has no macOS WKWebView driver, so its UI checks are Linux/Windows-only (see ADR-5 in [architecture.md](../docs/architecture.md)). macOS-specific rendering must be verified via manual tests.
 
 ### Debugging / Logging
 
@@ -367,7 +367,9 @@ pnpm test                # Vitest single run
 pnpm test:watch          # Vitest watch mode
 pnpm test:coverage       # Vitest with coverage
 pnpm build               # TypeScript check + Vite build
-pnpm test:e2e            # WebdriverIO E2E (requires built app)
+
+# System / E2E tests (Python bridge harness — not a pnpm script)
+./scripts/test-system-py.sh -m integration   # build if needed + fixtures + pytest
 
 # Rust workspace (all crates)
 cargo fmt --all -- --check

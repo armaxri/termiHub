@@ -458,8 +458,8 @@ pnpm build
 # Rust linting (workspace-wide)
 cargo clippy --workspace --all-targets -- -D warnings
 
-# E2E tests (requires built app — see docs/testing.md for setup)
-pnpm test:e2e
+# System / E2E tests (Python bridge harness — see docs/testing.md for setup)
+./scripts/test-system-py.sh -m integration
 ```
 
 ### Manual Testing
