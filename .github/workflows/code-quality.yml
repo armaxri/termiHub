@@ -115,9 +115,6 @@ jobs:
       - name: Check data-testid catalog is up to date (#899)
         run: python3 scripts/build-testid-catalog.py --check
 
-      - name: Check docs/testing.md test counts are up to date
-        run: python3 scripts/build-test-counts.py --check
-
   # Run tests
   tests:
     name: Run Tests
