@@ -309,6 +309,7 @@ pub fn initial_command_strategy(
 ///
 /// Uses `if [ -n "$ZSH_VERSION" ]; then ... else ... fi` for the same reason
 /// as [`bash_osc7_command()`] — see that function's doc for the rationale.
+/// The bash branch is array-aware (see that function's doc for why).
 /// Injected via the WSL temp-file source mechanism in `wsl.rs`.
 fn wsl_osc7_command() -> &'static str {
     concat!(
@@ -318,7 +319,11 @@ fn wsl_osc7_command() -> &'static str {
         r#"if [ -n "$ZSH_VERSION" ]; then "#,
         r#"precmd_functions+=(__termihub_osc7); "#,
         r#"else "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
+        // Array-aware PROMPT_COMMAND hook — see bash_osc7_command().
+        r#"case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "#,
+        r#""declare -a"*) PROMPT_COMMAND+=(__termihub_osc7);; "#,
+        r#"*) PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; "#,
+        r#"esac; "#,
         r#"fi"#,
     )
 }
@@ -334,6 +339,22 @@ fn wsl_osc7_command() -> &'static str {
 /// the `||` fallback would set PROMPT_COMMAND. In ZSH, `${PROMPT_COMMAND:+…}`
 /// inside a double-quoted string could produce unbalanced quotes (when the
 /// variable contains `"`), leaving the shell at the `>` secondary prompt.
+///
+/// # Array-aware `PROMPT_COMMAND` (issue #1029)
+///
+/// bash 5.1+ allows `PROMPT_COMMAND` to be an array whose elements are each
+/// executed before the prompt, and distros increasingly ship it that way —
+/// Fedora, for instance, declares `declare -a PROMPT_COMMAND=([0]=<title>
+/// [1]=<systemd OSC context>)` and ships no `vte.sh` OSC 7 emitter at all.
+///
+/// A bare scalar assignment (`PROMPT_COMMAND="…"`) targets element `[0]` of
+/// such an array, silently rewriting an existing hook instead of adding ours.
+/// So the bash branch probes the variable's type via `declare -p` and uses
+/// `PROMPT_COMMAND+=(__termihub_osc7)` for arrays, falling back to the
+/// scalar-string form otherwise. bash normalizes `declare -p` so array flags
+/// always begin `declare -a…` (even `declare -xa` prints as `declare -ax`), so
+/// the `"declare -a"*` prefix match is exact and never matches a scalar —
+/// including scalars whose *value* contains the letter `a`.
 fn bash_osc7_command() -> &'static str {
     concat!(
         r#"echo '# [termiHub] Shell integration: setting up OSC 7 CWD tracking'; "#,
@@ -341,7 +362,10 @@ fn bash_osc7_command() -> &'static str {
         r#"if [ -n "$ZSH_VERSION" ]; then "#,
         r#"precmd_functions+=(__termihub_osc7); "#,
         r#"else "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
+        r#"case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "#,
+        r#""declare -a"*) PROMPT_COMMAND+=(__termihub_osc7);; "#,
+        r#"*) PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; "#,
+        r#"esac; "#,
         r#"fi"#,
     )
 }
