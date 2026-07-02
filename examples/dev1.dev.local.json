@@ -1,0 +1,8 @@
+{
+  "_comment": "Example dev.local.json for parallel checkout 'dev1'. Copy it into the repo root as dev.local.json (`cp examples/dev1.dev.local.json dev.local.json`). Each checkout must use a DISTINCT example (dev0..dev3) so their dev servers, dev agents and Docker test ports never collide. See docs/testing.md → 'Parallel test isolation'.",
+  "dev_port": 1430,
+  "dev_agent_port": 2232,
+  "dev_name": "dev1",
+  "compose_project": "termihub-test-1",
+  "test_port_offset": 1000
+}

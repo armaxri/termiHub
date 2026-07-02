@@ -32,11 +32,11 @@ When you're done, stop the test containers:
 
 The example config (`config/connections.json`) includes pre-configured connections:
 
-| Connection | Type | Host | Port | Credentials | Notes |
-|-----------|------|------|------|-------------|-------|
-| Docker SSH | SSH | 127.0.0.1 | 2222 | `testuser` / `testpass` | |
-| Docker SSH + X11 | SSH | 127.0.0.1 | 2222 | `testuser` / `testpass` | X11 forwarding enabled |
-| Docker Telnet | Telnet | 127.0.0.1 | 2323 | `testuser` / `testpass` | |
+| Connection       | Type   | Host      | Port | Credentials             | Notes                  |
+| ---------------- | ------ | --------- | ---- | ----------------------- | ---------------------- |
+| Docker SSH       | SSH    | 127.0.0.1 | 2222 | `testuser` / `testpass` |                        |
+| Docker SSH + X11 | SSH    | 127.0.0.1 | 2222 | `testuser` / `testpass` | X11 forwarding enabled |
+| Docker Telnet    | Telnet | 127.0.0.1 | 2323 | `testuser` / `testpass` |                        |
 
 SSH connections prompt for the password at connect time.
 
@@ -49,6 +49,35 @@ The Docker container includes `xclock` and `xeyes` for testing X11 forwarding. T
 3. Connect using the "Docker SSH + X11" connection.
 4. Run `xclock` or `xeyes` in the terminal — the window should appear on your local display.
 5. Verify with `echo $DISPLAY` — it should show something like `localhost:N.0`.
+
+## Parallel Checkout Config (`dev.local.json`)
+
+Each checkout of termiHub reads a gitignored `dev.local.json` from the repo root
+to pick its Vite dev-server port, dev-agent `sshd` port, Docker Compose project
+name, and test-port offset — so several checkouts can run their dev servers and
+full Docker test environments **at the same time** without colliding. Working out
+non-conflicting values by hand is fiddly, so this directory ships four
+ready-to-use, mutually non-colliding configs:
+
+| File                  | `dev_port` | `dev_agent_port` | `compose_project` | `test_port_offset` |
+| --------------------- | ---------- | ---------------- | ----------------- | ------------------ |
+| `dev0.dev.local.json` | `1420`     | `2222`           | `termihub-test-0` | `0`                |
+| `dev1.dev.local.json` | `1430`     | `2232`           | `termihub-test-1` | `1000`             |
+| `dev2.dev.local.json` | `1440`     | `2242`           | `termihub-test-2` | `2000`             |
+| `dev3.dev.local.json` | `1450`     | `2252`           | `termihub-test-3` | `3000`             |
+
+Pick a different file for each checkout and copy it into the repo root as
+`dev.local.json`:
+
+```bash
+cp examples/dev0.dev.local.json dev.local.json   # or dev1 / dev2 / dev3
+```
+
+The steps differ per key on purpose: `test_port_offset` jumps by `1000` (it is
+added to every base test port, which span `2201…8080`), `dev_port` /
+`dev_agent_port` step by `10`, and `compose_project` just bumps its suffix. See
+[`docs/testing.md` → Parallel test isolation](../docs/testing.md#parallel-test-isolation)
+for the full derivation and the list of every resource that gets namespaced.
 
 ## Serial Port Testing
 
@@ -71,6 +100,10 @@ python3 serial/serial-echo-server.py
 ```
 examples/
 ├── README.md                          # This file
+├── dev0.dev.local.json                # Ready-to-use per-checkout config (checkout 0)
+├── dev1.dev.local.json                # Ready-to-use per-checkout config (checkout 1)
+├── dev2.dev.local.json                # Ready-to-use per-checkout config (checkout 2)
+├── dev3.dev.local.json                # Ready-to-use per-checkout config (checkout 3)
 ├── config/
 │   └── connections.json               # Pre-configured test connections
 ├── docker/

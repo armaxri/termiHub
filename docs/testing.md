@@ -669,11 +669,23 @@ Give each parallel checkout a distinct row:
 | dev0     | `1420`     | `2222`           | `termihub-test-0` | `0`                |
 | dev1     | `1430`     | `2232`           | `termihub-test-1` | `1000`             |
 | dev2     | `1440`     | `2242`           | `termihub-test-2` | `2000`             |
+| dev3     | `1450`     | `2252`           | `termihub-test-3` | `3000`             |
 
-With offset `1000` the SSH containers move to `3201…3211`, telnet to `3301`, and
-the network-tools HTTP target to `9080`; offset `2000` moves them to `4201…`,
-`4301`, `10080`. The `1000` step is larger than the span of all base ports, so
-ranges from different checkouts can never overlap.
+Note the different step per key: `test_port_offset` jumps by **1000** (it is
+added to _every_ base test port, and the base ports span `2201…8080`, so the step
+must exceed that whole span or ranges would overlap); `dev_port` and
+`dev_agent_port` step by **10** (`dev_port` reserves `dev_port + 1` for Vite HMR);
+and `compose_project` just increments its numeric suffix (a name, not a port
+range). With offset `1000` the SSH containers move to `3201…3211`, telnet to
+`3301`, and the network-tools HTTP target to `9080`; offset `2000` moves them to
+`4201…`, `4301`, `10080`; offset `3000` to `5201…`, `5301`, `11080`.
+
+Rather than hand-editing values, copy a ready-made row from the committed
+examples — one fully-filled, non-colliding file per checkout:
+
+```bash
+cp examples/dev0.dev.local.json dev.local.json   # or dev1 / dev2 / dev3
+```
 
 #### What is isolated, and how
 
