@@ -61,8 +61,11 @@ def test_no_build_raises_with_both_paths(fake_repo: Path):
     with pytest.raises(FileNotFoundError) as exc:
         orchestrator.app_binary_path()
     # The error names both the release and debug locations it looked in.
-    assert "target/release" in str(exc.value)
-    assert "target/debug" in str(exc.value)
+    # Path objects render with OS-native separators (backslashes on Windows),
+    # so normalize before the substring check to stay separator-agnostic.
+    message = str(exc.value).replace("\\", "/")
+    assert "target/release" in message
+    assert "target/debug" in message
 
 
 def test_candidates_are_release_then_debug(fake_repo: Path):
