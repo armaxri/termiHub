@@ -880,6 +880,48 @@ mod tests {
         );
     }
 
+    /// Regression for #1029: bash 5.1+ supports an **array** `PROMPT_COMMAND`
+    /// (e.g. Fedora, which declares `declare -a PROMPT_COMMAND=(...)` and ships
+    /// no `vte.sh`). The old scalar assignment
+    /// `PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"`
+    /// only mutated element `[0]` of such an array — fragile shell integration.
+    /// The bash branch must detect the array case via `declare -p` and append
+    /// the hook as a proper array element with `PROMPT_COMMAND+=(...)`.
+    #[test]
+    fn osc7_bash_handles_array_prompt_command() {
+        for shell in ["bash", "gitbash", "ssh"] {
+            let setup = osc7_setup_command(shell).expect("expected Some");
+            assert!(
+                setup.contains("declare -p PROMPT_COMMAND"),
+                "{shell}: must probe PROMPT_COMMAND type via declare -p, got: {setup}"
+            );
+            assert!(
+                setup.contains("PROMPT_COMMAND+=(__termihub_osc7)"),
+                "{shell}: must array-append the hook when PROMPT_COMMAND is an array, got: {setup}"
+            );
+            // The scalar fallback (non-array) must still be present.
+            assert!(
+                setup.contains(r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}""#),
+                "{shell}: must keep the scalar-string fallback, got: {setup}"
+            );
+        }
+    }
+
+    /// Regression for #1029: the WSL variant must also be array-aware, since
+    /// Fedora is a WSL-hosted distro that uses an array `PROMPT_COMMAND`.
+    #[test]
+    fn osc7_wsl_handles_array_prompt_command() {
+        let setup = osc7_setup_command("wsl:FedoraLinux-44").expect("expected Some for WSL");
+        assert!(
+            setup.contains("declare -p PROMPT_COMMAND"),
+            "WSL: must probe PROMPT_COMMAND type via declare -p, got: {setup}"
+        );
+        assert!(
+            setup.contains("PROMPT_COMMAND+=(__termihub_osc7)"),
+            "WSL: must array-append the hook when PROMPT_COMMAND is an array, got: {setup}"
+        );
+    }
+
     #[test]
     fn osc9_cmd_contains_expected_parts() {
         let setup = osc7_setup_command("cmd").expect("expected Some for cmd");
