@@ -468,7 +468,10 @@ the old WebdriverIO find-by-title lookups. Tab lookups use the `TabsUi` mixin's
 ## Orchestration
 
 - `AppInstance(config_dir?)` — `start(bridge_port)`, `stop()`, `restart()`. Config
-  dir is stable across a restart so the saved last-session survives.
+  dir is stable across a restart so the saved last-session survives. On Windows
+  each instance pins its WebView2 user-data folder (via `WEBVIEW2_USER_DATA_FOLDER`)
+  so `stop()` can reap the `msedgewebview2.exe` hosts, which live outside the app
+  process tree and would otherwise leak across back-to-back runs (issue #1022).
 - `AgentInstance(host?, port?)` — `start()`, `stop()`, `restart()` for a
   `termihub-agent --listen` process, with process-tree teardown via `psutil`.
 
