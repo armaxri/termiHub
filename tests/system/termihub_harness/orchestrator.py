@@ -127,6 +127,68 @@ def _terminate_tree(process: subprocess.Popen, timeout: float = 5.0) -> None:
             pass
 
 
+def _webview2_user_data_dir(config_dir: Path) -> Path:
+    """Per-instance WebView2 user-data folder, nested under the app config dir.
+
+    Passed to the app via ``WEBVIEW2_USER_DATA_FOLDER`` (Windows only) so every
+    launched instance pins its WebView2 host processes to a distinct folder —
+    which teardown then matches on to reap only that instance's children.
+    """
+    return config_dir / "webview2-user-data"
+
+
+def _is_webview2_for_data_dir(name: str, cmdline: list[str], user_data_dir: Path) -> bool:
+    """True if a process is a ``msedgewebview2.exe`` pinned to ``user_data_dir``.
+
+    WebView2 hosts its renderer/GPU/utility processes under
+    ``msedgewebview2.exe``. Those are launched with ``--user-data-dir=<folder>``
+    matching the app's ``WEBVIEW2_USER_DATA_FOLDER``, so matching on the folder
+    reaps exactly one instance's children — safe under parallel instances.
+    Comparison normalises path separators and case (Windows paths).
+    """
+    if (name or "").casefold() != "msedgewebview2.exe":
+        return False
+    needle = str(user_data_dir).replace("/", "\\").casefold()
+    joined = " ".join(cmdline or []).replace("/", "\\").casefold()
+    return needle in joined
+
+
+def _terminate_webview2_children(user_data_dir: Path, timeout: float = 5.0) -> None:
+    """Windows-only: reap the ``msedgewebview2.exe`` hosts for ``user_data_dir``.
+
+    WebView2's child processes live under a separate host that is *not* a
+    descendant of the app PID, so :func:`_terminate_tree` leaves them running.
+    They accumulate across app launches and eventually destabilise back-to-back
+    test runs (issue #1022). This finds the ones pinned to this instance's
+    user-data folder and terminates them, escalating to kill.
+    """
+    if platform.system() != "Windows":
+        return
+    victims = []
+    for proc in psutil.process_iter(["name", "cmdline"]):
+        try:
+            info = proc.info
+            if _is_webview2_for_data_dir(
+                info.get("name") or "", info.get("cmdline") or [], user_data_dir
+            ):
+                victims.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if not victims:
+        return
+    for proc in victims:
+        try:
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    _, alive = psutil.wait_procs(victims, timeout=timeout)
+    for proc in alive:
+        try:
+            proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+
 class AppInstance:
     """A launchable, killable, restartable desktop app process.
 
@@ -139,6 +201,9 @@ class AppInstance:
         self._binary = app_binary_path()
         self._owns_config_dir = config_dir is None
         self._config_dir = config_dir or Path(tempfile.mkdtemp(prefix="termihub-app-config-"))
+        #: Per-instance WebView2 user-data folder (Windows), pinned via env so
+        #: teardown can reap only this instance's msedgewebview2.exe children.
+        self._webview2_data_dir = _webview2_user_data_dir(self._config_dir)
         self._process: Optional[subprocess.Popen] = None
         self._bridge_port: Optional[int] = None
         #: Captured app stdout/stderr — copied into the failure-artifact bundle.
@@ -175,6 +240,11 @@ class AppInstance:
         env = dict(os.environ)
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         env["TERMIHUB_CONFIG_DIR"] = str(self._config_dir)
+        # Pin WebView2 to a per-instance user-data folder so teardown can reap
+        # only this instance's msedgewebview2.exe hosts (issue #1022). The app
+        # (Tauri) sets no data_directory, so WebView2 honours this env var.
+        if platform.system() == "Windows":
+            env["WEBVIEW2_USER_DATA_FOLDER"] = str(self._webview2_data_dir)
         # Append so the log survives a restart() (same config dir, same file).
         self._log_file = open(self._log_path, "a", encoding="utf-8", errors="replace")
         self._process = subprocess.Popen(
@@ -217,6 +287,9 @@ class AppInstance:
         """Kill the app process tree and stop log capture."""
         if self._process is not None:
             _terminate_tree(self._process)
+            # WebView2 hosts live outside the app's process tree; reap the ones
+            # pinned to this instance so they don't pile up (issue #1022).
+            _terminate_webview2_children(self._webview2_data_dir)
             if self._process.stdout is not None:
                 try:
                     self._process.stdout.close()  # EOF so the pump thread exits
