@@ -1,0 +1,3 @@
+# Agent binary staged into this build context by the harness fixture
+# (`remote_agent_fixtures`). It is a per-arch static-musl build, never committed.
+termihub-agent

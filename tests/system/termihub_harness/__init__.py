@@ -7,6 +7,8 @@ tests that run identically on Linux, Windows, and macOS (issue #802).
 
 from .bridge import Bridge, BridgeError, Driver, screenshot_to_png_bytes
 from .fixtures import (
+    REMOTE_AGENT_PORT,
+    REMOTE_AGENT_SERVICE,
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
     SSH_HOST,
@@ -27,6 +29,7 @@ from .fixtures import (
     ComposeFixture,
     ContainerRuntimeUnavailable,
     container_runtime,
+    stage_remote_agent_binary,
     wait_for_port,
 )
 from .manual import (
@@ -117,7 +120,10 @@ __all__ = [
     "ComposeFixture",
     "ContainerRuntimeUnavailable",
     "container_runtime",
+    "stage_remote_agent_binary",
     "wait_for_port",
+    "REMOTE_AGENT_SERVICE",
+    "REMOTE_AGENT_PORT",
     "SSH_HOST",
     "SSH_PASSWORD_SERVICE",
     "SSH_PASSWORD_PORT",
