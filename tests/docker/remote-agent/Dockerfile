@@ -1,15 +1,27 @@
 # termiHub Remote Agent test container
 #
-# Provides an SSH-accessible host with the termihub-agent binary
-# pre-installed for E2E testing.
+# Provides an SSH-accessible host with the `termihub-agent` binary
+# **pre-installed** for the live-connect E2E tests (#995).
 #
-# Usage:
+# The agent binary is not committed to the repo — it is a static-musl build
+# cross-compiled for the container architecture and staged into this build
+# context by the Python harness fixture (`remote_agent_fixtures`) right before
+# the image is built. See `tests/system/termihub_harness/fixtures.py`
+# (`stage_remote_agent_binary`). The staged file is git-ignored (see the sibling
+# `.gitignore`).
+#
+# Usage (normally driven by the harness, not by hand):
+#   ./scripts/build-agents.sh --targets x86_64-unknown-linux-musl
+#   cp target/x86_64-unknown-linux-musl/release/termihub-agent \
+#      tests/docker/remote-agent/termihub-agent
+#   docker compose -f tests/docker/docker-compose.yml --profile agent build remote-agent
 #   docker compose -f tests/docker/docker-compose.yml --profile agent up -d
-#   # Connects on port 2211 (testuser/testpass)
+#   # Connects on port 2211 (testuser/testpass) with the agent already deployed.
 #
-# Note: The agent binary must be cross-compiled for Linux x86_64
-# before building this container. Use:
-#   cargo build --release -p termihub-agent --target x86_64-unknown-linux-gnu
+# The agent is installed to `~testuser/.local/bin/termihub-agent`, the POSIX
+# default path the desktop probes and launches (`$HOME/.local/bin/termihub-agent
+# --stdio`; see `src-tauri/src/terminal/backend.rs`), so a live connect finds it
+# without any setup wizard step.
 
 FROM ubuntu:24.04
 
@@ -33,13 +45,14 @@ RUN chown -R testuser:testuser /home/testuser/.ssh && \
     chmod 700 /home/testuser/.ssh && \
     chmod 600 /home/testuser/.ssh/authorized_keys
 
+# Deploy the pre-built agent binary to the POSIX default install path. The file
+# is staged into the build context by the harness fixture before `build`.
+COPY termihub-agent /home/testuser/.local/bin/termihub-agent
+RUN chown -R testuser:testuser /home/testuser/.local && \
+    chmod 755 /home/testuser/.local/bin/termihub-agent
+
 # Generate host keys
 RUN ssh-keygen -A
-
-# Note: The agent binary will be installed via the setup wizard during tests.
-# For tests that require a pre-installed agent, build and copy the binary:
-# COPY termihub-agent /usr/local/bin/termihub-agent
-# RUN chmod +x /usr/local/bin/termihub-agent
 
 EXPOSE 22
 
