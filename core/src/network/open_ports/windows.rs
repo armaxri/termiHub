@@ -52,7 +52,7 @@ fn parse_netstat_output(text: &str) -> Result<Vec<OpenPort>, NetworkError> {
                     continue;
                 }
                 let pid: Option<u32> = cols[4].parse().ok();
-                let process = pid.and_then(|p| lookup_process_name(p));
+                let process = pid.and_then(lookup_process_name);
 
                 ports.push(OpenPort {
                     protocol,
@@ -64,7 +64,7 @@ fn parse_netstat_output(text: &str) -> Result<Vec<OpenPort>, NetworkError> {
             Protocol::Udp => {
                 // UDP has no state column.
                 let pid: Option<u32> = cols[3].parse().ok();
-                let process = pid.and_then(|p| lookup_process_name(p));
+                let process = pid.and_then(lookup_process_name);
 
                 ports.push(OpenPort {
                     protocol,
