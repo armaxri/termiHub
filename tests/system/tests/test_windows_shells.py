@@ -43,6 +43,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.git_bash import detect_git_bash
 from termihub_harness.shell import is_absolute_path
 from termihub_harness.wsl import detect_wsl_distros
 
@@ -101,6 +102,17 @@ skip_without_wsl = pytest.mark.skipif(
     not _WSL_DISTROS, reason="no WSL2 distribution installed on this host"
 )
 
+# Git Bash — unlike PowerShell and cmd.exe, which the local backend always detects
+# on Windows — is only present when Git for Windows is installed, so it appears
+# among the detected shells (and in the editor's `field-shell` dropdown) only then.
+# Probe the same install paths the backend checks so the gate and the app agree,
+# and skip the Git Bash case cleanly when it is absent (mirrors `skip_without_wsl`).
+_HAS_GIT_BASH = detect_git_bash() if _IS_WINDOWS else False
+
+skip_without_git_bash = pytest.mark.skipif(
+    not _HAS_GIT_BASH, reason="Git Bash (Git for Windows) is not installed on this host"
+)
+
 
 @skip_on_non_windows
 class TestWindowsShells(
@@ -131,6 +143,23 @@ class TestWindowsShells(
 
         self.wait(self.has_terminal, what="the cmd.exe shell to be readable")
         marker = "WIN_CMD_MARKER"
+        self.run_command(f"echo {marker}")
+        assert marker in self.wait_for_output(marker)
+
+    # ── MT-LOCAL-15: a saved Git Bash connection spawns and echoes a POSIX marker
+    #    (skips when Git for Windows is not installed) ─────────────────────────────
+    @skip_without_git_bash
+    def test_gitbash_session_renders_and_accepts_input(self):
+        self.close_all_tabs()
+        name = unique_name("win-gitbash")
+        self.create_local_connection(name, shell="gitbash")
+        self.switch_to_connections_sidebar()
+        self.connect_connection(name)
+
+        self.wait(self.has_terminal, what="the Git Bash shell to be readable")
+        # Git Bash is an MSYS bash, so the POSIX `echo` builtin works — unlike the
+        # PowerShell/cmd cases, this asserts the *POSIX* dialect actually runs.
+        marker = "WIN_GITBASH_MARKER"
         self.run_command(f"echo {marker}")
         assert marker in self.wait_for_output(marker)
 
