@@ -394,6 +394,17 @@ vi.mock("@tauri-apps/api/fs", () => ({
 }));
 ```
 
+### 6. Component-test timeout (Windows CI flake, #1025)
+
+The global Vitest `testTimeout` is raised to **15000ms** in `vitest.config.ts`
+(the default is 5000ms). The React-DOM `createRoot` component tests are otherwise
+instant — immediately-resolving mocks, no real timers — but the `windows-latest`
+CI runner has been observed spending 240s+ on environment setup alone, starving
+those tests enough to trip the 5s default (originally seen in
+`HttpMonitorPanel.race.test.tsx`). The larger budget absorbs that runner jitter
+without masking genuine hangs. If a test legitimately needs to run longer, prefer
+a per-`it` override (`it("…", async () => { … }, 30000)`) over lowering the global.
+
 ## Test Scripts for package.json
 
 ```json
