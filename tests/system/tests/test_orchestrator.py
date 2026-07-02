@@ -99,13 +99,23 @@ class _FakePopen:
 
 
 class _FakeProc:
-    """A psutil.Process stand-in recording terminate()/kill() calls."""
+    """A psutil.Process stand-in recording terminate()/kill() calls.
+
+    ``cmdline()`` is a method (not cached in ``.info``) to mirror the reaper's
+    lazy fetch — it only reads the command line for name-matched processes.
+    """
 
     def __init__(self, name, cmdline, *, survives=False):
-        self.info = {"name": name, "cmdline": cmdline}
+        self.info = {"name": name}
+        self._cmdline = cmdline
         self.survives = survives
         self.terminated = False
         self.killed = False
+        self.cmdline_read = False
+
+    def cmdline(self):
+        self.cmdline_read = True
+        return self._cmdline
 
     def terminate(self):
         self.terminated = True
@@ -193,6 +203,8 @@ def test_terminate_webview2_children_reaps_only_matching(monkeypatch):
     assert stubborn.terminated and stubborn.killed  # escalated after surviving
     assert not other_instance.terminated  # different instance — left alone
     assert not app_proc.terminated  # not a WebView2 host — left alone
+    # Name pre-filter must skip the costly cmdline read for non-WebView2 procs.
+    assert not app_proc.cmdline_read
 
 
 def _make_app(monkeypatch, tmp_path, system):

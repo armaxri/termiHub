@@ -100,6 +100,26 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _terminate_procs(procs: list, timeout: float = 5.0) -> None:
+    """Terminate a set of processes, escalating any survivors to a hard kill.
+
+    The shared shutdown ritual for both the app process tree and the out-of-tree
+    WebView2 hosts: request a graceful ``terminate()``, wait, then ``kill()``
+    whatever is still alive. Processes that vanish or deny access are ignored.
+    """
+    for proc in procs:
+        try:
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    _, alive = psutil.wait_procs(procs, timeout=timeout)
+    for proc in alive:
+        try:
+            proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+
 def _terminate_tree(process: subprocess.Popen, timeout: float = 5.0) -> None:
     """Kill a process and all of its children, escalating to SIGKILL.
 
@@ -113,28 +133,7 @@ def _terminate_tree(process: subprocess.Popen, timeout: float = 5.0) -> None:
         parent = psutil.Process(process.pid)
     except psutil.NoSuchProcess:
         return
-    procs = parent.children(recursive=True) + [parent]
-    for proc in procs:
-        try:
-            proc.terminate()
-        except psutil.NoSuchProcess:
-            pass
-    _, alive = psutil.wait_procs(procs, timeout=timeout)
-    for proc in alive:
-        try:
-            proc.kill()
-        except psutil.NoSuchProcess:
-            pass
-
-
-def _webview2_user_data_dir(config_dir: Path) -> Path:
-    """Per-instance WebView2 user-data folder, nested under the app config dir.
-
-    Passed to the app via ``WEBVIEW2_USER_DATA_FOLDER`` (Windows only) so every
-    launched instance pins its WebView2 host processes to a distinct folder —
-    which teardown then matches on to reap only that instance's children.
-    """
-    return config_dir / "webview2-user-data"
+    _terminate_procs(parent.children(recursive=True) + [parent], timeout)
 
 
 def _is_webview2_for_data_dir(name: str, cmdline: list[str], user_data_dir: Path) -> bool:
@@ -165,28 +164,20 @@ def _terminate_webview2_children(user_data_dir: Path, timeout: float = 5.0) -> N
     if platform.system() != "Windows":
         return
     victims = []
-    for proc in psutil.process_iter(["name", "cmdline"]):
+    for proc in psutil.process_iter(["name"]):
         try:
-            info = proc.info
+            # Cheap name pre-filter first: reading a process's full command line
+            # (proc.cmdline()) is costly on Windows, so only pay it for the few
+            # msedgewebview2.exe hosts rather than the whole process table.
+            if (proc.info.get("name") or "").casefold() != "msedgewebview2.exe":
+                continue
             if _is_webview2_for_data_dir(
-                info.get("name") or "", info.get("cmdline") or [], user_data_dir
+                "msedgewebview2.exe", proc.cmdline(), user_data_dir
             ):
                 victims.append(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-    if not victims:
-        return
-    for proc in victims:
-        try:
-            proc.terminate()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    _, alive = psutil.wait_procs(victims, timeout=timeout)
-    for proc in alive:
-        try:
-            proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+    _terminate_procs(victims, timeout)
 
 
 class AppInstance:
@@ -203,7 +194,7 @@ class AppInstance:
         self._config_dir = config_dir or Path(tempfile.mkdtemp(prefix="termihub-app-config-"))
         #: Per-instance WebView2 user-data folder (Windows), pinned via env so
         #: teardown can reap only this instance's msedgewebview2.exe children.
-        self._webview2_data_dir = _webview2_user_data_dir(self._config_dir)
+        self._webview2_data_dir = self._config_dir / "webview2-user-data"
         self._process: Optional[subprocess.Popen] = None
         self._bridge_port: Optional[int] = None
         #: Captured app stdout/stderr — copied into the failure-artifact bundle.
