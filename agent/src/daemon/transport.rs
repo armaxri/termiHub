@@ -80,7 +80,7 @@ where
 
 #[cfg(unix)]
 #[allow(unused_imports)]
-pub use unix_impl::{connect, endpoint_alive, session_endpoint, DaemonListener};
+pub use unix_impl::{connect, endpoint_alive, open_daemon_log, session_endpoint, DaemonListener};
 #[cfg(windows)]
 #[allow(unused_imports)]
 pub use windows_impl::{connect, endpoint_alive, session_endpoint, DaemonListener};
@@ -123,6 +123,21 @@ mod unix_impl {
         std::fs::create_dir_all(dir)?;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
         Ok(())
+    }
+
+    /// Open (truncating) the daemon's per-session log file in the socket dir.
+    ///
+    /// The launcher points the detached daemon's stderr here instead of
+    /// inheriting the agent's stderr: over SSH that stderr is the exec channel,
+    /// and keeping it tethers the daemon's life to the SSH connection (a
+    /// disconnect then kills the persistent session). A sibling of the socket
+    /// (`session-{id}.log`) keeps daemon diagnostics without that coupling.
+    /// Best-effort: returns `None` if the dir or file can't be created, and the
+    /// caller falls back to a null stderr.
+    pub fn open_daemon_log(session_id: &str) -> Option<std::fs::File> {
+        let dir = socket_dir();
+        ensure_socket_dir(&dir).ok()?;
+        std::fs::File::create(dir.join(format!("session-{session_id}.log"))).ok()
     }
 
     /// A listening Unix domain socket bound to a per-user, `0o700` path.
@@ -478,6 +493,25 @@ mod tests {
         let endpoint = session_endpoint("xyz");
         assert!(endpoint.starts_with("/tmp/termihub/"), "got {endpoint}");
         assert!(endpoint.ends_with("session-xyz.sock"), "got {endpoint}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_daemon_log_creates_a_writable_sibling_of_the_socket() {
+        // The daemon logs beside its socket (never into the inherited SSH
+        // channel), so the file must land in the same per-user dir and be
+        // writable — otherwise the launcher falls back to a null stderr.
+        let session = unique_session("log");
+        let mut file = open_daemon_log(&session).expect("daemon log file");
+        use std::io::Write;
+        file.write_all(b"ok").expect("write to daemon log");
+        // Same per-user dir as the socket, with a `.log` extension.
+        let expected = session_endpoint(&session).replace(".sock", ".log");
+        assert!(
+            std::path::Path::new(&expected).exists(),
+            "missing {expected}"
+        );
+        let _ = std::fs::remove_file(&expected);
     }
 
     #[cfg(windows)]
