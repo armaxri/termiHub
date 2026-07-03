@@ -953,3 +953,25 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-NET-01–09                     | `tests/system/tests/test_network_tools.py`                                                                                                                                               |
 | MT-NET-10, 12, 14, 17, 18        | `tests/system/tests/test_network_tools_live.py` (loopback + local stdlib servers; no Docker `network` profile)                                                                           |
 | MT-NET-13                        | _manual_ (large-range warning is a native `window.confirm()`, no `data-testid`)                                                                                                          |
+
+#### WSL shell-integration note (`/mnt/<drive>` translation, #1029)
+
+The WSL file browser follows the shell's CWD via an injected **OSC 7** hook and
+translates `/mnt/<letter>` into a native Windows drive path (`C:/`) rather than
+the inaccessible `\\wsl$\` UNC view. How the shell exposes `PROMPT_COMMAND`
+varies by distro, which affects how the hook must register:
+
+- **Scalar `PROMPT_COMMAND`** (Ubuntu/Debian and most distros) — termiHub
+  prepends its hook as a string.
+- **Array `PROMPT_COMMAND`** (bash 5.1+, e.g. **Fedora**, which also ships no
+  `vte.sh` and tracks context via systemd's OSC 3008) — termiHub appends its
+  hook as a first-class array element (`PROMPT_COMMAND+=(__termihub_osc7)`).
+  A scalar assignment here would only overwrite element `[0]`, which caused the
+  file browser to settle on the `\\wsl$\` UNC root after `cd /mnt/c` (#1029).
+
+`MT-LOCAL-19` (`test_wsl_file_browser_follows_cwd`) exercises the scalar path on
+a general-purpose distro (Ubuntu is preferred by `_pick_wsl_distro`). The
+array-`PROMPT_COMMAND` shape is covered by Rust unit tests
+(`osc7_bash_handles_array_prompt_command`, `osc7_wsl_handles_array_prompt_command`
+in `core/src/session/shell.rs`) and was manually verified end-to-end on
+FedoraLinux-44 (bash 5.3): `cd /mnt/c` emits `file:///mnt/c` → `C:/`.

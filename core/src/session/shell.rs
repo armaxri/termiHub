@@ -301,48 +301,69 @@ pub fn initial_command_strategy(
 // Private helpers
 // ---------------------------------------------------------------------------
 
+/// Shared bash/zsh fragment: define `__termihub_osc7` and register it as a
+/// prompt hook. Spliced verbatim into both [`wsl_osc7_command`] and
+/// [`bash_osc7_command`]. It is a `macro_rules!` rather than a `fn`/`const`
+/// because both callers embed it in a `concat!`, which accepts only literals.
+///
+/// The `if/else/fi` (not `&&…||`) isolates the zsh and bash paths: a non-zero
+/// `precmd_functions+=` must not fall through to set `PROMPT_COMMAND`, and in
+/// zsh `${PROMPT_COMMAND:+…}` inside double quotes could otherwise produce
+/// unbalanced quotes and strand the shell at the `>` secondary prompt.
+///
+/// # Array-aware `PROMPT_COMMAND` (issue #1029)
+///
+/// bash 5.1+ allows `PROMPT_COMMAND` to be an array whose elements are each
+/// executed before the prompt, and distros increasingly ship it that way —
+/// Fedora, for instance, declares `declare -a PROMPT_COMMAND=([0]=<title>
+/// [1]=<systemd OSC context>)` and provides no `vte.sh` OSC 7 emitter at all.
+/// A bare scalar assignment (`PROMPT_COMMAND="…"`) targets element `[0]` of
+/// such an array, silently rewriting an existing hook instead of adding ours,
+/// so we probe the type via `declare -p` and append with
+/// `PROMPT_COMMAND+=(__termihub_osc7)` for arrays. bash normalizes `declare -p`
+/// so array flags always begin `declare -a…` (even `declare -xa` prints as
+/// `declare -ax`), making the `"declare -a"*` prefix match exact — it never
+/// matches a scalar, including one whose value contains the letter `a`.
+macro_rules! osc7_bash_prompt_hook {
+    () => {
+        concat!(
+            r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
+            r#"if [ -n "$ZSH_VERSION" ]; then "#,
+            r#"precmd_functions+=(__termihub_osc7); "#,
+            r#"else "#,
+            r#"case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "#,
+            r#""declare -a"*) PROMPT_COMMAND+=(__termihub_osc7);; "#,
+            r#"*) PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; "#,
+            r#"esac; "#,
+            r#"fi"#,
+        )
+    };
+}
+
 /// OSC 7 setup command for WSL shells.
 ///
 /// Changes to `$HOME` when the CWD is a Windows drive mount (`/mnt/c/...`),
 /// since WSL defaults to the Windows user directory which is inaccessible
-/// through the `\\wsl$\` UNC share.
-///
-/// Uses `if [ -n "$ZSH_VERSION" ]; then ... else ... fi` for the same reason
-/// as [`bash_osc7_command()`] — see that function's doc for the rationale.
+/// through the `\\wsl$\` UNC share. The prompt-hook registration itself is
+/// shared with [`bash_osc7_command`] via [`osc7_bash_prompt_hook`].
 /// Injected via the WSL temp-file source mechanism in `wsl.rs`.
 fn wsl_osc7_command() -> &'static str {
     concat!(
         r#"echo '# [termiHub] Shell integration: setting up OSC 7 CWD tracking'; "#,
         r#"case "$PWD" in /mnt/[a-z]|/mnt/[a-z]/*) cd;; esac; "#,
-        r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
-        r#"if [ -n "$ZSH_VERSION" ]; then "#,
-        r#"precmd_functions+=(__termihub_osc7); "#,
-        r#"else "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
-        r#"fi"#,
+        osc7_bash_prompt_hook!(),
     )
 }
 
 /// OSC 7 setup command for bash-based shells (SSH, local bash, Git Bash).
 ///
-/// Unlike [`wsl_osc7_command()`], this does not include a `cd $HOME` guard
-/// for `/mnt/` paths. Supports both bash (`PROMPT_COMMAND`) and zsh
-/// (`precmd_functions`).
-///
-/// Uses `if/else/fi` to isolate the ZSH and bash code paths. The former
-/// `&&...||` form was unsafe: if `precmd_functions+=` returned non-zero,
-/// the `||` fallback would set PROMPT_COMMAND. In ZSH, `${PROMPT_COMMAND:+…}`
-/// inside a double-quoted string could produce unbalanced quotes (when the
-/// variable contains `"`), leaving the shell at the `>` secondary prompt.
+/// Unlike [`wsl_osc7_command`], this omits the `cd $HOME` guard for `/mnt/`
+/// paths. The prompt-hook registration (bash + zsh, array-aware
+/// `PROMPT_COMMAND`) is shared via [`osc7_bash_prompt_hook`].
 fn bash_osc7_command() -> &'static str {
     concat!(
         r#"echo '# [termiHub] Shell integration: setting up OSC 7 CWD tracking'; "#,
-        r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
-        r#"if [ -n "$ZSH_VERSION" ]; then "#,
-        r#"precmd_functions+=(__termihub_osc7); "#,
-        r#"else "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
-        r#"fi"#,
+        osc7_bash_prompt_hook!(),
     )
 }
 
@@ -877,6 +898,47 @@ mod tests {
         assert!(
             else_part.contains("PROMPT_COMMAND"),
             "PROMPT_COMMAND must be in the else-branch (bash-only path): {setup}"
+        );
+    }
+
+    /// Regression for #1029: bash 5.1+ supports an **array** `PROMPT_COMMAND`
+    /// (e.g. Fedora, which declares `declare -a PROMPT_COMMAND=(...)` and ships
+    /// no `vte.sh`). The old scalar assignment only mutated element `[0]` of
+    /// such an array — fragile shell integration. The bash branch must detect
+    /// the array case via `declare -p` and append the hook with
+    /// `PROMPT_COMMAND+=(...)`. (ssh/gitbash/zsh share this command via the
+    /// dispatch in [`osc7_setup_command`], covered by the *_contains_* tests.)
+    #[test]
+    fn osc7_bash_handles_array_prompt_command() {
+        let setup = osc7_setup_command("bash").expect("expected Some for bash");
+        assert!(
+            setup.contains("declare -p PROMPT_COMMAND"),
+            "must probe PROMPT_COMMAND type via declare -p, got: {setup}"
+        );
+        assert!(
+            setup.contains("PROMPT_COMMAND+=(__termihub_osc7)"),
+            "must array-append the hook when PROMPT_COMMAND is an array, got: {setup}"
+        );
+        // The scalar fallback (non-array) must still be present.
+        assert!(
+            setup
+                .contains(r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}""#),
+            "must keep the scalar-string fallback, got: {setup}"
+        );
+    }
+
+    /// Regression for #1029: the WSL variant must also be array-aware, since
+    /// Fedora is a WSL-hosted distro that uses an array `PROMPT_COMMAND`.
+    #[test]
+    fn osc7_wsl_handles_array_prompt_command() {
+        let setup = osc7_setup_command("wsl:FedoraLinux-44").expect("expected Some for WSL");
+        assert!(
+            setup.contains("declare -p PROMPT_COMMAND"),
+            "WSL: must probe PROMPT_COMMAND type via declare -p, got: {setup}"
+        );
+        assert!(
+            setup.contains("PROMPT_COMMAND+=(__termihub_osc7)"),
+            "WSL: must array-append the hook when PROMPT_COMMAND is an array, got: {setup}"
         );
     }
 
