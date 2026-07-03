@@ -37,6 +37,22 @@ class AgentUi(HarnessMixin):
 
     CTX_CONNECT = "context-agent-connect"
     CTX_SETUP = "context-agent-setup"
+    CTX_DISCONNECT = "context-agent-disconnect"
+    CTX_REFRESH = "context-agent-refresh"
+    CTX_NEW_SHELL = "context-agent-new-shell"
+    CTX_NEW_CONNECTION = "context-agent-new-connection"
+    CTX_EDIT = "context-agent-edit"
+    CTX_DELETE = "context-agent-delete"
+
+    # Agent-definition editor (opened as a tab via "New Connection"): a saved
+    # shell/serial connection under a connected agent, optionally persistent.
+    DEF_EDITOR_NAME = "connection-editor-name-input"
+    DEF_EDITOR_TYPE = "connection-editor-type-select"
+    DEF_EDITOR_PERSISTENT = "connection-editor-persistent"
+    DEF_EDITOR_SAVE = "connection-editor-save"
+
+    # Per-definition persistent-session action buttons (id suffix is the def id).
+    CTX_DEF_START_PERSISTENT = "context-agent-def-start-persistent"
 
     ERROR_TITLE = "connection-error-title"
     ERROR_SETUP_AGENT = "connection-error-setup-agent"
@@ -97,33 +113,158 @@ class AgentUi(HarnessMixin):
         return self.require_agent(name)
 
     # ── context menu ────────────────────────────────────────────────────────────
-    def open_agent_menu(self, name: str) -> None:
+    def open_agent_menu(self, name: str, *, sentinel: Optional[str] = None) -> None:
         """Right-click an agent by name and wait for its context menu to mount.
 
         Delegates to :meth:`HarnessMixin.open_named_context_menu`: the agent id is
         re-resolved by name on every poll (a save reloads the store), and the
         right-click is dispatched on the ``agent-header`` element — the actual
         ``ContextMenu.Trigger`` — only once it is in the DOM.
+
+        The menu renders a *different* item set by connection state, so the
+        readiness ``sentinel`` differs too: the default ``context-agent-connect``
+        exists only while **disconnected**; pass ``CTX_DISCONNECT`` to wait on the
+        **connected** menu.
         """
         self.open_named_context_menu(
             resolve=lambda: self.find_agent(name),
             testid_for=self.agent_header_testid,
-            sentinel=self.CTX_CONNECT,
+            sentinel=sentinel or self.CTX_CONNECT,
             what=f"the {name!r} agent context menu",
         )
 
-    def agent_menu_action(self, name: str, action_test_id: str) -> None:
-        """Right-click an agent by name and click a context-menu action."""
-        self.open_agent_menu(name)
+    def agent_menu_action(
+        self, name: str, action_test_id: str, *, sentinel: Optional[str] = None
+    ) -> None:
+        """Right-click an agent by name and click a context-menu action.
+
+        ``sentinel`` selects which menu variant to wait for; it defaults to the
+        clicked action itself, which is correct for actions that only appear in
+        one state (e.g. Disconnect / New Shell Session on a connected agent).
+        """
+        self.open_agent_menu(name, sentinel=sentinel or action_test_id)
         self.driver.click(action_test_id)
 
     def connect_agent(self, name: str) -> None:
         """Trigger a connect on an agent via its context menu."""
         self.agent_menu_action(name, self.CTX_CONNECT)
 
+    def disconnect_agent(self, name: str) -> None:
+        """Trigger a disconnect on a connected agent via its context menu."""
+        self.agent_menu_action(name, self.CTX_DISCONNECT)
+
     def open_agent_setup(self, name: str) -> None:
         """Open the agent-setup wizard via the agent's context menu."""
         self.agent_menu_action(name, self.CTX_SETUP)
+
+    def new_shell_session(self, name: str) -> None:
+        """Create a (non-persistent) shell session under a connected agent."""
+        self.agent_menu_action(name, self.CTX_NEW_SHELL)
+
+    # ── live-connection state ────────────────────────────────────────────────────
+    def agent_connection_state(self, name: str) -> Optional[str]:
+        """The ``connectionState`` of an agent (``connected`` / ``disconnected`` / …)."""
+        agent = self.find_agent(name)
+        return agent.get("connectionState") if agent else None
+
+    def wait_agent_connected(self, name: str, *, timeout: float = 40.0) -> dict[str, Any]:
+        """Wait until an agent reaches the ``connected`` state and return it.
+
+        A live connect runs an SSH handshake and an agent handshake, so this is
+        slower than a plain store update — hence the generous default timeout.
+        """
+        return self.wait(
+            lambda: (
+                agent
+                if (agent := self.find_agent(name))
+                and agent.get("connectionState") == "connected"
+                else None
+            ),
+            what=f"agent {name!r} to reach the connected state",
+            timeout=timeout,
+        )
+
+    def agent_available_shells(self, name: str) -> list[str]:
+        """The shells the connected agent reported in its capabilities."""
+        agent = self.find_agent(name) or {}
+        capabilities = agent.get("capabilities") or {}
+        shells = capabilities.get("availableShells")
+        return [s for s in shells if isinstance(s, str)] if isinstance(shells, list) else []
+
+    def _agent_keyed_dicts(self, state_key: str, agent_id: str) -> list[dict[str, Any]]:
+        """The dict entries of a ``Record<agentId, list>`` store keyed by ``agent_id``."""
+        value = self.driver.get_state(state_key)
+        items = value.get(agent_id) if isinstance(value, dict) else None
+        return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+    # ── agent-side sessions ──────────────────────────────────────────────────────
+    def agent_sessions(self, agent_id: str) -> list[dict[str, Any]]:
+        """The live sessions the agent reports for ``agent_id`` (``agentSessions``)."""
+        return self._agent_keyed_dicts("agentSessions", agent_id)
+
+    # ── saved definitions + persistent sessions ─────────────────────────────────
+    def agent_definitions(self, agent_id: str) -> list[dict[str, Any]]:
+        """Saved connection definitions under ``agent_id`` (``agentDefinitions``)."""
+        return self._agent_keyed_dicts("agentDefinitions", agent_id)
+
+    def create_agent_definition(
+        self, agent_name: str, def_name: str, *, persistent: bool = False
+    ) -> dict[str, Any]:
+        """Create a saved connection definition under a connected agent.
+
+        Opens the agent-definition editor via "New Connection", keeps the default
+        session type (the agent's first reported type — a shell on a Linux agent),
+        optionally toggles the persistent switch, saves, and returns the saved
+        definition once it lands in ``agentDefinitions``.
+        """
+        agent = self.require_agent(agent_name)
+        self.agent_menu_action(agent_name, self.CTX_NEW_CONNECTION)
+        self.wait(
+            lambda: self.driver.exists(self.DEF_EDITOR_NAME), what="the agent-definition editor"
+        )
+        self.driver.type(self.DEF_EDITOR_NAME, def_name)
+        if persistent:
+            self.driver.click(self.DEF_EDITOR_PERSISTENT)
+        self.driver.click(self.DEF_EDITOR_SAVE)
+        return self.wait(
+            lambda: next(
+                (
+                    d
+                    for d in self.agent_definitions(agent["id"])
+                    if d.get("name") == def_name
+                ),
+                None,
+            ),
+            what=f"the saved agent definition {def_name!r}",
+        )
+
+    def persistent_session_state(self, agent_id: str, def_id: str) -> Optional[str]:
+        """The ``state`` of the persistent session for ``agent_id:def_id``, if any."""
+        value = self.driver.get_state("persistentSessions")
+        if not isinstance(value, dict):
+            return None
+        entry = value.get(f"{agent_id}:{def_id}")
+        return entry.get("state") if isinstance(entry, dict) else None
+
+    def start_persistent_session(self, def_id: str) -> None:
+        """Start a persistent session via a definition's inline start button."""
+        self.driver.click(f"persistent-start-{def_id}")
+
+    def wait_persistent_running(
+        self, agent_id: str, def_id: str, *, timeout: float = 40.0
+    ) -> None:
+        """Wait until the persistent session for ``agent_id:def_id`` is live.
+
+        ``running`` (or ``attached`` once a tab attaches) is the backend-confirmed
+        live state — the store only transitions there off the
+        ``persistent-session-state-changed`` event, not synchronously on start.
+        """
+        self.wait(
+            lambda: self.persistent_session_state(agent_id, def_id)
+            in ("running", "attached"),
+            what=f"persistent session {agent_id}:{def_id} to reach the running state",
+            timeout=timeout,
+        )
 
     # ── connection-error dialog ─────────────────────────────────────────────────
     def connection_error_present(self) -> bool:

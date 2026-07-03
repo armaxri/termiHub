@@ -19,6 +19,7 @@ TCP port** — the same signal the Rust integration tests use.
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -66,6 +67,29 @@ TELNET_HOST = "127.0.0.1"
 #: Service + host port for the telnet container (in.telnetd via xinetd on :23).
 TELNET_SERVICE = "telnet-server"
 TELNET_PORT = dev_local.service_port("TERMIHUB_TEST_TELNET_PORT", 2301)
+
+# ── Remote-agent fixture coordinates (mirror tests/docker/docker-compose.yml) ──
+#: Service + host port for the deployed-agent SSH container (compose profile
+#: ``agent``). Unlike ``ssh-password``, this image ships the ``termihub-agent``
+#: binary at the POSIX default install path, so a live connect finds it without
+#: running the setup wizard (see :func:`stage_remote_agent_binary` and #995).
+REMOTE_AGENT_SERVICE = "remote-agent"
+REMOTE_AGENT_PORT = dev_local.service_port("TERMIHUB_TEST_REMOTE_AGENT_PORT", 2211)
+#: Build context the harness stages the per-arch agent binary into before the
+#: image is built (git-ignored — see the sibling ``.gitignore``).
+_REMOTE_AGENT_BUILD_CONTEXT = REPO_ROOT / "tests" / "docker" / "remote-agent"
+
+#: Map a ``platform.machine()`` value to the static-musl target triple whose
+#: binary runs in a Linux container of the same architecture. Static musl is used
+#: so the binary has no glibc/arch coupling to the ``ubuntu:24.04`` base image —
+#: it runs on any Linux of the matching arch (see ``scripts/build-agents.sh``).
+_MUSL_TARGET_BY_MACHINE = {
+    "x86_64": "x86_64-unknown-linux-musl",
+    "amd64": "x86_64-unknown-linux-musl",
+    "aarch64": "aarch64-unknown-linux-musl",
+    "arm64": "aarch64-unknown-linux-musl",
+    "armv7l": "armv7-unknown-linux-musleabihf",
+}
 
 
 class ContainerRuntimeUnavailable(RuntimeError):
@@ -121,6 +145,7 @@ class ComposeFixture:
         self,
         *services: str,
         ports: Sequence[tuple[str, int]] = (),
+        build: bool = False,
         up_timeout: float = 300.0,
         ready_timeout: float = 90.0,
     ) -> None:
@@ -133,6 +158,12 @@ class ComposeFixture:
         probe of each ``(host, port)`` rather than ``--wait`` (Podman's compose
         provider may not support it). Raises :class:`ContainerRuntimeUnavailable`
         when no runtime is reachable, the compose up fails, or a port never opens.
+
+        When ``build`` is set, the image is (re)built first with ``compose build``
+        — needed for the ``remote-agent`` fixture, whose Dockerfile ``COPY``s a
+        freshly-staged agent binary that ``up -d`` alone would not pick up if the
+        image already exists (Docker rebuilds only the changed layer, so this is
+        cheap when the binary is unchanged).
         """
         runtime = container_runtime()
         if runtime is None:
@@ -145,27 +176,38 @@ class ComposeFixture:
         # host ports (see ``dev_local`` / docs "Parallel test isolation"). The
         # ``ports`` we then probe are computed from the same offset, so they match.
         project = dev_local.compose_project()
-        cmd = [
-            runtime, "compose", "-p", project,
-            "-f", str(self._compose_file), "up", "-d", *services,
-        ]
+        base = [runtime, "compose", "-p", project, "-f", str(self._compose_file)]
         env = {**os.environ, **dev_local.compose_env()}
+        services = list(services)
+        if build:
+            self._run_compose(
+                [*base, "build", *services], services, env=env, timeout=up_timeout, action="build"
+            )
+        self._run_compose(
+            [*base, "up", "-d", *services], services, env=env, timeout=up_timeout, action="up"
+        )
+        for host, port in ports:
+            wait_for_port(host, port, timeout=ready_timeout)
+
+    @staticmethod
+    def _run_compose(
+        cmd: list[str], services: list[str], *, env: dict, timeout: float, action: str
+    ) -> None:
+        """Run a compose subcommand, mapping any failure to a clean skip signal."""
         try:
             subprocess.run(
-                cmd, check=True, timeout=up_timeout, capture_output=True, text=True, env=env
+                cmd, check=True, timeout=timeout, capture_output=True, text=True, env=env
             )
         except subprocess.CalledProcessError as exc:
             raise ContainerRuntimeUnavailable(
-                f"`{runtime} compose up` failed for {list(services)} "
+                f"`compose {action}` failed for {services} "
                 f"(exit {exc.returncode}):\n{_tail(exc.stderr or exc.stdout)}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise ContainerRuntimeUnavailable(
-                f"`{runtime} compose up` timed out after {up_timeout}s for {list(services)}:"
+                f"`compose {action}` timed out after {timeout}s for {services}:"
                 f"\n{_tail(exc.stderr)}"
             ) from exc
-        for host, port in ports:
-            wait_for_port(host, port, timeout=ready_timeout)
 
 
 def _tail(output: Optional[str], lines: int = 15) -> str:
@@ -195,3 +237,73 @@ def wait_for_port(host: str, port: int, *, timeout: float) -> None:
     raise ContainerRuntimeUnavailable(
         f"container port {host}:{port} did not become reachable within {timeout}s: {last_error}"
     )
+
+
+def _container_musl_target() -> str:
+    """The static-musl target triple matching the container's architecture.
+
+    Docker/Podman build and run native-arch images by default, so the container
+    arch equals the host arch; map that to the musl triple whose binary runs in
+    the Linux container. Raises :class:`ContainerRuntimeUnavailable` (→ skip) on
+    an unmapped arch rather than shipping a binary that cannot execute.
+    """
+    machine = platform.machine().lower()
+    target = _MUSL_TARGET_BY_MACHINE.get(machine)
+    if target is None:
+        raise ContainerRuntimeUnavailable(
+            f"no known static-musl agent target for host architecture {machine!r} — "
+            f"supported: {sorted(set(_MUSL_TARGET_BY_MACHINE.values()))}"
+        )
+    return target
+
+
+def stage_remote_agent_binary(*, build_timeout: float = 900.0) -> Path:
+    """Build (if needed) and stage the agent binary into the remote-agent context.
+
+    Produces a static-musl ``termihub-agent`` for the container architecture via
+    ``scripts/build-agents.sh`` and copies it to
+    ``tests/docker/remote-agent/termihub-agent`` so the image ``COPY`` picks it
+    up. An existing per-target build is reused (a fresh musl cross-build is slow),
+    and the copy into the context is always refreshed so a stale image is rebuilt.
+
+    Raises :class:`ContainerRuntimeUnavailable` — turned into a ``pytest.skip`` by
+    the fixture — when the arch is unmapped or the cross-build is unavailable
+    (e.g. ``cross``/Docker not set up on this host). This keeps the deployed-agent
+    suite skipping cleanly instead of failing where the toolchain is missing.
+    """
+    target = _container_musl_target()
+    built = REPO_ROOT / "target" / target / "release" / "termihub-agent"
+    if not built.exists():
+        script = REPO_ROOT / "scripts" / "build-agents.sh"
+        try:
+            subprocess.run(
+                ["bash", str(script), "--targets", target],
+                check=True,
+                timeout=build_timeout,
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+            )
+        except FileNotFoundError as exc:
+            raise ContainerRuntimeUnavailable(
+                f"cannot build the agent binary: {exc}"
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`build-agents.sh --targets {target}` failed (exit {exc.returncode}) — "
+                f"is the cross toolchain set up (`scripts/setup-agent-cross.sh`)?\n"
+                f"{_tail(exc.stderr or exc.stdout)}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`build-agents.sh --targets {target}` timed out after {build_timeout}s:"
+                f"\n{_tail(exc.stderr)}"
+            ) from exc
+    if not built.exists():
+        raise ContainerRuntimeUnavailable(
+            f"agent binary still missing after build: {built}"
+        )
+    staged = _REMOTE_AGENT_BUILD_CONTEXT / "termihub-agent"
+    shutil.copy2(built, staged)
+    staged.chmod(0o755)
+    return staged

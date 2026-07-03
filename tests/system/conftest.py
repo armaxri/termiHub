@@ -18,6 +18,8 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    REMOTE_AGENT_PORT,
+    REMOTE_AGENT_SERVICE,
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
     SSH_HOST,
@@ -35,6 +37,7 @@ from termihub_harness import (
     Bridge,
     ComposeFixture,
     ContainerRuntimeUnavailable,
+    stage_remote_agent_binary,
 )
 
 
@@ -216,6 +219,29 @@ def telnet_fixtures():
     return _ensure_services(
         [(TELNET_HOST, TELNET_SERVICE, TELNET_PORT)], label="telnet"
     )
+
+
+@pytest.fixture(scope="session")
+def remote_agent_fixtures():
+    """Deployed-agent SSH container (compose profile ``agent``, port 2211).
+
+    Unlike ``ssh_fixtures``, this bakes a freshly-built ``termihub-agent`` binary
+    into the image, so a live connect finds the agent already installed (#995).
+    Stages the per-arch static-musl binary into the build context, then builds and
+    brings up the ``remote-agent`` service. Skips the suite cleanly when no
+    container runtime is reachable *or* the agent cross-build is unavailable — the
+    same contract as the other container fixtures, so hosts without the cross
+    toolchain (or without Docker) stay green.
+    """
+    try:
+        stage_remote_agent_binary()
+        fixture = ComposeFixture()
+        fixture.ensure(
+            REMOTE_AGENT_SERVICE, ports=[(SSH_HOST, REMOTE_AGENT_PORT)], build=True
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"deployed-agent container fixture unavailable: {exc}")
+    return fixture
 
 
 @pytest.hookimpl(hookwrapper=True)
