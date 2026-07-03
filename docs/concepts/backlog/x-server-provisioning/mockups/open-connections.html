@@ -1,0 +1,113 @@
+<!doctype html>
+<!-- X Server Provisioning — "X Servers" section in the Open Connections panel. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X Server Provisioning — Open Connections (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <path d="M8 21h8" />
+        <path d="M12 17v4" />
+      </symbol>
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-power" viewBox="0 0 24 24">
+        <path d="M12 2v10" />
+        <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+    </svg>
+
+    <h1>X Server Provisioning — Open Connections Panel</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>backlog/x-server-provisioning/mockups/open-connections.html</code>
+    </p>
+
+    <section class="mockup-section">
+      <h2>"X Servers" section among the other connection groups</h2>
+      <div class="mockup-note">
+        The managed (or adopted) X server appears as a new <strong>X Servers</strong> section in the
+        Open Connections modal <span class="callout">A</span>, alongside the existing groups. Each
+        row has a <strong>Stop</strong> control <span class="callout">B</span>; the section header
+        carries a count and a <strong>Kill all</strong> action <span class="callout">C</span> —
+        matching how every other section in this panel behaves.
+      </div>
+
+      <!-- Dialog surface (reuses .menu chrome, widened) -->
+      <div class="menu" style="width: 460px">
+        <div class="menu__title" style="display: flex; align-items: center; justify-content: space-between">
+          <span>Open Connections</span>
+          <button class="tab__close" style="opacity: 1">
+            <svg class="li"><use href="#i-x" /></svg>
+          </button>
+        </div>
+
+        <!-- sibling sections, collapsed for context -->
+        <div class="state-label" style="padding: 8px 14px 0; margin: 0">Local Sessions <span class="count">1</span></div>
+        <div class="menu__row">
+          <span class="state-dot state-dot--running"></span> zsh — /Users/arne
+        </div>
+
+        <div class="state-label" style="padding: 8px 14px 0; margin: 0">SSH Tunnels <span class="count">1</span></div>
+        <div class="menu__row">
+          <span class="state-dot state-dot--connected"></span> server-1 · 5432 → localhost:5432
+        </div>
+
+        <!-- NEW: X Servers section -->
+        <div
+          class="state-label"
+          style="padding: 10px 14px 2px; margin: 0; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--border-secondary)"
+        >
+          <svg class="li" style="width: 13px; height: 13px"><use href="#i-monitor" /></svg>
+          X Servers <span class="count" style="margin-left: 0">1</span>
+          <button class="btn btn--link" style="margin-left: auto">Kill all</button>
+        </div>
+
+        <div class="menu__row menu__row--selected">
+          <span class="state-dot state-dot--running"></span>
+          VcXsrv <span class="count" style="margin-left: 4px; color: var(--text-primary)">managed</span>
+          <span style="color: var(--text-secondary)">· display :0 · 2 sessions</span>
+          <button class="btn" style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px">
+            <svg class="li"><use href="#i-power" /></svg> Stop
+          </button>
+        </div>
+      </div>
+
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">A</span> New <strong>X Servers</strong> section in
+            <code>OpenConnectionsModal.tsx</code>, following the existing <code>Section</code> pattern
+            (title + count + kill-all).
+          </li>
+          <li>
+            <span class="callout">B</span> Per-server <strong>Stop</strong> (lucide
+            <code>Power</code>) terminates the managed <code>vcxsrv.exe</code>.
+          </li>
+          <li>
+            <span class="callout">C</span> <strong>Kill all</strong> stops every managed server —
+            consistent with the panel being the single place to kill any connection.
+          </li>
+          <li>
+            An <em>adopted external</em> server shows as <code>External X server · display :0</code>
+            with no Stop control (termiHub did not start it, so it does not stop it).
+          </li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>
