@@ -20,8 +20,9 @@ Covered:
 - **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07) and
   the "Setup SSH Agent" button in the connection editor (MT-SSH-09, #955).
 - **X11 forwarding** — enabling ``enableX11Forwarding`` on a connection, proving
-  the flag persists and the session connects, then confirming a remote X11 window
-  appears (MT-SSH-14/15/16/18, MT-XPLAT-03).
+  the flag persists, the session connects, and (against the ``ssh-x11`` fixture)
+  the server allocates a forwarded ``$DISPLAY``; the operator only confirms a
+  remote X11 window appears (MT-SSH-14/15/16/18, MT-XPLAT-03).
 - **Clipboard** — copy the terminal buffer via the tab menu and via the
   platform copy shortcut, and paste into the terminal (MT-KB-01..04).
 
@@ -57,8 +58,8 @@ from termihub_harness import (
     SSH_HOST,
     SSH_KEYS_PORT,
     SSH_PASSWORD,
-    SSH_PASSWORD_PORT,
     SSH_USERNAME,
+    SSH_X11_PORT,
     ManualUi,
     SystemTest,
     TabsUi,
@@ -252,13 +253,14 @@ class TestExternalApp(
     @pytest.mark.skipif(
         "sys.platform == 'win32'", reason="X11 forwarding is a macOS/Linux feature"
     )
-    @pytest.mark.usefixtures("ssh_fixtures")
+    @pytest.mark.usefixtures("ssh_x11_fixtures")
     def test_x11_forwarding_window_appears(self):
-        """Harness enables X11 on the connection (proving the flag persists) and
-        connects; operator runs an X11 app and confirms a window appears."""
+        """Harness enables X11 on the connection (proving the flag persists),
+        connects to the X11-capable fixture, and auto-asserts the server handed
+        back a forwarded ``$DISPLAY``; the operator only confirms a window."""
         self.close_all_tabs()
         name = unique_name("x11")
-        self._fill_ssh_editor(name, port=SSH_PASSWORD_PORT)
+        self._fill_ssh_editor(name, port=SSH_X11_PORT)
 
         self.wait(
             lambda: self.driver.exists("field-enableX11Forwarding"),
@@ -280,14 +282,24 @@ class TestExternalApp(
         self.connect_connection(name)
         self.handle_password_prompt(SSH_PASSWORD)
         assert self.wait(self.has_terminal, what="the X11 SSH terminal")
-        self.run_command("echo DISPLAY=$DISPLAY")
+
+        # In-app verification: the ssh-x11 fixture has X11Forwarding + xauth, so a
+        # session opened with X11 enabled gets a server-allocated $DISPLAY (e.g.
+        # 'localhost:10.0'). Auto-assert it rather than leaving it to the operator
+        # (#957) — a unique marker keeps the typed command line ('$DISPLAY') from
+        # matching before the echoed value does.
+        self.run_command("echo TH_X11_DISPLAY=$DISPLAY")
+        output = self.wait_for_output("TH_X11_DISPLAY=localhost:")
+        assert "TH_X11_DISPLAY=localhost:" in output, (
+            "SSH server did not allocate a forwarded $DISPLAY — X11 forwarding "
+            "was not negotiated"
+        )
 
         self.manual_step(
-            "In the SSH terminal (X11 forwarding is enabled), with a local X server "
-            "running (XQuartz on macOS), run an X11 app, e.g.:\n"
-            "      xeyes   (or: xclock)\n"
-            "Note: $DISPLAY was just echoed above — it should read like "
-            "'localhost:10.0'.",
+            "X11 forwarding is confirmed working ($DISPLAY was auto-verified "
+            "above). In the SSH terminal, with a local X server running (XQuartz "
+            "on macOS), run an X11 app, e.g.:\n"
+            "      xeyes   (or: xclock)",
             "An X11 window (xeyes/xclock) appears on your local display.",
         )
 
