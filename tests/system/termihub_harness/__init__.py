@@ -44,6 +44,7 @@ from .manual import (
     write_manual_report,
 )
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
+from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
 from .systemtest import SystemTest, unique_name
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
 from .ui import (
@@ -149,4 +150,7 @@ __all__ = [
     "ftp_list",
     "tftp_download",
     "TftpUnavailable",
+    "agent_has_key",
+    "key_fingerprint",
+    "sha256_fingerprints",
 ]
