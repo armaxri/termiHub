@@ -64,6 +64,7 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
+    agent_has_key,
     unique_name,
 )
 
@@ -190,16 +191,23 @@ class TestExternalApp(
     # ── SSH agent auth connects (MT-SSH-07) ──────────────────────────────────
     @pytest.mark.usefixtures("ssh_fixtures")
     def test_ssh_agent_auth_connects(self):
-        """Operator loads the fixture key into their agent; harness connects with
-        the ``agent`` auth method and asserts a terminal comes up — no password,
-        no key path."""
+        """Harness connects with the ``agent`` auth method and asserts a terminal
+        comes up — no password, no key path.
+
+        The precondition (the fixture key loaded into the operator's ssh-agent)
+        is *checked* programmatically rather than prompted: agent auth is only
+        possible if the agent holds that key, and that is machine-verifiable via
+        ``ssh-add -l`` fingerprints. So the test runs unattended when the key is
+        present and skips with the exact ``ssh-add`` command when it is not —
+        instead of gating an operator on a step a machine can confirm (#957).
+        """
         self.close_all_tabs()
-        self.manual_step(
-            "Ensure an ssh-agent is running with this key loaded:\n"
-            f"      ssh-add {_AGENT_KEY_FIXTURE}\n"
-            "(this key is authorized by the ssh-keys fixture container).",
-            "ssh-add reports the key is added.",
-        )
+        if not agent_has_key(_AGENT_KEY_FIXTURE):
+            pytest.skip(
+                "ssh-agent has not loaded the fixture key — run:\n"
+                f"      ssh-add {_AGENT_KEY_FIXTURE}\n"
+                "(authorized by the ssh-keys fixture container), then re-run."
+            )
 
         name = unique_name("agent-auth")
         self.create_ssh_connection(
