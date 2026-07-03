@@ -2,6 +2,17 @@
 
 **GitHub Issue:** TBD
 
+> **Update — artifact form changed to a single HTML file.** This document originally proposed a
+> **folder form** (`concept.md` + `behavior.md` + `mockups/*.html` + `sync.md`). That has been
+> **superseded by a single self-contained HTML file per concept**: `docs/concepts/<status>/<name>.html`
+> holds the prose, the Mermaid diagrams (rendered client-side via the vendored
+> `_assets/mermaid.min.js`), the mockups (inline `<section>`s using `_assets/mockup.css`), and the
+> sync ledger (`<section id="sync">`) — all in one file. The rationale and loop below still apply;
+> only the packaging changed (four files → one). Where the text says "the folder / `concept.md` /
+> `behavior.md` / `sync.md`," read "the corresponding part of the one HTML file." Authoritative,
+> current instructions live in `.claude/CLAUDE.md` (§ AI-Driven Concept Workflow) and the
+> `/sync-concept` skill. Worked example: [`backlog/x-server-provisioning.html`](x-server-provisioning.html).
+
 ---
 
 ## Overview
@@ -73,9 +84,22 @@ These three decisions define the system and are deliberately fixed:
 This is a **developer-facing** system. Its "interface" is the on-disk artifact layout, the
 rendered mockups viewed in a browser, and the Claude Code interaction during authoring and sync.
 
-### Per-Concept Folder Layout
+### Per-Concept Layout
 
-A concept graduates from a single `.md` file to a folder co-locating its artifacts:
+> Superseded: the layout below is the **original folder form**, kept for context. The **current
+> form is one self-contained HTML file** — see the banner at the top of this document.
+
+**Current (single-file HTML):** a concept with a visual surface is one file that co-locates
+everything:
+
+```
+docs/concepts/<status>/<concept-name>.html   # prose + Mermaid + mockups + sync ledger
+docs/concepts/_assets/                        # shared, linked by every concept
+  concept-template.html   # copy-me scaffold      concept.css   # document styling
+  mockup.css              # app-chrome kit         mermaid.min.js # vendored, offline diagrams
+```
+
+**Original (folder form, retired):** a concept graduated from a single `.md` to a folder:
 
 ```
 docs/concepts/<status>/<concept-name>/
@@ -88,8 +112,8 @@ docs/concepts/<status>/<concept-name>/
   sync.md             # Sync ledger: last-synced commit, open divergences
 ```
 
-Single-file concepts remain valid. A concept is "upgraded" to a folder only when it needs
-mockups — the two forms coexist in the same status directories.
+Single-file `.md` concepts remain valid for features with **no** visual surface; features **with**
+a visual surface become a single-file HTML concept. Both live in the same status directories.
 
 ### The Mockup Viewer
 

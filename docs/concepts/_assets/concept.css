@@ -1,0 +1,288 @@
+/*
+ * termiHub single-file concept stylesheet.
+ *
+ * Document-level styling for the one-HTML-per-concept form (see
+ * docs/concepts/backlog/ai-driven-concept-workflow.md). Loaded ALONGSIDE
+ * mockup.css: mockup.css provides the app-chrome kit + design tokens (:root
+ * vars) reused here; concept.css provides the surrounding document layout
+ * (prose, headings, tables, diagram cards, table of contents).
+ *
+ * A concept.html links both:
+ *   <link rel="stylesheet" href="../_assets/mockup.css" />
+ *   <link rel="stylesheet" href="../_assets/concept.css" />
+ */
+
+/* ── Document container ───────────────────────────────────────────────── */
+
+.concept {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 8px 8px 96px;
+}
+
+.concept-header {
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+}
+
+.concept-header h1 {
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+}
+
+.concept-header .concept-meta {
+  color: var(--text-secondary);
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+}
+
+.concept-header .concept-meta a {
+  color: var(--text-accent);
+  text-decoration: none;
+}
+
+.concept-header .concept-meta a:hover {
+  text-decoration: underline;
+}
+
+.concept-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 55%, transparent);
+  color: var(--color-warning);
+}
+
+/* ── Table of contents ───────────────────────────────────────────────── */
+
+.concept-toc {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin: 0 0 28px;
+}
+
+.concept-toc h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+  border: none;
+  padding: 0;
+}
+
+.concept-toc ol {
+  margin: 0;
+  padding-left: 20px;
+  columns: 2;
+  column-gap: 32px;
+}
+
+.concept-toc li {
+  margin: 3px 0;
+}
+
+.concept-toc a {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.concept-toc a:hover {
+  color: var(--text-accent);
+}
+
+/* ── Prose ───────────────────────────────────────────────────────────── */
+
+.concept h2 {
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  margin: 40px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-secondary);
+  scroll-margin-top: 16px;
+}
+
+.concept h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 26px 0 8px;
+  color: var(--text-primary);
+}
+
+.concept h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 18px 0 6px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.concept p,
+.concept li {
+  font-size: 14px;
+  line-height: 1.62;
+  color: var(--text-primary);
+}
+
+.concept p {
+  margin: 0 0 12px;
+}
+
+.concept ul,
+.concept ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.concept li {
+  margin: 4px 0;
+}
+
+.concept a {
+  color: var(--text-accent);
+  text-decoration: none;
+}
+
+.concept a:hover {
+  text-decoration: underline;
+}
+
+.concept strong {
+  color: #fff;
+  font-weight: 620;
+}
+
+.concept code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: var(--text-accent);
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+}
+
+.concept blockquote {
+  margin: 0 0 16px;
+  padding: 8px 14px;
+  border-left: 3px solid var(--accent-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.concept blockquote p {
+  margin: 0;
+}
+
+/* ── Tables ──────────────────────────────────────────────────────────── */
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 0 0 16px;
+}
+
+.concept table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.concept th,
+.concept td {
+  text-align: left;
+  padding: 7px 12px;
+  border: 1px solid var(--border-secondary);
+  vertical-align: top;
+}
+
+.concept th {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.concept tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-secondary) 55%, transparent);
+}
+
+.concept td code {
+  white-space: nowrap;
+}
+
+/* ── Mermaid diagram cards ───────────────────────────────────────────── */
+
+.diagram {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin: 0 0 18px;
+  overflow-x: auto;
+}
+
+.diagram .diagram__caption {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+/* Mermaid replaces the <pre> text with an SVG once rendered. Center it and
+   keep the pre-render source unobtrusive (monospace, dimmed). */
+pre.mermaid {
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ── Section wrapper spacing for embedded mockups ─────────────────────── */
+
+.concept .mockup-section {
+  margin: 20px 0 28px;
+}
+
+.concept .mockup-section > h3 {
+  margin-top: 0;
+}
+
+/* Anchor links on section headings (the little ¶ shown on hover). */
+.concept h2 .anchor,
+.concept h3 .anchor {
+  opacity: 0;
+  margin-left: 8px;
+  color: var(--text-secondary);
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.concept h2:hover .anchor,
+.concept h3:hover .anchor {
+  opacity: 1;
+}

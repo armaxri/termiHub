@@ -35,16 +35,19 @@ Issues labeled **`Concept`** are design-only tasks. Do **not** implement code fo
 4. Reference the GitHub issue number in the document header
 5. Commit with `docs(concept): add concept for <name> (Closes #N)`
 
-### AI-Driven Concept Workflow (Folder-Form Concepts)
+### AI-Driven Concept Workflow (Single-File HTML Concepts)
 
-For features with a **visual surface worth mocking up**, prefer the **folder form** of a concept
-over a single `.md`. This is a **design-first loop**: the artifacts are both the human discussion
-medium and Claude Code's implementation target. Full design:
+For features with a **visual surface worth mocking up**, author the concept as a **single
+self-contained HTML file** — `docs/concepts/<status>/<name>.html` — instead of a plain `.md`. One
+file holds everything: prose (the standard concept sections), Mermaid diagrams, the mockups, and
+the sync ledger. This is a **design-first loop**: the file is both the human discussion medium
+(opened in a browser) and Claude Code's implementation target. Full design:
 [`docs/concepts/ai-driven-concept-workflow.md`](../docs/concepts/backlog/ai-driven-concept-workflow.md).
+(Concepts with **no** visual surface stay a single `.md` — see the Concept Issues section above.)
 
 **Three fixed rules:**
 
-1. **Concept drives code (source of truth).** When artifacts and code disagree, the **concept is
+1. **Concept drives code (source of truth).** When the concept and code disagree, the **concept is
    authoritative** — fix the code by default. Only when a real constraint (platform, library,
    performance) makes the design wrong do you change the **concept** instead — never silently
    absorb the divergence into code.
@@ -52,43 +55,54 @@ medium and Claude Code's implementation target. Full design:
    and states**, not pixels — but they must read as the real app, not a generic dark IDE. So:
    - **Reuse the real component class names** from `docs/concepts/_assets/mockup.css`
      (`.activity-bar__item`, `.tab`, `.terminal-view__toolbar`, `.status-bar`,
-     `.connection-tree__item`, …) — the kit mirrors the app's actual BEM classes and theme values,
-     so the mockup DOM matches the real DOM and doubles as a precise implementation target.
-   - **Use real lucide icons**, never unicode glyphs: copy the needed `<symbol>` from the inline
-     sprite in `mockup-template.html` and reference `<svg class="li"><use href="#i-name" /></svg>`.
+     `.connection-tree__item`, `.menu`, …) — the kit mirrors the app's actual BEM classes and theme
+     values, so the mockup DOM matches the real DOM and doubles as a precise implementation target.
+   - **Use real lucide icons**, never unicode glyphs: add the needed `<symbol>` to the inline sprite
+     and reference `<svg class="li"><use href="#i-name" /></svg>`.
      (Glyphs like `◉`/`⫽` were the main reason early drafts didn't look like termiHub.)
-   - Self-contained HTML (link only `_assets/mockup.css`, never import app code) so they can
-     describe not-yet-built features. They may be "directionally right, not current" between syncs.
+   - The file links only the shared `_assets/` (`mockup.css`, `concept.css`, `mermaid.min.js`) and
+     never imports app code, so it can describe not-yet-built features. Mockups may be
+     "directionally right, not current" between syncs.
 3. **Sync is human-triggered.** Reconciliation happens only via the `/sync-concept <name>` skill —
    never automatically.
 
-**Folder layout** (lives in the same status dirs as single-file concepts):
+**Single-file layout** (one HTML per concept, in the usual status dirs):
 
 ```
-docs/concepts/<status>/<name>/
-  concept.md      # Overview, UI Interface (points at mockups), General Handling, Impl Details
-  behavior.md     # Mermaid state machines + sequence diagrams
-  mockups/*.html  # Hand-written, layout-altitude HTML (use _assets/mockup.css + mockup-template.html)
-  sync.md         # Concept↔code reconciliation ledger (last-synced commit, open divergences)
+docs/concepts/<status>/<name>.html   # everything: prose + Mermaid + mockups + sync ledger
+docs/concepts/_assets/
+  concept-template.html              # copy-me scaffold (sections + sprite + Mermaid init)
+  concept.css                        # document styling (prose/tables/diagram cards)
+  mockup.css                         # app-chrome kit (real BEM class names + tokens)
+  mermaid.min.js                     # vendored, pinned — diagrams render offline in the browser
 ```
 
-**Authoring a new folder-form concept:**
+Inside the file: prose uses `concept.css` classes; **Mermaid** goes in
+`<pre class="mermaid">…</pre>` (kept as editable text, rendered client-side on load); **mockups**
+are `<section>`s using the real `mockup.css` classes; the **sync ledger** is the final `<section
+id="sync">`. Because it's HTML, it renders in a browser (not on github.com — that shows raw
+source), so review and iterate by opening the file, not in the PR diff.
 
-1. Scaffold the folder; write `concept.md` + `behavior.md`; copy
-   `docs/concepts/_assets/mockup-template.html` into `mockups/` and build at least one mockup
-   using the real class names + lucide icons (rule 2 above).
+**Authoring a new single-file concept:**
+
+1. Copy `docs/concepts/_assets/concept-template.html` to `docs/concepts/<status>/<name>.html`;
+   fill in the sections, Mermaid diagrams, and at least one mockup using the real class names +
+   lucide icons (rule 2 above).
 2. **Screenshot-verify fidelity**: render with `scripts/internal/screenshot-mockup.sh <file>` (or
-   `--all`) and confirm the mockup actually looks like termiHub before using it for discussion.
-3. Regenerate the index: `scripts/internal/build-mockups-index.sh` (or `.cmd`) →
+   `--all`) and confirm it actually looks like termiHub and that Mermaid renders before using it
+   for discussion.
+3. Regenerate the gallery: `scripts/internal/build-mockups-index.sh` (or `.cmd`) →
    `docs/concepts/mockups-index.html`.
-4. Discuss/iterate on artifacts **before** writing code. Implement only once they stabilize, using
-   the mockups as the layout target and `behavior.md` as the behavior spec.
+4. Discuss/iterate on the file **before** writing code. Implement only once it stabilizes, using
+   the mockups as the layout target and the diagrams as the behavior spec.
 5. After implementing (and after any later change to the feature), run `/sync-concept <name>` to
-   refresh `sync.md` and reconcile.
+   refresh the sync ledger and reconcile.
 
 The standard Concept-issue rules (sections, Mermaid, issue header, commit message) still apply —
-they just split across `concept.md` and `behavior.md`. The first worked example is
-[`backlog/broadcast-input/`](../docs/concepts/backlog/broadcast-input/).
+they just all live in the one HTML file. The worked example is
+[`backlog/x-server-provisioning.html`](../docs/concepts/backlog/x-server-provisioning.html).
+Older concepts may still use the retired **folder form** (`concept.md` + `behavior.md` +
+`mockups/*.html` + `sync.md`); migrate them to the single-file form on next substantial edit.
 
 ---
 
@@ -271,7 +285,7 @@ feat(scope): implement <feature name> (Closes #N)
 Use these skills with `/skill-name` during development:
 
 - `/frontend-design:frontend-design` — UI components and new screens (VS Code-inspired aesthetic)
-- `/sync-concept <name>` — reconcile a folder-form concept with the code (concept is source of truth)
+- `/sync-concept <name>` — reconcile a single-file HTML concept with the code (concept is source of truth)
 - `/simplify` — post-implementation code quality review (run before PRs)
 - `/claude-md-management:revise-claude-md` — update CLAUDE.md with session learnings (run at session end)
 - `/claude-md-management:claude-md-improver` — full CLAUDE.md audit and improvement pass
