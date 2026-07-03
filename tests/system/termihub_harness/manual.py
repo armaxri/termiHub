@@ -119,11 +119,29 @@ class ManualPrompter:
 
     # -- public verbs --------------------------------------------------------
     def step(
-        self, instruction: str, expected: str, *, screenshot: Optional[str] = None
+        self,
+        instruction: str,
+        expected: str,
+        *,
+        screenshot: Optional[str] = None,
+        action: bool = True,
     ) -> ManualResult:
-        """Show the instruction + expected result, wait, then ask pass/fail/skip."""
-        self._present("MANUAL STEP", [instruction], expected, screenshot)
-        self._read_line("  Perform the step, then press Enter to record the result… ")
+        """Show the instruction + expected result, wait, then ask pass/fail/skip.
+
+        ``action`` frames the prompt: ``True`` (the default) for a step the
+        operator performs ("Perform the step…"), ``False`` for one where the
+        harness already acted and the operator only observes the result
+        ("Look at the result…"). Getting this right matters — telling an operator
+        to "perform" a step the harness already did reads as a broken prompt.
+        """
+        title = "MANUAL STEP" if action else "OBSERVE RESULT"
+        wait = (
+            "  Perform the step, then press Enter to record the result… "
+            if action
+            else "  Look at the result, then press Enter to record it… "
+        )
+        self._present(title, [instruction], expected, screenshot)
+        self._read_line(wait)
         return self._verdict()
 
     def confirm(self, question: str) -> bool:

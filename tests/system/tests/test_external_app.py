@@ -137,7 +137,7 @@ class TestExternalApp(
         assert self.driver.exists(_VSCODE_ITEM), "Open-in-VS-Code item missing"
         self.driver.click(_VSCODE_ITEM)
 
-        self.manual_step(
+        self.manual_observe(
             f"termiHub just issued 'Open in VS Code' for the local file {fname!r}.",
             "VS Code opens (or focuses) with that file.",
         )
@@ -180,7 +180,7 @@ class TestExternalApp(
         assert self.driver.exists(_VSCODE_ITEM), "Open-in-VS-Code item missing (SFTP)"
         self.driver.click(_VSCODE_ITEM)
 
-        self.manual_step(
+        self.manual_observe(
             f"termiHub issued 'Open in VS Code' for the remote (SFTP) file {fname!r}.",
             "VS Code opens with the downloaded file and termiHub keeps running "
             "(no crash — regression #828).",
@@ -251,7 +251,7 @@ class TestExternalApp(
             what="the 'Setup SSH Agent' helper tab to open",
         )
 
-        self.manual_step(
+        self.manual_observe(
             "termiHub opened the 'Setup SSH Agent' helper tab.",
             "The helper terminal runs the SSH-agent setup command (PowerShell "
             "elevation on Windows; `ssh-agent` + `ssh-add` on macOS/Linux).",

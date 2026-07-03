@@ -69,15 +69,18 @@ class ManualUi(HarnessMixin):
     def manual_observe(
         self, instruction: str, expected: str, *, label: Optional[str] = None
     ) -> None:
-        """Like :meth:`manual_step`, attaching a screenshot when the bridge can.
+        """Confirm a result the harness already produced — no operator action.
 
-        The screenshot verb (#900) is not yet available; until it lands this
-        captures nothing and behaves like :meth:`manual_step`, so visual carve-
-        outs can already be written against this API.
+        Use this (not :meth:`manual_step`) whenever the harness performed the
+        work and the operator only *looks* — e.g. "termiHub issued Open in
+        VS Code; confirm it opened". The prompt is framed as an observation
+        ("Look at the result…") rather than an action, and a screenshot is
+        attached when the bridge supports it (#900); until then it captures
+        nothing, so visual carve-outs can already be written against this API.
         """
         screenshot = self._capture_screenshot(label)
         result = self._manual_prompter.step(
-            instruction, expected, screenshot=screenshot
+            instruction, expected, screenshot=screenshot, action=False
         )
         self._record("observe", instruction, expected, result, screenshot=screenshot)
         self._enforce(result, instruction)

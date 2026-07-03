@@ -127,6 +127,24 @@ class TestManualPrompter:
         assert "Click export" in blob
         assert "A save dialog opens" in blob
 
+    def test_step_action_frames_as_something_to_perform(self):
+        prompter, captured = _scripted(["", "p"])
+        prompter.step("Click export", "A save dialog opens")  # action=True default
+        blob = "\n".join(captured)
+        assert "MANUAL STEP" in blob
+        assert "Perform the step" in blob
+
+    def test_step_observe_frames_as_something_to_look_at(self):
+        # An observation must not tell the operator to "perform" a step the
+        # harness already did — it should ask them to look at the result (#957).
+        prompter, captured = _scripted(["", "p"])
+        prompter.step("VS Code was told to open", "It opens", action=False)
+        blob = "\n".join(captured)
+        assert "OBSERVE RESULT" in blob
+        assert "Look at the result" in blob
+        assert "Perform the step" not in blob
+        assert "MANUAL STEP" not in blob
+
     def test_confirm_yes_no(self):
         yes, _ = _scripted(["y"])
         no, _ = _scripted(["n"])
