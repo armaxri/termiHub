@@ -294,9 +294,18 @@ class TestManualUiBehavior:
         assert ui.manual_confirm("does it blink?") is True
         assert ui._manual_session.records[-1].status == "pass"
 
-    def test_observe_without_screenshot_verb_records_none(self):
+    def test_observe_defaults_to_no_screenshot(self):
+        # Screenshot capture is opt-in: an observe step must not block on the
+        # bridge snapshot verb by default (it stalls under macOS occlusion #957).
         ui = self._ui(["", "p"])
-        ui.manual_observe("look", "green", label="shot")
+        ui.manual_observe("look", "green")
+        rec = ui._manual_session.records[-1]
+        assert rec.kind == "observe" and rec.screenshot is None
+
+    def test_observe_without_screenshot_verb_records_none(self):
+        # Even when explicitly requested, a driver lacking the verb yields None.
+        ui = self._ui(["", "p"])
+        ui.manual_observe("look", "green", label="shot", screenshot=True)
         rec = ui._manual_session.records[-1]
         assert rec.kind == "observe" and rec.screenshot is None
 

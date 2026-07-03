@@ -67,22 +67,33 @@ class ManualUi(HarnessMixin):
         return answer
 
     def manual_observe(
-        self, instruction: str, expected: str, *, label: Optional[str] = None
+        self,
+        instruction: str,
+        expected: str,
+        *,
+        label: Optional[str] = None,
+        screenshot: bool = False,
     ) -> None:
         """Confirm a result the harness already produced — no operator action.
 
         Use this (not :meth:`manual_step`) whenever the harness performed the
         work and the operator only *looks* — e.g. "termiHub issued Open in
         VS Code; confirm it opened". The prompt is framed as an observation
-        ("Look at the result…") rather than an action, and a screenshot is
-        attached when the bridge supports it (#900); until then it captures
-        nothing, so visual carve-outs can already be written against this API.
+        ("Look at the result…") rather than an action.
+
+        ``screenshot`` is **opt-in and off by default**: observe steps almost
+        always run right after the app hands off to an external app, which on
+        macOS leaves termiHub's window occluded — and the bridge snapshot verb
+        (#900) then blocks until it times out (~10 s), stalling the operator for
+        no benefit. Pass ``screenshot=True`` only where a capture is both
+        reliable and worth the wait; it saves a PNG under the artifacts dir and
+        references its path (never the raw data URL).
         """
-        screenshot = self._capture_screenshot(label)
+        shot = self._capture_screenshot(label) if screenshot else None
         result = self._manual_prompter.step(
-            instruction, expected, screenshot=screenshot, action=False
+            instruction, expected, screenshot=shot, action=False
         )
-        self._record("observe", instruction, expected, result, screenshot=screenshot)
+        self._record("observe", instruction, expected, result, screenshot=shot)
         self._enforce(result, instruction)
 
     # ── Internals ────────────────────────────────────────────────────────────
