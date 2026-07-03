@@ -76,6 +76,22 @@ pub fn run() {
                 *handle = Some(app.handle().clone());
             }
 
+            // In WebSocket test-bridge mode, keep the window above other apps so
+            // macOS never marks its webview as fully occluded — full occlusion
+            // throttles WKWebView rendering, which hangs the harness (xterm stops
+            // painting, screenshots time out) once a guided-manual test hands off
+            // to an external app like VS Code (#957). Best-effort and test-only;
+            // production windows are untouched.
+            if utils::test_bridge::is_test_bridge_enabled() {
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Err(e) = window.set_always_on_top(true) {
+                        tracing::warn!("Failed to set test window always-on-top: {e}");
+                    } else {
+                        info!("Test window pinned always-on-top (anti-occlusion, #957)");
+                    }
+                }
+            }
+
             let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
 
             // Detect portable mode before any storage initialization.
