@@ -9,10 +9,6 @@
   overflow-y: hidden;
 }
 
-.tab-bar::-webkit-scrollbar {
-  height: 3px;
-}
-
 .tab-bar__tabs {
   display: flex;
   height: 100%;

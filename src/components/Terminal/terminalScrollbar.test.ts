@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { computeThumbGeometry, dragOffsetToLine, MIN_THUMB_PX } from "./terminalScrollbar";
+import type { Terminal as XTerm } from "@xterm/xterm";
+import {
+  computeThumbGeometry,
+  dragOffsetToLine,
+  createTerminalScrollbar,
+  MIN_THUMB_PX,
+} from "./terminalScrollbar";
 
 describe("computeThumbGeometry", () => {
   it("hides the thumb when there is no scrollback", () => {
@@ -122,5 +128,62 @@ describe("dragOffsetToLine", () => {
       });
       expect(line).toBe(viewportY);
     }
+  });
+});
+
+describe("createTerminalScrollbar thumb visibility during drag", () => {
+  /** Minimal xterm stub exposing only the API the scrollbar touches. */
+  function fakeXterm(): XTerm {
+    const noopDisposable = { dispose: () => {} };
+    return {
+      rows: 24,
+      buffer: { active: { viewportY: 0, baseY: 24 } },
+      onScroll: () => noopDisposable,
+      onResize: () => noopDisposable,
+      onWriteParsed: () => noopDisposable,
+      scrollToLine: () => {},
+      scrollLines: () => {},
+    } as unknown as XTerm;
+  }
+
+  /** Build a gutter+thumb wired to a scrollbar controller, mounted in the DOM. */
+  function mountScrollbar() {
+    const gutter = document.createElement("div");
+    const thumb = document.createElement("div");
+    thumb.className = "terminal-vscroll-thumb";
+    gutter.appendChild(thumb);
+    document.body.appendChild(gutter);
+    const controller = createTerminalScrollbar({ xterm: fakeXterm(), gutter, thumb });
+    return { gutter, thumb, controller };
+  }
+
+  const isDragging = (thumb: HTMLElement): boolean =>
+    thumb.classList.contains("terminal-vscroll-thumb--dragging");
+
+  it("marks the thumb as dragging on pointerdown and clears it on pointerup", () => {
+    const { gutter, thumb, controller } = mountScrollbar();
+
+    // A drag keeps the thumb pinned visible even if the pointer later leaves
+    // the terminal (which would otherwise drop the :hover reveal).
+    thumb.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientY: 10 }));
+    expect(isDragging(thumb)).toBe(true);
+
+    window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientY: 40 }));
+    expect(isDragging(thumb)).toBe(false);
+
+    controller.dispose();
+    gutter.remove();
+  });
+
+  it("clears the dragging flag on dispose (torn down mid-drag)", () => {
+    const { gutter, thumb, controller } = mountScrollbar();
+
+    thumb.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientY: 10 }));
+    expect(isDragging(thumb)).toBe(true);
+
+    controller.dispose();
+    expect(isDragging(thumb)).toBe(false);
+
+    gutter.remove();
   });
 });
