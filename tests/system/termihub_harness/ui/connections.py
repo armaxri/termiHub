@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from ..bridge import BridgeError
 from .base import HarnessMixin
 from .lookups import connection_item_testid, find_connection, find_folder
 
@@ -112,10 +113,33 @@ class ConnectionsUi(HarnessMixin):
         def opened() -> bool:
             if self.driver.exists("connection-editor-name-input"):
                 return True
-            self.driver.click("connection-list-new-connection")
+            # The New Connection button lives only in the connections sidebar
+            # view; an earlier file-browser step can leave the sidebar on
+            # "files" (seen in the #957 operator run), where the button is
+            # absent and the click can never land. Switch back first so this
+            # works regardless of the incoming view.
+            if not self.driver.exists("connection-list-new-connection"):
+                self._ensure_connections_sidebar()
+            if self.driver.exists("connection-list-new-connection"):
+                self.driver.click("connection-list-new-connection")
             return self.driver.exists("connection-editor-name-input")
 
         self.wait(opened, what="the connection editor")
+
+    def _ensure_connections_sidebar(self) -> None:
+        """Show the connections sidebar view if it is not already active.
+
+        Kept self-contained (rather than depending on ``SidebarUi``) so every
+        suite that mixes in :class:`ConnectionsUi` gets the corrective switch.
+        Only clicks when the view differs, so it never toggles an already-open
+        connections sidebar shut.
+        """
+        try:
+            on_connections = self.driver.get_state("sidebarView") == "connections"
+        except BridgeError:
+            on_connections = False
+        if not on_connections and self.driver.exists("activity-bar-connections"):
+            self.driver.click("activity-bar-connections")
 
     def _try_select(self, test_id: str, value: str) -> bool:
         """``driver.select`` that returns True, for use as a :meth:`wait` predicate.
