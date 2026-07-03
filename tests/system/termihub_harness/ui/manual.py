@@ -87,14 +87,18 @@ class ManualUi(HarnessMixin):
 
     # ── Internals ────────────────────────────────────────────────────────────
     def _capture_screenshot(self, label: Optional[str]) -> Optional[str]:
-        """Capture a screenshot via the bridge if it supports it (#900), else None."""
-        shot = getattr(self.driver, "screenshot", None)
-        if shot is None:
-            return None
-        try:
-            return shot(label) if label else shot()
-        except Exception:  # noqa: BLE001 — evidence capture is best-effort
-            return None
+        """Persist a bridge screenshot for this observation; return its file path.
+
+        Delegates to :func:`artifacts.save_manual_screenshot`, which writes a PNG
+        under the per-test artifacts dir and returns its path — never the raw
+        ``data:image/png;base64,…`` URL the bridge produces (#900), which would
+        flood the operator console and the report. Returns ``None`` when the
+        bridge has no screenshot verb (older app) or capture fails.
+        """
+        from ..artifacts import save_manual_screenshot
+
+        path = save_manual_screenshot(self.driver, self._manual_nodeid, label=label)
+        return str(path) if path is not None else None
 
     def _record(
         self,
