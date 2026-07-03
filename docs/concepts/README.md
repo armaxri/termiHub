@@ -12,23 +12,30 @@ Design documents are sorted into four folders based on **implementation status**
 Each partially implemented concept has an **## Implementation Status** section at the bottom
 of its document that lists exactly what exists and what is still missing.
 
-## Two forms: single-file vs. folder
+## Concept forms
 
-A concept is either a single `.md` file or a **folder** — both live in the same status
-directories.
+A concept is either a single `.md` file or a single **HTML** file — chosen by whether it has a
+visual surface. Both live in the same status directories.
 
-- **Single file** (`<name>.md`) — the default. Prose + inline Mermaid diagrams.
-- **Folder form** (`<name>/`) — used when a concept has a **visual surface worth mocking up**.
-  It co-locates `concept.md` (prose), `behavior.md` (diagrams), `mockups/*.html` (hand-written,
-  layout-altitude HTML), and `sync.md` (the concept↔code reconciliation ledger).
+- **Markdown** (`<name>.md`) — the default for features with **no** visual surface. Prose + inline
+  Mermaid diagrams.
+- **Single-file HTML** (`<name>.html`) — used when a concept has a **visual surface worth mocking
+  up**. One self-contained file holds everything: prose, Mermaid diagrams (rendered client-side),
+  the mockups (inline, using the real app class names), and the concept↔code reconciliation ledger
+  (`<section id="sync">`). Open it in a browser to review it — it does not render on github.com.
 
-The folder form is part of the **AI-driven concept workflow** — design-first artifacts that
-double as Claude Code's implementation target, reconciled via the `/sync-concept <name>` skill
-where the **concept is the source of truth**. See
+The HTML form is part of the **AI-driven concept workflow** — a design-first artifact that doubles
+as Claude Code's implementation target, reconciled via the `/sync-concept <name>` skill where the
+**concept is the source of truth**. See
 [`backlog/ai-driven-concept-workflow.md`](backlog/ai-driven-concept-workflow.md) for the full
-design, [`_assets/`](_assets/) for the shared mockup kit, and
-[`mockups-index.html`](mockups-index.html) for a browsable index of every mockup.
-[`backlog/broadcast-input/`](backlog/broadcast-input/) is the first worked example.
+design, [`_assets/`](_assets/) for the shared kit (`concept-template.html`, `concept.css`,
+`mockup.css`, `mermaid.min.js`), and [`mockups-index.html`](mockups-index.html) for a browsable
+gallery. [`backlog/x-server-provisioning.html`](backlog/x-server-provisioning.html) is the worked
+example.
+
+> **Legacy folder form (retired).** Some concepts below are still marked _(folder form)_ —
+> `<name>/` with `concept.md` + `behavior.md` + `mockups/*.html` + `sync.md`. This form is retired;
+> migrate a folder concept to the single-file HTML form on its next substantial edit.
 
 ---
 
