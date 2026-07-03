@@ -29,6 +29,8 @@ from termihub_harness import (
     SSH_PASSWORD_SERVICE,
     SSH_TUNNEL_PORT,
     SSH_TUNNEL_SERVICE,
+    SSH_X11_PORT,
+    SSH_X11_SERVICE,
     TELNET_HOST,
     TELNET_PORT,
     TELNET_SERVICE,
@@ -199,6 +201,19 @@ def ssh_fixtures():
     return _ensure_ssh_services(
         [(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT), (SSH_KEYS_SERVICE, SSH_KEYS_PORT)]
     )
+
+
+@pytest.fixture(scope="session")
+def ssh_x11_fixtures():
+    """X11-forwarding SSH container (port 2208).
+
+    The image ships ``X11Forwarding yes`` plus ``xauth`` and ``x11-apps`` /
+    ``xdpyinfo`` (see ``tests/docker/ssh-x11/Dockerfile``), so a connection with
+    X11 forwarding enabled gets a server-allocated ``$DISPLAY``. This lets the
+    guided-manual X11 test auto-assert the forwarded display instead of leaving
+    the whole check to the operator (#957).
+    """
+    return _ensure_ssh_services([(SSH_X11_SERVICE, SSH_X11_PORT)])
 
 
 @pytest.fixture(scope="session")
