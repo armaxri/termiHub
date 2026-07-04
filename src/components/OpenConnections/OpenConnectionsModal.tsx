@@ -1,15 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   Terminal,
   Server,
   ArrowLeftRight,
   FolderOpen,
   Activity,
-  X,
   MonitorStop,
   Loader2,
 } from "lucide-react";
+import { Modal, Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
@@ -196,204 +195,191 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="open-connections__overlay" />
-        <Dialog.Content className="open-connections__content" aria-describedby={undefined}>
-          <div className="open-connections__header">
-            <Dialog.Title className="open-connections__title">
-              Open Connections
-              {totalCount > 0 && (
-                <span className="oc-section__count" style={{ marginLeft: "8px" }}>
-                  {totalCount}
-                </span>
-              )}
-            </Dialog.Title>
-            <Dialog.Close asChild>
-              <button className="open-connections__close" aria-label="Close">
-                <X size={16} />
-              </button>
-            </Dialog.Close>
-          </div>
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      size="lg"
+      title={
+        <span className="open-connections__title-row">
+          Open Connections
+          {totalCount > 0 && <span className="oc-section__count">{totalCount}</span>}
+        </span>
+      }
+    >
+      <div className="open-connections__body">
+        {loading && totalCount === 0 && <div className="open-connections__empty">Loading…</div>}
+        {!loading && totalCount === 0 && (
+          <div className="open-connections__empty">No open connections.</div>
+        )}
 
-          <div className="open-connections__body">
-            {loading && totalCount === 0 && <div className="open-connections__empty">Loading…</div>}
-            {!loading && totalCount === 0 && (
-              <div className="open-connections__empty">No open connections.</div>
-            )}
-
-            {/* Connecting (in-flight handshakes) */}
-            {connectingTabs.length > 0 && (
-              <Section
-                title="Connecting"
+        {/* Connecting (in-flight handshakes) */}
+        {connectingTabs.length > 0 && (
+          <Section
+            title="Connecting"
+            icon={<Loader2 size={14} />}
+            count={connectingTabs.length}
+            onKillAll={handleCancelAllConnecting}
+          >
+            {connectingTabs.map((tab) => (
+              <ConnectionRow
+                key={tab.id}
                 icon={<Loader2 size={14} />}
-                count={connectingTabs.length}
-                onKillAll={handleCancelAllConnecting}
-              >
-                {connectingTabs.map((tab) => (
-                  <ConnectionRow
-                    key={tab.id}
-                    icon={<Loader2 size={14} />}
-                    title={tab.title}
-                    badge="connecting"
-                    onKill={() => handleCancelConnecting(tab.id, tab.panelId)}
-                  />
-                ))}
-              </Section>
-            )}
+                title={tab.title}
+                badge="connecting"
+                onKill={() => handleCancelConnecting(tab.id, tab.panelId)}
+              />
+            ))}
+          </Section>
+        )}
 
-            {/* Local Sessions */}
-            {localSessions.length > 0 && (
-              <Section
-                title="Local Sessions"
+        {/* Local Sessions */}
+        {localSessions.length > 0 && (
+          <Section
+            title="Local Sessions"
+            icon={<Terminal size={14} />}
+            count={localSessions.length}
+            onKillAll={handleKillAllLocal}
+          >
+            {localSessions.map((s) => (
+              <ConnectionRow
+                key={s.id}
                 icon={<Terminal size={14} />}
-                count={localSessions.length}
-                onKillAll={handleKillAllLocal}
-              >
-                {localSessions.map((s) => (
-                  <ConnectionRow
-                    key={s.id}
-                    icon={<Terminal size={14} />}
-                    title={s.title}
-                    badge={s.alive ? "alive" : "dead"}
-                    onKill={() => handleKillLocal(s.id)}
-                  />
-                ))}
-              </Section>
-            )}
+                title={s.title}
+                badge={s.alive ? "alive" : "dead"}
+                onKill={() => handleKillLocal(s.id)}
+              />
+            ))}
+          </Section>
+        )}
 
-            {/* Agent Connections */}
-            {connectedAgents.length > 0 && (
-              <Section
-                title="Agent Connections"
+        {/* Agent Connections */}
+        {connectedAgents.length > 0 && (
+          <Section
+            title="Agent Connections"
+            icon={<Server size={14} />}
+            count={connectedAgents.length}
+            onKillAll={handleKillAllAgents}
+          >
+            {connectedAgents.map((a) => (
+              <ConnectionRow
+                key={a.id}
                 icon={<Server size={14} />}
-                count={connectedAgents.length}
-                onKillAll={handleKillAllAgents}
-              >
-                {connectedAgents.map((a) => (
-                  <ConnectionRow
-                    key={a.id}
-                    icon={<Server size={14} />}
-                    title={a.name}
-                    badge="connected"
-                    onKill={() => handleKillAgent(a.id)}
-                  />
-                ))}
-              </Section>
-            )}
+                title={a.name}
+                badge="connected"
+                onKill={() => handleKillAgent(a.id)}
+              />
+            ))}
+          </Section>
+        )}
 
-            {/* Connections via each agent (proxy sessions opened from the desktop) */}
-            {connectedAgents.map((a) => {
-              const sessions = proxySessions[a.id] ?? [];
-              if (sessions.length === 0) return null;
-              return (
-                <Section
-                  key={`proxy-sessions-${a.id}`}
-                  title={`Connections via ${a.name}`}
-                  icon={<Server size={14} />}
-                  count={sessions.length}
-                  onKillAll={() => handleKillAllProxy(a.id)}
-                >
-                  {sessions.map((s) => (
-                    <ConnectionRow
-                      key={s.id}
-                      icon={
-                        s.connectionType === "ssh" ? <Server size={14} /> : <Terminal size={14} />
-                      }
-                      title={s.title}
-                      badge={s.alive ? "alive" : "dead"}
-                      onKill={() => handleKillProxy(a.id, s.id)}
-                    />
-                  ))}
-                </Section>
-              );
-            })}
+        {/* Connections via each agent (proxy sessions opened from the desktop) */}
+        {connectedAgents.map((a) => {
+          const sessions = proxySessions[a.id] ?? [];
+          if (sessions.length === 0) return null;
+          return (
+            <Section
+              key={`proxy-sessions-${a.id}`}
+              title={`Connections via ${a.name}`}
+              icon={<Server size={14} />}
+              count={sessions.length}
+              onKillAll={() => handleKillAllProxy(a.id)}
+            >
+              {sessions.map((s) => (
+                <ConnectionRow
+                  key={s.id}
+                  icon={s.connectionType === "ssh" ? <Server size={14} /> : <Terminal size={14} />}
+                  title={s.title}
+                  badge={s.alive ? "alive" : "dead"}
+                  onKill={() => handleKillProxy(a.id, s.id)}
+                />
+              ))}
+            </Section>
+          );
+        })}
 
-            {/* Native sessions on each agent (reported by the agent itself) */}
-            {connectedAgents.map((a) => {
-              const sessions = agentSessions[a.id] ?? [];
-              if (sessions.length === 0) return null;
-              return (
-                <Section
-                  key={`agent-sessions-${a.id}`}
-                  title={`Sessions on ${a.name}`}
+        {/* Native sessions on each agent (reported by the agent itself) */}
+        {connectedAgents.map((a) => {
+          const sessions = agentSessions[a.id] ?? [];
+          if (sessions.length === 0) return null;
+          return (
+            <Section
+              key={`agent-sessions-${a.id}`}
+              title={`Sessions on ${a.name}`}
+              icon={<Terminal size={14} />}
+              count={sessions.length}
+              onKillAll={() => handleKillAllAgentSessions(a.id)}
+            >
+              {sessions.map((s) => (
+                <ConnectionRow
+                  key={s.sessionId}
                   icon={<Terminal size={14} />}
-                  count={sessions.length}
-                  onKillAll={() => handleKillAllAgentSessions(a.id)}
-                >
-                  {sessions.map((s) => (
-                    <ConnectionRow
-                      key={s.sessionId}
-                      icon={<Terminal size={14} />}
-                      title={s.title}
-                      badge={s.status === "attached" || s.status === "running" ? "alive" : "dead"}
-                      onKill={() => handleKillAgentSession(a.id, s.sessionId)}
-                    />
-                  ))}
-                </Section>
+                  title={s.title}
+                  badge={s.status === "attached" || s.status === "running" ? "alive" : "dead"}
+                  onKill={() => handleKillAgentSession(a.id, s.sessionId)}
+                />
+              ))}
+            </Section>
+          );
+        })}
+
+        {/* SSH Tunnels */}
+        {activeTunnels.length > 0 && (
+          <Section
+            title="SSH Tunnels"
+            icon={<ArrowLeftRight size={14} />}
+            count={activeTunnels.length}
+            onKillAll={handleKillAllTunnels}
+          >
+            {activeTunnels.map((t) => {
+              const state = tunnelStates.find((ts) => ts.tunnelId === t.id);
+              return (
+                <ConnectionRow
+                  key={t.id}
+                  icon={<ArrowLeftRight size={14} />}
+                  title={t.name}
+                  badge={state?.status === "connected" ? "connected" : "connecting"}
+                  onKill={() => handleKillTunnel(t.id)}
+                />
               );
             })}
+          </Section>
+        )}
 
-            {/* SSH Tunnels */}
-            {activeTunnels.length > 0 && (
-              <Section
-                title="SSH Tunnels"
-                icon={<ArrowLeftRight size={14} />}
-                count={activeTunnels.length}
-                onKillAll={handleKillAllTunnels}
-              >
-                {activeTunnels.map((t) => {
-                  const state = tunnelStates.find((ts) => ts.tunnelId === t.id);
-                  return (
-                    <ConnectionRow
-                      key={t.id}
-                      icon={<ArrowLeftRight size={14} />}
-                      title={t.name}
-                      badge={state?.status === "connected" ? "connected" : "connecting"}
-                      onKill={() => handleKillTunnel(t.id)}
-                    />
-                  );
-                })}
-              </Section>
-            )}
+        {/* SFTP */}
+        {sftpConnectedHost && (
+          <Section
+            title="SFTP"
+            icon={<FolderOpen size={14} />}
+            count={1}
+            onKillAll={disconnectSftp}
+          >
+            <ConnectionRow
+              icon={<FolderOpen size={14} />}
+              title={sftpConnectedHost}
+              badge="connected"
+              onKill={disconnectSftp}
+            />
+          </Section>
+        )}
 
-            {/* SFTP */}
-            {sftpConnectedHost && (
-              <Section
-                title="SFTP"
-                icon={<FolderOpen size={14} />}
-                count={1}
-                onKillAll={disconnectSftp}
-              >
-                <ConnectionRow
-                  icon={<FolderOpen size={14} />}
-                  title={sftpConnectedHost}
-                  badge="connected"
-                  onKill={disconnectSftp}
-                />
-              </Section>
-            )}
-
-            {/* Monitoring */}
-            {monitoringHost && (
-              <Section
-                title="Monitoring"
-                icon={<Activity size={14} />}
-                count={1}
-                onKillAll={disconnectMonitoring}
-              >
-                <ConnectionRow
-                  icon={<MonitorStop size={14} />}
-                  title={monitoringHost}
-                  badge="connected"
-                  onKill={disconnectMonitoring}
-                />
-              </Section>
-            )}
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        {/* Monitoring */}
+        {monitoringHost && (
+          <Section
+            title="Monitoring"
+            icon={<Activity size={14} />}
+            count={1}
+            onKillAll={disconnectMonitoring}
+          >
+            <ConnectionRow
+              icon={<MonitorStop size={14} />}
+              title={monitoringHost}
+              badge="connected"
+              onKill={disconnectMonitoring}
+            />
+          </Section>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -403,7 +389,7 @@ interface SectionProps {
   title: string;
   icon: React.ReactNode;
   count: number;
-  onKillAll: () => void;
+  onKillAll: () => void | Promise<void>;
   children: React.ReactNode;
 }
 
@@ -413,9 +399,15 @@ function Section({ title, count, onKillAll, children }: SectionProps) {
       <div className="oc-section__header">
         <span className="oc-section__title">{title}</span>
         <span className="oc-section__count">{count}</span>
-        <button className="oc-section__kill-all" onClick={onKillAll} title={`Kill all ${title}`}>
+        <Button
+          variant="danger"
+          size="sm"
+          className="oc-section__kill-all"
+          onClick={() => onKillAll()}
+          title={`Kill all ${title}`}
+        >
           Kill All
-        </button>
+        </Button>
       </div>
       {children}
     </div>
@@ -428,7 +420,7 @@ interface ConnectionRowProps {
   icon: React.ReactNode;
   title: string;
   badge: BadgeVariant;
-  onKill: () => void;
+  onKill: () => void | Promise<void>;
 }
 
 function ConnectionRow({ icon, title, badge, onKill }: ConnectionRowProps) {
@@ -439,9 +431,9 @@ function ConnectionRow({ icon, title, badge, onKill }: ConnectionRowProps) {
         {title}
       </span>
       <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
-      <button className="oc-row__kill" onClick={onKill}>
+      <Button variant="danger" size="sm" className="oc-row__kill" onClick={() => onKill()}>
         Kill
-      </button>
+      </Button>
     </div>
   );
 }
