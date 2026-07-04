@@ -16,9 +16,9 @@ gh issue list --label Concept
 ```
 
 - **Always confirm before implementing**: when picking up an issue, first show the user the issue title and description and ask for confirmation before starting any work
-- **Assign yourself to picked issues**: when picking up an issue, determine the current GitHub user via `gh api user -q .login` and assign them to the issue with `gh issue edit <N> --add-assignee <login>`. Before starting work, check if the issue already has an assignee — if so, warn the user that someone else may already be working on it (check for existing branches like `feature/*` or `bugfix/*` referencing the issue number)
+- **Assignment happens ONLY when _taking_ an issue to implement it — never at creation time**: when (and only when) picking up an existing issue to start work on it, determine the current GitHub user via `gh api user -q .login` and assign them with `gh issue edit <N> --add-assignee <login>`. Before starting work, check if the issue already has an assignee — if so, warn the user that someone else may already be working on it (check for existing branches like `feature/*` or `bugfix/*` referencing the issue number)
 - Reference issue numbers in commits and PRs (`Closes #N` / `Fixes #N`)
-- Create new issues for work discovered during development and label them appropriately
+- Create new issues for work discovered during development and label them appropriately. **Never add an assignee when _creating_ an issue** — not the user, not yourself. Newly created issues are always left unassigned so anyone can pick them up; assigning is exclusively the "taking an issue" action above.
 
 ### Concept Issues
 
@@ -206,6 +206,18 @@ Bundle/dep-size concerns belong in the "secondary" bucket — raise them in PR d
 - Hooks first, then event handlers, then render
 - JSDoc for public functions
 - Naming: `PascalCase` components, `camelCase` functions/hooks, `UPPER_SNAKE_CASE` constants
+
+### UI / Design System
+
+termiHub has a shared design system (concept — the source of truth: [`docs/concepts/backlog/ui-modernization/concept.html`](../docs/concepts/backlog/ui-modernization/concept.html)). **For any non-trivial UI work — building or restyling components/dialogs/forms, adding user-facing feedback, reviewing a UI diff, or making a visual/interaction decision — delegate to the `ui-design` subagent** (`.claude/agents/ui-design.md`), which owns the full system. The concept is authoritative: when it and the code disagree, fix the code by default.
+
+These rules hold in every session (the `ui-design` agent enforces them in depth):
+
+1. **Compose from primitives.** Build UI from the shared primitives in `src/components/ui/` (Button, Input, Field, Select, Modal, Toggle, Toast) — never a new `__btn`, bespoke input, or one-off dialog shell. If a primitive is missing or doesn't exist yet, create/extend it there rather than adding another one-off.
+2. **Build on installed libraries.** Primitives are thin token'd skins over deps already in `package.json` — Modal/Select/Tabs → Radix, Field → `react-hook-form` + `zod`, toasts → `sonner`. Propose a dependency before a custom implementation (see [Prefer Libraries Over Custom Code](#dependencies--prefer-libraries-over-custom-code)).
+3. **Tokens only — no magic values.** Every color/spacing/radius/shadow/font-size/z-index/transition references a token from `src/styles/variables.css`. No raw hex, no `rgba(0,0,0,…)` overlays, no pixel radii. Add a token (with per-theme values) if one is missing; primary-button text uses `--text-on-accent`, never `#fff`.
+4. **Every action gives feedback.** No mutating/async action resolves silently — show a pending state, then success (`toast.success()`) or a recoverable error. Button actions use the async Button state; long-running work uses `toast.loading()`; field errors are inline; blocking connects use the connection-overlay pattern.
+5. **One scrollbar, one motion language.** Scrollbars are styled globally (`global.css`) — never re-style per component. Use `--transition-*` tokens and wrap motion in `@media (prefers-reduced-motion: reduce)`.
 
 ### Rust
 
