@@ -18,6 +18,7 @@
 
 #[cfg(windows)]
 pub mod acquire;
+pub mod auth;
 pub mod manager;
 
 pub use manager::XServerManager;
