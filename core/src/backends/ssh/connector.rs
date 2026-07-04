@@ -176,7 +176,12 @@ impl SshConnector for RusshSshConnector {
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
         if config.enable_x11_forwarding {
-            match X11Forwarder::start(config, &mut session, registry, alive.clone()).await {
+            // No managed X server source yet — the Windows XServerManager
+            // (issue #1049) will supply one here; until then detection falls
+            // back to a user-run server.
+            let managed = None;
+            match X11Forwarder::start(config, &mut session, registry, alive.clone(), managed).await
+            {
                 Ok((forwarder, display_num, cookie)) => {
                     x11_display = Some(display_num);
                     x11_cookie = cookie;

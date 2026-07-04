@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**452** literal · **123** dynamic · **14** indirect.
+**454** literal · **123** dynamic · **16** indirect.
 
 ## Literal test IDs
 
@@ -153,6 +153,7 @@ Fixed strings — match exactly.
 | `export-submit` | `src/components/ExportImport/ExportDialog.tsx` |
 | `export-warning` | `src/components/ExportImport/ExportDialog.tsx` |
 | `external-files-add` | `src/components/Settings/ExternalFilesSettings.tsx` |
+| `field-error` | `src/components/ui/Field.tsx` |
 | `file-browser-cd-here` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-current-path` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-disconnect` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -249,6 +250,7 @@ Fixed strings — match exactly.
 | `migration-confirm` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-dialog` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-result` | `src/components/Settings/PortableModeSettings.tsx`, `src/components/Settings/SecuritySettings.tsx` |
+| `modal-close` | `src/components/ui/Modal.tsx` |
 | `monitoring-connect-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-cpu` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disconnect` | `src/components/StatusBar/StatusBar.tsx` |
@@ -612,7 +614,9 @@ where the component is used, not at the `data-testid` site.
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
+| `{rest["data-testid"]}` | `src/components/ui/Modal.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
+| `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connection")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
