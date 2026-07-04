@@ -14,13 +14,18 @@
 //! (`vcxsrv.exe` + required DLLs + `fonts/`) hosted as a versioned `.zip`. It
 //! runs strictly as a separate process, so termiHub's own license is unaffected
 //! (see the licensing issue #1056).
+//!
+// The public surface here is consumed by the X server lifecycle manager (#1049)
+// and the provisioning orchestrator + Tauri commands (#1052), which are not yet
+// wired up. Allow dead code until those land so the foundation can ship and be
+// tested on its own.
+#![allow(dead_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-#[allow(unused_imports)]
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::utils::portable::AppMode;
 
@@ -129,16 +134,72 @@ pub fn find_bundled_zip(app_handle: &tauri::AppHandle, version: &str) -> Option<
 /// Returns an error (without side effects) on any mismatch, so a corrupted
 /// download is never extracted or executed.
 pub fn verify_sha256(path: &Path, expected_sha256: &str) -> Result<()> {
-    let _ = (path, expected_sha256);
-    bail!("not implemented")
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("Failed to open {} for checksum", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buf)
+            .with_context(|| format!("Failed to read {} for checksum", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if actual.eq_ignore_ascii_case(expected_sha256) {
+        debug!("VcXsrv checksum ok: {actual}");
+        Ok(())
+    } else {
+        bail!(
+            "VcXsrv checksum mismatch for {}: expected {expected_sha256}, got {actual}",
+            path.display()
+        )
+    }
 }
 
 /// Extract every entry of `zip_path` into `dest_dir` (created if missing).
 ///
 /// Rejects entries whose normalized path escapes `dest_dir` (zip-slip).
 pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
-    let _ = (zip_path, dest_dir);
-    bail!("not implemented")
+    let file = fs::File::open(zip_path)
+        .with_context(|| format!("Failed to open zip {}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("Failed to read zip {}", zip_path.display()))?;
+
+    fs::create_dir_all(dest_dir)
+        .with_context(|| format!("Failed to create {}", dest_dir.display()))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .with_context(|| format!("Failed to read zip entry {i}"))?;
+        // `enclosed_name` rejects absolute paths and `..` traversal (zip-slip).
+        let rel = match entry.enclosed_name() {
+            Some(name) => name,
+            None => bail!("Refusing unsafe zip entry path: {}", entry.name()),
+        };
+        let out_path = dest_dir.join(rel);
+
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path)
+                .with_context(|| format!("Failed to create {}", out_path.display()))?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
+        let mut out_file = fs::File::create(&out_path)
+            .with_context(|| format!("Failed to create {}", out_path.display()))?;
+        std::io::copy(&mut entry, &mut out_file)
+            .with_context(|| format!("Failed to write {}", out_path.display()))?;
+    }
+    Ok(())
 }
 
 /// Download the `.zip` at `url` to `dest`, reporting progress via `progress_cb`.
@@ -146,8 +207,30 @@ pub fn download_zip<F>(url: &str, dest: &Path, progress_cb: &F) -> Result<()>
 where
     F: Fn(AcquireProgress),
 {
-    let _ = (url, dest, progress_cb);
-    bail!("not implemented")
+    info!("Downloading VcXsrv from {url}");
+    let response = reqwest::blocking::Client::new()
+        .get(url)
+        .send()
+        .context("Failed to start VcXsrv download")?;
+    if !response.status().is_success() {
+        bail!("VcXsrv download failed: HTTP {} for {url}", response.status());
+    }
+
+    let total = response.content_length().unwrap_or(0);
+    let bytes = response.bytes().context("Failed to read VcXsrv download body")?;
+    progress_cb(AcquireProgress::Downloading {
+        received: bytes.len() as u64,
+        total,
+    });
+
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+    fs::write(dest, &bytes)
+        .with_context(|| format!("Failed to write VcXsrv download to {}", dest.display()))?;
+    info!("VcXsrv downloaded to {} ({} bytes)", dest.display(), bytes.len());
+    Ok(())
 }
 
 /// Verify a `.zip` against `expected_sha256`, then extract it into `install_dir`
@@ -163,8 +246,50 @@ pub fn install_from_zip<F>(
 where
     F: Fn(AcquireProgress),
 {
-    let _ = (zip_path, expected_sha256, install_dir, progress_cb);
-    bail!("not implemented")
+    // Verify first — a mismatched archive is rejected before `install_dir` is
+    // touched, so a corrupted download is never extracted or executed.
+    progress_cb(AcquireProgress::Verifying);
+    verify_sha256(zip_path, expected_sha256)?;
+
+    progress_cb(AcquireProgress::Extracting);
+    let parent = install_dir
+        .parent()
+        .context("VcXsrv install dir has no parent")?;
+    let name = install_dir
+        .file_name()
+        .context("VcXsrv install dir has no final component")?
+        .to_string_lossy();
+
+    // Extract into a sibling `.partial` dir, then atomically rename it into
+    // place so a half-written tree is never mistaken for a good install.
+    let partial = parent.join(format!(".{name}.partial"));
+    if partial.exists() {
+        fs::remove_dir_all(&partial)
+            .with_context(|| format!("Failed to clear stale {}", partial.display()))?;
+    }
+    extract_zip(zip_path, &partial)?;
+
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir)
+            .with_context(|| format!("Failed to replace {}", install_dir.display()))?;
+    }
+    fs::rename(&partial, install_dir).with_context(|| {
+        format!(
+            "Failed to move {} into place at {}",
+            partial.display(),
+            install_dir.display()
+        )
+    })?;
+
+    let exe = install_dir.join(VCXSRV_EXE);
+    if !is_nonempty_file(&exe) {
+        bail!(
+            "VcXsrv archive did not contain {VCXSRV_EXE} at {}",
+            install_dir.display()
+        );
+    }
+    info!("VcXsrv installed at {}", install_dir.display());
+    Ok(exe)
 }
 
 /// Resolve a runnable `vcxsrv.exe`, downloading and extracting the pinned build
@@ -180,8 +305,29 @@ pub fn resolve_vcxsrv<F>(
 where
     F: Fn(AcquireProgress),
 {
-    let _ = (app_handle, app_mode, pinned, progress_cb);
-    bail!("not implemented")
+    // 1. Already extracted for the pinned version → nothing to do (offline-safe).
+    if let Some(exe) = find_installed(app_mode, pinned.version) {
+        info!("Using extracted VcXsrv {}: {}", pinned.version, exe.display());
+        return Ok(exe);
+    }
+
+    let dir = install_dir(app_mode, pinned.version)?;
+
+    // 2. Bundled with the app → verify + extract, no network required.
+    if let Some(zip) = find_bundled_zip(app_handle, pinned.version) {
+        info!("Installing bundled VcXsrv {}", pinned.version);
+        return install_from_zip(&zip, pinned.sha256, &dir, &progress_cb);
+    }
+
+    // 3. Download the pinned `.zip`, verify, extract.
+    let base = xserver_base_dir(app_mode)?;
+    fs::create_dir_all(&base)
+        .with_context(|| format!("Failed to create {}", base.display()))?;
+    let tmp_zip = base.join(format!(".vcxsrv-{}.zip.partial", pinned.version));
+    download_zip(pinned.zip_url, &tmp_zip, &progress_cb)?;
+    let result = install_from_zip(&tmp_zip, pinned.sha256, &dir, &progress_cb);
+    let _ = fs::remove_file(&tmp_zip);
+    result
 }
 
 /// Returns `true` if `path` is a regular file with a non-zero length.
