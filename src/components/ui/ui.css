@@ -347,6 +347,10 @@
   overflow: hidden;
 }
 
+.ui-modal--lg {
+  width: 640px;
+}
+
 .ui-modal__head {
   display: flex;
   align-items: center;
