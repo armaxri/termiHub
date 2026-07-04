@@ -522,7 +522,9 @@ mod tests {
                 assert_eq!(*p, port);
             }
             #[cfg(unix)]
-            LocalXConnection::UnixSocket(_) => panic!("expected a TCP connection, got a Unix socket"),
+            LocalXConnection::UnixSocket(_) => {
+                panic!("expected a TCP connection, got a Unix socket")
+            }
         }
     }
 
@@ -591,6 +593,9 @@ mod tests {
         let probe = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
         let closed_addr = probe.local_addr().expect("local addr");
         drop(probe);
-        assert!(!probe_tcp_x_server_at(closed_addr, Duration::from_millis(200)));
+        assert!(!probe_tcp_x_server_at(
+            closed_addr,
+            Duration::from_millis(200)
+        ));
     }
 }
