@@ -4,14 +4,9 @@
   align-items: center;
   gap: 2px;
   overflow-x: auto;
-  scrollbar-width: none;
   flex: 1;
   min-width: 0;
   padding-right: var(--spacing-sm);
-}
-
-.tab-group-chips::-webkit-scrollbar {
-  display: none;
 }
 
 /* Pill-shaped chip — intentionally distinct from file-tab terminal tabs */

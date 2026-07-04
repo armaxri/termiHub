@@ -39,7 +39,7 @@
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   background: var(--color-error, #f44336);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .update-settings__up-to-date {

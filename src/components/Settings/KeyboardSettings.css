@@ -113,7 +113,7 @@
 
 .keyboard-settings__binding-cell--recording {
   background-color: var(--accent-color);
-  color: var(--accent-fg, #fff);
+  color: var(--text-on-accent);
   cursor: default;
 }
 

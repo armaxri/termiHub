@@ -22,7 +22,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .server-sidebar__add-btn:hover {
@@ -132,7 +132,7 @@
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0;
 }
 
@@ -163,7 +163,7 @@
 .dialog__overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-bg);
   z-index: 1000;
 }
 
@@ -229,7 +229,7 @@
 
 .btn--primary {
   background-color: var(--accent-color);
-  color: #ffffff;
+  color: var(--text-on-accent);
 }
 
 .btn--primary:hover:not(:disabled) {
@@ -272,7 +272,7 @@
 .server-dialog__input {
   padding: 5px 8px;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 13px;
@@ -304,7 +304,7 @@
 
 .server-dialog__fieldset {
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
   display: flex;
   flex-direction: column;
