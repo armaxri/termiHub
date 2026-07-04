@@ -79,6 +79,7 @@ keyring = { version = "3", default-features = false, features = ["windows-native
 # on other platforms.
 zip = "2"
 sha2 = "0.10"
+hex = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux Secret Service backend. The `async-secret-service` backend talks to the

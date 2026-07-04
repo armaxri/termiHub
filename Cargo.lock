@@ -7116,6 +7116,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs",
+ "hex",
  "if-addrs",
  "keyring",
  "libunftp",

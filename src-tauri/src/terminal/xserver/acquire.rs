@@ -135,26 +135,15 @@ pub fn find_bundled_zip(app_handle: &tauri::AppHandle, version: &str) -> Option<
 /// download is never extracted or executed.
 pub fn verify_sha256(path: &Path, expected_sha256: &str) -> Result<()> {
     use sha2::{Digest, Sha256};
-    use std::io::Read;
 
     let mut file = fs::File::open(path)
         .with_context(|| format!("Failed to open {} for checksum", path.display()))?;
     let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buf)
-            .with_context(|| format!("Failed to read {} for checksum", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buf[..read]);
-    }
-    let actual: String = hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
+    // `Sha256` implements `io::Write`, so this streams the file through the
+    // hasher with a small internal buffer — no full read into memory.
+    std::io::copy(&mut file, &mut hasher)
+        .with_context(|| format!("Failed to read {} for checksum", path.display()))?;
+    let actual = hex::encode(hasher.finalize());
     if actual.eq_ignore_ascii_case(expected_sha256) {
         debug!("VcXsrv checksum ok: {actual}");
         Ok(())
@@ -207,7 +196,10 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
 }
 
 /// Download the `.zip` at `url` to `dest`, reporting progress via `progress_cb`.
-pub fn download_zip<F>(url: &str, dest: &Path, progress_cb: &F) -> Result<()>
+///
+/// Internal step of [`resolve_vcxsrv`]; callers acquire via `resolve_vcxsrv` or
+/// [`install_from_zip`], never a bare download.
+fn download_zip<F>(url: &str, dest: &Path, progress_cb: &F) -> Result<()>
 where
     F: Fn(AcquireProgress),
 {
@@ -362,11 +354,7 @@ mod tests {
     fn hex_sha256(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
-        hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        hex::encode(hasher.finalize())
     }
 
     /// Build a minimal VcXsrv-shaped zip in memory: `vcxsrv.exe`, a DLL, and a
