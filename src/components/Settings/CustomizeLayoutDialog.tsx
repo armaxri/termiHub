@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { Modal, Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import {
   LayoutConfig,
@@ -129,143 +129,138 @@ export function CustomizeLayoutDialog() {
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="customize-layout-dialog__overlay" />
-        <Dialog.Content className="customize-layout-dialog__content">
-          <Dialog.Title className="customize-layout-dialog__title">Customize Layout</Dialog.Title>
-
-          {/* Presets */}
-          <div className="customize-layout-dialog__presets">
-            {PRESET_LIST.map(({ key, label }) => (
-              <button
-                key={key}
-                className={`customize-layout-dialog__preset${activePreset === key ? " customize-layout-dialog__preset--active" : ""}`}
-                onClick={() => handlePreset(key)}
-                data-testid={`layout-preset-${key}`}
-              >
-                <PresetSchematic config={LAYOUT_PRESETS[key]} />
-                <span className="customize-layout-dialog__preset-label">{label}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Activity Bar */}
-          <div className="customize-layout-dialog__section">
-            <span className="customize-layout-dialog__section-title">Activity Bar</span>
-            <div className="customize-layout-dialog__control-row">
-              <label className="customize-layout-dialog__label">
-                <input
-                  type="checkbox"
-                  checked={!abHidden}
-                  onChange={(e) => handleActivityBarVisibilityChange(e.target.checked)}
-                  data-testid="layout-ab-visible"
-                />
-                Visible
-              </label>
-              <div className="customize-layout-dialog__radio-group">
-                {(["left", "right", "top"] as ActivityBarPosition[]).map((pos) => (
-                  <label
-                    key={pos}
-                    className={`customize-layout-dialog__radio-label${abHidden ? " customize-layout-dialog__radio-label--disabled" : ""}`}
-                  >
-                    <input
-                      type="radio"
-                      name="ab-position"
-                      value={pos}
-                      checked={
-                        abHidden
-                          ? lastNonHiddenPos.current === pos
-                          : layoutConfig.activityBarPosition === pos
-                      }
-                      disabled={abHidden}
-                      onChange={() => handleActivityBarPosition(pos)}
-                      data-testid={`layout-ab-${pos}`}
-                    />
-                    {pos.charAt(0).toUpperCase() + pos.slice(1)}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Sidebar */}
-          <div className="customize-layout-dialog__section">
-            <span className="customize-layout-dialog__section-title">Sidebar</span>
-            <div className="customize-layout-dialog__control-row">
-              <label className="customize-layout-dialog__label">
-                <input
-                  type="checkbox"
-                  checked={layoutConfig.sidebarVisible}
-                  onChange={(e) => handleSidebarVisible(e.target.checked)}
-                  data-testid="layout-sidebar-visible"
-                />
-                Visible
-              </label>
-              <div className="customize-layout-dialog__radio-group">
-                {(["left", "right"] as SidebarPosition[]).map((pos) => (
-                  <label
-                    key={pos}
-                    className={`customize-layout-dialog__radio-label${!layoutConfig.sidebarVisible ? " customize-layout-dialog__radio-label--disabled" : ""}`}
-                  >
-                    <input
-                      type="radio"
-                      name="sb-position"
-                      value={pos}
-                      checked={layoutConfig.sidebarPosition === pos}
-                      disabled={!layoutConfig.sidebarVisible}
-                      onChange={() => handleSidebarPosition(pos)}
-                      data-testid={`layout-sidebar-${pos}`}
-                    />
-                    {pos.charAt(0).toUpperCase() + pos.slice(1)}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Status Bar */}
-          <div className="customize-layout-dialog__section">
-            <span className="customize-layout-dialog__section-title">Status Bar</span>
-            <div className="customize-layout-dialog__control-row">
-              <label className="customize-layout-dialog__label">
-                <input
-                  type="checkbox"
-                  checked={layoutConfig.statusBarVisible}
-                  onChange={(e) => handleStatusBarVisible(e.target.checked)}
-                  data-testid="layout-statusbar-visible"
-                />
-                Visible
-              </label>
-            </div>
-          </div>
-
-          {/* Layout Preview */}
-          <div className="customize-layout-dialog__section">
-            <span className="customize-layout-dialog__section-title">Layout Preview</span>
-            <LayoutPreview layout={layoutConfig} />
-          </div>
-
-          {/* Actions */}
-          <div className="customize-layout-dialog__actions">
+    <Modal
+      open={open}
+      onOpenChange={setOpen}
+      title="Customize Layout"
+      hideClose
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            onClick={() => applyPreset("default")}
+            data-testid="layout-reset-default"
+          >
+            Reset to Default
+          </Button>
+          <Button variant="primary" onClick={() => setOpen(false)} data-testid="layout-close">
+            Close
+          </Button>
+        </>
+      }
+    >
+      <div className="customize-layout-dialog__body">
+        {/* Presets */}
+        <div className="customize-layout-dialog__presets">
+          {PRESET_LIST.map(({ key, label }) => (
             <button
-              className="customize-layout-dialog__btn customize-layout-dialog__btn--secondary"
-              onClick={() => applyPreset("default")}
-              data-testid="layout-reset-default"
+              key={key}
+              className={`customize-layout-dialog__preset${activePreset === key ? " customize-layout-dialog__preset--active" : ""}`}
+              onClick={() => handlePreset(key)}
+              data-testid={`layout-preset-${key}`}
             >
-              Reset to Default
+              <PresetSchematic config={LAYOUT_PRESETS[key]} />
+              <span className="customize-layout-dialog__preset-label">{label}</span>
             </button>
-            <Dialog.Close asChild>
-              <button
-                className="customize-layout-dialog__btn customize-layout-dialog__btn--primary"
-                data-testid="layout-close"
-              >
-                Close
-              </button>
-            </Dialog.Close>
+          ))}
+        </div>
+
+        {/* Activity Bar */}
+        <div className="customize-layout-dialog__section">
+          <span className="customize-layout-dialog__section-title">Activity Bar</span>
+          <div className="customize-layout-dialog__control-row">
+            <label className="customize-layout-dialog__label">
+              <input
+                type="checkbox"
+                checked={!abHidden}
+                onChange={(e) => handleActivityBarVisibilityChange(e.target.checked)}
+                data-testid="layout-ab-visible"
+              />
+              Visible
+            </label>
+            <div className="customize-layout-dialog__radio-group">
+              {(["left", "right", "top"] as ActivityBarPosition[]).map((pos) => (
+                <label
+                  key={pos}
+                  className={`customize-layout-dialog__radio-label${abHidden ? " customize-layout-dialog__radio-label--disabled" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="ab-position"
+                    value={pos}
+                    checked={
+                      abHidden
+                        ? lastNonHiddenPos.current === pos
+                        : layoutConfig.activityBarPosition === pos
+                    }
+                    disabled={abHidden}
+                    onChange={() => handleActivityBarPosition(pos)}
+                    data-testid={`layout-ab-${pos}`}
+                  />
+                  {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                </label>
+              ))}
+            </div>
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </div>
+
+        {/* Sidebar */}
+        <div className="customize-layout-dialog__section">
+          <span className="customize-layout-dialog__section-title">Sidebar</span>
+          <div className="customize-layout-dialog__control-row">
+            <label className="customize-layout-dialog__label">
+              <input
+                type="checkbox"
+                checked={layoutConfig.sidebarVisible}
+                onChange={(e) => handleSidebarVisible(e.target.checked)}
+                data-testid="layout-sidebar-visible"
+              />
+              Visible
+            </label>
+            <div className="customize-layout-dialog__radio-group">
+              {(["left", "right"] as SidebarPosition[]).map((pos) => (
+                <label
+                  key={pos}
+                  className={`customize-layout-dialog__radio-label${!layoutConfig.sidebarVisible ? " customize-layout-dialog__radio-label--disabled" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="sb-position"
+                    value={pos}
+                    checked={layoutConfig.sidebarPosition === pos}
+                    disabled={!layoutConfig.sidebarVisible}
+                    onChange={() => handleSidebarPosition(pos)}
+                    data-testid={`layout-sidebar-${pos}`}
+                  />
+                  {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Status Bar */}
+        <div className="customize-layout-dialog__section">
+          <span className="customize-layout-dialog__section-title">Status Bar</span>
+          <div className="customize-layout-dialog__control-row">
+            <label className="customize-layout-dialog__label">
+              <input
+                type="checkbox"
+                checked={layoutConfig.statusBarVisible}
+                onChange={(e) => handleStatusBarVisible(e.target.checked)}
+                data-testid="layout-statusbar-visible"
+              />
+              Visible
+            </label>
+          </div>
+        </div>
+
+        {/* Layout Preview */}
+        <div className="customize-layout-dialog__section">
+          <span className="customize-layout-dialog__section-title">Layout Preview</span>
+          <LayoutPreview layout={layoutConfig} />
+        </div>
+      </div>
+    </Modal>
   );
 }

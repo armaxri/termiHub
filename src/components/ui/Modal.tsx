@@ -25,6 +25,8 @@ export interface ModalProps {
   footer?: React.ReactNode;
   /** Hide the built-in close (X) button in the head. */
   hideClose?: boolean;
+  /** Content width. `md` (default) is 420px; `lg` is 640px for content-heavy panels. */
+  size?: "md" | "lg";
   /** Key handler forwarded to the content node (e.g. Enter-to-confirm). */
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
   /** Test hook forwarded to the content node. */
@@ -43,6 +45,7 @@ export function Modal({
   children,
   footer,
   hideClose = false,
+  size = "md",
   onKeyDown,
   ...rest
 }: ModalProps): React.ReactElement {
@@ -51,7 +54,7 @@ export function Modal({
       <Dialog.Portal>
         <Dialog.Overlay className="ui-modal__overlay" />
         <Dialog.Content
-          className="ui-modal"
+          className={size === "lg" ? "ui-modal ui-modal--lg" : "ui-modal"}
           data-testid={rest["data-testid"]}
           onKeyDown={onKeyDown}
         >

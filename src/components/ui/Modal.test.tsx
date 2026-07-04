@@ -62,6 +62,17 @@ describe("Modal", () => {
     expect(document.querySelector('[data-testid="modal-confirm"]')).toBeTruthy();
   });
 
+  it("applies the lg size class only when size='lg'", () => {
+    render(
+      <Modal data-testid="modal" open onOpenChange={() => {}} title="Wide" size="lg">
+        <p>Body</p>
+      </Modal>
+    );
+    expect(
+      document.querySelector('[data-testid="modal"]')!.classList.contains("ui-modal--lg")
+    ).toBe(true);
+  });
+
   it("calls onOpenChange(false) when the built-in close button is clicked", () => {
     const onOpenChange = vi.fn();
     render(
