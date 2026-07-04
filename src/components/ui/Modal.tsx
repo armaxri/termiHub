@@ -25,6 +25,8 @@ export interface ModalProps {
   footer?: React.ReactNode;
   /** Hide the built-in close (X) button in the head. */
   hideClose?: boolean;
+  /** Key handler forwarded to the content node (e.g. Enter-to-confirm). */
+  onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
   /** Test hook forwarded to the content node. */
   "data-testid"?: string;
 }
@@ -41,13 +43,18 @@ export function Modal({
   children,
   footer,
   hideClose = false,
+  onKeyDown,
   ...rest
 }: ModalProps): React.ReactElement {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="ui-modal__overlay" />
-        <Dialog.Content className="ui-modal" data-testid={rest["data-testid"]}>
+        <Dialog.Content
+          className="ui-modal"
+          data-testid={rest["data-testid"]}
+          onKeyDown={onKeyDown}
+        >
           <div className="ui-modal__head">
             <Dialog.Title className="ui-modal__title">{title}</Dialog.Title>
             {!hideClose ? (
