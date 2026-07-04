@@ -601,4 +601,48 @@ mod tests {
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
+
+    // ----- licensing / compliance (GPL-3.0, #1056) --------------------------
+
+    /// Path to a file at the repository root (parent of this crate's manifest
+    /// dir, `src-tauri/`).
+    fn repo_root_file(rel: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)
+    }
+
+    /// GPL-3.0 requires shipping the license text and a source offer for the
+    /// *exact* redistributed version. This guards against the pinned VcXsrv
+    /// version drifting away from what `THIRD_PARTY_LICENSES.md` attributes —
+    /// the automated half of the release compliance checklist in
+    /// `docs/licensing.md` (#1056).
+    #[test]
+    fn third_party_licenses_match_pinned_vcxsrv() {
+        let path = repo_root_file("THIRD_PARTY_LICENSES.md");
+        let text =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        assert!(
+            text.contains(PINNED_VCXSRV.version),
+            "THIRD_PARTY_LICENSES.md must attribute the pinned VcXsrv version {}",
+            PINNED_VCXSRV.version
+        );
+        assert!(
+            text.contains("GPL-3.0"),
+            "VcXsrv GPL-3.0 attribution missing"
+        );
+        assert!(
+            text.contains("github.com/marchaesen/vcxsrv"),
+            "VcXsrv corresponding-source link missing"
+        );
+    }
+
+    /// The GPL-3.0 text we redistribute alongside VcXsrv must actually be
+    /// vendored in the repo (not just linked).
+    #[test]
+    fn gpl3_license_text_is_vendored() {
+        let path = repo_root_file("licenses/GPL-3.0.txt");
+        let text =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        assert!(text.contains("GNU GENERAL PUBLIC LICENSE"));
+        assert!(text.contains("Version 3"));
+    }
 }
