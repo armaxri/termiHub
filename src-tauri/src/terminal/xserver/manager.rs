@@ -8,6 +8,14 @@
 //! Testability: process spawning, port probing and binary resolution are all
 //! injected behind small traits, so the reuse / adopt / idle-shutdown logic is
 //! exercised by unit tests on every platform without a real `vcxsrv.exe`.
+//!
+//! Part of the X-server provisioning epic (#1047). This issue (#1049) builds the
+//! lifecycle core; the session-facing API (`ensure_running`, `acquire_session`,
+//! `release_session`, `status`, `set_auth_file`, [`DisplayInfo`], [`XServerStatus`])
+//! is exercised by the unit tests here and wired into the orchestrator, auth and
+//! UI in sibling issues (#1050, #1052, #1053). Until then those entry points are
+//! reachable only from tests, so dead-code analysis is relaxed for this module.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -31,16 +39,26 @@ pub fn port_for_display(display: u32) -> u16 {
 /// When no auth file is supplied (cookie auth lands in #1050) access control is
 /// disabled with `-ac` so forwarded clients can connect.
 pub fn build_launch_args(display: u32, auth_file: Option<&Path>) -> Vec<String> {
-    let _ = (display, auth_file);
-    unimplemented!("build_launch_args")
+    let mut args = vec![
+        format!(":{display}"),
+        "-multiwindow".to_string(),
+        "-clipboard".to_string(),
+    ];
+    match auth_file {
+        Some(path) => {
+            args.push("-auth".to_string());
+            args.push(path.to_string_lossy().into_owned());
+        }
+        None => args.push("-ac".to_string()),
+    }
+    args
 }
 
 /// Find the lowest display number in `0..=max` whose TCP port is free (closed).
 ///
 /// Returns `None` if every candidate port is already in use.
 pub fn first_free_display(max: u32, is_open: impl Fn(u16) -> bool) -> Option<u32> {
-    let _ = (max, is_open);
-    unimplemented!("first_free_display")
+    (0..=max).find(|&display| !is_open(port_for_display(display)))
 }
 
 /// Abstraction over "is this local TCP port accepting connections?".
@@ -171,7 +189,7 @@ impl XServerManager {
 
     /// Current server status.
     pub fn status(&self) -> XServerStatus {
-        unimplemented!("status")
+        self.inner.lock().expect("xserver lock").status.clone()
     }
 
     /// Ensure a usable X server exists, spawning or adopting one as needed.
@@ -179,25 +197,110 @@ impl XServerManager {
     /// Order: reuse our live managed process → adopt an external server on `:0`
     /// → (managed platforms only) spawn a new server on the first free display.
     pub fn ensure_running(&self) -> Result<DisplayInfo> {
-        unimplemented!("ensure_running")
+        let mut inner = self.inner.lock().expect("xserver lock");
+        self.ensure_running_locked(&mut inner)
     }
 
     /// Ensure a server exists and register a session against it (refcount + 1).
     pub fn acquire_session(&self) -> Result<DisplayInfo> {
-        unimplemented!("acquire_session")
+        let mut inner = self.inner.lock().expect("xserver lock");
+        let info = self.ensure_running_locked(&mut inner)?;
+        inner.refcount += 1;
+        Ok(info)
     }
 
     /// Release a previously acquired session (refcount - 1). When the count
     /// reaches zero and idle-shutdown is enabled, the managed server is stopped.
     /// Adopted external servers are never terminated.
     pub fn release_session(&self) {
-        unimplemented!("release_session")
+        let mut inner = self.inner.lock().expect("xserver lock");
+        inner.refcount = inner.refcount.saturating_sub(1);
+        if inner.refcount == 0 && inner.stop_when_idle {
+            // Only stop a server we manage; an adopted external server (no child
+            // held) must keep running.
+            if inner.child.is_some() {
+                self.stop_locked(&mut inner);
+            }
+        }
     }
 
     /// Stop the managed server (if any) and reset state. Adopted external
     /// servers are left running.
     pub fn stop(&self) {
-        unimplemented!("stop")
+        let mut inner = self.inner.lock().expect("xserver lock");
+        self.stop_locked(&mut inner);
+    }
+
+    /// Core adopt/reuse/spawn decision, run under the held lock.
+    fn ensure_running_locked(&self, inner: &mut Inner) -> Result<DisplayInfo> {
+        // 1. Reuse our own managed process if it is still alive.
+        if let Some(child) = inner.child.as_mut() {
+            if child.is_alive() {
+                let display = inner.display.unwrap_or(0);
+                return Ok(DisplayInfo::managed(display));
+            }
+            // It died underneath us — drop the handle and fall through to respawn.
+            inner.child = None;
+            inner.display = None;
+            inner.status = XServerStatus::Stopped;
+        }
+
+        // 2. Adopt an external server already listening on :0.
+        //
+        // A bare TCP probe cannot distinguish an X server from an unrelated
+        // service on 6000; per the concept we treat a reachable port as an X
+        // server to adopt. Disambiguating a non-X listener (and then allocating
+        // the next display) would require a real X11 handshake and is left to a
+        // follow-up.
+        if self.probe.is_open(port_for_display(0)) {
+            inner.display = Some(0);
+            inner.status = XServerStatus::Adopted { display: 0 };
+            return Ok(DisplayInfo::adopted(0));
+        }
+
+        // 3. On platforms without managed provisioning (Unix) we never spawn.
+        if !self.provides_managed {
+            inner.status = XServerStatus::Stopped;
+            anyhow::bail!(
+                "no X server reachable on :0 and managed provisioning is unavailable on this platform"
+            );
+        }
+
+        // 4. Spawn a new managed server on the first free display.
+        let display = first_free_display(self.max_display, |p| self.probe.is_open(p))
+            .ok_or_else(|| anyhow::anyhow!("no free X display in 0..={}", self.max_display))?;
+
+        let exe = (self.resolver)().map_err(|e| {
+            let msg = format!("failed to resolve X server binary: {e}");
+            inner.status = XServerStatus::Failed { message: msg.clone() };
+            anyhow::anyhow!(msg)
+        })?;
+
+        let auth = self.auth_file.lock().expect("auth lock").clone();
+        match self.launcher.launch(&exe, display, auth.as_deref()) {
+            Ok(child) => {
+                inner.child = Some(child);
+                inner.display = Some(display);
+                inner.status = XServerStatus::Running { display };
+                Ok(DisplayInfo::managed(display))
+            }
+            Err(e) => {
+                let msg = format!("failed to spawn X server: {e}");
+                inner.status = XServerStatus::Failed { message: msg.clone() };
+                Err(anyhow::anyhow!(msg))
+            }
+        }
+    }
+
+    /// Terminate the managed child (if any) and reset to `Stopped`.
+    fn stop_locked(&self, inner: &mut Inner) {
+        if let Some(child) = inner.child.as_mut() {
+            child.terminate();
+        }
+        inner.child = None;
+        inner.display = None;
+        inner.refcount = 0;
+        inner.status = XServerStatus::Stopped;
     }
 }
 
@@ -216,13 +319,17 @@ impl Drop for XServerManager {
 // Real collaborator implementations (used by the platform wiring in lib.rs).
 // ---------------------------------------------------------------------------
 
+/// Timeout for the TCP reachability probe.
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// Real TCP probe against `127.0.0.1`.
 pub struct TcpPortProbe;
 
 impl PortProbe for TcpPortProbe {
     fn is_open(&self, port: u16) -> bool {
-        let _ = port;
-        unimplemented!("TcpPortProbe::is_open")
+        use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        TcpStream::connect_timeout(&addr, PROBE_TIMEOUT).is_ok()
     }
 }
 
@@ -231,11 +338,14 @@ pub struct ChildProcess(pub std::process::Child);
 
 impl ManagedProcess for ChildProcess {
     fn is_alive(&mut self) -> bool {
-        unimplemented!("ChildProcess::is_alive")
+        // `try_wait` returns `Ok(None)` while the process is still running.
+        matches!(self.0.try_wait(), Ok(None))
     }
 
     fn terminate(&mut self) {
-        unimplemented!("ChildProcess::terminate")
+        // Best-effort: the process may already have exited.
+        let _ = self.0.kill();
+        let _ = self.0.wait();
     }
 }
 
@@ -249,8 +359,23 @@ impl XServerLauncher for CommandLauncher {
         display: u32,
         auth_file: Option<&Path>,
     ) -> Result<Box<dyn ManagedProcess>> {
-        let _ = (exe, display, auth_file);
-        unimplemented!("CommandLauncher::launch")
+        use anyhow::Context;
+
+        let mut command = std::process::Command::new(exe);
+        command.args(build_launch_args(display, auth_file));
+
+        // Do not pop up a console window for the detached server on Windows.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let child = command
+            .spawn()
+            .with_context(|| format!("failed to spawn X server: {}", exe.display()))?;
+        Ok(Box::new(ChildProcess(child)))
     }
 }
 

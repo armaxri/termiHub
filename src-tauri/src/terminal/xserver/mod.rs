@@ -11,6 +11,4 @@
 
 pub mod manager;
 
-pub use manager::{
-    DisplayInfo, ManagedProcess, PortProbe, XServerLauncher, XServerManager, XServerStatus,
-};
+pub use manager::XServerManager;

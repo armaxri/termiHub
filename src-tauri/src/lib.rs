@@ -30,6 +30,28 @@ use session::registry::build_desktop_registry;
 use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
 use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer};
 
+/// Build the shared X server lifecycle manager (issue #1049).
+///
+/// On Windows it provides a managed VcXsrv instance; on other platforms it is a
+/// report-only no-op that adopts the system's existing X server. The default
+/// policy is to stop the managed server once the last X11 session closes.
+///
+/// The `vcxsrv.exe` resolver (issue #1048) is not yet available, so a placeholder
+/// is injected: spawning a managed server surfaces a clear error until the
+/// acquisition module lands, while adoption of an already-running X server works
+/// today. Swap the resolver for the real `acquire` call once #1048 merges.
+fn build_xserver_manager() -> terminal::xserver::XServerManager {
+    use terminal::xserver::manager::{CommandLauncher, TcpPortProbe};
+
+    terminal::xserver::XServerManager::new(
+        Box::new(TcpPortProbe),
+        Box::new(CommandLauncher),
+        Box::new(|| anyhow::bail!("VcXsrv acquisition is not yet available (#1048)")),
+        cfg!(windows),
+        true,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let log_buffer = create_log_buffer();
@@ -51,6 +73,7 @@ pub fn run() {
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
+        .manage(build_xserver_manager())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(log_buffer);
 
@@ -590,6 +613,11 @@ pub fn run() {
                         .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
                     {
                         mgr.stop_all();
+                    }
+                    // Stop the managed X server so no orphan vcxsrv.exe is left
+                    // behind (issue #1049). Adopted external servers are untouched.
+                    if let Some(mgr) = handle.try_state::<terminal::xserver::XServerManager>() {
+                        mgr.stop();
                     }
                 });
             }
