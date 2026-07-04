@@ -324,9 +324,20 @@ graph LR
 | **DynamicForm**       | `src/components/DynamicForm/`      | Generic schema-driven form renderer — renders `SettingsField` definitions as UI widgets (text, password, select, file picker, key-value list, etc.)                                                                                                                                |
 | **Settings Panel**    | `src/components/Settings/`         | Two-panel settings with categories: General, Appearance, Terminal, External Files, Security, plus Customize Layout dialog                                                                                                                                                          |
 | **Theme Engine**      | `src/themes/`                      | Dark/Light/System theme management, CSS variable application, xterm.js live re-theming                                                                                                                                                                                             |
+| **Design System**     | `src/components/ui/`               | Shared UI primitives (Button, Input, Field, Select, Modal, Toggle) + Toast feedback hub — token-driven skins over Radix / react-hook-form / sonner. All dialogs and forms compose from these.                                                                                      |
 | **App Store**         | `src/store/appStore.ts`            | Zustand store managing all frontend state (panels, tabs, connections, tunnels, agents, themes, layout, credentials)                                                                                                                                                                |
 | **API Service**       | `src/services/api.ts`              | Tauri command wrappers                                                                                                                                                                                                                                                             |
 | **Event Service**     | `src/services/events.ts`           | Tauri event listeners and dispatcher                                                                                                                                                                                                                                               |
+
+### Design System
+
+The frontend is built on a shared **design system** (`src/components/ui/`) that keeps every screen visually and behaviorally consistent:
+
+- **Primitives** — `Button`, `Input`, `Field`, `Select`, `Modal`, `Toggle`: thin, token-driven skins over installed libraries (Radix for `Modal`/`Select`, `@radix-ui/react-switch` for `Toggle`, `react-hook-form` + `zod` for forms). Dialogs and forms compose from these instead of hand-rolling CSS.
+- **Feedback** — a `Toast` hub (`src/components/ui/Toast/`, over `sonner`) plus an async `Button` lifecycle (idle → pending → success/error). Every mutating/async action gives immediate feedback; nothing resolves silently.
+- **Tokens** — all visual values come from `src/styles/variables.css` (colors, spacing, radii, shadows, control heights, z-index, transitions). No raw hex, per-component overlays, or ad-hoc scrollbars.
+
+The system is authoritative: its concept lives at [`docs/concepts/backlog/ui-modernization.html`](concepts/backlog/ui-modernization.html), the rules are in `.claude/CLAUDE.md` (UI / Design System), and the `ui-design` subagent (`.claude/agents/ui-design.md`) enforces them. New UI must compose from the primitives and use tokens only.
 
 ### Level 2: Backend Modules
 

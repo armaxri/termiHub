@@ -414,7 +414,7 @@ pnpm tauri dev
 1. Implement the backend in `core/src/backends/` (follow existing patterns like `local_shell.rs`, `telnet.rs`)
 2. Add config types in `core/src/config/` (Rust) and `src/types/terminal.ts` (TypeScript)
 3. Wire up in `src-tauri/src/terminal/` and add Tauri commands in `src-tauri/src/commands/` if needed
-4. Create settings UI in `src/components/Settings/`
+4. Create settings UI in `src/components/Settings/` — compose from the shared `src/components/ui/` primitives (Button, Input, Field, Select, Modal, Toggle); never hand-roll button/input/dialog CSS
 5. Add to connection type selector in `src/components/ConnectionEditor/ConnectionEditor.tsx`
 6. Test on target platform, run `./scripts/check.sh`
 

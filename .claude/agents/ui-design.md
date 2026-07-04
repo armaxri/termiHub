@@ -19,7 +19,7 @@ reactive, modern** — and to keep it that way.
 ## Source of truth
 
 The design system is defined in
-`docs/concepts/backlog/ui-modernization/concept.html`. **When the concept and the
+`docs/concepts/backlog/ui-modernization.html`. **When the concept and the
 code disagree, the concept is authoritative — fix the code by default.** Only when
 a real platform/library/performance constraint makes the design wrong do you change
 the concept instead (and say so explicitly). Read that concept before substantial
@@ -58,8 +58,8 @@ The primitives are thin, token'd **skins over libraries already in
   agent deploy, tunnel start, import). Radix Toast is the zero-new-vendor fallback.
 - long lists → **`react-virtuoso`**; color → **`react-colorful`**; charts →
   **`uplot`**; icons → **`lucide-react`**.
-Per the repo's "Prefer Libraries Over Custom Code" standard, propose a dependency
-before a custom implementation; "I could write it in 50 lines" is not a reason.
+  Per the repo's "Prefer Libraries Over Custom Code" standard, propose a dependency
+  before a custom implementation; "I could write it in 50 lines" is not a reason.
 
 ### 3. Tokens only — no magic values
 
