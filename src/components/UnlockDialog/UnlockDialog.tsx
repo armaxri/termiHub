@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { unlockCredentialStore } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { toast } from "@/components/ui";
 import "./UnlockDialog.css";
 
 interface UnlockDialogProps {
@@ -33,6 +34,7 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
     setError("");
     try {
       await unlockCredentialStore(password);
+      toast.success("Credential store unlocked");
       onOpenChange(false);
     } catch {
       setError("Incorrect master password.");

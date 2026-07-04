@@ -14,6 +14,7 @@ import { RemoteAgentDefinition } from "@/types/connection";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { detectAgentArch, setupRemoteAgent, RemoteArchInfo } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "@/components/ui";
 import "./AgentSetupDialog.css";
 
 interface AgentSetupDialogProps {
@@ -150,6 +151,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     const remoteOs = archOption?.os ?? phase.archInfo.os;
     const remoteArch = archOption?.uname ?? phase.archInfo.arch;
 
+    // Long-running background op: a single loading toast resolves in place.
+    const toastId = toast.loading(`Deploying agent to ${agent.name}…`);
+
     try {
       const binarySourcePayload =
         binarySource === "github"
@@ -188,9 +192,12 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
         result.sessionId
       );
 
+      toast.success(`Agent deployed to ${agent.name}`, { id: toastId });
       onOpenChange(false);
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setSubmitError(message);
+      toast.error(`Agent deploy to ${agent.name} failed: ${message}`, { id: toastId });
     } finally {
       setLoading(false);
     }

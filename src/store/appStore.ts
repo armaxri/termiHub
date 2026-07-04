@@ -140,6 +140,7 @@ import {
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
 import { frontendLog } from "@/utils/frontendLog";
+import { toast } from "@/components/ui";
 import {
   createLeafPanel,
   findLeaf,
@@ -2494,9 +2495,15 @@ export const useAppStore = create<AppState>((set, get) => {
       persistConnection(stripPassword(connection))
         .then((persistedId) => {
           reconcileConnectionId(connection.id, persistedId);
+          toast.success(`Saved ${connection.name}`);
           return applyConnectionReload();
         })
-        .catch((err) => console.error("Failed to persist new connection:", err));
+        .catch((err) => {
+          console.error("Failed to persist new connection:", err);
+          toast.error(
+            `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     updateConnection: (connection) => {
@@ -2509,9 +2516,15 @@ export const useAppStore = create<AppState>((set, get) => {
           // A rename changes the name-derived persisted id; reconcile so a connect
           // before the reload stores its credential under the new id (#875).
           reconcileConnectionId(connection.id, persistedId);
+          toast.success(`Saved ${connection.name}`);
           return applyConnectionReload();
         })
-        .catch((err) => console.error("Failed to persist connection update:", err));
+        .catch((err) => {
+          console.error("Failed to persist connection update:", err);
+          toast.error(
+            `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     deleteConnection: (connectionId) => {
@@ -2523,9 +2536,15 @@ export const useAppStore = create<AppState>((set, get) => {
       removeConnection(connectionId, conn?.sourceFile)
         .then(() => {
           frontendLog("connection_sync", `deleteConnection: backend confirmed, reloading`);
+          toast.success(`Deleted ${conn?.name ?? "connection"}`);
           return applyConnectionReload();
         })
-        .catch((err) => console.error("Failed to persist connection deletion:", err));
+        .catch((err) => {
+          console.error("Failed to persist connection deletion:", err);
+          toast.error(
+            `Failed to delete ${conn?.name ?? "connection"}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     bulkDeleteConnections: (connectionIds) => {
@@ -3161,12 +3180,17 @@ export const useAppStore = create<AppState>((set, get) => {
             [agentId]: [...(s.agentFolders[agentId] ?? []), folder],
           },
         }));
+        toast.success(`Created folder ${folder.name}`);
       } catch (err) {
         console.error(`Failed to create agent folder on ${agentId}:`, err);
+        toast.error(`Failed to create folder: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
 
     updateAgentFolder: async (agentId, params) => {
+      // A rename carries a new `name`; other prop updates (e.g. expansion state)
+      // stay silent so we do not toast on bookkeeping writes.
+      const isRename = typeof params.name === "string";
       try {
         const updated = await apiUpdateAgentFolder(agentId, params);
         set((s) => ({
@@ -3177,8 +3201,14 @@ export const useAppStore = create<AppState>((set, get) => {
             ),
           },
         }));
+        if (isRename) toast.success(`Renamed folder to ${updated.name}`);
       } catch (err) {
         console.error(`Failed to update agent folder on ${agentId}:`, err);
+        if (isRename) {
+          toast.error(
+            `Failed to rename folder: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
     },
 
@@ -3553,19 +3583,32 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     startTunnel: async (tunnelId) => {
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Starting ${name}…`);
       try {
         await apiStartTunnel(tunnelId);
+        toast.success(`Started ${name}`, { id: toastId });
       } catch (err) {
         console.error("Failed to start tunnel:", err);
+        toast.error(
+          `Failed to start ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
         throw err;
       }
     },
 
     stopTunnel: async (tunnelId) => {
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Stopping ${name}…`);
       try {
         await apiStopTunnel(tunnelId);
+        toast.success(`Stopped ${name}`, { id: toastId });
       } catch (err) {
         console.error("Failed to stop tunnel:", err);
+        toast.error(`Failed to stop ${name}: ${err instanceof Error ? err.message : String(err)}`, {
+          id: toastId,
+        });
         throw err;
       }
     },
