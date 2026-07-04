@@ -74,6 +74,12 @@ windows = { version = "0.58", features = [
 ] }
 # Windows Credential Manager backend for the `keyring` crate.
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+# VcXsrv acquisition (X server provisioning): download + checksum + extract.
+# Windows-only — the X server subsystem provisions VcXsrv, which does not exist
+# on other platforms.
+zip = "2"
+sha2 = "0.10"
+hex = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux Secret Service backend. The `async-secret-service` backend talks to the
