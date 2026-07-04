@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**454** literal · **123** dynamic · **16** indirect.
+**453** literal · **123** dynamic · **16** indirect.
 
 ## Literal test IDs
 
@@ -304,7 +304,6 @@ Fixed strings — match exactly.
 | `rename-dialog-apply` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-cancel` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-input` | `src/components/Terminal/RenameDialog.tsx` |
-| `save-workspace-cancel` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-confirm` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-description` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-dialog` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
