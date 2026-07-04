@@ -74,7 +74,7 @@
 .activity-bar--right .activity-bar__indicator {
   left: auto;
   right: 0;
-  border-radius: 2px 0 0 2px;
+  border-radius: var(--radius-xs) 0 0 var(--radius-xs);
 }
 
 /* Horizontal mode (top position) */
@@ -106,7 +106,7 @@
   bottom: 0;
   width: auto;
   height: 2px;
-  border-radius: 2px 2px 0 0;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
 }
 
 /* Settings dropdown menu */

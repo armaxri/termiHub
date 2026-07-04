@@ -52,7 +52,7 @@
 
 .network-panel__btn--run {
   background-color: var(--accent-color);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .network-panel__btn--run:hover:not(:disabled) {
@@ -72,7 +72,7 @@
 
 .network-panel__btn--stop {
   background-color: var(--color-error);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .network-panel__btn--stop:hover {
@@ -99,7 +99,7 @@
 
 .network-panel__icon-btn--danger:hover {
   background-color: var(--color-error);
-  color: #fff;
+  color: var(--text-on-accent);
   border-color: var(--color-error);
 }
 

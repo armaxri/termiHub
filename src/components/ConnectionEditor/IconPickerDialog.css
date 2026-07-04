@@ -1,9 +1,9 @@
 .icon-picker__overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px) saturate(120%);
-  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  background: var(--overlay-bg);
+  backdrop-filter: var(--overlay-blur);
+  -webkit-backdrop-filter: var(--overlay-blur);
   z-index: 1000;
 }
 
@@ -128,7 +128,7 @@
 
 .icon-picker__btn--primary {
   background-color: var(--accent-color);
-  color: #ffffff;
+  color: var(--text-on-accent);
 }
 
 .icon-picker__btn--primary:hover {

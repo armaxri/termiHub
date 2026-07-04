@@ -59,7 +59,7 @@
 
 .connection-editor__btn--primary {
   background-color: var(--accent-color);
-  color: #ffffff;
+  color: var(--text-on-accent);
 }
 
 .connection-editor__btn--primary:hover {
@@ -359,7 +359,7 @@
 
 .jump-host__source-opt--active {
   background: var(--accent-color);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .jump-host__source-opt:disabled {
@@ -465,9 +465,9 @@
 .field-help-dialog__overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px) saturate(120%);
-  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  background: var(--overlay-bg);
+  backdrop-filter: var(--overlay-blur);
+  -webkit-backdrop-filter: var(--overlay-blur);
   z-index: 1000;
 }
 
