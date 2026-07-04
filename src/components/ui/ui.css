@@ -1,0 +1,449 @@
+/*
+ * Shared primitive styles for the UI Modernization design system (Phase 2).
+ *
+ * Every value references a token from src/styles/variables.css — no raw hex,
+ * no rgba() overlays, no pixel radii. Class names mirror the concept's proposed
+ * `.ui-*` naming (docs/concepts/backlog/ui-modernization.html) so later phases
+ * can migrate mechanically.
+ *
+ * Scrollbars are styled globally (global.css); nothing here re-styles them.
+ * All motion uses --transition-* tokens and is disabled under reduced-motion.
+ */
+
+/* ── Button ─────────────────────────────────────────────────────────── */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+  height: var(--control-height-lg);
+  padding: 0 var(--spacing-md);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-ui);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--transition-fast),
+    box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.ui-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-btn__icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+}
+
+.ui-btn--sm {
+  height: var(--control-height-md);
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.ui-btn--full {
+  width: 100%;
+}
+
+.ui-btn--primary {
+  background: var(--accent-color);
+  color: var(--text-on-accent);
+}
+.ui-btn--primary:hover {
+  background: var(--accent-hover);
+}
+
+.ui-btn--secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-primary);
+}
+.ui-btn--secondary:hover {
+  background: var(--bg-hover);
+}
+
+.ui-btn--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.ui-btn--ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ui-btn--danger {
+  background: var(--bg-tertiary);
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+.ui-btn--danger:hover {
+  background: var(--bg-hover);
+}
+
+.ui-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ── Input ──────────────────────────────────────────────────────────── */
+.ui-input {
+  height: var(--control-height-lg);
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 0 var(--spacing-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  letter-spacing: var(--letter-spacing-ui);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.ui-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.ui-input:focus {
+  outline: none;
+  border-color: var(--focus-border);
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-input--error {
+  border-color: var(--color-error);
+}
+.ui-input--error:focus {
+  border-color: var(--color-error);
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── Field ──────────────────────────────────────────────────────────── */
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.ui-field__label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.ui-field__msg {
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.ui-field__msg-icon {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* ── Select (Radix skin) ────────────────────────────────────────────── */
+.ui-select__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  height: var(--control-height-lg);
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 0 var(--spacing-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  letter-spacing: var(--letter-spacing-ui);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.ui-select__trigger:focus-visible {
+  outline: none;
+  border-color: var(--focus-border);
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-select__trigger[data-placeholder] {
+  color: var(--text-secondary);
+}
+
+.ui-select__trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-select__icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+}
+
+.ui-select__content {
+  background: var(--bg-dropdown);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  padding: var(--spacing-xs);
+  z-index: var(--z-toast);
+  overflow: hidden;
+}
+
+.ui-select__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  height: var(--control-height-md);
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.ui-select__item[data-highlighted] {
+  background: var(--bg-hover);
+}
+
+.ui-select__item[data-state="checked"] {
+  color: var(--text-accent);
+}
+
+.ui-select__item-indicator {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+}
+
+/* ── Toggle (Radix Switch skin) ─────────────────────────────────────── */
+.ui-toggle {
+  width: 34px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: var(--radius-xl);
+  background: var(--bg-active);
+  border: 1px solid var(--border-primary);
+  position: relative;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.ui-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-toggle[data-state="checked"] {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.ui-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-toggle__thumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transform: translateX(2px);
+  transition:
+    transform var(--transition-fast),
+    background var(--transition-fast);
+  will-change: transform;
+}
+
+.ui-toggle[data-state="checked"] .ui-toggle__thumb {
+  transform: translateX(16px);
+  background: var(--text-on-accent);
+}
+
+/* ── Modal (Radix Dialog skin) ──────────────────────────────────────── */
+.ui-modal__overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay-bg);
+  backdrop-filter: var(--overlay-blur);
+  z-index: var(--z-toast);
+}
+
+.ui-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 420px;
+  max-width: calc(100vw - var(--spacing-xl) * 2);
+  max-height: calc(100vh - var(--spacing-xl) * 2);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  z-index: var(--z-toast);
+  overflow: hidden;
+}
+
+.ui-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.ui-modal__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-heading);
+  color: var(--text-primary);
+}
+
+.ui-modal__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+.ui-modal__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.ui-modal__close:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.ui-modal__close-icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+}
+
+.ui-modal__body {
+  padding: var(--spacing-lg);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  overflow: auto;
+}
+
+.ui-modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--border-secondary);
+}
+
+/* Shared enter/exit motion: fade + 8px rise, driven by tokens. */
+.ui-modal__overlay[data-state="open"] {
+  animation: ui-fade-in var(--transition-normal);
+}
+.ui-modal__overlay[data-state="closed"] {
+  animation: ui-fade-out var(--transition-fast);
+}
+.ui-modal[data-state="open"] {
+  animation: ui-modal-in var(--transition-normal);
+}
+.ui-modal[data-state="closed"] {
+  animation: ui-modal-out var(--transition-fast);
+}
+
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ui-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes ui-modal-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+@keyframes ui-modal-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-modal__overlay[data-state],
+  .ui-modal[data-state] {
+    animation: none;
+  }
+  .ui-btn,
+  .ui-input,
+  .ui-select__trigger,
+  .ui-toggle,
+  .ui-toggle__thumb,
+  .ui-modal__close {
+    transition: none;
+  }
+}
