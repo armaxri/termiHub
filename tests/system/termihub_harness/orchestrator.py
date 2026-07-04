@@ -188,7 +188,9 @@ class AppInstance:
     the saved last-session survive a restart without touching the real profile.
     """
 
-    def __init__(self, config_dir: Optional[Path] = None) -> None:
+    def __init__(
+        self, config_dir: Optional[Path] = None, *, echo_logs: bool = True
+    ) -> None:
         self._binary = app_binary_path()
         self._owns_config_dir = config_dir is None
         self._config_dir = config_dir or Path(tempfile.mkdtemp(prefix="termihub-app-config-"))
@@ -201,6 +203,10 @@ class AppInstance:
         self._log_path = self._config_dir / "app.log"
         self._log_file: Optional[IO[str]] = None
         self._pump: Optional[threading.Thread] = None
+        #: Echo the app's merged output to the console (helpful under ``-s``).
+        #: Disabled for guided-manual runs so the operator prompts stay readable —
+        #: the log is always in :attr:`log_path` regardless (#957).
+        self._echo_logs = echo_logs
 
     @property
     def config_dir(self) -> Path:
@@ -268,11 +274,12 @@ class AppInstance:
                     log_file.flush()
                 except (OSError, ValueError):
                     pass
-            try:  # echo for -s / on-failure capture; never fatal
-                sys.stdout.write(line)
-                sys.stdout.flush()
-            except (OSError, ValueError):
-                pass
+            if self._echo_logs:
+                try:  # echo for -s / on-failure capture; never fatal
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                except (OSError, ValueError):
+                    pass
 
     def stop(self) -> None:
         """Kill the app process tree and stop log capture."""

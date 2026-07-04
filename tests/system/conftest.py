@@ -72,6 +72,15 @@ def pytest_addoption(parser):
         help="Override the platform used to select platform-scoped manual tests "
         "(macos / linux / windows). Defaults to the host platform.",
     )
+    parser.addoption(
+        "--app-log-echo",
+        action="store_true",
+        default=False,
+        help="Echo the app's stdout/stderr live to the console. Off by default "
+        "in guided-manual (--manual) runs so the operator prompts stay readable; "
+        "the app log is always captured to the per-instance app.log regardless. "
+        "Pass this to force the live echo back on even under --manual.",
+    )
 
 
 # ── Guided-manual mode (issue #914) ──────────────────────────────────────────
@@ -140,16 +149,26 @@ def bridge():
 
 
 @pytest.fixture
-def app():
+def app(request):
     """An (unstarted) :class:`AppInstance`; skipped if the app is not built.
 
     The test starts it with ``app.start(bridge.port)`` so it can control launch
     ordering; the process tree is torn down afterward.
+
+    In guided-manual runs the app's live log echo is suppressed by default so it
+    does not interleave with the operator prompts (``--app-log-echo`` forces it
+    back on); the log is always captured to ``app.log`` either way (#957).
     """
+    manual = bool(request.config.getoption("manual"))
+    force_echo = bool(request.config.getoption("app_log_echo"))
+    echo_logs = force_echo or not manual
     try:
-        instance = AppInstance()
+        instance = AppInstance(echo_logs=echo_logs)
     except FileNotFoundError as exc:
         pytest.skip(str(exc))
+    if manual and not echo_logs:
+        print(f"\n[manual] app logs are captured (not echoed) at: {instance.log_path}")
+        print("[manual] tail them in another window: " f"tail -f {instance.log_path}\n")
     with instance as started:
         yield started
 
