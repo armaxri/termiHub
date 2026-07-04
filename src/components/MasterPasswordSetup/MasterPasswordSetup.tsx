@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { setupMasterPassword, changeMasterPassword } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Modal, Button, Field } from "@/components/ui";
 import "./MasterPasswordSetup.css";
 
 type PasswordStrength = "weak" | "medium" | "strong";
@@ -90,115 +90,102 @@ export function MasterPasswordSetup({ open, onOpenChange, mode }: MasterPassword
   const title = mode === "setup" ? "Set Master Password" : "Change Master Password";
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="master-pw__overlay" />
-        <Dialog.Content className="master-pw__content" onKeyDown={handleKeyDown}>
-          <Dialog.Title className="master-pw__title">{title}</Dialog.Title>
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title={title}
+      onKeyDown={handleKeyDown}
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            onClick={() => onOpenChange(false)}
+            data-testid="master-pw-cancel"
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleSubmit}
+            disabled={!isValid || loading}
+            data-testid="master-pw-submit"
+          >
+            {mode === "setup" ? "Set Password" : "Change Password"}
+          </Button>
+        </>
+      }
+    >
+      {mode === "setup" && (
+        <p className="master-pw__warning" data-testid="master-pw-warning">
+          This password cannot be recovered. If you forget it, your saved credentials will be lost.
+        </p>
+      )}
 
-          {mode === "setup" && (
-            <p className="master-pw__warning" data-testid="master-pw-warning">
-              This password cannot be recovered. If you forget it, your saved credentials will be
-              lost.
-            </p>
-          )}
+      {mode === "change" && (
+        <Field label="Current Password" htmlFor="master-pw-current">
+          <PasswordInput
+            id="master-pw-current"
+            className="ui-input"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            placeholder="Current password"
+            autoFocus
+            data-testid="master-pw-current"
+          />
+        </Field>
+      )}
 
-          {mode === "change" && (
-            <div className="master-pw__field">
-              <label className="master-pw__label" htmlFor="master-pw-current">
-                Current Password
-              </label>
-              <PasswordInput
-                id="master-pw-current"
-                className="master-pw__input"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Current password"
-                autoFocus
-                data-testid="master-pw-current"
+      <Field label={mode === "setup" ? "Password" : "New Password"} htmlFor="master-pw-new">
+        <PasswordInput
+          id="master-pw-new"
+          className="ui-input"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          placeholder={mode === "setup" ? "Password (min 8 characters)" : "New password"}
+          autoFocus={mode === "setup"}
+          data-testid="master-pw-new"
+        />
+        {newPassword.length > 0 && (
+          <div className="master-pw__strength" data-testid="master-pw-strength">
+            <div className="master-pw__strength-bar">
+              <div
+                className={`master-pw__strength-segment master-pw__strength-segment--filled master-pw__strength-segment--${strength}`}
+              />
+              <div
+                className={`master-pw__strength-segment ${strength !== "weak" ? `master-pw__strength-segment--filled master-pw__strength-segment--${strength}` : ""}`}
+              />
+              <div
+                className={`master-pw__strength-segment ${strength === "strong" ? "master-pw__strength-segment--filled master-pw__strength-segment--strong" : ""}`}
               />
             </div>
-          )}
-
-          <div className="master-pw__field">
-            <label className="master-pw__label" htmlFor="master-pw-new">
-              {mode === "setup" ? "Password" : "New Password"}
-            </label>
-            <PasswordInput
-              id="master-pw-new"
-              className="master-pw__input"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder={mode === "setup" ? "Password (min 8 characters)" : "New password"}
-              autoFocus={mode === "setup"}
-              data-testid="master-pw-new"
-            />
-            {newPassword.length > 0 && (
-              <div className="master-pw__strength" data-testid="master-pw-strength">
-                <div className="master-pw__strength-bar">
-                  <div
-                    className={`master-pw__strength-segment master-pw__strength-segment--filled master-pw__strength-segment--${strength}`}
-                  />
-                  <div
-                    className={`master-pw__strength-segment ${strength !== "weak" ? `master-pw__strength-segment--filled master-pw__strength-segment--${strength}` : ""}`}
-                  />
-                  <div
-                    className={`master-pw__strength-segment ${strength === "strong" ? "master-pw__strength-segment--filled master-pw__strength-segment--strong" : ""}`}
-                  />
-                </div>
-                <span
-                  className={`master-pw__strength-label master-pw__strength-label--${strength}`}
-                >
-                  {strength}
-                </span>
-              </div>
-            )}
+            <span className={`master-pw__strength-label master-pw__strength-label--${strength}`}>
+              {strength}
+            </span>
           </div>
+        )}
+      </Field>
 
-          <div className="master-pw__field">
-            <label className="master-pw__label" htmlFor="master-pw-confirm">
-              Confirm Password
-            </label>
-            <PasswordInput
-              id="master-pw-confirm"
-              className="master-pw__input"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm password"
-              data-testid="master-pw-confirm"
-            />
-            {!passwordsMatch && (
-              <p className="master-pw__mismatch" data-testid="master-pw-mismatch">
-                Passwords do not match.
-              </p>
-            )}
-          </div>
+      <Field label="Confirm Password" htmlFor="master-pw-confirm">
+        <PasswordInput
+          id="master-pw-confirm"
+          className="ui-input"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          placeholder="Confirm password"
+          data-testid="master-pw-confirm"
+        />
+        {!passwordsMatch && (
+          <p className="master-pw__mismatch" data-testid="master-pw-mismatch">
+            Passwords do not match.
+          </p>
+        )}
+      </Field>
 
-          {error && (
-            <p className="master-pw__error" data-testid="master-pw-error">
-              {error}
-            </p>
-          )}
-
-          <div className="master-pw__actions">
-            <button
-              className="master-pw__btn master-pw__btn--secondary"
-              onClick={() => onOpenChange(false)}
-              data-testid="master-pw-cancel"
-            >
-              Cancel
-            </button>
-            <button
-              className="master-pw__btn master-pw__btn--primary"
-              onClick={handleSubmit}
-              disabled={!isValid || loading}
-              data-testid="master-pw-submit"
-            >
-              {loading ? "Saving..." : mode === "setup" ? "Set Password" : "Change Password"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      {error && (
+        <p className="master-pw__error" data-testid="master-pw-error">
+          {error}
+        </p>
+      )}
+    </Modal>
   );
 }
