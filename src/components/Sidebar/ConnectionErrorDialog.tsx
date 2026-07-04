@@ -6,8 +6,8 @@
  * AgentSetupDialog.
  */
 
-import * as Dialog from "@radix-ui/react-dialog";
 import { AlertTriangle } from "lucide-react";
+import { Modal, Button } from "@/components/ui";
 import { ClassifiedAgentError } from "@/utils/classifyAgentError";
 import "./ConnectionErrorDialog.css";
 
@@ -28,71 +28,69 @@ export function ConnectionErrorDialog({
 }: ConnectionErrorDialogProps) {
   if (!error) return null;
 
+  const showSetupAgent =
+    (error.category === "agent-missing" || error.category === "agent-outdated") &&
+    Boolean(onSetupAgent);
+  const showForceReconnect = error.category === "already-connected" && Boolean(onForceReconnect);
+
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="connection-error-dialog__overlay" />
-        <Dialog.Content className="connection-error-dialog__content">
-          <div className="connection-error-dialog__icon-row">
-            <AlertTriangle size={20} className="connection-error-dialog__icon" />
-            <Dialog.Title
-              className="connection-error-dialog__title"
-              data-testid="connection-error-title"
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title={
+        <span className="connection-error-dialog__title-row">
+          <AlertTriangle size={20} className="connection-error-dialog__icon" aria-hidden="true" />
+          <span data-testid="connection-error-title">{error.title}</span>
+        </span>
+      }
+      footer={
+        <>
+          {showSetupAgent && (
+            <Button
+              variant="primary"
+              onClick={() => {
+                onOpenChange(false);
+                onSetupAgent?.();
+              }}
+              data-testid="connection-error-setup-agent"
             >
-              {error.title}
-            </Dialog.Title>
-          </div>
-          <Dialog.Description
-            className="connection-error-dialog__message"
-            data-testid="connection-error-message"
-          >
-            {error.message}
-          </Dialog.Description>
-          {error.rawError !== error.message && (
-            <details
-              className="connection-error-dialog__details"
-              data-testid="connection-error-details"
-            >
-              <summary>Technical details</summary>
-              <code className="connection-error-dialog__raw">{error.rawError}</code>
-            </details>
+              Setup Agent
+            </Button>
           )}
-          <div className="connection-error-dialog__actions">
-            {(error.category === "agent-missing" || error.category === "agent-outdated") &&
-              onSetupAgent && (
-                <button
-                  className="connection-error-dialog__btn connection-error-dialog__btn--primary"
-                  onClick={() => {
-                    onOpenChange(false);
-                    onSetupAgent();
-                  }}
-                  data-testid="connection-error-setup-agent"
-                >
-                  Setup Agent
-                </button>
-              )}
-            {error.category === "already-connected" && onForceReconnect && (
-              <button
-                className="connection-error-dialog__btn connection-error-dialog__btn--primary"
-                onClick={() => {
-                  onOpenChange(false);
-                  onForceReconnect();
-                }}
-                data-testid="connection-error-force-reconnect"
-              >
-                Force Reconnect
-              </button>
-            )}
-            <button
-              className="connection-error-dialog__btn connection-error-dialog__btn--secondary"
-              onClick={() => onOpenChange(false)}
-              data-testid="connection-error-close"
+          {showForceReconnect && (
+            <Button
+              variant="primary"
+              onClick={() => {
+                onOpenChange(false);
+                onForceReconnect?.();
+              }}
+              data-testid="connection-error-force-reconnect"
             >
-              Close
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+              Force Reconnect
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            onClick={() => onOpenChange(false)}
+            data-testid="connection-error-close"
+          >
+            Close
+          </Button>
+        </>
+      }
+    >
+      <p className="connection-error-dialog__message" data-testid="connection-error-message">
+        {error.message}
+      </p>
+      {error.rawError !== error.message && (
+        <details
+          className="connection-error-dialog__details"
+          data-testid="connection-error-details"
+        >
+          <summary>Technical details</summary>
+          <code className="connection-error-dialog__raw">{error.rawError}</code>
+        </details>
+      )}
+    </Modal>
   );
 }
