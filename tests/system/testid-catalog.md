@@ -20,6 +20,7 @@ Fixed strings — match exactly.
 | `about-github-link` | `src/components/Settings/AboutSettings.tsx` |
 | `about-license-link` | `src/components/Settings/AboutSettings.tsx` |
 | `about-settings` | `src/components/Settings/AboutSettings.tsx` |
+| `about-third-party-licenses-link` | `src/components/Settings/AboutSettings.tsx` |
 | `about-version` | `src/components/Settings/AboutSettings.tsx` |
 | `activity-bar-context-menu` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `activity-bar-logs` | `src/components/ActivityBar/ActivityBar.tsx` |
