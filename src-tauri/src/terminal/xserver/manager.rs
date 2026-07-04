@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::Result;
+use termihub_core::backends::ssh::x11::{ManagedXServer, ManagedXServerSource};
 
 /// TCP base port for X11: display `:N` listens on `6000 + N`.
 pub const X11_BASE_PORT: u16 = 6000;
@@ -99,6 +100,18 @@ pub enum XServerStatus {
     Failed { message: String },
 }
 
+impl XServerStatus {
+    /// The display number of an active (adopted or running) server, if any.
+    fn display(&self) -> Option<u32> {
+        match self {
+            XServerStatus::Adopted { display } | XServerStatus::Running { display } => {
+                Some(*display)
+            }
+            XServerStatus::Stopped | XServerStatus::Failed { .. } => None,
+        }
+    }
+}
+
 /// Where an X11 session should connect, returned by [`XServerManager::ensure_running`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayInfo {
@@ -132,7 +145,6 @@ impl DisplayInfo {
 struct Inner {
     status: XServerStatus,
     child: Option<Box<dyn ManagedProcess>>,
-    display: Option<u32>,
     /// Number of live X11 sessions using the server.
     refcount: usize,
     /// Stop the managed server when the last session closes.
@@ -150,7 +162,6 @@ pub struct XServerManager {
     provides_managed: bool,
     /// Optional `-auth` cookie file (wired by #1050); `None` uses `-ac`.
     auth_file: Mutex<Option<PathBuf>>,
-    max_display: u32,
 }
 
 impl XServerManager {
@@ -167,7 +178,6 @@ impl XServerManager {
             inner: Mutex::new(Inner {
                 status: XServerStatus::Stopped,
                 child: None,
-                display: None,
                 refcount: 0,
                 stop_when_idle,
             }),
@@ -176,7 +186,6 @@ impl XServerManager {
             resolver,
             provides_managed,
             auth_file: Mutex::new(None),
-            max_display: MAX_DISPLAY,
         }
     }
 
@@ -236,12 +245,11 @@ impl XServerManager {
         // 1. Reuse our own managed process if it is still alive.
         if let Some(child) = inner.child.as_mut() {
             if child.is_alive() {
-                let display = inner.display.unwrap_or(0);
+                let display = inner.status.display().unwrap_or(0);
                 return Ok(DisplayInfo::managed(display));
             }
             // It died underneath us — drop the handle and fall through to respawn.
             inner.child = None;
-            inner.display = None;
             inner.status = XServerStatus::Stopped;
         }
 
@@ -253,7 +261,6 @@ impl XServerManager {
         // the next display) would require a real X11 handshake and is left to a
         // follow-up.
         if self.probe.is_open(port_for_display(0)) {
-            inner.display = Some(0);
             inner.status = XServerStatus::Adopted { display: 0 };
             return Ok(DisplayInfo::adopted(0));
         }
@@ -267,12 +274,14 @@ impl XServerManager {
         }
 
         // 4. Spawn a new managed server on the first free display.
-        let display = first_free_display(self.max_display, |p| self.probe.is_open(p))
-            .ok_or_else(|| anyhow::anyhow!("no free X display in 0..={}", self.max_display))?;
+        let display = first_free_display(MAX_DISPLAY, |p| self.probe.is_open(p))
+            .ok_or_else(|| anyhow::anyhow!("no free X display in 0..={MAX_DISPLAY}"))?;
 
         let exe = (self.resolver)().map_err(|e| {
             let msg = format!("failed to resolve X server binary: {e}");
-            inner.status = XServerStatus::Failed { message: msg.clone() };
+            inner.status = XServerStatus::Failed {
+                message: msg.clone(),
+            };
             anyhow::anyhow!(msg)
         })?;
 
@@ -280,13 +289,14 @@ impl XServerManager {
         match self.launcher.launch(&exe, display, auth.as_deref()) {
             Ok(child) => {
                 inner.child = Some(child);
-                inner.display = Some(display);
                 inner.status = XServerStatus::Running { display };
                 Ok(DisplayInfo::managed(display))
             }
             Err(e) => {
                 let msg = format!("failed to spawn X server: {e}");
-                inner.status = XServerStatus::Failed { message: msg.clone() };
+                inner.status = XServerStatus::Failed {
+                    message: msg.clone(),
+                };
                 Err(anyhow::anyhow!(msg))
             }
         }
@@ -298,19 +308,36 @@ impl XServerManager {
             child.terminate();
         }
         inner.child = None;
-        inner.display = None;
         inner.refcount = 0;
         inner.status = XServerStatus::Stopped;
+    }
+}
+
+impl ManagedXServerSource for XServerManager {
+    /// Report the server termiHub itself started so core X11 detection can skip
+    /// its filesystem/`xauth` probing (issue #1049 seam; consumers wired in
+    /// #1052). Adopted external servers are intentionally excluded — they are
+    /// discovered by the normal TCP probe and are not termiHub-managed.
+    ///
+    /// The cookie is always `None` for now: managed servers currently launch in
+    /// `-ac` (loopback-only, no auth) mode until MIT-MAGIC-COOKIE-1 provisioning
+    /// lands in #1050.
+    fn managed_server(&self) -> Option<ManagedXServer> {
+        let inner = self.inner.lock().expect("xserver lock");
+        match inner.status {
+            XServerStatus::Running { display } => Some(ManagedXServer {
+                display_number: display,
+                cookie: None,
+            }),
+            _ => None,
+        }
     }
 }
 
 impl Drop for XServerManager {
     fn drop(&mut self) {
         if let Ok(mut inner) = self.inner.lock() {
-            if let Some(child) = inner.child.as_mut() {
-                child.terminate();
-            }
-            inner.child = None;
+            self.stop_locked(&mut inner);
         }
     }
 }
@@ -319,17 +346,18 @@ impl Drop for XServerManager {
 // Real collaborator implementations (used by the platform wiring in lib.rs).
 // ---------------------------------------------------------------------------
 
-/// Timeout for the TCP reachability probe.
+/// Timeout for the TCP reachability probe (matches core X11 detection).
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
 
-/// Real TCP probe against `127.0.0.1`.
+/// Real TCP probe against `127.0.0.1`, reusing core's X11 reachability check so
+/// the adopt-probe and core detection agree on "an X server is reachable here".
 pub struct TcpPortProbe;
 
 impl PortProbe for TcpPortProbe {
     fn is_open(&self, port: u16) -> bool {
-        use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+        use std::net::{Ipv4Addr, SocketAddr};
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-        TcpStream::connect_timeout(&addr, PROBE_TIMEOUT).is_ok()
+        termihub_core::backends::ssh::x11::probe_tcp_x_server_at(addr, PROBE_TIMEOUT)
     }
 }
 
@@ -540,7 +568,10 @@ mod tests {
         let mgr = manager_with(&[6000], launcher.clone(), true, true);
 
         let info = mgr.ensure_running().unwrap();
-        assert!(!info.managed, "external server should be adopted, not managed");
+        assert!(
+            !info.managed,
+            "external server should be adopted, not managed"
+        );
         assert_eq!(info.display, 0);
         assert_eq!(launcher.count(), 0, "must not spawn when adopting");
         assert_eq!(mgr.status(), XServerStatus::Adopted { display: 0 });
@@ -558,7 +589,12 @@ mod tests {
         assert_eq!(launcher.count(), 1);
         assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
         // launched with -ac (no auth file configured yet)
-        assert!(launcher.last_args.lock().unwrap().iter().any(|a| a == "-ac"));
+        assert!(launcher
+            .last_args
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|a| a == "-ac"));
     }
 
     // -- reuse across sessions ---------------------------------------------
@@ -600,7 +636,10 @@ mod tests {
         mgr.release_session();
 
         let state = launcher.spawned.lock().unwrap()[0].clone();
-        assert!(state.lock().unwrap().terminated, "managed server must stop when idle");
+        assert!(
+            state.lock().unwrap().terminated,
+            "managed server must stop when idle"
+        );
         assert_eq!(mgr.status(), XServerStatus::Stopped);
     }
 
@@ -613,7 +652,10 @@ mod tests {
         mgr.release_session();
 
         let state = launcher.spawned.lock().unwrap()[0].clone();
-        assert!(!state.lock().unwrap().terminated, "must stay up when idle-stop is off");
+        assert!(
+            !state.lock().unwrap().terminated,
+            "must stay up when idle-stop is off"
+        );
         assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
     }
 
@@ -656,7 +698,10 @@ mod tests {
             s
             // mgr dropped here
         };
-        assert!(state.lock().unwrap().terminated, "Drop must reap the process");
+        assert!(
+            state.lock().unwrap().terminated,
+            "Drop must reap the process"
+        );
     }
 
     // -- unix no-op ---------------------------------------------------------
@@ -676,7 +721,44 @@ mod tests {
         let launcher = FakeLauncher::new();
         let mgr = manager_with(&[], launcher.clone(), false, true);
 
-        assert!(mgr.ensure_running().is_err(), "no server + no managed provisioning → error");
+        assert!(
+            mgr.ensure_running().is_err(),
+            "no server + no managed provisioning → error"
+        );
         assert_eq!(launcher.count(), 0);
+    }
+
+    // -- core detection seam (ManagedXServerSource) -------------------------
+
+    #[test]
+    fn managed_server_reports_only_our_spawned_server() {
+        let launcher = FakeLauncher::new();
+        let mgr = manager_with(&[], launcher.clone(), true, false);
+
+        // Nothing running yet.
+        assert!(mgr.managed_server().is_none());
+
+        // A server we spawned is reported (cookie deferred to #1050).
+        mgr.ensure_running().unwrap();
+        let managed = mgr
+            .managed_server()
+            .expect("managed server should be reported");
+        assert_eq!(managed.display_number, 0);
+        assert!(managed.cookie.is_none());
+
+        // After stopping, nothing is reported.
+        mgr.stop();
+        assert!(mgr.managed_server().is_none());
+    }
+
+    #[test]
+    fn managed_server_excludes_adopted_external() {
+        let launcher = FakeLauncher::new();
+        let mgr = manager_with(&[6000], launcher.clone(), true, false);
+
+        mgr.ensure_running().unwrap();
+        // Adopted external servers are found by normal detection, not reported
+        // here as termiHub-managed.
+        assert!(mgr.managed_server().is_none());
     }
 }
