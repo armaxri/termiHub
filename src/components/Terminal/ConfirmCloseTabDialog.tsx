@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { Modal, Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 
 /**
@@ -49,76 +49,36 @@ export function ConfirmCloseTabDialog() {
     request.kind === "tab" ? "confirm-close-tab-confirm" : "confirm-close-tab-group-confirm";
 
   return (
-    <Dialog.Root open={true} onOpenChange={(isOpen) => !isOpen && handleCancel()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="shortcuts-overlay__backdrop" />
-        <Dialog.Content
-          className="confirm-close-tab-dialog"
-          data-testid="confirm-close-tab-dialog"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              // Enter on the dialog content triggers confirm; focused Cancel button
-              // does not bubble its own Enter here because we attach to content.
-              if (document.activeElement === cancelBtnRef.current) return;
-              e.preventDefault();
-              handleConfirm();
-            }
-          }}
-          style={{
-            position: "fixed",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            width: "380px",
-            padding: "var(--spacing-lg, 16px)",
-            backgroundColor: "var(--bg-secondary)",
-            border: "1px solid var(--border-primary)",
-            borderRadius: "var(--radius-lg, 8px)",
-            boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
-            zIndex: 1001,
-          }}
-        >
-          <Dialog.Title
-            style={{ margin: "0 0 var(--spacing-md, 12px) 0", color: "var(--text-primary)" }}
+    <Modal
+      open
+      onOpenChange={(isOpen) => !isOpen && handleCancel()}
+      title={title}
+      data-testid="confirm-close-tab-dialog"
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          // Enter confirms — unless the safe Cancel button is focused.
+          if (document.activeElement === cancelBtnRef.current) return;
+          e.preventDefault();
+          handleConfirm();
+        }
+      }}
+      footer={
+        <>
+          <Button
+            ref={cancelBtnRef}
+            variant="secondary"
+            onClick={handleCancel}
+            data-testid="confirm-close-tab-cancel"
           >
-            {title}
-          </Dialog.Title>
-          <Dialog.Description style={{ color: "var(--text-secondary)", marginBottom: "16px" }}>
-            {description}
-          </Dialog.Description>
-          <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-            <button
-              ref={cancelBtnRef}
-              onClick={handleCancel}
-              data-testid="confirm-close-tab-cancel"
-              style={{
-                padding: "4px 16px",
-                border: "1px solid var(--border-primary)",
-                borderRadius: "var(--radius-md, 4px)",
-                background: "transparent",
-                color: "var(--text-primary)",
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConfirm}
-              data-testid={confirmTestId}
-              style={{
-                padding: "4px 16px",
-                border: "none",
-                borderRadius: "var(--radius-md, 4px)",
-                background: "var(--color-error)",
-                color: "#fff",
-                cursor: "pointer",
-              }}
-            >
-              {confirmLabel}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={handleConfirm} data-testid={confirmTestId}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      {description}
+    </Modal>
   );
 }

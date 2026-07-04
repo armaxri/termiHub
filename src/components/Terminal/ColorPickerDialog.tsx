@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { HexColorPicker } from "react-colorful";
+import { Modal, Button, Input } from "@/components/ui";
 import "./ColorPickerDialog.css";
 
 const PRESET_COLORS = [
@@ -50,61 +50,52 @@ export function ColorPickerDialog({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="color-picker__overlay" />
-        <Dialog.Content className="color-picker__content">
-          <Dialog.Title className="color-picker__title">Tab Color</Dialog.Title>
-
-          <div className="color-picker__presets">
-            {PRESET_COLORS.map((color) => (
-              <button
-                key={color}
-                className={`color-picker__swatch ${selectedColor === color ? "color-picker__swatch--active" : ""}`}
-                style={{ backgroundColor: color }}
-                onClick={() => setSelectedColor(color)}
-                title={color}
-                data-testid={`color-picker-swatch-${color.replace("#", "")}`}
-              />
-            ))}
-          </div>
-
-          <HexColorPicker
-            className="color-picker__picker"
-            color={selectedColor}
-            onChange={setSelectedColor}
-          />
-
-          <input
-            className="color-picker__hex-input"
-            type="text"
-            value={selectedColor}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setSelectedColor(v);
-            }}
-            maxLength={7}
-            data-testid="color-picker-hex-input"
-          />
-
-          <div className="color-picker__actions">
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Tab Color"
+      footer={
+        <>
+          <Button variant="secondary" onClick={handleClear} data-testid="color-picker-clear">
+            Clear
+          </Button>
+          <Button variant="primary" onClick={handleApply} data-testid="color-picker-apply">
+            Apply
+          </Button>
+        </>
+      }
+    >
+      <div className="color-picker__body">
+        <div className="color-picker__presets">
+          {PRESET_COLORS.map((color) => (
             <button
-              className="color-picker__btn color-picker__btn--secondary"
-              onClick={handleClear}
-              data-testid="color-picker-clear"
-            >
-              Clear
-            </button>
-            <button
-              className="color-picker__btn color-picker__btn--primary"
-              onClick={handleApply}
-              data-testid="color-picker-apply"
-            >
-              Apply
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+              key={color}
+              className={`color-picker__swatch ${selectedColor === color ? "color-picker__swatch--active" : ""}`}
+              style={{ backgroundColor: color }}
+              onClick={() => setSelectedColor(color)}
+              title={color}
+              data-testid={`color-picker-swatch-${color.replace("#", "")}`}
+            />
+          ))}
+        </div>
+
+        <HexColorPicker
+          className="color-picker__picker"
+          color={selectedColor}
+          onChange={setSelectedColor}
+        />
+
+        <Input
+          className="color-picker__hex-input"
+          value={selectedColor}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setSelectedColor(v);
+          }}
+          maxLength={7}
+          data-testid="color-picker-hex-input"
+        />
+      </div>
+    </Modal>
   );
 }
