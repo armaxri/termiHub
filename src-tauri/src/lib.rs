@@ -36,17 +36,23 @@ use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer}
 /// report-only no-op that adopts the system's existing X server. The default
 /// policy is to stop the managed server once the last X11 session closes.
 ///
-/// The `vcxsrv.exe` resolver (issue #1048) is not yet available, so a placeholder
-/// is injected: spawning a managed server surfaces a clear error until the
-/// acquisition module lands, while adoption of an already-running X server works
-/// today. Swap the resolver for the real `acquire` call once #1048 merges.
+/// A placeholder `vcxsrv.exe` resolver is injected: adoption of an
+/// already-running X server works today, while spawning a managed server
+/// surfaces a clear error. The acquisition module (`xserver::acquire`, #1048)
+/// exists, but resolving it downloads VcXsrv, which the concept gates behind a
+/// user consent prompt — so the real resolver is wired by the provisioning
+/// orchestrator (#1052) once the consent flow exists, not here.
 fn build_xserver_manager() -> terminal::xserver::XServerManager {
     use terminal::xserver::manager::{CommandLauncher, TcpPortProbe};
 
     terminal::xserver::XServerManager::new(
         Box::new(TcpPortProbe),
         Box::new(CommandLauncher),
-        Box::new(|| anyhow::bail!("VcXsrv acquisition is not yet available (#1048)")),
+        Box::new(|| {
+            anyhow::bail!(
+                "managed X server provisioning is not wired yet (awaiting consent flow, #1052)"
+            )
+        }),
         cfg!(windows),
         true,
     )
