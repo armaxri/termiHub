@@ -97,6 +97,12 @@ wrap motion in `@media (prefers-reduced-motion: reduce)`; use the shared enter/e
 - Debug logging goes through `frontendLog` (LogViewer), never `console.*`.
 - **TDD**: write/adjust the Vitest test first, watch it fail, then implement.
   A design change ships with at least a unit test or documented manual test.
+- **`data-testid` catalog**: if you add, remove, or rename ANY `data-testid`
+  (migrating a dialog to `Modal` adds `modal-close`; primitives forward the
+  hook), regenerate `tests/system/testid-catalog.md` with
+  `python scripts/build-testid-catalog.py` and commit it in the same change.
+  CI fails on a stale catalog (both the "Frontend Code Quality" catalog check
+  and the "System-Test machinery" job).
 - Run `./scripts/check.sh` (lint/format/clippy mirror of CI) and `./scripts/test.sh`
   before declaring done. Formatting is auto-applied by the PostToolUse hook.
 
