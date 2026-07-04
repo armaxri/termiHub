@@ -1,0 +1,134 @@
+/*
+ * Toast hub styling (UI Modernization, Phase 3) — a token-driven skin over
+ * sonner's <Toaster/>. Every value references a token from
+ * src/styles/variables.css: no raw hex, no rgba() overlays, no pixel radii.
+ *
+ * sonner is mounted with `unstyled: true`, so these rules fully own the toast
+ * surface. Scrollbars are global; nothing here re-styles them. Motion uses
+ * --transition-* and is disabled under reduced-motion.
+ */
+
+/* sonner sets these vars on its container; pin them to our z-layer + width. */
+[data-sonner-toaster] {
+  z-index: var(--z-toast);
+  --width: 340px;
+  font-family: var(--font-family);
+}
+
+.th-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: var(--spacing-md);
+  background: var(--bg-dropdown);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-left: 3px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  font-size: var(--font-size-md);
+  letter-spacing: var(--letter-spacing-ui);
+}
+
+.th-toast [data-icon] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--text-secondary);
+}
+
+.th-toast__icon-svg {
+  width: 16px;
+  height: 16px;
+}
+
+.th-toast [data-content] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.th-toast [data-title] {
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.th-toast [data-description] {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.th-toast [data-close-button] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.th-toast [data-close-button]:hover {
+  color: var(--text-primary);
+}
+
+/* ── Intent accents ─────────────────────────────────────────────────── */
+.th-toast[data-type="success"] {
+  border-left-color: var(--color-success);
+}
+.th-toast[data-type="success"] [data-icon] {
+  color: var(--color-success);
+}
+
+.th-toast[data-type="error"] {
+  border-left-color: var(--color-error);
+}
+.th-toast[data-type="error"] [data-icon] {
+  color: var(--color-error);
+}
+
+.th-toast[data-type="info"] {
+  border-left-color: var(--color-info);
+}
+.th-toast[data-type="info"] [data-icon] {
+  color: var(--color-info);
+}
+
+.th-toast[data-type="loading"] {
+  border-left-color: var(--accent-color);
+}
+.th-toast[data-type="loading"] [data-icon] {
+  color: var(--accent-color);
+}
+
+/* ── Spinner (loading icon) ─────────────────────────────────────────── */
+.th-toast__icon-svg--spin {
+  animation: th-toast-spin 0.7s linear infinite;
+}
+
+@keyframes th-toast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th-toast {
+    transition: none;
+  }
+  .th-toast [data-close-button] {
+    transition: none;
+  }
+  .th-toast__icon-svg--spin {
+    animation: none;
+  }
+}

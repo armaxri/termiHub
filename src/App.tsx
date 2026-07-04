@@ -16,6 +16,7 @@ import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
+import { ToastProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
@@ -307,6 +308,7 @@ function App() {
         />
         <UpdateNotification />
         <ConfirmCloseTabDialog />
+        <ToastProvider />
       </div>
     </ErrorBoundary>
   );
