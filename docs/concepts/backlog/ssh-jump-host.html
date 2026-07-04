@@ -1,0 +1,2422 @@
+<!doctype html>
+<!--
+  Single-file concept: First-Class SSH Jump Host / Gateway in Connection Editor.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/backlog/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>First-Class SSH Jump Host / Gateway in Connection Editor (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Form-field structural helpers (mockup-only) — theme vars from mockup.css. */
+      .form {
+        padding: 16px 18px;
+        max-width: 620px;
+        overflow: auto;
+      }
+      .form__group {
+        margin: 0 0 18px;
+      }
+      .form__group-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 0 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      /* Flat editor category — mirrors the real .settings-panel__category /
+         .settings-panel__category-title (the editor has no collapsible groups). */
+      .category {
+        margin: 0 0 18px;
+      }
+      .category__title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .category__body {
+        padding: 0;
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 10px;
+      }
+      .field__label {
+        flex: 0 0 84px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        text-align: right;
+      }
+      .input,
+      .select {
+        flex: 1 1 auto;
+        height: 28px;
+        padding: 0 9px;
+        font-size: 12px;
+        font-family: inherit;
+        color: var(--text-primary);
+        background: var(--bg-input, #0d1019);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+      }
+      .input--sm {
+        flex: 0 0 70px;
+      }
+      .select {
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .checkrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-primary);
+        margin: 0 0 12px;
+      }
+      .checkbox {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 15px;
+        border: 1px solid var(--accent-color);
+        border-radius: 3px;
+        background: var(--accent-color);
+        display: inline-grid;
+        place-items: center;
+        color: #fff;
+      }
+      .checkbox .li {
+        width: 11px;
+        height: 11px;
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+      }
+      .seg__opt {
+        padding: 4px 12px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+        border-right: 1px solid var(--border-primary);
+      }
+      .seg__opt:last-child {
+        border-right: none;
+      }
+      .seg__opt--active {
+        background: var(--accent-color);
+        color: #fff;
+      }
+      .hop-card {
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        background: var(--bg-tertiary);
+        padding: 10px;
+        margin: 0 0 10px;
+      }
+      .hop-card__head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 10px;
+      }
+      .hop-card__head .li {
+        color: var(--text-secondary);
+      }
+      .hop-card__remove {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--color-error);
+        background: none;
+        border: none;
+        font-size: 11px;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .add-hop {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--text-accent);
+        background: none;
+        border: none;
+        font-size: 12px;
+        font-family: inherit;
+        padding: 4px 0;
+        cursor: pointer;
+      }
+      .path-line {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 12px;
+        padding: 8px 10px;
+        font-size: 12px;
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+        background: var(--bg-input, #0d1019);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+      }
+      .path-line__label {
+        color: var(--text-secondary);
+        font-family: var(--font-family);
+      }
+      .path-line .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-secondary);
+      }
+      .path-line__target {
+        color: var(--text-accent);
+      }
+      .validation-error {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 10px;
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--color-error);
+        background: color-mix(in srgb, var(--color-error) 12%, transparent);
+        border: 1px solid var(--color-error);
+        border-radius: var(--radius-sm);
+      }
+      .validation-error .li {
+        color: var(--color-error);
+        flex: 0 0 auto;
+      }
+      .browse-btn {
+        flex: 0 0 auto;
+        height: 28px;
+        padding: 0 10px;
+        font-size: 12px;
+        font-family: inherit;
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+      }
+      /* Indicators mockup helpers (mockup-only) — theme vars from mockup.css. */
+      .jump-badge {
+        display: inline-flex;
+        align-items: center;
+        color: var(--text-accent);
+      }
+      .jump-badge .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-accent);
+      }
+      .hop-count {
+        font-size: 10px;
+        color: var(--text-secondary);
+        margin-left: 1px;
+      }
+      .tree-via {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+      }
+      .tooltip {
+        position: relative;
+        display: inline-block;
+        margin: 6px 0 0 28px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        box-shadow: var(--shadow-overlay);
+      }
+      .menu__sep {
+        height: 1px;
+        background: var(--border-secondary);
+        margin: 4px 0;
+      }
+      .menu__row .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry) — union of all mockup symbols. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-layout-grid" viewBox="0 0 24 24">
+        <rect width="7" height="7" x="3" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="14" rx="1" />
+        <rect width="7" height="7" x="3" y="14" rx="1" />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="i-arrow-left-right" viewBox="0 0 24 24">
+        <path d="M8 3 4 7l4 4" />
+        <path d="M4 7h16" />
+        <path d="m16 21 4-4-4-4" />
+        <path d="M20 17H4" />
+      </symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="m12 5 7 7-7 7" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-circle-alert" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" x2="12" y1="8" y2="12" />
+        <line x1="12" x2="12.01" y1="16" y2="16" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+      <symbol id="i-network-2" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="M12 19h8" />
+        <path d="m4 17 6-6-6-6" />
+      </symbol>
+      <symbol id="i-route" viewBox="0 0 24 24">
+        <circle cx="6" cy="19" r="3" />
+        <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+        <circle cx="18" cy="5" r="3" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24">
+        <path
+          d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+        />
+        <path d="m15 5 4 4" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>First-Class SSH Jump Host / Gateway in Connection Editor</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/520">#520</a> (original gateway/UI
+            concept), <a href="https://github.com/armaxri/termiHub/issues/872">#872</a> (ProxyJump
+            connect path + <code>SSH-JUMP-01</code> test conversion)</span
+          >
+          <span><code>docs/concepts/backlog/ssh-jump-host.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept ssh-jump-host</code> to reconcile
+          it with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Add a first-class SSH gateway / jump host option directly in the SSH connection editor,
+          allowing users to configure proxy hops without deploying the remote agent. This brings
+          termiHub in line with MobaXterm's SSH gateway feature and OpenSSH's
+          <code>ProxyJump</code> directive.
+        </p>
+        <p>
+          <strong>Motivation</strong>: termiHub currently supports SSH jump hosts only through the
+          remote agent's sub-sessions, which requires agent deployment on the bastion host. Many
+          users need simple <code>ProxyJump</code> / <code>ProxyCommand</code> functionality to
+          reach servers behind a bastion host without that overhead. This is one of the most common
+          SSH workflows in enterprise environments.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>Allow users to select an SSH gateway per connection in the connection editor UI</li>
+          <li>
+            Support both referencing an existing saved SSH connection and inline gateway
+            configuration
+          </li>
+          <li>Support multi-hop chaining (gateway -&gt; gateway -&gt; target)</li>
+          <li>Integrate with the credential store for per-hop authentication</li>
+          <li>Pool gateway sessions across multiple connections sharing the same jump host</li>
+          <li>Ensure SSH tunnels work through jump hosts</li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Replacing the remote agent for advanced features (file browsing, monitoring, Docker
+            sessions)
+          </li>
+          <li>
+            Automatic detection of bastion hosts from <code>~/.ssh/config</code> (future
+            enhancement)
+          </li>
+          <li>SOCKS proxy or HTTP CONNECT proxy support (separate feature)</li>
+          <li>Jump hosts for non-SSH connection types (serial, telnet, local shell)</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The visual surfaces are specified by the mockups (inlined below) — they are authoritative
+          for layout. This section describes them.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Connection editor "Jump Host" category</td>
+                <td>disabled, saved-connection mode, inline mode, multi-hop + error</td>
+              </tr>
+              <tr>
+                <td>Indicators &amp; context menu</td>
+                <td>
+                  Sidebar hop badges + tooltip, status-bar hop-chain display, and the jump-host
+                  context menu
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Connection Editor — Jump Host Section</h3>
+        <p>
+          A <strong>"Jump Host"</strong> section appears in the SSH connection editor as a flat
+          category (<code>settings-panel__category</code>, the same pattern as the other editor
+          categories — "General", "SSH Agent", "Session"), after the connection/authentication
+          fields and before the SSH Agent category. A single
+          <strong>"Connect through a jump host"</strong> checkbox (with the
+          <code>ArrowLeftRight</code> icon) reveals the body. The section has no separate "Advanced"
+          group and is not a collapsible chevron group — the connection editor uses flat categories
+          throughout. See the editor mockup states 1–4.
+        </p>
+        <p>
+          Each hop carries a <strong>source segmented control</strong> ("Saved connection" / "Inline
+          configuration") selecting one of the two modes below. The "Saved connection" option is
+          disabled when there are no other SSH connections to reference. A per-hop
+          <strong>Connect Timeout (s)</strong> field applies to either mode (blank = the default SSH
+          connect timeout).
+        </p>
+
+        <h4>Mode 1: Saved Connection Reference</h4>
+        <p>
+          The user selects an existing SSH connection from a dropdown. This is the quickest option
+          when the bastion host is already configured as a saved connection. The dropdown only shows
+          SSH-type saved connections and displays the full path (<code>folder / sub / name</code>)
+          to disambiguate connections with the same name; the connection being edited is excluded so
+          it cannot reference itself. A reference whose target was deleted/renamed is shown as
+          <code>… (not found)</code> and flagged by validation. See state 2.
+        </p>
+
+        <h4>Mode 2: Inline Configuration</h4>
+        <p>
+          The user configures the gateway directly within the connection editor (host, port,
+          username, auth method, key/password), without needing a separate saved connection. Useful
+          for one-off gateways or when the bastion host isn't worth saving standalone. See state 3.
+        </p>
+
+        <h4>Multi-Hop Chaining</h4>
+        <p>
+          Clicking "Add another hop" appends an additional jump host entry. A lone hop renders as a
+          plain field group; as soon as there are two or more hops, each renders as a
+          <strong>numbered, removable hop card</strong> ("Hop 1 (outermost)", "Hop 2
+          (intermediate)", …, "Hop N (innermost)") with its own Remove control. Hops are ordered
+          from outermost (first connection) to innermost (closest to target). A
+          <strong>"Connection path"</strong> summary line (<code
+            >You → edge-gateway → internal-bastion → target</code
+          >) provides a visual summary of the full hop chain for easy verification, with the target
+          node in the accent color. Non-blocking <strong>warnings</strong> (e.g. deep chains) appear
+          as hints; when the chain is invalid (missing/deleted reference, circular reference,
+          missing inline host/username), an inline <strong>validation error</strong> block is shown
+          in the error color and Save is blocked. See state 4.
+        </p>
+
+        <h3>Connection Sidebar — Visual Indicator</h3>
+        <p>
+          Connections configured with a jump host display a small lucide hop icon
+          (<code>arrow-left-right</code>) next to the connection icon in the connection tree
+          sidebar. Hovering shows a tooltip with the full path (<code
+            >Via: bastion.example.com → target</code
+          >). Multi-hop connections add a small hop-count label. See the indicators mockup section
+          A.
+        </p>
+
+        <h3>Status Bar — Connection Info</h3>
+        <p>
+          When a terminal tab using a jump host is active, the status bar shows the hop chain (<code
+            >SSH: deploy@app-server via bastion.example.com</code
+          >). See the indicators mockup section B.
+        </p>
+
+        <h3>Connection Context Menu</h3>
+        <p>Right-clicking a connection that uses a jump host shows additional context actions:</p>
+        <ul>
+          <li>
+            <strong>Open Jump Host Terminal</strong> — opens a terminal directly on the gateway
+            (useful for debugging connectivity)
+          </li>
+          <li>
+            <strong>Show Connection Path</strong> — displays a popover with the full hop chain and
+            per-hop status
+          </li>
+        </ul>
+        <p>See the indicators mockup section C.</p>
+
+        <!-- Mockup 1: connection editor "Jump Host" category -->
+        <div class="mockup-section">
+          <h3>Mockup — connection editor "Jump Host" category</h3>
+          <div class="mockup-note">
+            The Connection Editor opens as a tab in the main area. The
+            <strong>Jump Host</strong> category is a flat <code>settings-panel__category</code> (the
+            editor has no collapsible groups), after the connection/authentication fields and before
+            the SSH Agent category. Four states below: disabled, saved-connection mode, inline mode,
+            and multi-hop with a connection-path summary + validation error.
+          </div>
+
+          <!-- ── State 1: collapsed ─────────────────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>1 · Jump Host section disabled (default)</h2>
+            <div class="mockup-note">
+              Full app shell. The editor tab is active; the Jump Host category
+              <span class="callout">A</span> shows only its title and the "Connect through a jump
+              host" checkbox (unchecked) — the body stays hidden until it is enabled.
+            </div>
+            <div class="app" style="height: 520px">
+              <div class="app__body">
+                <nav class="activity-bar">
+                  <div class="activity-bar__top">
+                    <button
+                      class="activity-bar__item activity-bar__item--active"
+                      title="Connections"
+                    >
+                      <svg class="li"><use href="#i-network" /></svg>
+                      <span class="activity-bar__indicator"></span>
+                    </button>
+                    <button class="activity-bar__item" title="File Browser">
+                      <svg class="li"><use href="#i-folder-open" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="Workspaces">
+                      <svg class="li"><use href="#i-layout-grid" /></svg>
+                    </button>
+                  </div>
+                  <div class="activity-bar__bottom">
+                    <button class="activity-bar__item" title="Log Viewer">
+                      <svg class="li"><use href="#i-scroll-text" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="Settings">
+                      <svg class="li"><use href="#i-settings" /></svg>
+                    </button>
+                  </div>
+                </nav>
+
+                <aside class="sidebar">
+                  <div class="sidebar__header">
+                    <span class="sidebar__title">Connections</span>
+                  </div>
+                  <div class="sidebar__content">
+                    <div class="connection-tree__item">
+                      <svg class="li"><use href="#i-server" /></svg> bastion.example.com
+                    </div>
+                    <div class="connection-tree__item connection-tree__item--selected">
+                      <svg class="li"><use href="#i-server" /></svg> app-server-01
+                    </div>
+                  </div>
+                </aside>
+
+                <div class="terminal-view">
+                  <div class="tab-bar">
+                    <div class="tab tab--active">
+                      <svg class="li"><use href="#i-server" /></svg>
+                      <span class="tab__title">Edit: app-server-01</span>
+                      <button class="tab__close">
+                        <svg class="li"><use href="#i-x" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="form">
+                    <div class="form__group">
+                      <div class="form__group-title">Connection</div>
+                      <div class="field">
+                        <span class="field__label">Host</span>
+                        <span class="input">app-server.internal</span>
+                      </div>
+                      <div class="field">
+                        <span class="field__label">Port</span>
+                        <span class="input input--sm">22</span>
+                        <span class="field__label">Username</span>
+                        <span class="input">deploy</span>
+                      </div>
+                    </div>
+
+                    <div class="form__group">
+                      <div class="form__group-title">Authentication</div>
+                      <div class="field">
+                        <span class="field__label">Method</span>
+                        <span class="select"
+                          >SSH Key <svg class="li"><use href="#i-chevron-down" /></svg
+                        ></span>
+                      </div>
+                      <div class="field">
+                        <span class="field__label">Key</span>
+                        <span class="input">~/.ssh/id_ed25519</span>
+                        <span class="browse-btn">Browse</span>
+                      </div>
+                    </div>
+
+                    <!-- Jump Host category: disabled (only title + checkbox) -->
+                    <div class="category">
+                      <div class="category__title">
+                        <span class="callout">A</span>
+                        <svg class="li"><use href="#i-arrow-left-right" /></svg>
+                        Jump Host
+                      </div>
+                      <div class="checkrow" style="margin: 0">
+                        <span
+                          class="checkbox"
+                          style="background: none; border-color: var(--text-secondary)"
+                        ></span>
+                        Connect through a jump host
+                      </div>
+                    </div>
+
+                    <div class="category">
+                      <div class="category__title">
+                        <svg class="li"><use href="#i-settings" /></svg>
+                        Session
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="status-bar">
+                <div class="status-bar__section status-bar__section--left">
+                  <span class="status-bar__item">Editing connection</span>
+                </div>
+                <div class="status-bar__section status-bar__section--center"></div>
+                <div class="status-bar__section status-bar__section--right">
+                  <span class="status-bar__item">SSH</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">A</span> Jump Host category — flat
+                  <code>settings-panel__category</code> with the lucide
+                  <code>ArrowLeftRight</code> icon on its checkbox label, after the auth fields and
+                  before the SSH Agent / Session categories. Disabled: only the title + enable
+                  checkbox show.
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── State 2: saved-connection mode ─────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>2 · Enabled — saved connection reference</h2>
+            <div class="mockup-note">
+              Checkbox enabled <span class="callout">B</span> reveals the body. Source segmented
+              control <span class="callout">C</span> is set to "Saved connection"; the Connection
+              dropdown <span class="callout">D</span> lists SSH-type saved connections by full path.
+            </div>
+            <div class="category" style="max-width: 620px">
+              <div class="category__title">
+                <svg class="li"><use href="#i-arrow-left-right" /></svg>
+                Jump Host
+              </div>
+              <div class="category__body">
+                <div class="checkrow">
+                  <span class="callout">B</span>
+                  <span class="checkbox"
+                    ><svg class="li"><use href="#i-check" /></svg
+                  ></span>
+                  Connect through a jump host
+                </div>
+                <div class="field">
+                  <span class="field__label">Source</span>
+                  <span class="seg">
+                    <span class="callout" style="margin-right: 4px">C</span>
+                    <span class="seg__opt seg__opt--active">Saved connection</span>
+                    <span class="seg__opt">Inline configuration</span>
+                  </span>
+                </div>
+                <div class="field">
+                  <span class="field__label">Connection</span>
+                  <span class="select">
+                    <span
+                      ><span class="callout" style="margin-right: 6px">D</span>Work /
+                      bastion.example.com (SSH)</span
+                    >
+                    <svg class="li"><use href="#i-chevron-down" /></svg>
+                  </span>
+                </div>
+                <div class="field">
+                  <span class="field__label">Timeout (s)</span>
+                  <span class="input input--sm">20</span>
+                </div>
+                <button class="add-hop">
+                  <svg class="li"><use href="#i-plus" /></svg> Add another hop
+                </button>
+                <div class="path-line">
+                  <span class="path-line__label">Connection path</span>
+                  You
+                  <svg class="li"><use href="#i-arrow-right" /></svg>
+                  bastion.example.com
+                  <svg class="li"><use href="#i-arrow-right" /></svg>
+                  <span class="path-line__target">app-server.internal</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">B</span> "Connect through a jump host" enabled — accent
+                  checkbox.
+                </li>
+                <li>
+                  <span class="callout">C</span> Source segmented control: Saved connection / Inline
+                  configuration. "Saved connection" is disabled when there are no other SSH
+                  connections.
+                </li>
+                <li>
+                  <span class="callout">D</span> Connection dropdown — SSH-type saved connections
+                  only, shown as <code>folder / sub / name</code> (the edited connection excluded).
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── State 3: inline mode ───────────────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>3 · Expanded — inline gateway configuration</h2>
+            <div class="mockup-note">
+              Source toggled to "Inline configuration" <span class="callout">E</span> reveals direct
+              SSH fields <span class="callout">F</span> for a one-off gateway.
+            </div>
+            <div class="category" style="max-width: 620px">
+              <div class="category__title">
+                <svg class="li"><use href="#i-arrow-left-right" /></svg>
+                Jump Host
+              </div>
+              <div class="category__body">
+                <div class="checkrow">
+                  <span class="checkbox"
+                    ><svg class="li"><use href="#i-check" /></svg
+                  ></span>
+                  Connect through a jump host
+                </div>
+                <div class="field">
+                  <span class="field__label">Source</span>
+                  <span class="seg">
+                    <span class="seg__opt">Saved connection</span>
+                    <span class="seg__opt seg__opt--active">
+                      <span class="callout" style="margin-right: 4px">E</span>Inline configuration
+                    </span>
+                  </span>
+                </div>
+                <div
+                  style="
+                    border: 1px solid var(--border-secondary);
+                    border-radius: var(--radius-sm);
+                    padding: 10px;
+                    margin-top: 4px;
+                  "
+                >
+                  <span class="callout" style="float: right">F</span>
+                  <div class="field">
+                    <span class="field__label">Host</span>
+                    <span class="input">bastion.example.com</span>
+                    <span class="field__label">Port</span>
+                    <span class="input input--sm">22</span>
+                  </div>
+                  <div class="field">
+                    <span class="field__label">Username</span>
+                    <span class="input">admin</span>
+                  </div>
+                  <div class="field">
+                    <span class="field__label">Auth</span>
+                    <span class="select"
+                      >SSH Key <svg class="li"><use href="#i-chevron-down" /></svg
+                    ></span>
+                  </div>
+                  <div class="field" style="margin-bottom: 0">
+                    <span class="field__label">Key</span>
+                    <span class="input">~/.ssh/bastion_key</span>
+                    <span class="browse-btn">Browse</span>
+                  </div>
+                </div>
+                <div class="field" style="margin-top: 10px">
+                  <span class="field__label">Timeout (s)</span>
+                  <span class="input input--sm" style="color: var(--text-secondary)"
+                    >Default (20 s)</span
+                  >
+                </div>
+                <button class="add-hop" style="margin-top: 4px">
+                  <svg class="li"><use href="#i-plus" /></svg> Add another hop
+                </button>
+                <div class="path-line">
+                  <span class="path-line__label">Connection path</span>
+                  You
+                  <svg class="li"><use href="#i-arrow-right" /></svg>
+                  bastion.example.com
+                  <svg class="li"><use href="#i-arrow-right" /></svg>
+                  <span class="path-line__target">app-server.internal</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li><span class="callout">E</span> Source set to "Inline configuration".</li>
+                <li>
+                  <span class="callout">F</span> Inline SSH fields (host/port/username/auth/key) —
+                  no separate saved connection needed.
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── State 4: multi-hop + validation error ──────────────────────── -->
+          <section class="mockup-section">
+            <h2>4 · Multi-hop chain with connection path + validation error</h2>
+            <div class="mockup-note">
+              Two hop cards <span class="callout">G</span> (each with its own Remove control
+              <span class="callout">H</span>), the connection-path summary line
+              <span class="callout">I</span>, and an inline validation error
+              <span class="callout">J</span> (referenced gateway was deleted) that blocks Save.
+            </div>
+            <div class="category" style="max-width: 620px">
+              <div class="category__title">
+                <svg class="li"><use href="#i-arrow-left-right" /></svg>
+                Jump Host
+              </div>
+              <div class="category__body">
+                <div class="checkrow">
+                  <span class="checkbox"
+                    ><svg class="li"><use href="#i-check" /></svg
+                  ></span>
+                  Connect through a jump host
+                </div>
+
+                <div class="hop-card">
+                  <div class="hop-card__head">
+                    <span class="callout">G</span>
+                    <svg class="li"><use href="#i-server" /></svg>
+                    Hop 1 (outermost)
+                    <button class="hop-card__remove">
+                      <span class="callout">H</span><svg class="li"><use href="#i-trash" /></svg>
+                      Remove
+                    </button>
+                  </div>
+                  <div class="field">
+                    <span class="field__label">Source</span>
+                    <span class="seg">
+                      <span class="seg__opt seg__opt--active">Saved connection</span>
+                      <span class="seg__opt">Inline configuration</span>
+                    </span>
+                  </div>
+                  <div class="field" style="margin-bottom: 0">
+                    <span class="field__label">Connection</span>
+                    <span class="select"
+                      >Work / edge-gateway.example.com (SSH)
+                      <svg class="li"><use href="#i-chevron-down" /></svg
+                    ></span>
+                  </div>
+                </div>
+
+                <div class="hop-card">
+                  <div class="hop-card__head">
+                    <svg class="li"><use href="#i-server" /></svg>
+                    Hop 2 (innermost)
+                    <button class="hop-card__remove">
+                      <svg class="li"><use href="#i-trash" /></svg> Remove
+                    </button>
+                  </div>
+                  <div class="field">
+                    <span class="field__label">Source</span>
+                    <span class="seg">
+                      <span class="seg__opt seg__opt--active">Saved connection</span>
+                      <span class="seg__opt">Inline configuration</span>
+                    </span>
+                  </div>
+                  <div class="field" style="margin-bottom: 0">
+                    <span class="field__label">Connection</span>
+                    <span
+                      class="select"
+                      style="border-color: var(--color-error); color: var(--color-error)"
+                    >
+                      internal-bastion (not found)
+                      <svg class="li"><use href="#i-chevron-down" /></svg>
+                    </span>
+                  </div>
+                </div>
+
+                <button class="add-hop">
+                  <svg class="li"><use href="#i-plus" /></svg> Add another hop
+                </button>
+
+                <div class="path-line">
+                  <span class="callout" style="margin-right: 4px">I</span>
+                  <span class="path-line__label">Connection path</span>
+                  You
+                  <svg class="li"><use href="#i-arrow-right" /></svg>
+                  edge-gateway
+                  <svg class="li"><use href="#i-arrow-right" /></svg>
+                  internal-bastion
+                  <svg class="li"><use href="#i-arrow-right" /></svg>
+                  <span class="path-line__target">app-server.internal</span>
+                </div>
+
+                <div class="validation-error">
+                  <span class="callout">J</span>
+                  <svg class="li"><use href="#i-circle-alert" /></svg>
+                  Hop 2: referenced connection not found (it may have been deleted). Pick an
+                  existing SSH connection or switch to inline configuration.
+                </div>
+
+                <div class="menu__footer" style="border: none; padding: 12px 0 0">
+                  <button class="btn btn--primary" style="opacity: 0.5">Save</button>
+                  <button class="btn">Cancel</button>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li><span class="callout">G</span> Hop card — numbered outermost → innermost.</li>
+                <li><span class="callout">H</span> Per-hop Remove control (error color).</li>
+                <li>
+                  <span class="callout">I</span> Connection-path summary —
+                  <code>You → … → target</code>, hops joined by the directional
+                  <code>ArrowRight</code> icon (target in accent).
+                </li>
+                <li>
+                  <span class="callout">J</span> Inline validation error (error color) —
+                  deleted/missing reference blocks Save (button disabled).
+                </li>
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <!-- Mockup 2: indicators & context menu -->
+        <div class="mockup-section">
+          <h3>Mockup — indicators &amp; context menu</h3>
+
+          <!-- ── A: sidebar hop badges + tooltip ────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>A · Connection tree — hop badges &amp; tooltip</h2>
+            <div class="mockup-note">
+              Connections routed through a gateway show a hop badge
+              <span class="callout">A</span> (lucide <code>ArrowLeftRight</code>, never a unicode
+              glyph). Multi-hop adds a small hop count <span class="callout">B</span>. Hover
+              surfaces a tooltip with the full path <span class="callout">C</span>.
+            </div>
+            <div
+              class="sidebar"
+              style="height: 300px; border-radius: 8px; border: 1px solid var(--border-secondary)"
+            >
+              <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+              <div class="sidebar__content">
+                <div class="connection-tree__item">
+                  <svg class="li"><use href="#i-chevron-down" /></svg>
+                  <svg class="li"><use href="#i-folder-open" /></svg> Work
+                </div>
+                <div class="connection-tree__item" style="padding-left: 22px">
+                  <svg class="li"><use href="#i-server" /></svg> bastion.example.com
+                </div>
+                <div
+                  class="connection-tree__item connection-tree__item--selected"
+                  style="padding-left: 22px"
+                >
+                  <svg class="li"><use href="#i-server" /></svg> app-server-01
+                  <span class="jump-badge"
+                    ><svg class="li"><use href="#i-arrow-left-right" /></svg
+                  ></span>
+                  <span class="callout" style="margin-left: 2px">A</span>
+                  <span class="tree-via">via bastion</span>
+                </div>
+                <div class="connection-tree__item" style="padding-left: 22px">
+                  <svg class="li"><use href="#i-server" /></svg> app-server-02
+                  <span class="jump-badge"
+                    ><svg class="li"><use href="#i-arrow-left-right" /></svg
+                  ></span>
+                  <span class="tree-via">via bastion</span>
+                </div>
+                <div class="connection-tree__item" style="padding-left: 22px">
+                  <svg class="li"><use href="#i-server" /></svg> db-server
+                  <span class="jump-badge">
+                    <svg class="li"><use href="#i-arrow-left-right" /></svg>
+                    <span class="hop-count">2</span>
+                  </span>
+                  <span class="callout" style="margin-left: 2px">B</span>
+                  <span class="tree-via">2 hops</span>
+                </div>
+                <div class="connection-tree__item">
+                  <svg class="li"><use href="#i-chevron-right" /></svg>
+                  <svg class="li"><use href="#i-folder-open" /></svg> Personal
+                </div>
+              </div>
+            </div>
+            <div class="tooltip">
+              <span class="callout">C</span> Via: edge-gateway → internal-bastion → db-server
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">A</span> Hop badge — lucide <code>ArrowLeftRight</code> in
+                  accent color next to the connection.
+                </li>
+                <li><span class="callout">B</span> Hop-count label for multi-hop connections.</li>
+                <li><span class="callout">C</span> Hover tooltip showing the full hop path.</li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── B: status bar hop chain ────────────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>B · Status bar — active hop chain</h2>
+            <div class="mockup-note">
+              When the active terminal uses a jump host, the status bar shows the chain
+              <span class="callout">D</span>: <code>SSH: user@target via gateway</code>.
+            </div>
+            <div class="app" style="height: auto">
+              <div class="status-bar">
+                <div class="status-bar__section status-bar__section--left">
+                  <span class="status-bar__item">
+                    <svg class="li"><use href="#i-route" /></svg>
+                    <span class="callout" style="margin-right: 4px">D</span>
+                    SSH: deploy@app-server via bastion.example.com
+                  </span>
+                </div>
+                <div class="status-bar__section status-bar__section--center"></div>
+                <div class="status-bar__section status-bar__section--right">
+                  <span class="status-bar__item">80x24</span>
+                  <span class="status-bar__item">UTF-8</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">D</span> Hop-chain display — lucide <code>Route</code> icon
+                  + <code>user@target via gateway</code>.
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── C: context menu ────────────────────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>C · Connection context menu (jump-host connection)</h2>
+            <div class="mockup-note">
+              Right-clicking a jump-host connection adds two actions <span class="callout">E</span>:
+              open a terminal directly on the gateway, and show the full connection path.
+            </div>
+            <div class="menu" style="width: 260px">
+              <div class="menu__row">
+                <svg class="li"><use href="#i-terminal" /></svg> Connect
+              </div>
+              <div class="menu__row">
+                <svg class="li"><use href="#i-pencil" /></svg> Edit Connection…
+              </div>
+              <div class="menu__sep"></div>
+              <div class="menu__row">
+                <span class="callout">E</span>
+                <svg class="li"><use href="#i-server" /></svg> Open Jump Host Terminal
+              </div>
+              <div class="menu__row">
+                <svg class="li"><use href="#i-route" /></svg> Show Connection Path
+              </div>
+              <div class="menu__sep"></div>
+              <div class="menu__row">
+                <svg class="li"><use href="#i-copy" /></svg> Duplicate
+              </div>
+              <div class="menu__row">
+                <svg class="li"><use href="#i-trash" /></svg> Delete
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">E</span> Jump-host-only actions:
+                  <code>Open Jump Host Terminal</code> (debug the gateway) and
+                  <code>Show Connection Path</code> (per-hop status popover).
+                </li>
+              </ul>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <p>
+          Detailed flows, the per-hop authentication path, session pooling, tunnel compatibility,
+          the jump host state machine, single- and multi-hop sequences, and the on-save validation
+          flow are all diagrammed in <a href="#behavior">States &amp; Sequences</a>. Key rules:
+        </p>
+
+        <h3>Relationship with Remote Agent</h3>
+        <p>
+          Jump host (simple forwarding) and remote agent (full capabilities) serve different needs.
+          The UI should make the distinction clear:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>Jump Host Only</th>
+                <th>Remote Agent</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Shell access to target</td>
+                <td>Yes</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td>File browsing (SFTP)</td>
+                <td>Yes (via target)</td>
+                <td>Yes (via agent)</td>
+              </tr>
+              <tr>
+                <td>System monitoring</td>
+                <td>No</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td>Docker sessions on target</td>
+                <td>No</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td>Sub-sessions from target</td>
+                <td>No</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td>Agent deployment required</td>
+                <td>No</td>
+                <td>Yes</td>
+              </tr>
+              <tr>
+                <td>Connection overhead</td>
+                <td>Minimal</td>
+                <td>Higher (agent process)</td>
+              </tr>
+              <tr>
+                <td>Works with restricted hosts</td>
+                <td>Yes (no install)</td>
+                <td>Requires write access</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          When a user configures both a jump host AND agent deployment, the agent is deployed
+          through the jump host tunnel — the jump host provides the transport, and the agent
+          provides the features.
+        </p>
+
+        <h3>Edge Cases &amp; Error Handling</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Jump host unreachable</td>
+                <td>
+                  Show error: "Cannot reach jump host <code>bastion.example.com:22</code>. Check
+                  network connectivity."
+                </td>
+              </tr>
+              <tr>
+                <td>Jump host auth fails</td>
+                <td>
+                  Show error specifying which hop failed: "Authentication failed on hop 1
+                  (bastion.example.com)"
+                </td>
+              </tr>
+              <tr>
+                <td>Target unreachable from jump host</td>
+                <td>
+                  Show error: "Jump host connected, but target <code>app-server:22</code> is
+                  unreachable from <code>bastion.example.com</code>"
+                </td>
+              </tr>
+              <tr>
+                <td>Target auth fails (after successful hop)</td>
+                <td>
+                  Show error: "Connected via jump host. Authentication failed on target
+                  <code>app-server</code>"
+                </td>
+              </tr>
+              <tr>
+                <td>Jump host session drops</td>
+                <td>
+                  All connections through that gateway disconnect. Show reconnection dialog per
+                  connection.
+                </td>
+              </tr>
+              <tr>
+                <td>Referenced saved connection deleted</td>
+                <td>
+                  Show warning when deleting: "This connection is used as a jump host by N other
+                  connections." Block or confirm.
+                </td>
+              </tr>
+              <tr>
+                <td>Referenced saved connection modified</td>
+                <td>
+                  Changes to the gateway connection automatically apply to all connections using it
+                  as a jump host.
+                </td>
+              </tr>
+              <tr>
+                <td>Circular reference (A jumps through B, B through A)</td>
+                <td>
+                  Validate on save — reject circular jump host chains with clear error message.
+                </td>
+              </tr>
+              <tr>
+                <td>Jump host chain too deep (&gt;5 hops)</td>
+                <td>
+                  Warn on save: "Chain has N hops. Deep chains may cause latency issues." Allow but
+                  warn.
+                </td>
+              </tr>
+              <tr>
+                <td>Inline gateway password not saved</td>
+                <td>Prompt at connect time. Optionally save to credential store.</td>
+              </tr>
+              <tr>
+                <td>Connection timeout through hops</td>
+                <td>Per-hop timeout. Show which hop timed out.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Reconnection Behavior</h3>
+        <p>When a jump host connection drops mid-session:</p>
+        <ol>
+          <li>All terminal sessions through that gateway are disconnected</li>
+          <li>
+            Each terminal shows a reconnection banner: "Connection lost (jump host disconnected).
+            [Reconnect]"
+          </li>
+          <li>Clicking Reconnect re-establishes the full hop chain</li>
+          <li>The session pool creates a new gateway session on reconnection</li>
+          <li>
+            If multiple terminals reconnect simultaneously, the pool ensures only one gateway
+            session is created
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Connection Workflow</span>
+          <pre class="mermaid">
+flowchart TD
+    A[User clicks Connect<br/>on jump-host-enabled connection] --> B{Jump host<br/>configured?}
+    B -->|No| C[Direct SSH connection<br/>to target host]
+    B -->|Yes| D[Resolve jump host<br/>configuration]
+    D --> E{Source type?}
+    E -->|Saved connection| F[Load saved SSH<br/>connection config]
+    E -->|Inline| G[Use inline<br/>SSH config]
+    F --> H{Multi-hop?}
+    G --> H
+    H -->|Single hop| I[Connect to jump host]
+    H -->|Multiple hops| J[Connect to first hop]
+    J --> K[Forward through<br/>each intermediate hop]
+    K --> I
+    I --> L[Open direct-tcpip channel<br/>to target host:port]
+    L --> M[Run SSH handshake<br/>through forwarded channel]
+    M --> N{Auth on target?}
+    N -->|Success| O[Open shell channel<br/>on target session]
+    N -->|Failure| P[Show auth error<br/>for target hop]
+    O --> Q[Terminal session active]
+
+    style D fill:#2d6a4f,stroke:#333,color:#fff
+    style L fill:#2d6a4f,stroke:#333,color:#fff
+          </pre>
+        </div>
+
+        <h3>Authentication Flow Per Hop</h3>
+        <p>
+          Each hop in the chain may use a different authentication method. The credential store
+          resolves credentials independently per hop:
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption">Authentication Flow Per Hop</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant UI as Connection Editor
+    participant CM as ConnectionManager
+    participant CS as CredentialStore
+    participant SSH1 as Jump Host SSH
+    participant SSH2 as Target SSH
+
+    User->>UI: Click Connect
+    UI->>CM: connect(connectionId)
+    CM->>CM: Resolve jump host chain
+
+    Note over CM,CS: Hop 1: Jump Host
+    CM->>CS: getCredential(jumpHostId)
+    alt Password saved
+        CS-->>CM: Return saved password
+    else Password not saved
+        CS-->>CM: No password
+        CM-->>User: Prompt for jump host password
+        User-->>CM: Enter password
+    end
+    CM->>SSH1: Connect &amp; authenticate to jump host
+
+    Note over CM,SSH2: Hop 2: Target Host
+    CM->>SSH1: channel_open_direct_tcpip(targetHost, targetPort)
+    SSH1-->>CM: Forwarded channel
+    CM->>CS: getCredential(targetId)
+    alt Password saved
+        CS-->>CM: Return saved password
+    else Password not saved
+        CS-->>CM: No password
+        CM-->>User: Prompt for target password
+        User-->>CM: Enter password
+    end
+    CM->>SSH2: Authenticate over forwarded channel
+
+    SSH2-->>CM: Session ready
+    CM-->>User: Terminal connected
+          </pre>
+        </div>
+
+        <h3>Session Pooling</h3>
+        <p>
+          When multiple connections share the same jump host, the gateway SSH session is pooled
+          (reused) to avoid redundant connections. This extends the existing
+          <code>SshSessionPool</code> pattern used by SSH tunnels:
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption">Session Pooling</span>
+          <pre class="mermaid">
+flowchart LR
+    subgraph "User's Connections"
+        C1[app-server-01<br/>via bastion]
+        C2[app-server-02<br/>via bastion]
+        C3[db-server<br/>via bastion]
+    end
+
+    subgraph "Session Pool"
+        P1[bastion session<br/>ref_count: 3]
+    end
+
+    subgraph "Targets"
+        T1[app-server-01:22]
+        T2[app-server-02:22]
+        T3[db-server:5432]
+    end
+
+    C1 --> P1
+    C2 --> P1
+    C3 --> P1
+    P1 -->|direct-tcpip| T1
+    P1 -->|direct-tcpip| T2
+    P1 -->|direct-tcpip| T3
+
+    style P1 fill:#e87d0d,stroke:#333,color:#fff
+          </pre>
+        </div>
+
+        <h3>Tunnel Compatibility</h3>
+        <p>
+          SSH tunnels (local forward, remote forward, dynamic/SOCKS) should work through jump hosts.
+          The tunnel's SSH session is established over the forwarded channel, just like a terminal
+          session:
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption">Tunnel Compatibility</span>
+          <pre class="mermaid">
+flowchart TD
+    A[User creates tunnel<br/>through jump-host connection] --> B[Resolve jump host chain]
+    B --> C[Get or create pooled<br/>jump host session]
+    C --> D[Open direct-tcpip channel<br/>to target host]
+    D --> E[Establish SSH session<br/>on target]
+    E --> F{Tunnel type?}
+    F -->|Local forward| G[Bind local port<br/>forward via target SSH]
+    F -->|Remote forward| H[Request remote forward<br/>on target SSH]
+    F -->|Dynamic/SOCKS| I[Bind local SOCKS port<br/>forward via target SSH]
+          </pre>
+        </div>
+
+        <h3>Jump Host Connection State Machine</h3>
+        <div class="diagram">
+          <span class="diagram__caption">Jump Host Connection State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Idle: Connection created
+
+    Idle --> ResolvingChain: User clicks Connect
+    ResolvingChain --> ConnectingHop: Chain resolved
+
+    state "Connecting Through Hops" as ConnectingHop {
+        [*] --> AuthenticatingHop
+        AuthenticatingHop --> ForwardingChannel: Hop authenticated
+        ForwardingChannel --> AuthenticatingHop: More hops remaining
+        ForwardingChannel --> ConnectingTarget: Last hop reached
+        AuthenticatingHop --> HopFailed: Auth/network error
+    }
+
+    ConnectingTarget --> AuthenticatingTarget: Channel forwarded
+    AuthenticatingTarget --> Connected: Target authenticated
+    AuthenticatingTarget --> TargetAuthFailed: Auth failed
+
+    Connected --> Disconnected: Connection dropped
+    Connected --> Idle: User disconnects
+
+    Disconnected --> ResolvingChain: Reconnect
+    Disconnected --> Idle: User cancels
+
+    HopFailed --> Idle: User cancels
+    HopFailed --> ResolvingChain: Retry
+    TargetAuthFailed --> Idle: User cancels
+    TargetAuthFailed --> ConnectingTarget: Retry with new credentials
+          </pre>
+        </div>
+
+        <h3>Connection Establishment Sequence (Single Hop)</h3>
+        <div class="diagram">
+          <span class="diagram__caption">Connection Establishment Sequence (Single Hop)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant FE as Frontend
+    participant CM as ConnectionManager
+    participant Pool as SshSessionPool
+    participant JH as Jump Host (bastion)
+    participant TGT as Target (app-server)
+
+    User->>FE: Connect to app-server
+    FE->>CM: connect("app-server-id")
+    CM->>CM: Load connection config
+    CM->>CM: Detect jump host configured
+
+    Note over CM,JH: Phase 1: Gateway Connection
+    CM->>Pool: get_or_create("bastion-id", bastionConfig)
+    alt Session exists in pool
+        Pool-->>CM: Existing session (ref_count++)
+    else New connection needed
+        Pool->>JH: TCP connect + SSH handshake
+        JH-->>Pool: Authenticated session
+        Pool-->>CM: New session (ref_count=1)
+    end
+
+    Note over CM,TGT: Phase 2: Channel Forwarding
+    CM->>JH: session.channel_open_direct_tcpip("app-server", 22)
+    JH-->>CM: Forwarded TCP channel
+
+    Note over CM,TGT: Phase 3: Target Authentication
+    CM->>TGT: SSH handshake over forwarded channel
+    TGT-->>CM: Handshake complete
+    CM->>TGT: Authenticate (key/password/agent)
+    TGT-->>CM: Auth success
+
+    Note over CM,TGT: Phase 4: Shell Session
+    CM->>TGT: Open shell channel + request PTY
+    TGT-->>CM: Shell ready
+    CM-->>FE: Session connected
+    FE-->>User: Terminal active
+          </pre>
+        </div>
+
+        <h3>Multi-Hop Connection Sequence</h3>
+        <div class="diagram">
+          <span class="diagram__caption">Multi-Hop Connection Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant CM as ConnectionManager
+    participant H1 as Hop 1 (edge-gw)
+    participant H2 as Hop 2 (bastion)
+    participant TGT as Target (db-server)
+
+    Note over CM,H1: Hop 1: Connect to edge gateway
+    CM->>H1: TCP connect + SSH handshake + auth
+    H1-->>CM: Authenticated session
+
+    Note over CM,H2: Hop 2: Forward to bastion through edge
+    CM->>H1: channel_open_direct_tcpip("bastion", 22)
+    H1-->>CM: Forwarded channel to bastion
+    CM->>H2: SSH handshake + auth over channel
+    H2-->>CM: Authenticated session on bastion
+
+    Note over CM,TGT: Final: Forward to target through bastion
+    CM->>H2: channel_open_direct_tcpip("db-server", 22)
+    H2-->>CM: Forwarded channel to target
+    CM->>TGT: SSH handshake + auth over channel
+    TGT-->>CM: Authenticated session on target
+
+    Note over CM,TGT: Connection path established:<br/>You → edge-gw → bastion → db-server
+          </pre>
+        </div>
+
+        <h3>Session Pool Lifecycle</h3>
+        <div class="diagram">
+          <span class="diagram__caption">Session Pool Lifecycle</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Empty: Pool created
+
+    Empty --> HasSessions: First connection<br/>uses jump host
+
+    state HasSessions {
+        [*] --> Active
+        Active --> Active: New connection<br/>ref_count++
+        Active --> Active: Connection closed<br/>ref_count--
+        Active --> Draining: ref_count == 0
+        Draining --> Active: New connection<br/>before cleanup
+    }
+
+    HasSessions --> Empty: All sessions<br/>released
+    Active --> Reconnecting: Gateway drops
+    Reconnecting --> Active: Reconnect success
+    Reconnecting --> Empty: Reconnect failed<br/>+ all refs released
+          </pre>
+        </div>
+
+        <h3>Validation Flow (On Save)</h3>
+        <div class="diagram">
+          <span class="diagram__caption">Validation Flow (On Save)</span>
+          <pre class="mermaid">
+flowchart TD
+    A[User clicks Save<br/>on connection with jump host] --> B{Jump host<br/>enabled?}
+    B -->|No| C[Save normally]
+    B -->|Yes| D{Source type?}
+    D -->|Saved connection| E{Referenced connection<br/>exists?}
+    D -->|Inline| F{Inline config<br/>valid?}
+    E -->|Yes| G{Circular<br/>reference?}
+    E -->|No| H[Error: Referenced<br/>connection not found]
+    G -->|No| I{Chain depth<br/>&gt; 5?}
+    G -->|Yes| J[Error: Circular<br/>jump host chain detected]
+    I -->|No| C
+    I -->|Yes| K[Warning: Deep chain<br/>may cause latency]
+    K --> C
+    F -->|Valid| G
+    F -->|Invalid| L[Error: Missing required<br/>jump host fields]
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <blockquote>
+          <p>
+            Based on the current project architecture as of the time of concept creation. The
+            codebase may evolve before implementation.
+          </p>
+        </blockquote>
+
+        <h3>Backend (Rust)</h3>
+
+        <h4>Core Config Extension (<code>core/src/config/mod.rs</code>)</h4>
+        <p>
+          <code>SshConfig</code> (currently at <code>core/src/config/mod.rs:230</code>) has
+          <strong>no</strong> jump/proxy/bastion field today — its fields are <code>host</code>,
+          <code>port</code>, <code>username</code>, <code>auth_method</code>, <code>password</code>,
+          <code>key_path</code>, <code>shell</code>, <code>cols</code>, <code>rows</code>,
+          <code>env</code>, <code>enable_x11_forwarding</code>, <code>enable_monitoring</code>,
+          <code>enable_file_browser</code>, <code>save_password</code>,
+          <code>connect_timeout_secs</code>. Add jump host configuration:
+        </p>
+        <pre><code>/// Configuration for a single jump host hop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JumpHostConfig {
+    /// Reference to a saved SSH connection ID (mutually exclusive with inline config).
+    pub connection_id: Option&lt;String&gt;,
+    /// Inline SSH configuration (used when connection_id is None).
+    pub host: Option&lt;String&gt;,
+    pub port: Option&lt;u16&gt;,
+    pub username: Option&lt;String&gt;,
+    pub auth_method: Option&lt;String&gt;,
+    pub password: Option&lt;String&gt;,
+    pub key_path: Option&lt;String&gt;,
+    pub save_password: Option&lt;bool&gt;,
+}
+
+// Add to SshConfig:
+pub struct SshConfig {
+    // ... existing fields ...
+    /// Optional jump host chain (ordered outermost to innermost), OpenSSH `-J` / `ProxyJump` style.
+    #[serde(default, alias = "jumpHosts", skip_serializing_if = "Vec::is_empty")]
+    pub proxy_jump: Vec&lt;JumpHostConfig&gt;,
+}</code></pre>
+        <blockquote>
+          <p>
+            <strong>Naming decision (#872):</strong> The field is named
+            <strong><code>proxy_jump</code></strong> (serialized <code>proxyJump</code>) to match
+            OpenSSH's <code>ProxyJump</code> / <code>-J</code> directive, which is the term most SSH
+            users already know. A serde <code>alias = "jumpHosts"</code> keeps the UI-facing label
+            "Jump Host" working and tolerates the earlier draft name. The chain is ordered
+            outermost→innermost (<code>-J edge,bastion</code> ⇒ <code>[edge, bastion]</code>),
+            exactly like <code>ssh -J</code>.
+          </p>
+        </blockquote>
+        <p>
+          The <code>expand()</code> method on
+          <code>SshConfig</code> (<code>core/src/config/mod.rs:388</code>) currently expands
+          <code>${VAR}</code>/<code>~</code> in <code>host</code>, <code>username</code>,
+          <code>key_path</code>, and <code>password</code>. It must also expand those placeholders
+          in each inline <code>JumpHostConfig</code> hop's <code>host</code>, <code>username</code>,
+          <code>key_path</code>, and <code>password</code>.
+        </p>
+
+        <h4>SSH Backend Modification (<code>core/src/backends/ssh/</code>)</h4>
+        <blockquote>
+          <p>
+            <strong>Stack reality:</strong> termiHub's SSH stack is
+            <strong><code>russh 0.61</code></strong> (async, pure-Rust), <em>not</em> the
+            <code>ssh2</code>/libssh2 bindings. <code>SshSession</code> is
+            <code>russh::client::Handle&lt;TermiHubHandler&gt;</code>
+            (<code>core/src/backends/ssh/handler.rs</code>). This makes session-over-channel a
+            <strong>solved, already-used pattern</strong> rather than a risk — see below.
+          </p>
+        </blockquote>
+        <p>
+          The connect path already in the tree is <code>do_connect_and_authenticate()</code>
+          (<code>core/src/backends/ssh/auth.rs:76</code>), which:
+        </p>
+        <ol>
+          <li>opens a <code>tokio::net::TcpStream::connect(addr)</code> (auth.rs:83),</li>
+          <li>
+            hands it to
+            <code>russh::client::connect_stream(russh_config, tokio_tcp, handler)</code>
+            (auth.rs:113), then
+          </li>
+          <li>
+            calls <code>authenticate(&amp;mut session, config)</code> (auth.rs:117) —
+            <code>agent</code>, <code>key</code> (with legacy-PEM-EC fallback), or
+            <code>password</code>.
+          </li>
+        </ol>
+        <p>
+          The <strong>only</strong> difference for a jump hop is <em>what stream</em> step 2 runs
+          over. russh's <code>connect_stream</code> accepts any
+          <code>AsyncRead + AsyncWrite + Unpin</code> — and a forwarded channel already exposes
+          exactly that via <code>channel.into_stream()</code>, the same call SFTP, X11, and every
+          tunnel forwarder already use (<code>auth.rs:113</code>, <code>files/sftp.rs:43</code>,
+          <code>tunnel/local_forward.rs:150</code>, <code>tunnel/dynamic_forward.rs:186</code>,
+          <code>tunnel/remote_forward.rs:122</code>).
+        </p>
+        <p>
+          Refactor <code>do_connect_and_authenticate</code> so the transport is injectable, then add
+          a channel variant — no new crate, no custom <code>Read+Write</code> adapter:
+        </p>
+        <pre><code>/// Establish + authenticate a russh session over an existing forwarded channel
+/// (opened with `channel_open_direct_tcpip` on the previous hop).
+pub async fn connect_and_authenticate_over_channel(
+    config: &amp;SshConfig,
+    channel: russh::Channel&lt;russh::client::Msg&gt;,
+) -&gt; Result&lt;SshSession, SessionError&gt; {
+    let russh_config = build_client_config(config);
+    let handler = TermiHubHandler::new(/* host key policy */);
+    // channel.into_stream(): AsyncRead + AsyncWrite + Unpin — exactly what connect_stream wants.
+    let mut session =
+        russh::client::connect_stream(russh_config, channel.into_stream(), handler).await?;
+    authenticate(&amp;mut session, config).await?;
+    Ok(session)
+}</code></pre>
+        <p>
+          Add a new module <code>core/src/backends/ssh/jump_host.rs</code> that walks the chain:
+        </p>
+        <pre><code>/// Establish an SSH session through a chain of jump hosts.
+/// Returns the authenticated russh session on the final target host.
+pub async fn connect_through_jump_hosts(
+    hops: &amp;[ResolvedJumpHost], // ordered outermost → innermost
+    target: &amp;SshConfig,
+) -&gt; Result&lt;SshSession, SessionError&gt; {
+    // 1. First hop: ordinary TCP connect + auth (reuse do_connect_and_authenticate).
+    let mut session = do_connect_and_authenticate(&amp;hops[0].config).await?;
+
+    // 2. Each subsequent hop: open a direct-tcpip channel on the *current* session to the
+    //    next hop's host:port, then handshake/auth the next session over that channel.
+    for next in &amp;hops[1..] {
+        let channel = session
+            .channel_open_direct_tcpip(&amp;next.config.host, next.config.port as u32, "localhost", 0)
+            .await?;
+        session = connect_and_authenticate_over_channel(&amp;next.config, channel).await?;
+    }
+
+    // 3. Final hop → target: direct-tcpip to the target, then auth the target session over it.
+    let channel = session
+        .channel_open_direct_tcpip(&amp;target.host, target.port as u32, "localhost", 0)
+        .await?;
+    connect_and_authenticate_over_channel(target, channel).await
+}</code></pre>
+        <p>
+          <code>channel_open_direct_tcpip</code> is the <strong>identical primitive</strong> the
+          tunnel forwarders already call (<code>tunnel/local_forward.rs:140</code>,
+          <code>tunnel/dynamic_forward.rs:168</code>), so the building block is proven in production
+          code — this feature reuses it for the terminal connect path instead of duplicating it.
+        </p>
+
+        <h4>Session Pool Extension (<code>src-tauri/src/tunnel/session_pool.rs</code>)</h4>
+        <p>
+          The existing <code>SshSessionPool</code> already supports reference-counted session
+          sharing. It needs to be extended:
+        </p>
+        <ol>
+          <li>
+            <strong>Shared between tunnels and terminal connections</strong>: Currently only used by
+            the tunnel manager. Make it accessible from the terminal connection path too.
+          </li>
+          <li>
+            <strong>Jump host session tracking</strong>: Pool entries keyed by connection ID. When a
+            saved connection is used as a jump host, its session can be shared across all consumers.
+          </li>
+          <li>
+            <strong>Intermediate hop sessions</strong>: For multi-hop chains, intermediate sessions
+            also need pooling.
+          </li>
+        </ol>
+        <pre><code>/// Extended pool entry to track jump host intermediates.
+/// (`SshSession` = `Arc&lt;russh::client::Handle&lt;TermiHubHandler&gt;&gt;`, the same handle type the
+/// tunnel forwarders already pool — russh handles are cheaply cloneable and internally synced.)
+struct PooledSession {
+    session: SshSession,
+    ref_count: usize,
+    /// Sessions for intermediate hops (if this is a multi-hop chain).
+    intermediate_sessions: Vec&lt;SshSession&gt;,
+}</code></pre>
+
+        <h4>Connection Manager Changes (<code>src-tauri/src/connection/</code>)</h4>
+        <ul>
+          <li>
+            <strong>Validation</strong>: Add circular reference detection when saving a connection
+            with jump host references
+          </li>
+          <li>
+            <strong>Deletion protection</strong>: When deleting a saved connection, check if other
+            connections reference it as a jump host. Warn user and optionally cascade-update or
+            block deletion.
+          </li>
+          <li>
+            <strong>Resolution</strong>: New method
+            <code>resolve_jump_host_chain(connection_id) -&gt; Vec&lt;ResolvedJumpHost&gt;</code>
+            that follows the chain of connection references, loading inline or saved configs for
+            each hop.
+          </li>
+        </ul>
+
+        <h4>New and Modified Files</h4>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>core/src/config/mod.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — Add <code>JumpHostConfig</code> struct +
+                  <code>proxy_jump</code> to <code>SshConfig</code>; expand inline hops
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ssh/jump_host.rs</code></td>
+                <td>
+                  <strong>New</strong> — <code>connect_through_jump_hosts</code> (russh chain over
+                  <code>channel_open_direct_tcpip</code>)
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ssh/mod.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — Use jump host logic when <code>proxy_jump</code> is
+                  non-empty
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ssh/auth.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — Factor transport out of
+                  <code>do_connect_and_authenticate</code>; add
+                  <code>connect_and_authenticate_over_channel</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/tunnel/session_pool.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — Extend for shared use, intermediate session tracking
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/connection/manager.rs</code></td>
+                <td><strong>Modify</strong> — Add chain resolution, deletion protection</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/connection/config.rs</code></td>
+                <td><strong>Modify</strong> — Validate jump host config on save</td>
+              </tr>
+              <tr>
+                <td><code>core/tests/ssh_advanced.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — Convert <code>SSH-JUMP-01</code> to drive
+                  <code>connect_through_jump_hosts</code> end-to-end (see below)
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Frontend (React/TypeScript)</h3>
+
+        <h4>Connection Editor Changes</h4>
+        <p>
+          The SSH connection settings carry a single <code>proxyJump</code> array of hop configs —
+          there is <strong>no</strong> separate <code>jumpHostEnabled</code> flag and
+          <strong>no</strong> <code>source</code> discriminator field. Both are derived state:
+        </p>
+        <ul>
+          <li>
+            <strong>Enabled</strong> ⇔ the <code>proxyJump</code> array is non-empty. Ticking
+            "Connect through a jump host" seeds one default inline hop; unticking clears the array
+            (emits <code>undefined</code>).
+          </li>
+          <li>
+            <strong>Mode</strong> ⇔ a hop is "saved" iff it carries a <code>connectionId</code>;
+            otherwise it is "inline". Switching the source toggle sets/clears
+            <code>connectionId</code> (and clears stale inline
+            <code>host</code>/<code>username</code>).
+          </li>
+        </ul>
+        <pre><code>// In src/types/connection.ts — one entry per hop, ordered outermost → innermost.
+interface JumpHostConfig {
+  /** Reference to a saved SSH connection; present ⇒ "saved" mode, absent ⇒ "inline". */
+  connectionId?: string;
+  host: string;
+  port: number;
+  username: string;
+  /** "key" | "password" | "agent". */
+  authMethod: string;
+  password?: string;
+  keyPath?: string;
+  /** Per-hop connect/handshake timeout (s); unset ⇒ default SSH connect timeout (#951). */
+  connectTimeoutSecs?: number;
+}
+
+// SSH connection settings (no `jumpHostEnabled`): the chain lives in `proxyJump`.
+interface SshConnectionConfig {
+  // ... existing fields ...
+  /** OpenSSH `-J` / ProxyJump chain; empty/absent ⇒ direct connection. */
+  proxyJump?: JumpHostConfig[];
+}</code></pre>
+        <blockquote>
+          <p>
+            The Rust model serializes the chain as <code>proxyJump</code> with a serde
+            <code>alias = "jumpHosts"</code>; the frontend tolerates both keys (<code
+              >getJumpHosts</code
+            >
+            in <code>src/utils/jumpHost.ts</code>).
+          </p>
+        </blockquote>
+
+        <h4>New Components</h4>
+        <pre><code>src/components/ConnectionEditor/
+  JumpHostSection.tsx        # Jump host editor category (enable checkbox, hops, path, validation)
+  JumpHostEntry.tsx          # Single hop entry (source toggle + saved dropdown or inline fields)
+  JumpHostPathDisplay.tsx    # Visual "You → hop1 → hop2 → target" display
+src/utils/
+  jumpHost.ts                # Chain extraction + display helpers (badge/status/path/gateway/deps)
+  validateProxyJump.ts       # Save-time validation (inline fields, missing/non-SSH refs, cycles, depth)</code></pre>
+        <p>
+          <code>JumpHostSection.tsx</code> follows the flat <code>settings-panel__category</code>
+          pattern used by the other editor categories (General, SSH Agent, Session). Each
+          <code>JumpHostEntry</code> renders the source segmented control and then either a
+          saved-connection dropdown or the inline SSH fields, plus the per-hop connect timeout.
+        </p>
+
+        <h4>Sidebar Visual Indicator</h4>
+        <p>
+          The connection tree rendering in
+          <code>src/components/Sidebar/ConnectionList.tsx</code> shows a hop badge (lucide
+          <code>ArrowLeftRight</code>) on connections whose config has a non-empty
+          <code>proxyJump</code> chain, using the <code>hasJumpHost</code> /
+          <code>getJumpHosts</code> / <code>jumpHostTooltip</code> helpers from
+          <code>src/utils/jumpHost.ts</code>. Multi-hop connections add a small hop-count label:
+        </p>
+        <pre><code>// In connection tree item rendering (ConnectionList.tsx)
+{hasJumpHost(connection.config) &amp;&amp; (
+  &lt;span
+    className="connection-tree__jump-badge"
+    title={jumpHostTooltip(getJumpHosts(connection.config), connection.name)}
+  &gt;
+    &lt;ArrowLeftRight size={12} /&gt;
+    {hopCount &gt; 1 &amp;&amp; &lt;span className="connection-tree__hop-count"&gt;{hopCount}&lt;/span&gt;}
+  &lt;/span&gt;
+)}</code></pre>
+
+        <h4>Store Changes (<code>src/store/appStore.ts</code>)</h4>
+        <p>
+          Minimal changes needed — the jump host config is part of the connection config and flows
+          through existing save/load paths. The connection editor state already handles dynamic SSH
+          settings.
+        </p>
+
+        <h4>API Layer (<code>src/services/api.ts</code>)</h4>
+        <p>
+          No new Tauri commands needed for jump host support — the jump host config is part of the
+          SSH connection config that flows through the existing connect command. The backend
+          resolves and connects through the chain internally
+          (<code>src-tauri/src/connection/jump_host_resolver.rs</code>), and is the authoritative
+          safety net for cycles/missing references at connect time.
+        </p>
+        <p>
+          Save-time validation is done <strong>client-side</strong> by
+          <code>validateProxyJump</code> (<code>src/utils/validateProxyJump.ts</code>) rather than
+          via a round-trip Tauri command — it returns <code>{ errors, warnings }</code>, where
+          <code>errors</code> block Save and <code>warnings</code> are advisory:
+        </p>
+        <pre><code>export function validateProxyJump(
+  hops: JumpHostConfig[],
+  ctx?: { connections: SavedConnection[]; currentConnectionId?: string }
+): { errors: string[]; warnings: string[] };</code></pre>
+        <p>
+          Reference and circular-chain checks run only when <code>ctx</code> (the saved connections)
+          is supplied; inline hops are validated for required host/username regardless.
+        </p>
+
+        <h4>Types (<code>src/types/connection.ts</code>)</h4>
+        <p>Add jump host related types alongside existing connection types.</p>
+
+        <h3>Data Model &amp; Storage</h3>
+        <p>
+          Jump host configuration is stored inline within the SSH connection config in
+          <code>connections.json</code>:
+        </p>
+        <pre><code>{
+  "type": "ssh",
+  "config": {
+    "host": "app-server.internal",
+    "port": 22,
+    "username": "deploy",
+    "authMethod": "key",
+    "keyPath": "~/.ssh/id_ed25519",
+    "jumpHostEnabled": true,
+    "jumpHosts": [
+      {
+        "source": "saved",
+        "connectionId": "Work/bastion.example.com"
+      }
+    ]
+  }
+}</code></pre>
+        <p>For inline jump hosts:</p>
+        <pre><code>{
+  "jumpHosts": [
+    {
+      "source": "inline",
+      "host": "bastion.example.com",
+      "port": 22,
+      "username": "admin",
+      "authMethod": "key",
+      "keyPath": "~/.ssh/bastion_key"
+    }
+  ]
+}</code></pre>
+        <p>
+          Inline jump host passwords follow the same credential store flow as regular SSH passwords
+          — stored via the active credential store when <code>savePassword</code> is true.
+        </p>
+
+        <h3>Testing — <code>SSH-JUMP-01</code> Conversion (#872)</h3>
+        <p>The integration fixtures already exist and are wired for a real 2-hop jump:</p>
+        <ul>
+          <li>
+            <strong>Docker fixtures</strong> (<code>tests/docker/docker-compose.yml</code>):
+            <code>ssh-jumphost-bastion</code> (<code>termihub-ssh-bastion</code>, published on
+            <code>127.0.0.1:2204</code>, on both <code>test-net</code> and
+            <code>jumphost-net</code>) and
+            <code>ssh-jumphost-target</code> (<code>termihub-ssh-target</code>,
+            <strong>no host port</strong>, only on the isolated <code>jumphost-net</code>). The
+            target is deliberately unreachable except <em>through</em> the bastion — the exact
+            topology a ProxyJump must traverse.
+          </li>
+          <li>
+            <strong>Current test</strong>
+            <code>ssh_jump_01_two_hop_proxy_jump</code> (<code>core/tests/ssh_advanced.rs:23</code>)
+            proves only the building blocks: it (a) shells out to the system <code>ssh</code> binary
+            <em>on the bastion</em> to confirm the target is reachable, and (b) calls the raw
+            <code>channel_open_direct_tcpip("termihub-ssh-target", 22, …)</code> primitive. Neither
+            path goes through a termiHub jump connection a user could configure.
+          </li>
+        </ul>
+        <p>
+          <strong>Conversion plan:</strong> rewrite (or add a sibling to)
+          <code>SSH-JUMP-01</code> so it drives termiHub's own
+          <code>connect_through_jump_hosts</code> end-to-end:
+        </p>
+        <ol>
+          <li>
+            Build an <code>SshConfig</code> for the
+            <strong>target</strong> (<code>termihub-ssh-target:22</code>) carrying a one-hop
+            <code>proxy_jump</code> chain whose inline <code>JumpHostConfig</code> points at the
+            <strong>bastion</strong>
+            (<code>127.0.0.1:2204</code>, ed25519 key).
+          </li>
+          <li>
+            Call <code>connect_through_jump_hosts(&amp;hops, &amp;target)</code> and assert it
+            returns an authenticated session <strong>on the target</strong> — something only
+            reachable via the bastion, so success proves the hop actually forwarded.
+          </li>
+          <li>
+            Open a shell/exec channel on the returned session and assert it reads the target's
+            <code>marker.txt</code>, replacing the <code>ssh</code>-shell-out reachability check.
+          </li>
+          <li>
+            Keep the raw <code>channel_open_direct_tcpip</code> assertion as a lower-level
+            regression guard.
+          </li>
+        </ol>
+        <p>
+          This converts the test from "the primitive works" to "a user-configurable termiHub jump
+          connection works", closing the gap #872 identifies. The test is gated behind the same
+          Docker-fixtures feature flag as the rest of <code>ssh_advanced.rs</code>.
+        </p>
+
+        <h3>Implementation Phases</h3>
+        <ol>
+          <li>
+            <strong>Phase 1 — Core backend</strong>: Add <code>JumpHostConfig</code> +
+            <code>proxy_jump</code> to <code>SshConfig</code>. Factor the transport out of
+            <code>do_connect_and_authenticate</code> and add
+            <code>connect_and_authenticate_over_channel</code> (russh
+            <code>connect_stream</code> over <code>channel.into_stream()</code>). Implement
+            <code>connect_through_jump_hosts</code> for single-hop. Convert
+            <code>SSH-JUMP-01</code> (<code>core/tests/ssh_advanced.rs</code>) to drive it
+            end-to-end through the bastion/target Docker fixtures (see Testing above).
+          </li>
+          <li>
+            <strong>Phase 2 — Connection editor UI</strong>: Add
+            <code>JumpHostSection</code> component. Implement saved-connection dropdown and inline
+            config mode. Wire to existing save/load paths.
+          </li>
+          <li>
+            <strong>Phase 3 — Session pooling</strong>: Extend <code>SshSessionPool</code> for
+            shared jump host → terminal use. Ensure tunnels through jump hosts also pool correctly.
+            Add reference counting for intermediate hops.
+          </li>
+          <li>
+            <strong>Phase 4 — Multi-hop support</strong>: Extend Phase 1 for N-hop chains. Add "Add
+            another hop" UI. Implement chain validation (circular refs, depth warnings).
+          </li>
+          <li>
+            <strong>Phase 5 — Visual indicators &amp; polish</strong>: Add sidebar hop badges. Add
+            status bar connection path display. Add context menu actions (Open Jump Host Terminal,
+            Show Connection Path). Handle reconnection through jump hosts.
+          </li>
+        </ol>
+
+        <h3>Technical Risks</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Risk</th>
+                <th>Mitigation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Session-over-channel transport</td>
+                <td>
+                  <strong>Resolved by stack</strong> — russh's <code>connect_stream</code> accepts
+                  the <code>AsyncRead+AsyncWrite</code> from <code>channel.into_stream()</code>;
+                  already used by SFTP/X11/tunnels (<code>auth.rs:113</code>,
+                  <code>local_forward.rs:150</code>). No custom adapter needed.
+                </td>
+              </tr>
+              <tr>
+                <td>Pooled jump host session becomes stale</td>
+                <td>
+                  Add keepalive pings to pooled sessions. Detect disconnection and trigger
+                  reconnection for all users.
+                </td>
+              </tr>
+              <tr>
+                <td>Credential prompting for multiple hops is confusing</td>
+                <td>
+                  Show clear hop labels in password dialogs: "Password for hop 1
+                  (bastion.example.com)"
+                </td>
+              </tr>
+              <tr>
+                <td>Performance with deep chains</td>
+                <td>
+                  Cap default at 5 hops with warning. Each hop adds ~100ms latency for handshake.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Implementation Status</h3>
+        <p>
+          Substantially implemented. The core connect path (russh chain over
+          <code>channel_open_direct_tcpip</code>), session pooling (#924), the connection-editor
+          "Jump Host" category with saved/inline modes, multi-hop cards, per-hop connect timeout
+          (#951), client-side validation, deletion protection (#941), and the visual indicators
+          (sidebar badge, status-bar chain, context menu, connection-path dialog) have shipped. The
+          editor UI was reconciled with these artifacts in #937 (see the
+          <a href="#sync">Sync Ledger</a>, Resolved R1–R5). Remaining open items are connect-time
+          per-hop error UX and the per-terminal reconnection banner (tracked in the
+          <a href="#sync">Sync Ledger</a> Open divergences). Run
+          <code>/sync-concept ssh-jump-host</code> after each further change to keep the
+          <a href="#sync">Sync Ledger</a> current.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by the <code>/sync-concept ssh-jump-host</code> skill. It records the last
+            commit at which the concept artifacts and the code were reconciled, plus any open
+            divergences. The concept is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> 2026-06-30 at commit <code>be96039d</code> ·
+          <strong>Status:</strong> in-sync (editor UI reconciled; remaining items are deferred
+          phases, not divergences)
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>
+                  "Jump host unreachable / target unreachable / per-hop auth failed" connect-time
+                  error UX (concept §Edge Cases)
+                </td>
+                <td>
+                  Backend resolves and connects the chain; the granular per-hop connect-time error
+                  toasts in the concept are not yet surfaced verbatim in the UI.
+                </td>
+                <td>Missing</td>
+                <td>Leave open — connect-time error UX polish is a later refinement (#933).</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>
+                  Reconnection banner "Connection lost (jump host disconnected). [Reconnect]" per
+                  terminal (concept §Reconnection Behavior)
+                </td>
+                <td>
+                  Gateway-drop handling exists at the pool level; the dedicated per-terminal
+                  jump-host reconnection banner copy is not yet a distinct surface.
+                </td>
+                <td>Missing</td>
+                <td>Leave open — reconnection-UX is a later phase, tracked separately.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Neither open item is a contradiction between the concept and shipped code — they are
+          not-yet-built refinements of the same design. The editor UI (the subject of #937) is now
+          reconciled.
+        </p>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>2026-06-30</td>
+                <td>R1</td>
+                <td>
+                  <strong>Collapsible group → flat editor category.</strong> Concept (and editor
+                  mockup states 1–4) showed a <em>collapsible</em> "Jump Host" group with a chevron,
+                  between "Authentication" and an "Advanced" group. The connection editor has no
+                  collapsible groups or "Advanced" group — it renders flat
+                  <code>settings-panel__category</code> blocks.
+                  <strong>Concept + mockup updated to match the flat category</strong> (titled "Jump
+                  Host", after the connection/auth fields, before the SSH Agent category). Edited
+                  <code>concept.md</code> and <code>mockups/ssh-jump-host-editor.html</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-06-30</td>
+                <td>R2</td>
+                <td>
+                  <strong
+                    >Data model: no <code>source</code> /
+                    <code>jumpHostEnabled</code> fields.</strong
+                  >
+                  Concept Impl Details proposed a
+                  <code>JumpHostEntry.source: "saved" | "inline"</code> discriminator and an
+                  <code>SshConnectionConfig.jumpHostEnabled: boolean</code> flag. The shipped model
+                  has neither: a hop is "saved" iff it carries <code>connectionId</code> (otherwise
+                  inline), and the section is "enabled" iff the <code>proxyJump</code> array is
+                  non-empty. The cleaner derived model is what shipped;
+                  <strong>concept Impl Details updated</strong> to describe
+                  <code>JumpHostConfig</code> (no <code>source</code>, no
+                  <code>jumpHostEnabled</code>) and the derivation rules.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-06-30</td>
+                <td>R3</td>
+                <td>
+                  <strong>Per-hop connect timeout (#951) was undocumented.</strong> Each hop has an
+                  optional <code>connectTimeoutSecs</code> field (per-hop connect/handshake timeout,
+                  falling back to the default). <strong>Documented</strong> in
+                  <code>concept.md</code> and added to the inline-mode editor mockup.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-06-30</td>
+                <td>R4</td>
+                <td>
+                  <strong>Path separator icon.</strong> Concept editor mockup joined connection-path
+                  nodes with the <code>ArrowLeftRight</code> icon; the shipped
+                  <code>JumpHostPathDisplay</code> uses a directional <code>ArrowRight</code>.
+                  <strong>Mockup updated</strong> to <code>ArrowRight</code> for the path line (the
+                  sidebar/badge keeps <code>ArrowLeftRight</code>, which matches the code).
+                </td>
+              </tr>
+              <tr>
+                <td>2026-06-30</td>
+                <td>R5</td>
+                <td>
+                  <strong>Path-line label.</strong> Concept used <code>Connection path:</code>
+                  (trailing colon) with monospace node text; code renders a
+                  <code>Connection path</code> label with the chain. Treated as cosmetic; mockup
+                  label aligned to <code>Connection path</code> (no behavioral change).
+                </td>
+              </tr>
+              <tr>
+                <td>2026-06-30</td>
+                <td>—</td>
+                <td>
+                  Indicators mockup (sidebar hop badge + hop-count + tooltip, status-bar
+                  <code>Route</code> hop chain, context-menu "Open Jump Host Terminal" / "Show
+                  Connection Path", connection-path dialog) — <strong>verified matching</strong> the
+                  shipped <code>ConnectionList.tsx</code>, <code>ConnectionPathDialog.tsx</code>,
+                  <code>StatusBar.tsx</code>, and <code>src/utils/jumpHost.ts</code>. No change
+                  needed.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Notes</h3>
+        <ul>
+          <li>
+            2026-06-30 (#937): Editor-UI reconciliation pass. The "Jump Host" connection-editor
+            section shipped across #922/#923/#925 (+ #940 saved-connection mode, #941 deletion
+            protection, #951 per-hop timeout). It is a
+            <strong>flat <code>settings-panel__category</code></strong> with an enable checkbox, a
+            per-hop <strong>source segmented control</strong> (Saved connection / Inline
+            configuration), a saved-SSH dropdown (folder-path labelled), inline SSH fields, a
+            per-hop connect-timeout field, an "Add another hop" control rendering numbered removable
+            hop cards for multi-hop chains, a <code>Connection path</code> summary line,
+            non-blocking warnings, and blocking validation errors that disable Save. Components:
+            <code>JumpHostSection.tsx</code>, <code>JumpHostEntry.tsx</code>,
+            <code>JumpHostPathDisplay.tsx</code>; helpers <code>src/utils/jumpHost.ts</code>,
+            <code>src/utils/validateProxyJump.ts</code>; wiring in
+            <code>ConnectionEditor.tsx</code>. The concept and editor mockup were updated to reflect
+            the flat-category layout and the derived data model; see Resolved R1–R5.
+          </li>
+          <li>
+            2026-06-30 (#924): <strong>Phase 3 — session pooling</strong> implemented. The
+            reference-counted SSH session pool moved into the core crate as a generic
+            <code>RefPool&lt;T&gt;</code> (<code>core/src/backends/ssh/session_pool.rs</code>) with
+            single-flight creation; <code>SshGateway</code> + the process-wide
+            <code>shared_gateway_pool()</code> pool jump-host gateway sessions keyed by the resolved
+            hop chain (<code>gateway_pool_key</code>), tracking outer hops in
+            <code>SshGateway.intermediate_sessions</code>. The terminal connect path
+            (<code>connector.rs</code>) and the desktop tunnel manager both acquire gateways from
+            this one pool, so connections sharing a bastion reuse one gateway session; SSH tunnels
+            with a <code>proxyJump</code> chain now connect through (and pool) the gateway. Covered
+            by pool unit tests, <code>gateway_pool_key</code> unit tests, and the
+            <code>SSH-JUMP-03</code> Docker integration test.
+          </li>
+          <li>
+            2026-06-29 (#872): Concept refined to match the real SSH stack — termiHub uses
+            <strong>russh 0.61</strong> (async), not <code>ssh2</code>/libssh2. Backend impl details
+            rewritten around <code>channel_open_direct_tcpip</code> +
+            <code>channel.into_stream()</code> + <code>russh::client::connect_stream</code> (already
+            used by the tunnel forwarders and SFTP/X11), the config field renamed to
+            <code>proxy_jump</code> (OpenSSH <code>-J</code> style), and a concrete
+            <code>SSH-JUMP-01</code> test-conversion plan added against the existing
+            <code>ssh-jumphost-bastion</code> / <code>ssh-jumphost-target</code> Docker fixtures.
+          </li>
+        </ul>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
