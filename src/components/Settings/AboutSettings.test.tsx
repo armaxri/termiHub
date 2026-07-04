@@ -123,4 +123,24 @@ describe("AboutSettings", () => {
       "https://github.com/armaxri/termiHub/blob/main/LICENSE"
     );
   });
+
+  it("has a link to the third-party licenses", () => {
+    render();
+    const btn = container.querySelector("[data-testid='about-third-party-licenses-link']");
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toContain("Third-Party Licenses");
+  });
+
+  it("opens the third-party licenses URL when the link is clicked", async () => {
+    render();
+    const btn = container.querySelector(
+      "[data-testid='about-third-party-licenses-link']"
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    expect(mockedOpenUrl).toHaveBeenCalledWith(
+      "https://github.com/armaxri/termiHub/blob/main/THIRD_PARTY_LICENSES.md"
+    );
+  });
 });
