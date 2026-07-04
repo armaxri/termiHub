@@ -22,3 +22,6 @@ export type { ModalProps } from "./Modal";
 
 export { Toggle } from "./Toggle";
 export type { ToggleProps } from "./Toggle";
+
+export { ToastProvider, toast } from "./Toast";
+export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";

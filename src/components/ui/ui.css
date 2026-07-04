@@ -94,6 +94,33 @@
   pointer-events: none;
 }
 
+/* Async lifecycle: idle → pending (disabled + spinner) → success (brief). */
+.ui-btn--pending {
+  cursor: progress;
+}
+
+.ui-btn--success {
+  background: var(--bg-tertiary);
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.ui-btn__spinner {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: ui-btn-spin 0.7s linear infinite;
+}
+
+@keyframes ui-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ── Input ──────────────────────────────────────────────────────────── */
 .ui-input {
   height: var(--control-height-lg);
@@ -445,5 +472,8 @@
   .ui-toggle__thumb,
   .ui-modal__close {
     transition: none;
+  }
+  .ui-btn__spinner {
+    animation: none;
   }
 }
