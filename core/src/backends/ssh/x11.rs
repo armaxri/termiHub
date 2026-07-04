@@ -30,6 +30,33 @@ pub struct LocalXServerInfo {
     pub connection: LocalXConnection,
 }
 
+/// A termiHub-managed local X server (one that termiHub itself started).
+///
+/// See epic #1047 / concept #1044 (X server provisioning). When present, this
+/// carries everything the forwarder needs, so detection can skip all
+/// filesystem/`xauth` probing — which are no-ops on Windows anyway.
+#[derive(Debug, Clone)]
+pub struct ManagedXServer {
+    /// Display number the managed server listens on (TCP `127.0.0.1:6000+n`).
+    pub display_number: u32,
+    /// The MIT-MAGIC-COOKIE-1 (32 hex chars) generated when the server was
+    /// started, or `None` when it runs in `-ac` (loopback-only, no auth) mode.
+    pub cookie: Option<String>,
+}
+
+/// A source of termiHub-managed X server information.
+///
+/// This is a thin seam so detection can be managed-server-aware without a
+/// global: the Windows [`XServerManager`] (issue #1049) will implement it, and
+/// [`detect_local_x_server`] / [`read_local_xauth_cookie`] consult it first.
+/// Until the manager lands, callers pass `None` and behavior is unchanged.
+///
+/// [`XServerManager`]: https://github.com/armaxri/termiHub/issues/1049
+pub trait ManagedXServerSource: Send + Sync {
+    /// Returns the currently managed local X server, if termiHub started one.
+    fn managed_server(&self) -> Option<ManagedXServer>;
+}
+
 /// Manages X11 forwarding over an SSH tunnel.
 pub struct X11Forwarder {
     alive: Arc<AtomicBool>,
@@ -39,14 +66,20 @@ pub struct X11Forwarder {
 impl X11Forwarder {
     /// Start X11 forwarding using an existing SSH session.
     ///
+    /// `managed` is an optional source of termiHub-managed X server info (a
+    /// server termiHub started itself). When present it is consulted before any
+    /// filesystem/`xauth` probing; pass `None` to rely purely on detection of a
+    /// user-run server.
+    ///
     /// Returns `(forwarder, remote_display_number, xauth_cookie)`.
     pub async fn start(
         _config: &SshConfig,
         session: &mut SshSession,
         registry: ForwardedChannelRegistry,
         alive: Arc<AtomicBool>,
+        managed: Option<&dyn ManagedXServerSource>,
     ) -> Result<(Self, u32, Option<String>), SessionError> {
-        let local_x = detect_local_x_server().ok_or_else(|| {
+        let local_x = detect_local_x_server(managed).ok_or_else(|| {
             SessionError::SpawnFailed(
                 "No local X server detected. Start an X server (XQuartz on macOS).".to_string(),
             )
@@ -57,7 +90,7 @@ impl X11Forwarder {
             local_x.display_number
         );
 
-        let xauth_cookie = read_local_xauth_cookie(local_x.display_number);
+        let xauth_cookie = read_local_xauth_cookie(local_x.display_number, managed);
         if xauth_cookie.is_some() {
             info!("X11 forwarding: read local xauth cookie");
         } else {
@@ -265,19 +298,53 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
 
 /// Detect the local X server.
 ///
-/// Checks the DISPLAY environment variable first, then falls back to
-/// scanning `/tmp/.X11-unix/` for live sockets.
-pub fn detect_local_x_server() -> Option<LocalXServerInfo> {
+/// Resolution order (see the "Detection decision flow" diagram in concept
+/// #1044):
+/// 1. A termiHub-**managed** server (via `managed`) wins — returned as
+///    `Tcp("127.0.0.1", 6000+n)` with no filesystem/`xauth` probing.
+/// 2. The `DISPLAY` environment variable, when set.
+/// 3. Platform fallback for user-run servers: on Unix, scan `/tmp/.X11-unix/`
+///    for live sockets; on Windows, probe `127.0.0.1:6000`.
+pub fn detect_local_x_server(
+    managed: Option<&dyn ManagedXServerSource>,
+) -> Option<LocalXServerInfo> {
+    // 1. A termiHub-managed server takes precedence over everything.
+    if let Some(server) = managed.and_then(|src| src.managed_server()) {
+        return Some(managed_server_info(&server));
+    }
+
+    // 2. Honor an explicit DISPLAY.
     if let Ok(display) = std::env::var("DISPLAY") {
         if !display.is_empty() {
             let (host, display_number, _screen) = parse_display(&display)?;
             return Some(info_from_parsed(host, display_number));
         }
     }
-    detect_from_sockets()
+
+    // 3. Platform fallback for user-installed servers.
+    #[cfg(unix)]
+    {
+        detect_from_sockets()
+    }
+    #[cfg(not(unix))]
+    {
+        detect_from_tcp_probe()
+    }
 }
 
-/// Scan `/tmp/.X11-unix/` for X server sockets.
+/// Map a managed server to a `LocalXServerInfo` (always TCP loopback).
+fn managed_server_info(server: &ManagedXServer) -> LocalXServerInfo {
+    LocalXServerInfo {
+        display_number: server.display_number,
+        connection: LocalXConnection::Tcp(
+            "127.0.0.1".to_string(),
+            6000 + server.display_number as u16,
+        ),
+    }
+}
+
+/// Scan `/tmp/.X11-unix/` for X server sockets (Unix only).
+#[cfg(unix)]
 fn detect_from_sockets() -> Option<LocalXServerInfo> {
     let x11_dir = std::path::Path::new("/tmp/.X11-unix");
     if !x11_dir.is_dir() {
@@ -292,15 +359,9 @@ fn detect_from_sockets() -> Option<LocalXServerInfo> {
             if let Ok(display_num) = num_str.parse::<u32>() {
                 return Some(LocalXServerInfo {
                     display_number: display_num,
-                    #[cfg(unix)]
                     connection: LocalXConnection::UnixSocket(format!(
                         "/tmp/.X11-unix/X{display_num}"
                     )),
-                    #[cfg(not(unix))]
-                    connection: LocalXConnection::Tcp(
-                        "localhost".to_string(),
-                        6000 + display_num as u16,
-                    ),
                 });
             }
         }
@@ -308,11 +369,50 @@ fn detect_from_sockets() -> Option<LocalXServerInfo> {
     None
 }
 
+/// TCP fallback for platforms without `/tmp/.X11-unix` (Windows): probe whether
+/// a user-installed X server (e.g. VcXsrv) is listening on `127.0.0.1:6000`
+/// (display `:0`).
+#[cfg(not(unix))]
+fn detect_from_tcp_probe() -> Option<LocalXServerInfo> {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 6000));
+    if probe_tcp_x_server_at(addr, std::time::Duration::from_millis(300)) {
+        Some(LocalXServerInfo {
+            display_number: 0,
+            connection: LocalXConnection::Tcp("127.0.0.1".to_string(), 6000),
+        })
+    } else {
+        None
+    }
+}
+
+/// Probe whether a TCP X server accepts a connection at `addr` within `timeout`.
+///
+/// Extracted from [`detect_from_tcp_probe`] so it is unit-testable on every
+/// platform (the fallback itself is Windows-only).
+#[cfg(any(not(unix), test))]
+fn probe_tcp_x_server_at(addr: std::net::SocketAddr, timeout: std::time::Duration) -> bool {
+    std::net::TcpStream::connect_timeout(&addr, timeout).is_ok()
+}
+
 /// Read the MIT-MAGIC-COOKIE-1 for the given local display number.
 ///
-/// Runs `xauth list :N` and parses the hex cookie from the output.
-/// Returns `None` if xauth is not installed or no cookie is found.
-pub fn read_local_xauth_cookie(display_number: u32) -> Option<String> {
+/// Resolution order:
+/// 1. If `managed` reports a server on this display, return its known cookie
+///    directly — no `xauth` shell-out (which is a no-op on Windows). A `None`
+///    cookie means the managed server runs in `-ac` mode.
+/// 2. Otherwise run `xauth list :N` and parse the hex cookie. Returns `None` if
+///    `xauth` is not installed (e.g. Windows without a managed server, where a
+///    `-ac` server still works) or no cookie is found.
+pub fn read_local_xauth_cookie(
+    display_number: u32,
+    managed: Option<&dyn ManagedXServerSource>,
+) -> Option<String> {
+    if let Some(server) = managed.and_then(|src| src.managed_server()) {
+        if server.display_number == display_number {
+            return server.cookie;
+        }
+    }
+
     let output = std::process::Command::new("xauth")
         .args(["list", &format!(":{display_number}")])
         .output()
