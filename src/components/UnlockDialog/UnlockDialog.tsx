@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { unlockCredentialStore } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { toast } from "@/components/ui";
+import { Modal, Button, toast } from "@/components/ui";
 import "./UnlockDialog.css";
 
 interface UnlockDialogProps {
@@ -56,47 +55,43 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
   );
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="unlock-dialog__overlay" />
-        <Dialog.Content className="unlock-dialog__content">
-          <Dialog.Title className="unlock-dialog__title">Unlock Credential Store</Dialog.Title>
-          <Dialog.Description className="unlock-dialog__description">
-            termiHub has saved credentials that are encrypted with your master password.
-          </Dialog.Description>
-          <PasswordInput
-            className="unlock-dialog__input"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Master password"
-            autoFocus
-            data-testid="unlock-dialog-input"
-          />
-          {error && (
-            <p className="unlock-dialog__error" data-testid="unlock-dialog-error">
-              {error}
-            </p>
-          )}
-          <div className="unlock-dialog__actions">
-            <button
-              className="unlock-dialog__btn unlock-dialog__btn--secondary"
-              onClick={handleSkip}
-              data-testid="unlock-dialog-skip"
-            >
-              Skip
-            </button>
-            <button
-              className="unlock-dialog__btn unlock-dialog__btn--primary"
-              onClick={handleUnlock}
-              disabled={!password || loading}
-              data-testid="unlock-dialog-unlock"
-            >
-              {loading ? "Unlocking..." : "Unlock"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Unlock Credential Store"
+      footer={
+        <>
+          <Button variant="secondary" onClick={handleSkip} data-testid="unlock-dialog-skip">
+            Skip
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleUnlock}
+            disabled={!password || loading}
+            data-testid="unlock-dialog-unlock"
+          >
+            Unlock
+          </Button>
+        </>
+      }
+    >
+      <p className="unlock-dialog__description">
+        termiHub has saved credentials that are encrypted with your master password.
+      </p>
+      <PasswordInput
+        className="ui-input"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Master password"
+        autoFocus
+        data-testid="unlock-dialog-input"
+      />
+      {error && (
+        <p className="unlock-dialog__error" data-testid="unlock-dialog-error">
+          {error}
+        </p>
+      )}
+    </Modal>
   );
 }

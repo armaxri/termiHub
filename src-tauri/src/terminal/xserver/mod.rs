@@ -5,7 +5,14 @@
 //! that bridges core's SSH connect path (which cannot depend on the desktop app
 //! layer) to this orchestrator. The Tauri command surface lives in
 //! [`crate::commands::xserver`].
+//!
+//! The Windows-only [`acquire`] submodule (#1048) makes a known-good VcXsrv
+//! install available on disk (`cache → bundled → download → verify → extract`);
+//! the orchestrator's Windows provisioning path builds on it once lifecycle
+//! (#1049) and DISPLAY/auth (#1050) land.
 
+#[cfg(windows)]
+pub mod acquire;
 mod manager;
 mod orchestrator;
 mod types;
