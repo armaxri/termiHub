@@ -150,7 +150,11 @@ pub fn verify_sha256(path: &Path, expected_sha256: &str) -> Result<()> {
         }
         hasher.update(&buf[..read]);
     }
-    let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let actual: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     if actual.eq_ignore_ascii_case(expected_sha256) {
         debug!("VcXsrv checksum ok: {actual}");
         Ok(())
@@ -213,11 +217,16 @@ where
         .send()
         .context("Failed to start VcXsrv download")?;
     if !response.status().is_success() {
-        bail!("VcXsrv download failed: HTTP {} for {url}", response.status());
+        bail!(
+            "VcXsrv download failed: HTTP {} for {url}",
+            response.status()
+        );
     }
 
     let total = response.content_length().unwrap_or(0);
-    let bytes = response.bytes().context("Failed to read VcXsrv download body")?;
+    let bytes = response
+        .bytes()
+        .context("Failed to read VcXsrv download body")?;
     progress_cb(AcquireProgress::Downloading {
         received: bytes.len() as u64,
         total,
@@ -229,7 +238,11 @@ where
     }
     fs::write(dest, &bytes)
         .with_context(|| format!("Failed to write VcXsrv download to {}", dest.display()))?;
-    info!("VcXsrv downloaded to {} ({} bytes)", dest.display(), bytes.len());
+    info!(
+        "VcXsrv downloaded to {} ({} bytes)",
+        dest.display(),
+        bytes.len()
+    );
     Ok(())
 }
 
@@ -307,7 +320,11 @@ where
 {
     // 1. Already extracted for the pinned version → nothing to do (offline-safe).
     if let Some(exe) = find_installed(app_mode, pinned.version) {
-        info!("Using extracted VcXsrv {}: {}", pinned.version, exe.display());
+        info!(
+            "Using extracted VcXsrv {}: {}",
+            pinned.version,
+            exe.display()
+        );
         return Ok(exe);
     }
 
@@ -321,8 +338,7 @@ where
 
     // 3. Download the pinned `.zip`, verify, extract.
     let base = xserver_base_dir(app_mode)?;
-    fs::create_dir_all(&base)
-        .with_context(|| format!("Failed to create {}", base.display()))?;
+    fs::create_dir_all(&base).with_context(|| format!("Failed to create {}", base.display()))?;
     let tmp_zip = base.join(format!(".vcxsrv-{}.zip.partial", pinned.version));
     download_zip(pinned.zip_url, &tmp_zip, &progress_cb)?;
     let result = install_from_zip(&tmp_zip, pinned.sha256, &dir, &progress_cb);
@@ -332,7 +348,9 @@ where
 
 /// Returns `true` if `path` is a regular file with a non-zero length.
 fn is_nonempty_file(path: &Path) -> bool {
-    fs::metadata(path).map(|m| m.is_file() && m.len() > 0).unwrap_or(false)
+    fs::metadata(path)
+        .map(|m| m.is_file() && m.len() > 0)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -380,7 +398,10 @@ mod tests {
             data_dir: PathBuf::from("C:\\usb\\termiHub\\data"),
         };
         let base = xserver_base_dir(&mode).unwrap();
-        assert_eq!(base, PathBuf::from("C:\\usb\\termiHub\\data").join("xserver"));
+        assert_eq!(
+            base,
+            PathBuf::from("C:\\usb\\termiHub\\data").join("xserver")
+        );
     }
 
     #[test]
@@ -485,7 +506,10 @@ mod tests {
 
         extract_zip(&zip_path, &dest).unwrap();
 
-        assert_eq!(fs::read(dest.join("vcxsrv.exe")).unwrap(), b"MZ fake vcxsrv exe");
+        assert_eq!(
+            fs::read(dest.join("vcxsrv.exe")).unwrap(),
+            b"MZ fake vcxsrv exe"
+        );
         assert!(dest.join("libX11.dll").is_file());
         assert!(dest.join("fonts").join("misc").join("fonts.dir").is_file());
     }
@@ -517,11 +541,16 @@ mod tests {
         let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
         let err = install_from_zip(&zip_path, wrong, &dir, &no_progress).unwrap_err();
 
-        assert!(err.to_string().to_lowercase().contains("checksum")
-            || err.to_string().to_lowercase().contains("sha")
-            || err.to_string().to_lowercase().contains("mismatch"));
+        assert!(
+            err.to_string().to_lowercase().contains("checksum")
+                || err.to_string().to_lowercase().contains("sha")
+                || err.to_string().to_lowercase().contains("mismatch")
+        );
         // Never extracted → no install dir on disk.
-        assert!(!dir.exists(), "install dir must not exist after a rejected archive");
+        assert!(
+            !dir.exists(),
+            "install dir must not exist after a rejected archive"
+        );
     }
 
     #[test]
@@ -539,8 +568,14 @@ mod tests {
 
         let exe = install_from_zip(&zip_path, &hex_sha256(&zip_bytes), &dir, &no_progress).unwrap();
         assert!(exe.is_file());
-        assert!(!dir.join("garbage").exists(), "stale partial contents must not survive");
-        assert!(!partial.exists(), "partial dir must be renamed away, not left behind");
+        assert!(
+            !dir.join("garbage").exists(),
+            "stale partial contents must not survive"
+        );
+        assert!(
+            !partial.exists(),
+            "partial dir must be renamed away, not left behind"
+        );
     }
 
     #[test]
