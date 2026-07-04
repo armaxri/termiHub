@@ -1,12 +1,23 @@
-//! Windows X server (VcXsrv) provisioning subsystem.
+//! Local X server provisioning for SSH X11 forwarding.
 //!
-//! This subsystem makes a known-good VcXsrv install available on disk without
-//! the user running any installer, then (in later phases) launches and
-//! supervises it for SSH X11 forwarding. See the concept document
+//! Makes a usable local X server available and manages its lifecycle so remote
+//! GUI apps can render as native windows. See the concept document
 //! `docs/concepts/backlog/x-server-provisioning.html`.
 //!
-//! Phase 1 (#1048) ships [`acquire`] — resolve VcXsrv via
-//! `cache → bundled → download → verify → extract`. Lifecycle (#1049) and
-//! DISPLAY/auth (#1050) build on top of it.
+//! - [`acquire`] (#1048, Windows-only) resolves a known-good VcXsrv install on
+//!   disk via `cache → bundled → download → verify → extract`, without the user
+//!   running any installer.
+//! - [`manager`] (#1049) owns the lifecycle of a single shared X server: adopt an
+//!   existing server or spawn/supervise VcXsrv, reuse it across sessions, and
+//!   shut it down cleanly. It is cross-platform: on non-Windows hosts it degrades
+//!   to a report-only no-op that adopts the system's existing X server, which
+//!   also keeps the lifecycle logic unit-tested on every platform.
+//!
+//! DISPLAY/cookie provisioning (#1050) and the orchestrator/UI (#1052/#1053)
+//! build on top of these.
 
+#[cfg(windows)]
 pub mod acquire;
+pub mod manager;
+
+pub use manager::XServerManager;
