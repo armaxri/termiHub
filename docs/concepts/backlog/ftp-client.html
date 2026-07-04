@@ -1,0 +1,1921 @@
+<!doctype html>
+<!--
+  Single-file concept: FTP Client Sessions.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/backlog/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FTP Client Sessions (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* ── Transfer queue — structural markup not in the shared kit ──────── */
+      .transfer-queue {
+        background: var(--bg-secondary);
+        border-top: 1px solid var(--border-primary);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .transfer-queue__header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 8px;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .transfer-queue__title {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .transfer-queue__summary {
+        color: var(--text-secondary);
+      }
+      .transfer-queue__header-actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        margin-left: auto;
+      }
+      .transfer-queue__list {
+        max-height: 132px;
+        overflow: auto;
+      }
+      .transfer-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 30px;
+        padding: 0 8px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .transfer-row:hover {
+        background: var(--bg-hover);
+      }
+      .transfer-row__dir {
+        color: var(--text-secondary);
+        display: inline-flex;
+      }
+      .transfer-row__name {
+        font-family: var(--font-mono);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 0 0 200px;
+      }
+      .transfer-row__path {
+        color: var(--text-secondary);
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 0 0 150px;
+      }
+      .transfer-bar {
+        flex: 1 1 auto;
+        height: 6px;
+        min-width: 60px;
+        border-radius: 3px;
+        background: var(--bg-active);
+        overflow: hidden;
+      }
+      .transfer-bar__fill {
+        height: 100%;
+        background: var(--accent-color);
+        border-radius: 3px;
+      }
+      .transfer-bar__fill--paused {
+        background: var(--state-connecting);
+      }
+      .transfer-bar__fill--done {
+        background: var(--state-connected);
+      }
+      .transfer-bar__fill--failed {
+        background: var(--state-disconnected);
+      }
+      .transfer-row__pct {
+        flex: 0 0 38px;
+        text-align: right;
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
+      }
+      .transfer-row__speed {
+        flex: 0 0 78px;
+        text-align: right;
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
+      }
+      .transfer-row__status {
+        flex: 0 0 92px;
+        text-align: right;
+      }
+      .transfer-row__status--queued {
+        color: var(--text-secondary);
+      }
+      .transfer-row__status--done {
+        color: var(--state-connected);
+      }
+      .transfer-row__status--failed {
+        color: var(--color-error);
+      }
+      .transfer-row__actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        flex: 0 0 auto;
+      }
+      .transfer-queue__footer {
+        display: flex;
+        gap: 8px;
+        padding: 6px 8px;
+        justify-content: flex-end;
+      }
+      /* ── Schema-driven form chrome (DynamicForm proxy) ─────────────────── */
+      .form-card {
+        width: 460px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+      }
+      .form-card__tabs {
+        display: flex;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .form-card__tab {
+        padding: 9px 14px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        border-bottom: 2px solid transparent;
+        cursor: default;
+      }
+      .form-card__tab--active {
+        color: var(--text-primary);
+        border-bottom-color: var(--accent-color);
+      }
+      .form-card__body {
+        padding: 12px 14px;
+      }
+      .form-group__label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 14px 0 8px;
+      }
+      .form-group__label:first-child {
+        margin-top: 0;
+      }
+      .form-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 8px 0;
+      }
+      .form-row__label {
+        flex: 0 0 96px;
+        color: var(--text-secondary);
+      }
+      .form-field {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 8px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .form-field--select::after {
+        content: "";
+        margin-left: auto;
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid var(--text-secondary);
+      }
+      .form-field__icon-btn {
+        margin-left: auto;
+        color: var(--text-secondary);
+        display: inline-flex;
+      }
+      .form-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .form-checkbox .check {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+        display: inline-grid;
+        place-items: center;
+        font-size: 10px;
+        color: transparent;
+      }
+      .form-checkbox--on .check {
+        border-color: var(--accent-color);
+        background: var(--accent-color);
+        color: #fff;
+      }
+      .form-callout-warn {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin: 8px 0;
+        padding: 8px 10px;
+        border-left: 3px solid var(--color-warning);
+        background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+        color: var(--color-warning);
+        font-size: 12px;
+        border-radius: var(--radius-sm);
+      }
+      .form-callout-warn .li {
+        color: var(--color-warning);
+        flex: 0 0 auto;
+        margin-top: 1px;
+      }
+      .form-card__footer {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        padding: 10px 14px;
+        border-top: 1px solid var(--border-secondary);
+      }
+      .form-conditional {
+        outline: 1px dashed color-mix(in srgb, var(--broadcast-accent) 60%, transparent);
+        outline-offset: 3px;
+        border-radius: 2px;
+      }
+      /* ── Warning modal ─────────────────────────────────────────────────── */
+      .modal-backdrop {
+        background: rgba(6, 7, 10, 0.6);
+        padding: 28px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+      }
+      .modal {
+        width: 380px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-overlay);
+        overflow: hidden;
+      }
+      .modal__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px;
+        font-weight: 600;
+        color: var(--color-warning);
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .modal__body {
+        padding: 14px;
+        color: var(--text-primary);
+        font-size: 12.5px;
+      }
+      .modal__body p {
+        margin: 0 0 10px;
+      }
+      .modal__footer {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        padding: 10px 14px;
+        border-top: 1px solid var(--border-secondary);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry) — union of all mockup symbols. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+      <symbol id="i-file" viewBox="0 0 24 24">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+      </symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <rect x="14" y="4" width="4" height="16" rx="1" />
+        <rect x="6" y="4" width="4" height="16" rx="1" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="M6 3a1 1 0 0 1 1.5-.87l13 9a1 1 0 0 1 0 1.74l-13 9A1 1 0 0 1 6 21Z" />
+      </symbol>
+      <symbol id="i-rotate-cw" viewBox="0 0 24 24">
+        <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+      </symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24">
+        <path d="m5 12 7-7 7 7" />
+        <path d="M12 19V5" />
+      </symbol>
+      <symbol id="i-arrow-down" viewBox="0 0 24 24">
+        <path d="M12 5v14" />
+        <path d="m19 12-7 7-7-7" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 6v6l4 2" />
+      </symbol>
+      <symbol id="i-arrow-up-down" viewBox="0 0 24 24">
+        <path d="m21 16-4 4-4-4" />
+        <path d="M17 20V4" />
+        <path d="m3 8 4-4 4 4" />
+        <path d="M7 4v16" />
+      </symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24">
+        <path
+          d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>FTP Client Sessions</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/518">#518</a></span
+          >
+          <span><code>docs/concepts/backlog/ftp-client.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept ftp-client</code> to reconcile it
+          with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Add FTP (File Transfer Protocol) client support to termiHub, enabling users to connect to
+          FTP servers for file browsing and transfer. FTP sessions integrate with the existing file
+          browser sidebar, connection editor, and credential store — leveraging termiHub's
+          schema-driven architecture so that no custom UI code is required.
+        </p>
+        <p>
+          While SFTP has largely replaced FTP for secure transfers, FTP remains common in legacy
+          environments, embedded systems, network equipment, and some hosting providers. Supporting
+          FTP (plain and FTPS) broadens termiHub's compatibility with older infrastructure.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Support FTP (plain), FTPS explicit (STARTTLS), and FTPS implicit (TLS from the start)
+          </li>
+          <li>
+            Integrate with the existing file browser sidebar for directory navigation and file
+            operations
+          </li>
+          <li>Provide a transfer queue with progress tracking for uploads and downloads</li>
+          <li>Warn users when connecting over plain FTP (unencrypted credentials on the wire)</li>
+          <li>Support passive mode (default, firewall-friendly) and active mode as fallback</li>
+          <li>
+            Support transfer resume for interrupted uploads/downloads where the server supports it
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>SFTP support (already handled by the SSH backend)</li>
+          <li>FTP proxy/gateway functionality</li>
+          <li>FTP server hosting</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The visual surfaces are specified by the mockups — open them in a browser to review layout
+          and states. This section describes them; the mockups are authoritative for layout.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Transfer queue</td>
+                <td>
+                  <strong>Primary</strong> — Transfer Queue panel above the status bar: active (with
+                  progress bar), paused, queued, completed, failed/retry rows; multiple-active and
+                  minimized panel states
+                </td>
+              </tr>
+              <tr>
+                <td>Connection editor &amp; warning</td>
+                <td>
+                  Schema-driven FTP connection editor (TLS-mode conditional fields, anonymous
+                  toggle) and the insecure-FTP warning modal
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Connection editor</h3>
+        <p>
+          FTP connections use the existing generic connection editor with a schema-driven form
+          rendered by <code>DynamicForm</code> — there is no hand-coded FTP UI. Selecting "FTP" as
+          the connection type reveals Server (Host, Port), Security (TLS Mode), Authentication
+          (Anonymous toggle, Username, Password), and Transfer (Mode, Transfer type, Initial
+          Directory, Timeout) groups. Conditional field visibility:
+        </p>
+        <ul>
+          <li>
+            When <strong>Anonymous</strong> is checked, Username is set to
+            <code>anonymous</code> and the Username / Password rows are hidden.
+          </li>
+          <li>
+            The plain-FTP security warning is only shown when TLS Mode is <strong>None</strong>.
+          </li>
+          <li>
+            Port auto-adjusts to 990 when TLS Mode is <strong>Implicit</strong>, 21 otherwise (user
+            can override).
+          </li>
+        </ul>
+        <p>See the schema-driven connection editor mockup below.</p>
+
+        <h3>File browser sidebar</h3>
+        <p>
+          FTP sessions appear in the file browser sidebar, reusing the same tree-view UI as SFTP for
+          directory navigation, previews, and the file context menu (Download, Upload Here, New
+          Folder, Rename, Delete, Refresh, Copy Path, Properties).
+        </p>
+
+        <h3>Transfer queue panel</h3>
+        <p>
+          A transfer queue panel docks above the status bar whenever transfers are active. It is
+          <strong>connection-type agnostic</strong> — shared across all sessions that support file
+          transfer (FTP now, potentially SFTP later). Each row shows direction (up/down), file name,
+          remote path, a progress bar, percent, throughput, and per-transfer controls. The state
+          space — active, paused, queued, completed, failed/retry — plus the minimized (status-bar
+          indicator only) state are all in the primary mockup. Footer actions are
+          <strong>Clear Completed</strong> and <strong>Cancel All</strong>. See the transfer queue
+          mockup below.
+        </p>
+
+        <h3>Security warning dialog</h3>
+        <p>
+          Connecting via plain FTP (no TLS) shows a modal warning before the control connection
+          opens. The user can <strong>Connect Anyway</strong>, <strong>Cancel</strong>, or tick
+          "Don't warn again for this connection" (sets <code>suppressSecurityWarning</code>). See
+          the insecure-FTP warning mockup below.
+        </p>
+
+        <!-- ── Mockup: Transfer queue ───────────────────────────────── -->
+        <div class="mockup-section">
+          <h3>Mockup — Transfer Queue panel (above the status bar)</h3>
+
+          <div class="mockup-note">
+            The connection-type-agnostic transfer queue <span class="callout">A</span> docks
+            directly above the <code>status-bar</code>. Each row shows direction, name, remote path,
+            a progress bar, percent, throughput, and per-transfer controls. The queue covers the
+            full state space: active <span class="callout">B</span>, paused
+            <span class="callout">C</span>, queued <span class="callout">D</span>, completed
+            <span class="callout">E</span>, and failed/retry <span class="callout">F</span>.
+          </div>
+          <div class="app" style="height: 520px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button
+                    class="activity-bar__item activity-bar__item--active"
+                    title="File Browser"
+                  >
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">File Browser</span></div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-network" /></svg> My FTP Server (FTP)
+                  </div>
+                  <div class="connection-tree__item" style="padding-left: 22px">
+                    <svg class="li"><use href="#i-folder" /></svg> pub
+                  </div>
+                  <div class="connection-tree__item" style="padding-left: 22px">
+                    <svg class="li"><use href="#i-folder" /></svg> uploads
+                  </div>
+                  <div
+                    class="connection-tree__item connection-tree__item--selected"
+                    style="padding-left: 22px"
+                  >
+                    <svg class="li"><use href="#i-file" /></svg> data.csv
+                  </div>
+                  <div class="connection-tree__item" style="padding-left: 22px">
+                    <svg class="li"><use href="#i-file" /></svg> welcome.msg
+                  </div>
+                </div>
+              </aside>
+
+              <div class="terminal-view">
+                <div class="terminal-view__toolbar">
+                  <span class="tab-group-chip">
+                    <svg class="li"><use href="#i-network" /></svg> My FTP Server
+                  </span>
+                </div>
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <svg class="li"><use href="#i-folder-open" /></svg>
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">My FTP Server</span>
+                        <button class="tab__close">
+                          <svg class="li"><use href="#i-x" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div
+                      class="terminal"
+                      style="font-family: var(--font-family); color: var(--text-secondary)"
+                    >
+                      /pub — 3 folders, 14 files. FTP sessions open into the file browser; there is
+                      no terminal output. Drag files here or use the context menu to transfer.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Transfer queue panel sits between body and status bar -->
+            <div class="transfer-queue">
+              <div class="transfer-queue__header">
+                <svg class="li"><use href="#i-arrow-up-down" /></svg>
+                <span class="transfer-queue__title">Transfers</span>
+                <span class="transfer-queue__summary">2 active · 1 queued · 1 done · 1 failed</span>
+                <div class="transfer-queue__header-actions">
+                  <button class="terminal-view__toolbar-btn" title="Minimize">
+                    <svg class="li"><use href="#i-minus" /></svg>
+                  </button>
+                  <button class="terminal-view__toolbar-btn" title="Close panel">
+                    <svg class="li"><use href="#i-x" /></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="transfer-queue__list">
+                <!-- B · active (upload) -->
+                <div class="transfer-row">
+                  <span class="transfer-row__dir" title="Upload"
+                    ><svg class="li"><use href="#i-arrow-up" /></svg
+                  ></span>
+                  <span class="transfer-row__name">data.csv</span>
+                  <span class="transfer-row__path">/uploads/data.csv</span>
+                  <span class="transfer-bar"
+                    ><span class="transfer-bar__fill" style="width: 45%"></span
+                  ></span>
+                  <span class="transfer-row__pct">45%</span>
+                  <span class="transfer-row__speed">23 KB/s</span>
+                  <span class="transfer-row__status"></span>
+                  <span class="transfer-row__actions">
+                    <button class="terminal-view__toolbar-btn" title="Pause">
+                      <svg class="li"><use href="#i-pause" /></svg>
+                    </button>
+                    <button class="terminal-view__toolbar-btn" title="Cancel">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </span>
+                </div>
+
+                <!-- B · active (download) -->
+                <div class="transfer-row">
+                  <span class="transfer-row__dir" title="Download"
+                    ><svg class="li"><use href="#i-arrow-down" /></svg
+                  ></span>
+                  <span class="transfer-row__name">report.pdf</span>
+                  <span class="transfer-row__path">/pub/report.pdf</span>
+                  <span class="transfer-bar"
+                    ><span class="transfer-bar__fill" style="width: 78%"></span
+                  ></span>
+                  <span class="transfer-row__pct">78%</span>
+                  <span class="transfer-row__speed">112 KB/s</span>
+                  <span class="transfer-row__status"></span>
+                  <span class="transfer-row__actions">
+                    <button class="terminal-view__toolbar-btn" title="Pause">
+                      <svg class="li"><use href="#i-pause" /></svg>
+                    </button>
+                    <button class="terminal-view__toolbar-btn" title="Cancel">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </span>
+                </div>
+
+                <!-- C · paused -->
+                <div class="transfer-row">
+                  <span class="transfer-row__dir" title="Download"
+                    ><svg class="li"><use href="#i-arrow-down" /></svg
+                  ></span>
+                  <span class="transfer-row__name">image.iso</span>
+                  <span class="transfer-row__path">/pub/image.iso</span>
+                  <span class="transfer-bar"
+                    ><span
+                      class="transfer-bar__fill transfer-bar__fill--paused"
+                      style="width: 31%"
+                    ></span
+                  ></span>
+                  <span class="transfer-row__pct">31%</span>
+                  <span class="transfer-row__speed transfer-row__status--queued">paused</span>
+                  <span class="transfer-row__status"></span>
+                  <span class="transfer-row__actions">
+                    <button class="terminal-view__toolbar-btn" title="Resume">
+                      <svg class="li"><use href="#i-play" /></svg>
+                    </button>
+                    <button class="terminal-view__toolbar-btn" title="Cancel">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </span>
+                </div>
+
+                <!-- D · queued -->
+                <div class="transfer-row">
+                  <span class="transfer-row__dir" title="Upload"
+                    ><svg class="li"><use href="#i-arrow-up" /></svg
+                  ></span>
+                  <span class="transfer-row__name">backup.tar.gz</span>
+                  <span class="transfer-row__path">/uploads/</span>
+                  <span class="transfer-bar"
+                    ><span class="transfer-bar__fill" style="width: 0%"></span
+                  ></span>
+                  <span class="transfer-row__pct"></span>
+                  <span class="transfer-row__speed"></span>
+                  <span class="transfer-row__status transfer-row__status--queued">
+                    <svg class="li"><use href="#i-clock" /></svg> queued
+                  </span>
+                  <span class="transfer-row__actions">
+                    <button class="terminal-view__toolbar-btn" title="Cancel">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </span>
+                </div>
+
+                <!-- E · completed -->
+                <div class="transfer-row">
+                  <span class="transfer-row__dir" title="Download"
+                    ><svg class="li"><use href="#i-arrow-down" /></svg
+                  ></span>
+                  <span class="transfer-row__name">readme.txt</span>
+                  <span class="transfer-row__path">/pub/readme.txt</span>
+                  <span class="transfer-bar"
+                    ><span
+                      class="transfer-bar__fill transfer-bar__fill--done"
+                      style="width: 100%"
+                    ></span
+                  ></span>
+                  <span class="transfer-row__pct">100%</span>
+                  <span class="transfer-row__speed"></span>
+                  <span class="transfer-row__status transfer-row__status--done">done</span>
+                  <span class="transfer-row__actions">
+                    <button class="terminal-view__toolbar-btn" title="Remove">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </span>
+                </div>
+
+                <!-- F · failed / retry -->
+                <div class="transfer-row">
+                  <span class="transfer-row__dir" title="Upload"
+                    ><svg class="li"><use href="#i-arrow-up" /></svg
+                  ></span>
+                  <span class="transfer-row__name">archive.zip</span>
+                  <span class="transfer-row__path">/uploads/archive.zip</span>
+                  <span class="transfer-bar"
+                    ><span
+                      class="transfer-bar__fill transfer-bar__fill--failed"
+                      style="width: 62%"
+                    ></span
+                  ></span>
+                  <span class="transfer-row__pct">62%</span>
+                  <span class="transfer-row__speed"></span>
+                  <span class="transfer-row__status transfer-row__status--failed"
+                    >failed (2/3)</span
+                  >
+                  <span class="transfer-row__actions">
+                    <button class="terminal-view__toolbar-btn" title="Retry">
+                      <svg class="li"><use href="#i-rotate-cw" /></svg>
+                    </button>
+                    <button class="terminal-view__toolbar-btn" title="Cancel">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </span>
+                </div>
+              </div>
+
+              <div class="transfer-queue__footer">
+                <button class="btn">Clear Completed</button>
+                <button class="btn">Cancel All</button>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">My FTP Server · /pub</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">
+                  <svg class="li"><use href="#i-arrow-up-down" /></svg> 2 transferring
+                </span>
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Transfer queue panel — docks above the status bar,
+                shared across all transfer-capable sessions.
+              </li>
+              <li>
+                <span class="callout">B</span> Active transfer — accent progress bar, live percent +
+                throughput, Pause / Cancel.
+              </li>
+              <li>
+                <span class="callout">C</span> Paused transfer — amber bar
+                (<code>--state-connecting</code>), Resume / Cancel.
+              </li>
+              <li>
+                <span class="callout">D</span> Queued transfer — waiting for a free slot (max 2
+                concurrent), clock badge, Cancel.
+              </li>
+              <li>
+                <span class="callout">E</span> Completed transfer — green bar
+                (<code>--state-connected</code>), stays until cleared.
+              </li>
+              <li>
+                <span class="callout">F</span> Failed transfer — red bar
+                (<code>--state-disconnected</code>), retry counter, Retry / Cancel.
+              </li>
+            </ul>
+          </div>
+
+          <div class="mockup-note" style="margin-top: 16px">
+            When minimized, the panel collapses to a single status-bar item
+            <span class="callout">G</span> with a live transfer count; clicking it re-expands the
+            queue.
+          </div>
+          <div class="app" style="height: auto">
+            <div class="transfer-queue">
+              <div class="transfer-queue__header">
+                <svg class="li"><use href="#i-arrow-up-down" /></svg>
+                <span class="transfer-queue__title">Transfers</span>
+                <span class="transfer-queue__summary">2 active · 1 queued</span>
+                <div class="transfer-queue__header-actions">
+                  <button class="terminal-view__toolbar-btn" title="Expand">
+                    <svg class="li"><use href="#i-arrow-up" /></svg>
+                  </button>
+                  <button class="terminal-view__toolbar-btn" title="Close panel">
+                    <svg class="li"><use href="#i-x" /></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">My FTP Server · /pub</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item" style="color: var(--accent-color); cursor: pointer">
+                  <svg class="li"><use href="#i-arrow-up-down" /></svg> Transfers (2 active, 1
+                  queued)
+                </span>
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">G</span> Minimized indicator — click to re-expand the transfer
+                queue.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ── Mockup: Connection editor + insecure warning ─────────── -->
+        <div class="mockup-section">
+          <h3>Mockup — schema-driven connection editor &amp; insecure-FTP warning</h3>
+
+          <div class="states">
+            <!-- ── Connection editor (schema-driven) ───────────────── -->
+            <div style="flex: 1 1 480px">
+              <h3>Schema-driven connection editor (FTP type)</h3>
+              <div class="mockup-note">
+                Rendered by <code>DynamicForm</code> from the FTP backend's settings schema — no
+                hand-coded FTP fields. TLS Mode <span class="callout">A</span> conditionally reveals
+                the plain-FTP warning <span class="callout">B</span>; the Anonymous toggle
+                <span class="callout">C</span> hides Username / Password (dashed regions are
+                schema-conditional).
+              </div>
+              <div class="form-card">
+                <div class="form-card__tabs">
+                  <div class="form-card__tab form-card__tab--active">Connection</div>
+                  <div class="form-card__tab">Terminal</div>
+                  <div class="form-card__tab">Appearance</div>
+                </div>
+                <div class="form-card__body">
+                  <div class="form-row">
+                    <span class="form-row__label">Name</span>
+                    <span class="form-field">My FTP Server</span>
+                  </div>
+                  <div class="form-row">
+                    <span class="form-row__label">Type</span>
+                    <span class="form-field form-field--select">FTP</span>
+                  </div>
+
+                  <div class="form-group__label">Server</div>
+                  <div class="form-row">
+                    <span class="form-row__label">Host</span>
+                    <span class="form-field">ftp.example.com</span>
+                  </div>
+                  <div class="form-row">
+                    <span class="form-row__label">Port</span>
+                    <span class="form-field">21</span>
+                  </div>
+
+                  <div class="form-group__label">Security</div>
+                  <div class="form-row">
+                    <span class="form-row__label">TLS Mode <span class="callout">A</span></span>
+                    <span class="form-field form-field--select">None (plain FTP)</span>
+                  </div>
+                  <div class="form-callout-warn form-conditional">
+                    <svg class="li"><use href="#i-triangle-alert" /></svg>
+                    <span
+                      ><span class="callout">B</span> Plain FTP transmits credentials and data in
+                      cleartext. Use FTPS if the server supports it.</span
+                    >
+                  </div>
+
+                  <div class="form-group__label">Authentication</div>
+                  <div class="form-row">
+                    <span class="form-row__label"></span>
+                    <span class="form-checkbox"
+                      ><span class="check"></span> Use anonymous login
+                      <span class="callout">C</span></span
+                    >
+                  </div>
+                  <div class="form-conditional">
+                    <div class="form-row">
+                      <span class="form-row__label">Username</span>
+                      <span class="form-field">admin</span>
+                    </div>
+                    <div class="form-row">
+                      <span class="form-row__label">Password</span>
+                      <span class="form-field"
+                        >••••••••
+                        <span class="form-field__icon-btn"
+                          ><svg class="li"><use href="#i-eye" /></svg
+                        ></span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="form-group__label">Transfer</div>
+                  <div class="form-row">
+                    <span class="form-row__label">Mode</span>
+                    <span class="form-field form-field--select">Passive</span>
+                  </div>
+                  <div class="form-row">
+                    <span class="form-row__label">Transfer</span>
+                    <span class="form-field form-field--select">Binary</span>
+                  </div>
+                  <div class="form-row">
+                    <span class="form-row__label">Initial Dir</span>
+                    <span class="form-field">/pub</span>
+                  </div>
+                  <div class="form-row">
+                    <span class="form-row__label">Timeout (s)</span>
+                    <span class="form-field">30</span>
+                  </div>
+                </div>
+                <div class="form-card__footer">
+                  <button class="btn">Test Connection</button>
+                  <button class="btn btn--primary">Save</button>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">A</span> TLS Mode select — <code>None</code> /
+                    <code>Explicit (STARTTLS)</code> / <code>Implicit</code>; Port auto-adjusts to
+                    990 for Implicit.
+                  </li>
+                  <li>
+                    <span class="callout">B</span> Insecure warning — only visible while TLS Mode is
+                    <code>None</code>.
+                  </li>
+                  <li>
+                    <span class="callout">C</span> Anonymous toggle — when on, Username becomes
+                    <code>anonymous</code> and the Username / Password rows (dashed) are hidden.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- ── Insecure-FTP warning modal ──────────────────────── -->
+            <div style="flex: 1 1 420px">
+              <h3>Insecure connection warning (on connect, plain FTP)</h3>
+              <div class="mockup-note">
+                Shown before the control connection opens when TLS Mode is <code>None</code>. The
+                user can suppress it per connection <span class="callout">D</span> or back out.
+              </div>
+              <div class="modal-backdrop">
+                <div class="modal">
+                  <div class="modal__header">
+                    <svg class="li"><use href="#i-triangle-alert" /></svg> Insecure Connection
+                  </div>
+                  <div class="modal__body">
+                    <p>
+                      Plain FTP transmits your username, password, and all data in cleartext. Anyone
+                      on the network path can intercept your credentials and files.
+                    </p>
+                    <p>Consider using FTPS (FTP over TLS) if the server supports it.</p>
+                    <div class="form-checkbox">
+                      <span class="check"></span> Don't warn again for this connection
+                      <span class="callout">D</span>
+                    </div>
+                  </div>
+                  <div class="modal__footer">
+                    <button class="btn">Cancel</button>
+                    <button class="btn btn--primary">Connect Anyway</button>
+                  </div>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">D</span> Sets <code>suppressSecurityWarning</code> on the
+                    connection so future connects skip this modal.
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <p>
+          Detailed flows, the connection and transfer state machines, the reconnection path, and
+          edge cases are diagrammed in the <a href="#behavior">States &amp; Sequences</a> section.
+          Key rules:
+        </p>
+
+        <h3>Connection lifecycle</h3>
+        <ol>
+          <li>
+            <strong>Create</strong> — User creates an FTP connection via the connection editor;
+            settings are validated and saved to <code>connections.json</code>.
+          </li>
+          <li>
+            <strong>Connect</strong> — The backend establishes a control connection, authenticates,
+            and optionally negotiates TLS. On plain FTP, the security warning appears first.
+          </li>
+          <li>
+            <strong>Browse</strong> — The file browser sidebar populates with the remote listing;
+            the user navigates, previews text files, and initiates transfers.
+          </li>
+          <li>
+            <strong>Transfer</strong> — Uploads/downloads are queued and executed; progress is
+            reported in the transfer queue panel.
+          </li>
+          <li>
+            <strong>Disconnect</strong> — The control connection is gracefully terminated
+            (<code>QUIT</code>); active transfers are cancelled with a confirmation prompt.
+          </li>
+        </ol>
+
+        <h3>FTP-specific behaviors</h3>
+        <ul>
+          <li>
+            <strong>No terminal output</strong>: FTP sessions open directly into the file browser
+            view — no terminal tab is created.
+          </li>
+          <li>
+            <strong>Keep-alive</strong>: periodic <code>NOOP</code> commands prevent idle-connection
+            drops (default 60 s, configurable).
+          </li>
+          <li>
+            <strong>Reconnection</strong>: on control-connection drop, the backend auto-reconnects
+            (up to 3 retries); active transfers pause and resume after reconnection.
+          </li>
+          <li>
+            <strong>Transfer types</strong>: Binary (default) preserves contents exactly; ASCII
+            converts line endings. Default is configurable and overridable per transfer.
+          </li>
+          <li>
+            <strong>Passive vs Active mode</strong>: Passive (default) works through NAT/firewalls;
+            Active requires the client to be directly reachable.
+          </li>
+          <li>
+            <strong>Directory listing parsing</strong>: servers return varied listing formats (Unix
+            <code>ls -l</code>, Windows, MLSD); the backend parses multiple formats consistently.
+          </li>
+        </ul>
+
+        <h3>Transfer queue behavior</h3>
+        <ul>
+          <li>Transfers are queued globally per FTP session.</li>
+          <li>
+            Maximum concurrent transfers per session: 2 (configurable, separate data connections).
+          </li>
+          <li>Failed transfers retry up to 3 times automatically with exponential backoff.</li>
+          <li>
+            Transfer resume: where the server supports <code>REST</code>, interrupted downloads
+            resume from the last byte received.
+          </li>
+          <li>Large transfers show estimated time remaining from current throughput.</li>
+          <li>Completed transfers remain visible until explicitly cleared.</li>
+        </ul>
+
+        <h3>Credential handling</h3>
+        <ul>
+          <li>
+            Passwords are stored in the credential store (matching the user's credential storage
+            mode).
+          </li>
+          <li>
+            Anonymous login uses username <code>anonymous</code> with a configurable email-style
+            password (defaults to empty).
+          </li>
+          <li>Passwords are never written to <code>connections.json</code> or logs.</li>
+        </ul>
+
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>Server compatibility</strong>: handle common quirks gracefully (e.g. fall back
+            from <code>MLSD</code> to <code>LIST</code>).
+          </li>
+          <li>
+            <strong>Symbolic links</strong>: distinct icon, followed for navigation, target shown in
+            properties.
+          </li>
+          <li>
+            <strong>Large directories</strong>: virtual scrolling avoids UI freezes for thousands of
+            entries.
+          </li>
+          <li>
+            <strong>Filename encoding</strong>: assume UTF-8 with Latin-1 fallback; selectable
+            encoding is a future enhancement.
+          </li>
+          <li>
+            <strong>Connection timeout</strong>: surface a clear error with suggestions (check
+            host/port, firewall, server status).
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Connection State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Disconnected
+
+    Disconnected --> Connecting: connect()
+    Connecting --> TlsNegotiating: TLS mode != None
+    Connecting --> Authenticating: TLS mode == None
+    TlsNegotiating --> Authenticating: TLS established
+    TlsNegotiating --> Error: TLS failed
+    Authenticating --> Connected: auth success
+    Authenticating --> Error: auth failed
+
+    Connected --> Browsing: list_dir()
+    Browsing --> Connected: listing received
+    Connected --> Transferring: upload/download
+    Transferring --> Connected: transfer complete
+    Transferring --> Error: transfer failed
+
+    Connected --> Reconnecting: connection lost
+    Reconnecting --> Authenticating: reconnect success
+    Reconnecting --> Error: max retries exceeded
+
+    Connected --> Disconnecting: disconnect()
+    Disconnecting --> Disconnected: QUIT sent
+    Error --> Disconnected: user dismisses
+    Error --> Connecting: user retries
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Connection Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend as FTP Backend
+    participant Server as FTP Server
+
+    User->>Frontend: Open FTP connection
+    Frontend->>Backend: connect(settings)
+
+    alt Plain FTP
+        Frontend->>User: Show security warning
+        User->>Frontend: Confirm "Connect Anyway"
+    end
+
+    Backend->>Server: TCP connect (port 21/990)
+    Server-->>Backend: 220 Welcome
+
+    alt Explicit FTPS
+        Backend->>Server: AUTH TLS
+        Server-->>Backend: 234 TLS OK
+        Backend->>Server: TLS handshake
+    end
+
+    Backend->>Server: USER username
+    Server-->>Backend: 331 Need password
+    Backend->>Server: PASS ****
+    Server-->>Backend: 230 Login OK
+
+    Backend->>Server: PASV (or EPSV)
+    Server-->>Backend: 227 Entering Passive Mode (h1,h2,h3,h4,p1,p2)
+
+    Backend->>Server: LIST /
+    Server-->>Backend: Directory listing
+    Backend-->>Frontend: Vec&lt;FileEntry&gt;
+    Frontend-->>User: Show file browser
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">File Transfer Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Queue as Transfer Queue
+    participant Backend as FTP Backend
+    participant Server as FTP Server
+
+    User->>Frontend: Download file
+    Frontend->>Queue: Enqueue transfer
+    Queue->>Backend: Start download
+
+    Backend->>Server: TYPE I (binary)
+    Server-->>Backend: 200 OK
+    Backend->>Server: PASV
+    Server-->>Backend: 227 Passive mode
+
+    alt Resume supported
+        Backend->>Server: REST &lt;offset&gt;
+        Server-->>Backend: 350 Restarting
+    end
+
+    Backend->>Server: RETR /path/to/file
+    Server-->>Backend: 150 Opening data connection
+
+    loop Data transfer
+        Server-->>Backend: Data chunk
+        Backend-->>Queue: Progress update
+        Queue-->>Frontend: Update progress bar
+    end
+
+    Server-->>Backend: 226 Transfer complete
+    Queue-->>Frontend: Transfer completed
+    Frontend-->>User: Show completion
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Transfer Queue State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Queued
+
+    Queued --> Active: slot available
+    Active --> Completed: transfer done
+    Active --> Failed: error
+    Active --> Paused: user pause
+    Active --> Cancelled: user cancel
+
+    Paused --> Active: user resume
+    Paused --> Cancelled: user cancel
+
+    Failed --> Queued: retry (auto/manual)
+    Failed --> Cancelled: user cancel
+
+    Completed --> [*]
+    Cancelled --> [*]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">FTP Session Lifecycle (Frontend)</span>
+          <pre class="mermaid">
+flowchart TD
+    A[User selects FTP connection] --> B{TLS Mode?}
+    B -->|None| C[Show security warning]
+    B -->|Explicit/Implicit| D[Connect]
+    C --> E{User confirms?}
+    E -->|Yes| D
+    E -->|No| F[Cancel]
+    D --> G[Authenticate]
+    G --> H{Auth OK?}
+    H -->|Yes| I[Open file browser sidebar]
+    H -->|No| J[Show error, offer retry]
+    I --> K[List initial directory]
+    K --> L[User browses / transfers files]
+    L --> M{Connection lost?}
+    M -->|Yes| N[Auto-reconnect]
+    N -->|Success| L
+    N -->|Failed| J
+    M -->|No| O{User disconnects?}
+    O -->|Yes| P[Send QUIT, close session]
+    O -->|No| L
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Integration Overview</span>
+          <pre class="mermaid">
+flowchart TB
+    subgraph Frontend
+        CE[ConnectionEditor] -->|schema-driven| DS[DynamicField]
+        FB[FileBrowser Sidebar] -->|list_dir, read, write| API[api.ts]
+        TQ[TransferQueue Panel] -->|progress events| EV[events.ts]
+        ST[appStore] -->|transfers state| TQ
+    end
+
+    subgraph Tauri Commands
+        API --> CMD[commands/ftp.rs]
+        CMD --> SM[SessionManager]
+    end
+
+    subgraph Core
+        SM --> FTP[FtpBackend]
+        FTP -->|implements| CT[ConnectionType trait]
+        FTP -->|provides| FFB[FtpFileBrowser]
+        FFB -->|implements| FBT[FileBrowser trait]
+        FTP -->|manages| TQB[TransferQueue]
+    end
+
+    subgraph External
+        FTP -->|suppaftp| SRV[FTP Server]
+    end
+          </pre>
+        </div>
+
+        <h3>Agent Support</h3>
+        <p>
+          FTP connections are <strong>desktop-only</strong> in the initial implementation. The
+          remote agent does not need FTP support because:
+        </p>
+        <ul>
+          <li>FTP is a direct client-to-server protocol (no SSH tunneling involved)</li>
+          <li>The desktop app connects directly to FTP servers</li>
+          <li>
+            Agent-side FTP could be added later if there's demand for FTP access through SSH jump
+            hosts
+          </li>
+        </ul>
+
+        <div class="diagram">
+          <span class="diagram__caption">Agent Support</span>
+          <pre class="mermaid">
+flowchart LR
+    Desktop[termiHub Desktop] -->|FtpBackend / suppaftp| Server[FTP Server]
+    Agent[Remote Agent] -. not involved .- Server
+    style Agent stroke-dasharray: 5 5
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the current project architecture at concept-creation time; the codebase may
+          evolve before implementation. The integration and agent-support diagrams live in the
+          <a href="#behavior">States &amp; Sequences</a> section.
+        </p>
+
+        <h3>New crate dependency</h3>
+        <p>
+          Add the
+          <a href="https://crates.io/crates/suppaftp"><code>suppaftp</code></a> crate to
+          <code>core/Cargo.toml</code>:
+        </p>
+        <pre><code>[dependencies]
+suppaftp = { version = "6", features = ["async-native-tls"] }
+</code></pre>
+        <p>
+          <code>suppaftp</code> supports FTP, FTPS (explicit and implicit), passive and active mode,
+          and async operations via <code>async-native-tls</code>. It handles the FTP protocol
+          details, including <code>PASV</code>/<code>EPSV</code>, <code>REST</code>,
+          <code>MLSD</code>/<code>LIST</code>, and TLS negotiation.
+        </p>
+
+        <h3>New backend: <code>core/src/backends/ftp/</code></h3>
+        <pre><code>core/src/backends/ftp/
+  mod.rs              # FtpBackend — implements ConnectionType
+  file_browser.rs     # FtpFileBrowser — implements FileBrowser
+  transfer.rs         # TransferQueue, TransferEntry, progress tracking
+  listing_parser.rs   # Directory listing parsers (Unix, Windows, MLSD)
+</code></pre>
+
+        <p><strong>FtpBackend</strong> (<code>mod.rs</code>):</p>
+        <pre><code>pub struct FtpBackend {
+    client: Option&lt;AsyncFtpStream&gt;,
+    settings: FtpSettings,
+    keep_alive_handle: Option&lt;JoinHandle&lt;()&gt;&gt;,
+    file_browser: Option&lt;FtpFileBrowser&gt;,
+    transfer_queue: TransferQueue,
+    output_tx: Option&lt;broadcast::Sender&lt;Vec&lt;u8&gt;&gt;&gt;,
+}
+
+impl ConnectionType for FtpBackend {
+    fn type_id(&amp;self) -&gt; &amp;str { "ftp" }
+    fn display_name(&amp;self) -&gt; &amp;str { "FTP" }
+
+    fn capabilities(&amp;self) -&gt; Capabilities {
+        Capabilities {
+            monitoring: false,
+            file_browser: true,
+            resize: false,
+            persistent: false,
+        }
+    }
+
+    fn settings_schema(&amp;self) -&gt; SettingsSchema {
+        // Schema-driven fields: host, port, tls_mode,
+        // username, password, anonymous, passive_mode,
+        // transfer_type, initial_directory, timeout,
+        // keep_alive_interval, suppress_security_warning
+    }
+
+    async fn connect(&amp;mut self, settings: Value) -&gt; Result&lt;(), SessionError&gt; {
+        // 1. Parse settings
+        // 2. Establish TCP connection
+        // 3. Negotiate TLS if configured
+        // 4. Authenticate (user/pass or anonymous)
+        // 5. Set passive/active mode
+        // 6. Change to initial directory
+        // 7. Start keep-alive task
+        // 8. Initialize FtpFileBrowser
+    }
+
+    async fn write(&amp;mut self, _data: &amp;[u8]) -&gt; Result&lt;(), SessionError&gt; {
+        // FTP has no terminal input — return error or no-op
+        Err(SessionError::NotSupported("FTP has no terminal input"))
+    }
+
+    async fn resize(&amp;mut self, _cols: u16, _rows: u16) -&gt; Result&lt;(), SessionError&gt; {
+        Ok(()) // No-op, FTP has no terminal
+    }
+
+    fn file_browser(&amp;self) -&gt; Option&lt;&amp;dyn FileBrowser&gt; {
+        self.file_browser.as_ref().map(|fb| fb as &amp;dyn FileBrowser)
+    }
+
+    async fn disconnect(&amp;mut self) -&gt; Result&lt;(), SessionError&gt; {
+        // Cancel active transfers, send QUIT, close connection
+    }
+}
+</code></pre>
+
+        <p><strong>FtpFileBrowser</strong> (<code>file_browser.rs</code>):</p>
+        <pre><code>pub struct FtpFileBrowser {
+    client: Arc&lt;Mutex&lt;AsyncFtpStream&gt;&gt;,
+}
+
+#[async_trait]
+impl FileBrowser for FtpFileBrowser {
+    async fn list_dir(&amp;self, path: &amp;str) -&gt; Result&lt;Vec&lt;FileEntry&gt;, FileError&gt; {
+        // Try MLSD first (structured listing), fall back to LIST
+        // Parse listing into Vec&lt;FileEntry&gt;
+    }
+
+    async fn read_file(&amp;self, path: &amp;str) -&gt; Result&lt;Vec&lt;u8&gt;, FileError&gt; {
+        // RETR file into memory (for preview/edit)
+    }
+
+    async fn write_file(&amp;self, path: &amp;str, data: &amp;[u8]) -&gt; Result&lt;(), FileError&gt; {
+        // STOR file from memory
+    }
+
+    async fn delete(&amp;self, path: &amp;str) -&gt; Result&lt;(), FileError&gt; {
+        // DELE for files, RMD for directories
+    }
+
+    async fn rename(&amp;self, from: &amp;str, to: &amp;str) -&gt; Result&lt;(), FileError&gt; {
+        // RNFR + RNTO
+    }
+
+    async fn stat(&amp;self, path: &amp;str) -&gt; Result&lt;FileEntry, FileError&gt; {
+        // MLST if supported, otherwise LIST parent + filter
+    }
+}
+</code></pre>
+
+        <h3>Transfer queue</h3>
+        <p>The transfer queue manages concurrent file transfers with progress reporting.</p>
+        <pre><code>// core/src/backends/ftp/transfer.rs
+
+pub struct TransferQueue {
+    entries: Vec&lt;TransferEntry&gt;,
+    max_concurrent: usize,
+    progress_tx: broadcast::Sender&lt;TransferProgress&gt;,
+}
+
+pub struct TransferEntry {
+    pub id: String,
+    pub direction: TransferDirection,  // Upload / Download
+    pub local_path: PathBuf,
+    pub remote_path: String,
+    pub state: TransferState,
+    pub total_bytes: Option&lt;u64&gt;,
+    pub transferred_bytes: u64,
+    pub speed_bytes_per_sec: u64,
+}
+
+pub enum TransferState {
+    Queued,
+    Active,
+    Paused,
+    Completed,
+    Failed(String),
+    Cancelled,
+}
+</code></pre>
+
+        <h3>New Tauri IPC commands</h3>
+        <p>Add FTP-specific transfer commands in <code>src-tauri/src/commands/</code>:</p>
+        <pre><code>// src-tauri/src/commands/ftp.rs
+
+#[tauri::command]
+async fn ftp_download(
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+) -&gt; Result&lt;String, String&gt;;  // Returns transfer ID
+
+#[tauri::command]
+async fn ftp_upload(
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+) -&gt; Result&lt;String, String&gt;;  // Returns transfer ID
+
+#[tauri::command]
+async fn ftp_transfer_pause(transfer_id: String) -&gt; Result&lt;(), String&gt;;
+
+#[tauri::command]
+async fn ftp_transfer_resume(transfer_id: String) -&gt; Result&lt;(), String&gt;;
+
+#[tauri::command]
+async fn ftp_transfer_cancel(transfer_id: String) -&gt; Result&lt;(), String&gt;;
+
+#[tauri::command]
+async fn ftp_transfer_list(session_id: String) -&gt; Result&lt;Vec&lt;TransferEntry&gt;, String&gt;;
+</code></pre>
+
+        <h3>Frontend store extensions</h3>
+        <p>Add transfer queue state to <code>src/store/appStore.ts</code>:</p>
+        <pre><code>// Transfer queue types (src/types/transfer.ts)
+export interface TransferEntry {
+  id: string;
+  sessionId: string;
+  direction: "upload" | "download";
+  localPath: string;
+  remotePath: string;
+  state: "queued" | "active" | "paused" | "completed" | "failed" | "cancelled";
+  totalBytes: number | null;
+  transferredBytes: number;
+  speedBytesPerSec: number;
+  error: string | null;
+}
+
+// Store slice
+interface TransferSlice {
+  transfers: TransferEntry[];
+  addTransfer: (entry: TransferEntry) =&gt; void;
+  updateTransfer: (id: string, update: Partial&lt;TransferEntry&gt;) =&gt; void;
+  removeTransfer: (id: string) =&gt; void;
+  clearCompleted: () =&gt; void;
+}
+</code></pre>
+
+        <h3>New frontend components</h3>
+        <pre><code>src/components/TransferQueue/
+  TransferQueue.tsx           # Transfer queue panel (status bar area)
+  TransferEntry.tsx           # Individual transfer row with progress bar
+  TransferControls.tsx        # Pause/resume/cancel/retry buttons
+</code></pre>
+        <p>
+          The transfer queue panel is connection-type agnostic — it listens for transfer events from
+          any session that supports file transfers.
+        </p>
+
+        <h3>Tauri event integration</h3>
+        <p>Transfer progress is reported via Tauri events (not polling):</p>
+        <pre><code>// Backend emits progress events
+app_handle.emit("transfer-progress", TransferProgressPayload {
+    transfer_id: id,
+    transferred_bytes: bytes,
+    total_bytes: total,
+    speed: speed,
+    state: state,
+});
+</code></pre>
+        <pre><code>// Frontend listens for progress
+import { listen } from "@tauri-apps/api/event";
+
+listen&lt;TransferProgressPayload&gt;("transfer-progress", (event) =&gt; {
+  useAppStore.getState().updateTransfer(event.payload.transfer_id, {
+    transferredBytes: event.payload.transferred_bytes,
+    speedBytesPerSec: event.payload.speed,
+    state: event.payload.state,
+  });
+});
+</code></pre>
+
+        <h3>Settings schema definition</h3>
+        <p>
+          The FTP backend declares its settings schema so the connection editor renders
+          automatically:
+        </p>
+        <pre><code>fn settings_schema(&amp;self) -&gt; SettingsSchema {
+    SettingsSchema {
+        groups: vec![
+            SettingsGroup {
+                label: "Server",
+                fields: vec![
+                    Field { key: "host", label: "Host", field_type: Text, required: true },
+                    Field { key: "port", label: "Port", field_type: Port, default: 21 },
+                ],
+            },
+            SettingsGroup {
+                label: "Security",
+                fields: vec![
+                    Field {
+                        key: "tlsMode",
+                        label: "TLS Mode",
+                        field_type: Select(vec!["none", "explicit", "implicit"]),
+                        default: "none",
+                    },
+                    // Security warning rendered by frontend when tlsMode == "none"
+                    Field {
+                        key: "suppressSecurityWarning",
+                        label: "Don't warn about insecure connection",
+                        field_type: Boolean,
+                        default: false,
+                        visible_when: FieldCondition { key: "tlsMode", equals: "none" },
+                    },
+                ],
+            },
+            SettingsGroup {
+                label: "Authentication",
+                fields: vec![
+                    Field {
+                        key: "anonymous",
+                        label: "Use anonymous login",
+                        field_type: Boolean,
+                        default: false,
+                    },
+                    Field {
+                        key: "username",
+                        label: "Username",
+                        field_type: Text,
+                        default: "",
+                        visible_when: FieldCondition { key: "anonymous", equals: false },
+                    },
+                    Field {
+                        key: "password",
+                        label: "Password",
+                        field_type: Password,
+                        visible_when: FieldCondition { key: "anonymous", equals: false },
+                    },
+                ],
+            },
+            SettingsGroup {
+                label: "Transfer",
+                fields: vec![
+                    Field {
+                        key: "passiveMode",
+                        label: "Mode",
+                        field_type: Select(vec!["passive", "active"]),
+                        default: "passive",
+                    },
+                    Field {
+                        key: "transferType",
+                        label: "Transfer Type",
+                        field_type: Select(vec!["binary", "ascii"]),
+                        default: "binary",
+                    },
+                    Field {
+                        key: "initialDirectory",
+                        label: "Initial Directory",
+                        field_type: Text,
+                        default: "/",
+                    },
+                    Field {
+                        key: "timeout",
+                        label: "Timeout (seconds)",
+                        field_type: Number,
+                        default: 30,
+                    },
+                ],
+            },
+        ],
+    }
+}
+</code></pre>
+
+        <h3>Registration</h3>
+        <p>Register the FTP backend in the connection type registry:</p>
+        <pre><code>// core/src/backends/mod.rs
+pub mod ftp;
+
+// In the registry setup (desktop or agent)
+registry.register(Box::new(FtpBackend::new()));
+</code></pre>
+
+        <h3>Implementation order</h3>
+        <ol>
+          <li>
+            Core <code>FtpBackend</code> skeleton + settings schema + connection/auth/TLS
+            (<code>mod.rs</code>).
+          </li>
+          <li>
+            <code>FtpFileBrowser</code> + listing parsers; wire into the file browser sidebar.
+          </li>
+          <li><code>TransferQueue</code> core + Tauri IPC commands + progress events.</li>
+          <li>Frontend transfer store slice + <code>TransferQueue</code> panel/rows/controls.</li>
+          <li>Insecure-FTP warning modal + schema-conditional fields in the editor.</li>
+          <li>Polish &amp; edge cases (reconnection, resume, encoding fallback, server quirks).</li>
+        </ol>
+
+        <h3>File touched summary</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File/Directory</th>
+                <th>Action</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>core/Cargo.toml</code></td>
+                <td>Modify</td>
+                <td>Add <code>suppaftp</code> dependency</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ftp/mod.rs</code></td>
+                <td>Create</td>
+                <td>FtpBackend implementation</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ftp/file_browser.rs</code></td>
+                <td>Create</td>
+                <td>FtpFileBrowser implementation</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ftp/transfer.rs</code></td>
+                <td>Create</td>
+                <td>Transfer queue logic</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ftp/listing_parser.rs</code></td>
+                <td>Create</td>
+                <td>Directory listing parsers</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/mod.rs</code></td>
+                <td>Modify</td>
+                <td>Register FTP module</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/commands/ftp.rs</code></td>
+                <td>Create</td>
+                <td>Tauri IPC commands for transfers</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/commands/mod.rs</code></td>
+                <td>Modify</td>
+                <td>Register FTP commands</td>
+              </tr>
+              <tr>
+                <td><code>src/types/transfer.ts</code></td>
+                <td>Create</td>
+                <td>Transfer queue TypeScript types</td>
+              </tr>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>Modify</td>
+                <td>Add transfer slice</td>
+              </tr>
+              <tr>
+                <td><code>src/services/api.ts</code></td>
+                <td>Modify</td>
+                <td>Add FTP transfer API functions</td>
+              </tr>
+              <tr>
+                <td><code>src/services/events.ts</code></td>
+                <td>Modify</td>
+                <td>Add transfer progress event listener</td>
+              </tr>
+              <tr>
+                <td><code>src/components/TransferQueue/TransferQueue.tsx</code></td>
+                <td>Create</td>
+                <td>Transfer queue panel</td>
+              </tr>
+              <tr>
+                <td><code>src/components/TransferQueue/TransferEntry.tsx</code></td>
+                <td>Create</td>
+                <td>Transfer row component</td>
+              </tr>
+              <tr>
+                <td><code>src/components/TransferQueue/TransferControls.tsx</code></td>
+                <td>Create</td>
+                <td>Transfer action buttons</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Implementation Status</h3>
+        <p>
+          Not started — this is a <code>backlog/</code> concept. Once implementation begins, run
+          <code>/sync-concept ftp-client</code> after each change to keep the sync ledger current.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger — FTP Client <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            This ledger is maintained by the <code>/sync-concept ftp-client</code> skill. It records
+            the last commit at which the concept artifacts and the code were reconciled, plus any
+            open divergences. The concept is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (concept not yet implemented) ·
+          <strong>Status:</strong> diverged (entirely missing — backlog feature)
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Entire feature (per concept)</td>
+                <td>Not implemented — backlog</td>
+                <td>Missing</td>
+                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

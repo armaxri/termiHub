@@ -1,0 +1,2205 @@
+<!doctype html>
+<!--
+  Single-file concept: Macro Recording and Playback.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/backlog/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Macro Recording and Playback (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Mockup-only structural helpers built from theme vars (not app classes). */
+      .macro-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 6px 8px 4px;
+        padding: 4px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .macro-search .li {
+        width: 13px;
+        height: 13px;
+      }
+      .macro-tree__child {
+        padding-left: 14px;
+      }
+      .macro-tree__sep {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 8px 2px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-disabled);
+      }
+      .macro-tree__sep::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-secondary);
+      }
+      .sidebar__header-actions {
+        display: flex;
+        gap: 2px;
+      }
+      .sidebar__header-btn {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        cursor: pointer;
+      }
+      .sidebar__header-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+      }
+      .sidebar__header-btn .li {
+        width: 15px;
+        height: 15px;
+      }
+      /* Recording REC pill — red, used in tab bar and status bar. */
+      .rec-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--color-error);
+        font-weight: 600;
+        font-size: 11px;
+      }
+      .rec-pill .li {
+        width: 12px;
+        height: 12px;
+        fill: var(--color-error);
+        stroke: var(--color-error);
+        animation: rec-pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes rec-pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+      .status-bar__item--rec {
+        color: var(--color-error);
+        font-weight: 600;
+      }
+      .terminal-view__toolbar-btn--recording {
+        color: #fff;
+        background: var(--color-error);
+      }
+      .sidebar__empty {
+        padding: 28px 18px;
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .sidebar__empty .li {
+        width: 28px;
+        height: 28px;
+        color: var(--text-disabled);
+        margin-bottom: 8px;
+      }
+      .empty-hint {
+        margin-top: 10px;
+      }
+      /* Macro editor mockup helpers. */
+      .editor {
+        flex: 1 1 auto;
+        overflow: auto;
+        padding: 16px 20px;
+        background: var(--bg-primary);
+      }
+      .editor h2 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 14px;
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        max-width: 560px;
+      }
+      .field > label {
+        width: 96px;
+        flex: 0 0 96px;
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .input {
+        flex: 1;
+        padding: 5px 9px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        font-size: 12px;
+      }
+      .input--sm {
+        flex: 0 0 80px;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        color: var(--text-primary);
+        font-size: 11px;
+      }
+      .delay-mode {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        margin: 6px 0 4px;
+      }
+      .radio-opt {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .radio-opt .radio {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 50%;
+        display: inline-grid;
+        place-items: center;
+      }
+      .radio-opt--selected .radio {
+        border-color: var(--accent-color);
+      }
+      .radio-opt--selected .radio::after {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent-color);
+      }
+      .section-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 20px 0 8px;
+      }
+      table.grid {
+        width: 100%;
+        max-width: 720px;
+        border-collapse: collapse;
+        font-size: 12px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      table.grid th {
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border-secondary);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      table.grid td {
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border-secondary);
+        color: var(--text-primary);
+      }
+      table.grid tr:last-child td {
+        border-bottom: none;
+      }
+      .cell-mono {
+        font-family: var(--font-mono);
+      }
+      .badge-type {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 4px;
+        font-size: 11px;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+      }
+      .badge-type--key {
+        color: var(--text-accent);
+      }
+      .grid-actions {
+        display: flex;
+        gap: 8px;
+        margin: 8px 0 0;
+      }
+      .row-btn {
+        width: 22px;
+        height: 22px;
+        display: inline-grid;
+        place-items: center;
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        cursor: pointer;
+      }
+      .row-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+      }
+      .row-btn .li {
+        width: 14px;
+        height: 14px;
+      }
+      .editor-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 22px;
+        max-width: 720px;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry) — union of all mockup symbols. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-list-video" viewBox="0 0 24 24">
+        <path d="M21 5H3" />
+        <path d="M10 12H3" />
+        <path d="M10 19H3" />
+        <path
+          d="M15 12.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997a1 1 0 0 1-1.517-.86z"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-circle-dot" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <circle cx="12" cy="12" r="1" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path
+          d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"
+        />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <path d="m21 21-4.34-4.34" />
+        <circle cx="11" cy="11" r="8" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 15V3" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-square-pen" viewBox="0 0 24 24">
+        <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+        <path
+          d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"
+        />
+      </symbol>
+      <symbol id="i-chevron-up" viewBox="0 0 24 24">
+        <path d="m18 15-6-6-6 6" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Macro Recording and Playback</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/517">#517</a></span
+          >
+          <span><code>docs/concepts/backlog/macro-recording.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept macro-recording</code> to
+          reconcile it with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Add the ability to record terminal input as macros and replay them on one or more terminal
+          sessions. Users can automate repetitive command sequences such as server setup,
+          configuration, and maintenance workflows.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Record all keystrokes (including special keys, control sequences, and timing) from a
+            terminal session
+          </li>
+          <li>Persist macros in a searchable, taggable macro library</li>
+          <li>
+            Play back macros on a single terminal or broadcast to multiple terminals simultaneously
+          </li>
+          <li>Support parameterized macros with template variables prompted at playback time</li>
+          <li>
+            Provide a macro manager UI for browsing, editing, organizing, importing, and exporting
+            macros
+          </li>
+          <li>Offer safety features: preview before playback, cancel during execution</li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Output-dependent macros (conditional logic based on terminal output) — this is
+            scripting, not macro recording
+          </li>
+          <li>Full scripting language or control flow (loops, conditionals) within macros</li>
+          <li>Recording mouse events (only keyboard input)</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The visual surfaces are specified by the mockups — inlined below to review layout and
+          states. This section describes them; the mockups are authoritative for layout.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>macro-sidebar</code></td>
+                <td>
+                  Macros Activity Bar view + sidebar (folders/macros tree, search) — populated,
+                  recording-active (REC indicator on tab + status bar), and empty states
+                </td>
+              </tr>
+              <tr>
+                <td><code>macro-editor</code></td>
+                <td>
+                  Macro Editor tab — steps table, template-variables table, delay-mode controls
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Recording Controls</h3>
+        <p>Recording is initiated from three entry points:</p>
+        <ol>
+          <li>
+            <strong>Toolbar button</strong> — A record icon (lucide <code>CircleDot</code>) appears
+            in the terminal view toolbar. While recording, it pulses red and shows elapsed time.
+          </li>
+          <li>
+            <strong>Keyboard shortcut</strong> — A configurable shortcut (default:
+            <code>Ctrl+Shift+M</code> / <code>Cmd+Shift+M</code>) toggles recording on/off.
+          </li>
+          <li>
+            <strong>Status-bar indicator</strong> — While recording, a red
+            <strong>REC</strong> badge appears in the status bar with the active session name and
+            elapsed time. The recording tab also shows a <strong>REC</strong> marker in the tab bar.
+            See the <code>macro-sidebar</code> mockup state 2 (recording-active).
+          </li>
+        </ol>
+        <p>
+          When recording stops, a <strong>Save Macro</strong> dialog appears. The user provides a
+          name, description, and tags; the dialog reports the number of steps recorded and the
+          recording duration, with <strong>Discard</strong> and <strong>Save</strong> actions.
+        </p>
+
+        <h3>Macros Activity Bar View &amp; Sidebar</h3>
+        <p>
+          A new <strong>Macros</strong> entry in the Activity Bar (lucide
+          <code>ListVideo</code> icon) opens the <strong>Macros</strong> sidebar. It contains a
+          search box and a folders/macros tree (folders are user-created groups; ungrouped macros
+          sit below a separator). The sidebar header offers <strong>Record</strong> and
+          <strong>Import</strong> actions. See the <code>macro-sidebar</code> mockup.
+        </p>
+
+        <p><strong>Context menu (right-click on macro):</strong></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Play</td>
+                <td>Execute on the active terminal</td>
+              </tr>
+              <tr>
+                <td>Play on...</td>
+                <td>Open target terminal picker dialog</td>
+              </tr>
+              <tr>
+                <td>Edit</td>
+                <td>Open macro in the macro editor tab</td>
+              </tr>
+              <tr>
+                <td>Duplicate</td>
+                <td>Create a copy with " (copy)" suffix</td>
+              </tr>
+              <tr>
+                <td>Move to folder</td>
+                <td>Move to an existing or new folder</td>
+              </tr>
+              <tr>
+                <td>Export</td>
+                <td>Save as <code>.termihub-macro</code> JSON file</td>
+              </tr>
+              <tr>
+                <td>Delete</td>
+                <td>Delete with confirmation dialog</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>Context menu (right-click on folder):</strong></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Rename</td>
+                <td>Inline rename</td>
+              </tr>
+              <tr>
+                <td>Delete</td>
+                <td>Delete folder (moves contents to ungrouped)</td>
+              </tr>
+              <tr>
+                <td>Export all</td>
+                <td>Export all macros in folder as a bundle</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Macro Editor Tab</h3>
+        <p>
+          Opens as a new tab content type (<code>"macro-editor"</code>), similar to the connection
+          editor or settings tab. It exposes the macro's metadata (name, description, tags), the
+          <strong>delay-mode controls</strong> (real-time delays / fixed delay / none, plus a
+          fixed-delay field), a <strong>steps table</strong> (with type, content, per-step delay,
+          reorder and delete controls, and an Add Step action), and a
+          <strong>template-variables table</strong> (name, default value, description). See the
+          <code>macro-editor</code> mockup.
+        </p>
+
+        <h3>Playback Target Picker</h3>
+        <p>
+          When choosing "Play on..." from the context menu, a dialog lists all open terminal
+          sessions with a checkbox per session, the connection type, and the panel it lives in, plus
+          <strong>Select All</strong> / <strong>Select None</strong> and <strong>Cancel</strong> /
+          <strong>Play</strong> actions.
+        </p>
+        <p>
+          If the macro contains template variables, a <strong>Macro Parameters</strong> prompt
+          appears before playback, showing one input per variable (pre-filled with the default
+          value) and its description.
+        </p>
+
+        <h3>Playback Progress Overlay</h3>
+        <p>
+          During playback, a small floating overlay appears on each target terminal showing the
+          macro name, the current step (e.g. <code>Step 3/6</code>) with a progress bar, and a
+          <strong>Cancel</strong> action.
+        </p>
+
+        <!-- Mockup 1 — macro-sidebar -->
+        <div class="mockup-section">
+          <h3>Mockup — Macros Activity Bar view + sidebar</h3>
+
+          <div class="mockup-section">
+            <h3>1 · Macros view — populated</h3>
+            <div class="mockup-note">
+              New <strong>Macros</strong> entry in the Activity Bar
+              <span class="callout">A</span> opens the Macros sidebar: a search box
+              <span class="callout">B</span> and a folders/macros tree
+              <span class="callout">C</span> with an ungrouped section. Header actions
+              <span class="callout">D</span> are Record and Import.
+            </div>
+            <div class="app">
+              <div class="app__body">
+                <nav class="activity-bar">
+                  <div class="activity-bar__top">
+                    <button class="activity-bar__item" title="Connections">
+                      <svg class="li"><use href="#i-network" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="File Browser">
+                      <svg class="li"><use href="#i-folder-open" /></svg>
+                    </button>
+                    <button class="activity-bar__item activity-bar__item--active" title="Macros">
+                      <svg class="li"><use href="#i-list-video" /></svg>
+                      <span class="activity-bar__indicator"></span>
+                    </button>
+                  </div>
+                  <div class="activity-bar__bottom">
+                    <button class="activity-bar__item" title="Log Viewer">
+                      <svg class="li"><use href="#i-scroll-text" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="Settings">
+                      <svg class="li"><use href="#i-settings" /></svg>
+                    </button>
+                  </div>
+                </nav>
+
+                <aside class="sidebar">
+                  <div class="sidebar__header">
+                    <span class="sidebar__title">Macros</span>
+                    <div class="sidebar__header-actions">
+                      <button class="sidebar__header-btn" title="Record">
+                        <svg class="li"><use href="#i-circle-dot" /></svg>
+                      </button>
+                      <button class="sidebar__header-btn" title="Import">
+                        <svg class="li"><use href="#i-download" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="macro-search">
+                    <svg class="li"><use href="#i-search" /></svg> Search macros…
+                  </div>
+                  <div class="sidebar__content">
+                    <!-- Folder: Server Setup (expanded) -->
+                    <div class="connection-tree__item connection-tree__item--selected">
+                      <svg class="li"><use href="#i-chevron-down" /></svg>
+                      <svg class="li"><use href="#i-folder" /></svg> Server Setup
+                    </div>
+                    <div class="connection-tree__item macro-tree__child">
+                      <svg class="li"><use href="#i-play" /></svg> Install Nginx
+                    </div>
+                    <div class="connection-tree__item macro-tree__child">
+                      <svg class="li"><use href="#i-play" /></svg> Setup Firewall
+                    </div>
+                    <div class="connection-tree__item macro-tree__child">
+                      <svg class="li"><use href="#i-play" /></svg> Configure SSL
+                    </div>
+                    <!-- Folder: Maintenance (expanded) -->
+                    <div class="connection-tree__item">
+                      <svg class="li"><use href="#i-chevron-down" /></svg>
+                      <svg class="li"><use href="#i-folder" /></svg> Maintenance
+                    </div>
+                    <div class="connection-tree__item macro-tree__child">
+                      <svg class="li"><use href="#i-play" /></svg> Log Rotation
+                    </div>
+                    <div class="connection-tree__item macro-tree__child">
+                      <svg class="li"><use href="#i-play" /></svg> Disk Cleanup
+                    </div>
+                    <!-- Ungrouped -->
+                    <div class="macro-tree__sep">Ungrouped</div>
+                    <div class="connection-tree__item">
+                      <svg class="li"><use href="#i-play" /></svg> Quick SSH Key Copy
+                    </div>
+                  </div>
+                </aside>
+
+                <div class="terminal-view">
+                  <div class="terminal-view__toolbar">
+                    <div class="terminal-view__toolbar-actions">
+                      <button class="terminal-view__toolbar-btn" title="Record Macro">
+                        <svg class="li"><use href="#i-circle-dot" /></svg>
+                      </button>
+                      <button class="terminal-view__toolbar-btn" title="New Terminal">
+                        <svg class="li"><use href="#i-plus" /></svg>
+                      </button>
+                      <button
+                        class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                        title="Toggle Sidebar"
+                      >
+                        <svg class="li"><use href="#i-panel-left" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="terminal-view__content">
+                    <div class="panel">
+                      <div class="tab-bar">
+                        <div class="tab tab--active">
+                          <svg class="li"><use href="#i-network" /></svg>
+                          <span class="state-dot state-dot--connected"></span>
+                          <span class="tab__title">server-01</span>
+                          <button class="tab__close">
+                            <svg class="li"><use href="#i-x" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="terminal">
+                        <span class="prompt">server-01 $</span> <span class="cursor"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="status-bar">
+                <div class="status-bar__section status-bar__section--left">
+                  <span class="status-bar__item">8 macros</span>
+                </div>
+                <div class="status-bar__section status-bar__section--center"></div>
+                <div class="status-bar__section status-bar__section--right">
+                  <span class="status-bar__item">UTF-8</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">A</span> Macros Activity Bar item — lucide
+                  <code>ListVideo</code>, active with indicator.
+                </li>
+                <li><span class="callout">B</span> Search box — filters the tree by name/tag.</li>
+                <li>
+                  <span class="callout">C</span> Folders/macros tree — reuses
+                  <code>connection-tree__item</code>; macros use the <code>Play</code> icon, folders
+                  <code>Folder</code> with a chevron.
+                </li>
+                <li>
+                  <span class="callout">D</span> Header actions — Record (<code>CircleDot</code>)
+                  and Import (<code>Download</code>).
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="mockup-section">
+            <h3>2 · Recording active</h3>
+            <div class="mockup-note">
+              While recording, the toolbar record button is highlighted red
+              <span class="callout">E</span>, the active tab shows a pulsing
+              <strong>REC</strong> marker <span class="callout">F</span>, and the status bar shows a
+              <strong>REC</strong> badge with the session name and elapsed time
+              <span class="callout">G</span>.
+            </div>
+            <div class="app">
+              <div class="app__body">
+                <nav class="activity-bar">
+                  <div class="activity-bar__top">
+                    <button class="activity-bar__item" title="Connections">
+                      <svg class="li"><use href="#i-network" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="File Browser">
+                      <svg class="li"><use href="#i-folder-open" /></svg>
+                    </button>
+                    <button class="activity-bar__item activity-bar__item--active" title="Macros">
+                      <svg class="li"><use href="#i-list-video" /></svg>
+                      <span class="activity-bar__indicator"></span>
+                    </button>
+                  </div>
+                  <div class="activity-bar__bottom">
+                    <button class="activity-bar__item" title="Log Viewer">
+                      <svg class="li"><use href="#i-scroll-text" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="Settings">
+                      <svg class="li"><use href="#i-settings" /></svg>
+                    </button>
+                  </div>
+                </nav>
+
+                <aside class="sidebar">
+                  <div class="sidebar__header">
+                    <span class="sidebar__title">Macros</span>
+                    <div class="sidebar__header-actions">
+                      <button class="sidebar__header-btn" title="Recording…">
+                        <svg class="li" style="color: var(--color-error)">
+                          <use href="#i-circle-dot" />
+                        </svg>
+                      </button>
+                      <button class="sidebar__header-btn" title="Import">
+                        <svg class="li"><use href="#i-download" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="macro-search">
+                    <svg class="li"><use href="#i-search" /></svg> Search macros…
+                  </div>
+                  <div class="sidebar__content">
+                    <div class="connection-tree__item">
+                      <svg class="li"><use href="#i-chevron-down" /></svg>
+                      <svg class="li"><use href="#i-folder" /></svg> Server Setup
+                    </div>
+                    <div class="connection-tree__item macro-tree__child">
+                      <svg class="li"><use href="#i-play" /></svg> Install Nginx
+                    </div>
+                    <div class="macro-tree__sep">Ungrouped</div>
+                    <div class="connection-tree__item">
+                      <svg class="li"><use href="#i-play" /></svg> Quick SSH Key Copy
+                    </div>
+                  </div>
+                </aside>
+
+                <div class="terminal-view">
+                  <div class="terminal-view__toolbar">
+                    <div class="terminal-view__toolbar-actions">
+                      <button
+                        class="terminal-view__toolbar-btn terminal-view__toolbar-btn--recording"
+                        title="Stop Recording"
+                      >
+                        <svg class="li"><use href="#i-circle-dot" /></svg>
+                      </button>
+                      <button class="terminal-view__toolbar-btn" title="New Terminal">
+                        <svg class="li"><use href="#i-plus" /></svg>
+                      </button>
+                      <button
+                        class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                        title="Toggle Sidebar"
+                      >
+                        <svg class="li"><use href="#i-panel-left" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="terminal-view__content">
+                    <div class="panel">
+                      <div class="tab-bar">
+                        <div class="tab tab--active">
+                          <svg class="li"><use href="#i-network" /></svg>
+                          <span class="state-dot state-dot--connected"></span>
+                          <span class="tab__title">server-01</span>
+                          <span class="rec-pill">
+                            <svg class="li"><use href="#i-circle-dot" /></svg> REC
+                          </span>
+                          <button class="tab__close">
+                            <svg class="li"><use href="#i-x" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="terminal">
+                        <span class="prompt">server-01 $</span> apt update<br />
+                        <span class="prompt">server-01 $</span> apt install -y nginx<br />
+                        <span class="prompt">server-01 $</span> systemctl enable nginx<br />
+                        <span class="prompt">server-01 $</span> <span class="cursor"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="status-bar">
+                <div class="status-bar__section status-bar__section--left">
+                  <span class="status-bar__item status-bar__item--rec">
+                    <span class="rec-pill"
+                      ><svg class="li"><use href="#i-circle-dot" /></svg> REC</span
+                    >
+                    server-01 · 00:42
+                  </span>
+                </div>
+                <div class="status-bar__section status-bar__section--center"></div>
+                <div class="status-bar__section status-bar__section--right">
+                  <span class="status-bar__item">UTF-8</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">E</span> Toolbar record button — red fill
+                  (<code>--recording</code>); click to stop.
+                </li>
+                <li>
+                  <span class="callout">F</span> Tab REC marker — pulsing red
+                  <code>CircleDot</code> + REC text, visible in the tab bar.
+                </li>
+                <li>
+                  <span class="callout">G</span> Status-bar REC badge — session name + elapsed time
+                  (<code>00:42</code>).
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="mockup-section">
+            <h3>3 · Macros view — empty</h3>
+            <div class="mockup-note">
+              Before any macro exists, the sidebar shows an empty-state hint
+              <span class="callout">H</span> pointing at Record / Import.
+            </div>
+            <div class="app">
+              <div class="app__body">
+                <nav class="activity-bar">
+                  <div class="activity-bar__top">
+                    <button class="activity-bar__item" title="Connections">
+                      <svg class="li"><use href="#i-network" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="File Browser">
+                      <svg class="li"><use href="#i-folder-open" /></svg>
+                    </button>
+                    <button class="activity-bar__item activity-bar__item--active" title="Macros">
+                      <svg class="li"><use href="#i-list-video" /></svg>
+                      <span class="activity-bar__indicator"></span>
+                    </button>
+                  </div>
+                  <div class="activity-bar__bottom">
+                    <button class="activity-bar__item" title="Log Viewer">
+                      <svg class="li"><use href="#i-scroll-text" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="Settings">
+                      <svg class="li"><use href="#i-settings" /></svg>
+                    </button>
+                  </div>
+                </nav>
+
+                <aside class="sidebar">
+                  <div class="sidebar__header">
+                    <span class="sidebar__title">Macros</span>
+                    <div class="sidebar__header-actions">
+                      <button class="sidebar__header-btn" title="Record">
+                        <svg class="li"><use href="#i-circle-dot" /></svg>
+                      </button>
+                      <button class="sidebar__header-btn" title="Import">
+                        <svg class="li"><use href="#i-download" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="macro-search">
+                    <svg class="li"><use href="#i-search" /></svg> Search macros…
+                  </div>
+                  <div class="sidebar__content">
+                    <div class="sidebar__empty">
+                      <svg class="li"><use href="#i-list-video" /></svg>
+                      <div>No macros yet.</div>
+                      <div class="empty-hint">
+                        Press <strong>Record</strong> to capture a terminal session, or
+                        <strong>Import</strong> a <code>.termihub-macro</code> file.
+                      </div>
+                    </div>
+                  </div>
+                </aside>
+
+                <div class="terminal-view">
+                  <div class="terminal-view__toolbar">
+                    <div class="terminal-view__toolbar-actions">
+                      <button class="terminal-view__toolbar-btn" title="Record Macro">
+                        <svg class="li"><use href="#i-circle-dot" /></svg>
+                      </button>
+                      <button class="terminal-view__toolbar-btn" title="New Terminal">
+                        <svg class="li"><use href="#i-plus" /></svg>
+                      </button>
+                      <button
+                        class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                        title="Toggle Sidebar"
+                      >
+                        <svg class="li"><use href="#i-panel-left" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="terminal-view__content">
+                    <div class="panel">
+                      <div class="tab-bar">
+                        <div class="tab tab--active">
+                          <svg class="li"><use href="#i-network" /></svg>
+                          <span class="state-dot state-dot--connected"></span>
+                          <span class="tab__title">server-01</span>
+                          <button class="tab__close">
+                            <svg class="li"><use href="#i-x" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div class="terminal">
+                        <span class="prompt">server-01 $</span> <span class="cursor"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="status-bar">
+                <div class="status-bar__section status-bar__section--left">
+                  <span class="status-bar__item">0 macros</span>
+                </div>
+                <div class="status-bar__section status-bar__section--center"></div>
+                <div class="status-bar__section status-bar__section--right">
+                  <span class="status-bar__item">UTF-8</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">H</span> Empty state — <code>ListVideo</code> glyph +
+                  guidance to Record or Import.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mockup 2 — macro-editor -->
+        <div class="mockup-section">
+          <h3>Mockup — Macro Editor tab</h3>
+          <div class="mockup-note">
+            Opens as a <code>macro-editor</code> tab <span class="callout">A</span> alongside
+            terminals. Metadata fields <span class="callout">B</span>, delay-mode controls
+            <span class="callout">C</span>, the steps table <span class="callout">D</span>, and the
+            template-variables table <span class="callout">E</span>.
+          </div>
+          <div class="app" style="height: 560px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                  <button class="activity-bar__item activity-bar__item--active" title="Macros">
+                    <svg class="li"><use href="#i-list-video" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Log Viewer">
+                    <svg class="li"><use href="#i-scroll-text" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+
+              <div class="terminal-view">
+                <div class="terminal-view__toolbar">
+                  <div class="terminal-view__toolbar-actions">
+                    <button class="terminal-view__toolbar-btn" title="New Terminal">
+                      <svg class="li"><use href="#i-plus" /></svg>
+                    </button>
+                    <button
+                      class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                      title="Toggle Sidebar"
+                    >
+                      <svg class="li"><use href="#i-panel-left" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="tab-bar">
+                      <div class="tab">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">server-01</span>
+                      </div>
+                      <div class="tab tab--active">
+                        <svg class="li"><use href="#i-square-pen" /></svg>
+                        <span class="tab__title">Install Nginx</span>
+                        <button class="tab__close">
+                          <svg class="li"><use href="#i-x" /></svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="editor">
+                      <h2>Edit Macro: Install Nginx</h2>
+
+                      <div class="field">
+                        <label>Name</label><span class="input">Install Nginx</span>
+                      </div>
+                      <div class="field">
+                        <label>Description</label
+                        ><span class="input">Setup nginx on Ubuntu servers</span>
+                      </div>
+                      <div class="field">
+                        <label>Tags</label>
+                        <span class="tag"
+                          >nginx
+                          <svg class="li" style="width: 11px; height: 11px"><use href="#i-x" /></svg
+                        ></span>
+                        <span class="tag"
+                          >setup
+                          <svg class="li" style="width: 11px; height: 11px"><use href="#i-x" /></svg
+                        ></span>
+                        <span class="tag"
+                          >ubuntu
+                          <svg class="li" style="width: 11px; height: 11px"><use href="#i-x" /></svg
+                        ></span>
+                        <button class="row-btn" title="Add Tag">
+                          <svg class="li"><use href="#i-plus" /></svg>
+                        </button>
+                      </div>
+
+                      <div class="section-label">Delay Mode</div>
+                      <div class="delay-mode">
+                        <span class="radio-opt radio-opt--selected"
+                          ><span class="radio"></span> Real-time delays</span
+                        >
+                        <span class="radio-opt"><span class="radio"></span> Fixed delay</span>
+                        <span class="radio-opt"><span class="radio"></span> None</span>
+                        <span style="color: var(--text-secondary); font-size: 12px"
+                          >Fixed delay</span
+                        >
+                        <span class="input input--sm" style="opacity: 0.5">100</span>
+                        <span style="color: var(--text-secondary); font-size: 12px">ms</span>
+                      </div>
+
+                      <div class="section-label">Steps</div>
+                      <table class="grid">
+                        <thead>
+                          <tr>
+                            <th style="width: 36px">#</th>
+                            <th style="width: 70px">Type</th>
+                            <th>Content</th>
+                            <th style="width: 80px">Delay</th>
+                            <th style="width: 80px"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>1</td>
+                            <td><span class="badge-type">Text</span></td>
+                            <td class="cell-mono">apt update</td>
+                            <td>—</td>
+                            <td>
+                              <button class="row-btn">
+                                <svg class="li"><use href="#i-trash-2" /></svg>
+                              </button>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>2</td>
+                            <td><span class="badge-type badge-type--key">Key</span></td>
+                            <td class="cell-mono">Enter</td>
+                            <td>1200ms</td>
+                            <td>
+                              <button class="row-btn">
+                                <svg class="li"><use href="#i-trash-2" /></svg>
+                              </button>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>3</td>
+                            <td><span class="badge-type">Text</span></td>
+                            <td class="cell-mono">apt install -y {{package}}</td>
+                            <td>—</td>
+                            <td>
+                              <button class="row-btn">
+                                <svg class="li"><use href="#i-trash-2" /></svg>
+                              </button>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>4</td>
+                            <td><span class="badge-type badge-type--key">Key</span></td>
+                            <td class="cell-mono">Enter</td>
+                            <td>850ms</td>
+                            <td>
+                              <button class="row-btn">
+                                <svg class="li"><use href="#i-trash-2" /></svg>
+                              </button>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>5</td>
+                            <td><span class="badge-type">Text</span></td>
+                            <td class="cell-mono">systemctl enable nginx</td>
+                            <td>—</td>
+                            <td>
+                              <button class="row-btn">
+                                <svg class="li"><use href="#i-trash-2" /></svg>
+                              </button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div class="grid-actions">
+                        <button class="btn">
+                          <svg class="li" style="width: 13px; height: 13px">
+                            <use href="#i-plus" />
+                          </svg>
+                          Add Step
+                        </button>
+                        <button class="btn">
+                          <svg class="li" style="width: 13px; height: 13px">
+                            <use href="#i-chevron-up" />
+                          </svg>
+                          Move Up
+                        </button>
+                        <button class="btn">
+                          <svg class="li" style="width: 13px; height: 13px">
+                            <use href="#i-chevron-down" />
+                          </svg>
+                          Move Down
+                        </button>
+                      </div>
+
+                      <div class="section-label">Template Variables</div>
+                      <table class="grid">
+                        <thead>
+                          <tr>
+                            <th style="width: 140px">Name</th>
+                            <th style="width: 140px">Default Value</th>
+                            <th>Description</th>
+                            <th style="width: 44px"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td class="cell-mono">{{package}}</td>
+                            <td class="cell-mono">nginx</td>
+                            <td>Package to install</td>
+                            <td>
+                              <button class="row-btn">
+                                <svg class="li"><use href="#i-trash-2" /></svg>
+                              </button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div class="grid-actions">
+                        <button class="btn">
+                          <svg class="li" style="width: 13px; height: 13px">
+                            <use href="#i-plus" />
+                          </svg>
+                          Add Variable
+                        </button>
+                      </div>
+
+                      <div class="editor-footer">
+                        <button class="btn">Cancel</button>
+                        <button class="btn btn--primary">Save</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">Editing macro · 5 steps</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Macro editor tab — <code>macro-editor</code> content
+                type, <code>SquarePen</code> icon in the tab.
+              </li>
+              <li>
+                <span class="callout">B</span> Metadata — name, description, removable tag chips.
+              </li>
+              <li>
+                <span class="callout">C</span> Delay-mode controls — Real-time / Fixed / None radios
+                plus the fixed-delay field.
+              </li>
+              <li>
+                <span class="callout">D</span> Steps table — #, Type (Text/Key), Content (mono),
+                Delay, delete; Add/Move actions below.
+              </li>
+              <li>
+                <span class="callout">E</span> Template-variables table — auto-populated from
+                <code>{{…}}</code> patterns; name, default, description.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <p>
+          Detailed flows, the recording/playback state machines, and the input routing path are
+          diagrammed in <a href="#behavior">States &amp; Sequences</a>. Key rules follow.
+        </p>
+
+        <h3>Recording Workflow</h3>
+        <ol>
+          <li>
+            User activates recording via toolbar button, keyboard shortcut, or sidebar
+            <strong>Record</strong> button.
+          </li>
+          <li>
+            The active terminal session is identified. If no terminal is active, show a
+            notification: "No active terminal — open a terminal session first."
+          </li>
+          <li>A recording indicator appears in the tab bar and status bar.</li>
+          <li>
+            All input sent via <code>xterm.onData</code> is intercepted and captured with the raw
+            data string (UTF-8 keystrokes) and a timestamp (milliseconds since recording started).
+          </li>
+          <li>
+            Recording stops when the user clicks the record button again, uses the keyboard
+            shortcut, or closes the terminal.
+          </li>
+          <li>The save dialog appears. User provides name, description, and tags.</li>
+          <li>
+            If the user discards, no macro is saved. If saved, the macro is persisted and appears in
+            the sidebar.
+          </li>
+        </ol>
+
+        <h3>Playback Workflow</h3>
+        <ol>
+          <li>
+            User selects a macro and chooses a playback target (active terminal or multi-select via
+            picker).
+          </li>
+          <li>
+            If the macro has template variables (<code>{{variableName}}</code>), a parameter prompt
+            is shown. Variables have default values and descriptions.
+          </li>
+          <li>Template variables are substituted in all text steps.</li>
+          <li>
+            Playback begins: each step's data is sent to the target terminal(s) via
+            <code>sendInput</code>. Delays are applied according to the selected delay mode:
+            <ul>
+              <li><strong>Real-time</strong>: use the recorded inter-step delay</li>
+              <li>
+                <strong>Fixed delay</strong>: use a configurable fixed delay between steps (default:
+                100ms)
+              </li>
+              <li>
+                <strong>No delay</strong>: send all steps as fast as possible (with a minimal 10ms
+                gap to avoid overwhelming the terminal)
+              </li>
+            </ul>
+          </li>
+          <li>A progress overlay shows the current step. The user can cancel at any time.</li>
+          <li>
+            On cancel, playback stops immediately. Already-sent input cannot be undone — the overlay
+            shows "Playback cancelled at step N/M."
+          </li>
+          <li>
+            For multi-terminal playback, input is sent to all targets in parallel (same step
+            dispatched to all sessions before moving to the next step).
+          </li>
+        </ol>
+
+        <h3>Step Types</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Step Type</th>
+                <th>Data Captured</th>
+                <th>Example</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Text</td>
+                <td>Printable character sequence</td>
+                <td><code>apt update</code></td>
+              </tr>
+              <tr>
+                <td>Key</td>
+                <td>Special key or control sequence</td>
+                <td><code>Enter</code>, <code>Tab</code>, <code>Ctrl+C</code></td>
+              </tr>
+              <tr>
+                <td>Paste</td>
+                <td>Bracketed paste content</td>
+                <td>(large text block)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Consecutive printable characters are coalesced into a single "Text" step for readability
+          in the editor. Special keys and control sequences are individual "Key" steps.
+        </p>
+
+        <h3>Editing Macros</h3>
+        <ul>
+          <li>Steps can be reordered (drag-and-drop or move up/down buttons).</li>
+          <li>Individual steps can be deleted.</li>
+          <li>
+            Step content can be edited inline (text steps: edit the string; key steps: select from a
+            dropdown of special keys).
+          </li>
+          <li>Delays can be manually adjusted per step.</li>
+          <li>New steps can be inserted at any position.</li>
+          <li>
+            Template variables are detected by scanning for <code>{{...}}</code> patterns in text
+            steps. The variables table auto-populates from these patterns.
+          </li>
+        </ul>
+
+        <h3>Import/Export Format</h3>
+        <p>Macros are exported as <code>.termihub-macro</code> files (JSON):</p>
+        <pre><code>{
+  "version": 1,
+  "name": "Install Nginx",
+  "description": "Setup nginx on Ubuntu servers",
+  "tags": ["nginx", "setup"],
+  "delayMode": "realtime",
+  "fixedDelayMs": 100,
+  "variables": [
+    { "name": "package", "defaultValue": "nginx", "description": "Package to install" }
+  ],
+  "steps": [
+    { "type": "text", "data": "apt update", "delayMs": 0 },
+    { "type": "key", "data": "\r", "label": "Enter", "delayMs": 1200 },
+    { "type": "text", "data": "apt install -y {{package}}", "delayMs": 0 },
+    { "type": "key", "data": "\r", "label": "Enter", "delayMs": 850 }
+  ]
+}</code></pre>
+        <p>
+          Folder export bundles multiple macros into a single <code>.termihub-macros</code> file
+          (JSON array).
+        </p>
+
+        <h3>Macro Storage Organization</h3>
+        <p>Macros are organized in folders similar to the connection list:</p>
+        <ul>
+          <li>Folders are user-created groups with a name and sort order.</li>
+          <li>Macros can be moved between folders or left ungrouped.</li>
+          <li>Drag-and-drop reordering within and across folders.</li>
+          <li>Folders and macros are stored in a single <code>macros.json</code> file.</li>
+        </ul>
+
+        <h3>Edge Cases</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Terminal disconnects during recording</td>
+                <td>Stop recording, prompt to save partial macro</td>
+              </tr>
+              <tr>
+                <td>Terminal disconnects during playback</td>
+                <td>Stop playback, show error notification</td>
+              </tr>
+              <tr>
+                <td>Playback target terminal is busy</td>
+                <td>No check — input is sent regardless (user's responsibility)</td>
+              </tr>
+              <tr>
+                <td>Empty macro (no steps recorded)</td>
+                <td>Show warning in save dialog, allow saving anyway</td>
+              </tr>
+              <tr>
+                <td>Duplicate macro name</td>
+                <td>Allowed — macros are identified by UUID, not name</td>
+              </tr>
+              <tr>
+                <td>Import macro with same UUID as existing</td>
+                <td>Prompt: overwrite, keep both, or cancel</td>
+              </tr>
+              <tr>
+                <td>Very long macro (&gt;1000 steps)</td>
+                <td>Warn in editor, no hard limit</td>
+              </tr>
+              <tr>
+                <td>Template variable in key step</td>
+                <td>Not supported — template variables only in text steps</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Macro Manager Flow</span>
+          <pre class="mermaid">
+graph TD
+    A[Activity Bar: Macros icon] --> B[Macro Sidebar Panel]
+    B --> C{Action}
+    C -->|"+ Record"| D[Start Recording on Active Terminal]
+    C -->|"Right-click → Play"| E[Play on Active Terminal]
+    C -->|"Right-click → Play on..."| F[Target Picker Dialog]
+    C -->|"Right-click → Edit"| G[Macro Editor Tab]
+    C -->|"↓ Import"| H[File Picker → Import]
+    C -->|"Right-click → Export"| I[Save File Dialog]
+    D --> J[Recording... Status Bar Shows REC]
+    J --> K[Stop Recording]
+    K --> L[Save Macro Dialog]
+    L --> B
+    F --> M{Has Template Variables?}
+    M -->|Yes| N[Parameter Prompt]
+    M -->|No| O[Playback with Progress Overlay]
+    N --> O
+    E --> M
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Recording State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Idle
+
+    Idle --> Recording : Start recording
+    Recording --> Saving : Stop recording
+    Recording --> Idle : Terminal closed / disconnected
+
+    Saving --> Idle : Discard
+    Saving --> Idle : Save
+
+    state Recording {
+        [*] --> Capturing
+        Capturing --> Capturing : Keystroke received
+    }
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Playback State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Idle
+
+    Idle --> PromptingVariables : Play macro (has variables)
+    Idle --> SelectingTargets : Play on... (target picker)
+    Idle --> Executing : Play macro (no variables, active terminal)
+
+    SelectingTargets --> PromptingVariables : Targets selected (has variables)
+    SelectingTargets --> Executing : Targets selected (no variables)
+    SelectingTargets --> Idle : Cancel
+
+    PromptingVariables --> Executing : Variables filled
+    PromptingVariables --> Idle : Cancel
+
+    Executing --> Idle : Playback complete
+    Executing --> Cancelled : User cancels
+    Executing --> Error : Terminal disconnected
+
+    Cancelled --> Idle
+    Error --> Idle
+
+    state Executing {
+        [*] --> SendingStep
+        SendingStep --> WaitingDelay : Step sent
+        WaitingDelay --> SendingStep : Delay elapsed, more steps
+        WaitingDelay --> [*] : All steps sent
+    }
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Recording Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant TB as Toolbar / Shortcut
+    participant T as Terminal Component
+    participant R as MacroRecorder
+    participant API as sendInput (API)
+    participant B as Backend
+
+    U->>TB: Click Record / Shortcut
+    TB->>R: startRecording(sessionId)
+    R->>R: Initialize step buffer, start timer
+
+    loop Each keystroke
+        U->>T: Type keystroke
+        T->>R: captureInput(data, timestamp)
+        R->>R: Append step to buffer
+        T->>API: sendInput(sessionId, data)
+        API->>B: write(data)
+    end
+
+    U->>TB: Click Stop / Shortcut
+    TB->>R: stopRecording()
+    R->>U: Show save dialog
+    U->>R: Provide name, tags → Save
+    R->>R: Persist macro to storage
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Playback Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant S as Macro Sidebar
+    participant P as PlaybackEngine
+    participant API as sendInput (API)
+    participant T1 as Terminal 1
+    participant T2 as Terminal 2
+
+    U->>S: Right-click → Play on...
+    S->>U: Show target picker
+    U->>S: Select terminals 1 & 2
+    S->>U: Show variable prompt (if any)
+    U->>S: Fill variables → Continue
+    S->>P: play(macro, [session1, session2], variables)
+
+    loop Each step
+        P->>P: Substitute variables in step data
+        par Send to all targets
+            P->>API: sendInput(session1, data)
+            API->>T1: write(data)
+            P->>API: sendInput(session2, data)
+            API->>T2: write(data)
+        end
+        P->>P: Wait for delay (per delay mode)
+        P->>U: Update progress overlay
+    end
+
+    P->>U: Playback complete notification
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Integration Overview</span>
+          <pre class="mermaid">
+graph TD
+    subgraph Frontend
+        AB[Activity Bar] -->|"macros" view| MS[Macro Sidebar]
+        MS --> ME[Macro Editor Tab]
+        MS --> TP[Target Picker Dialog]
+        MS --> VP[Variable Prompt Dialog]
+
+        TC[Terminal Component] --> MR[MacroRecorder Hook]
+        MR -->|captures input| TC
+        MR -->|save| MAPI[Macro Storage API]
+
+        PE[PlaybackEngine] -->|sendInput| API[api.ts]
+        PE -->|progress| PO[Progress Overlay]
+    end
+
+    subgraph Backend
+        API -->|invoke send_input| SM[SessionManager]
+        MCMD[Macro Commands] -->|CRUD| MF[macros.json]
+        MAPI --> MCMD
+    end
+
+    subgraph Storage
+        MF[(macros.json)]
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Backend Integration Overview</span>
+          <pre class="mermaid">
+graph TD
+    subgraph "New Files"
+        MT[src/types/macro.ts]
+        MR[src/hooks/useMacroRecorder.ts]
+        MP[src/services/macroPlayback.ts]
+        MSUI[src/components/MacroSidebar/]
+        MEUI[src/components/MacroEditor/]
+        MDUI[src/components/MacroDialogs/]
+        MCMD[src-tauri/src/commands/macros.rs]
+        MSTO[src-tauri/src/macros/storage.rs]
+    end
+
+    subgraph "Modified Files"
+        AB[ActivityBar.tsx - add macros view]
+        SB[Sidebar.tsx - add macros branch]
+        TT[terminal.ts - add macro-editor content type]
+        TC[Terminal.tsx - integrate recorder hook]
+        AS[appStore.ts - add macro state/actions]
+        SET[settings types - add MacroSettings]
+        SBR[StatusBar.tsx - add recording indicator]
+        MAIN[main.rs - register macro commands]
+    end
+
+    MT --> MSUI
+    MT --> MEUI
+    MT --> AS
+    MR --> TC
+    MP --> MSUI
+    MCMD --> MSTO
+    MSTO --> |"macros.json"| DISK[(Disk)]
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the current project architecture at concept-creation time; the codebase may
+          evolve before implementation. The integration and backend-integration diagrams live in
+          <a href="#behavior">States &amp; Sequences</a>.
+        </p>
+
+        <h3>New TypeScript Types</h3>
+        <pre><code>// src/types/macro.ts
+
+/** Unique identifier for a macro */
+type MacroId = string;
+
+/** Unique identifier for a macro folder */
+type MacroFolderId = string;
+
+/** Type of a recorded step */
+type MacroStepType = "text" | "key" | "paste";
+
+/** Delay mode for playback */
+type MacroDelayMode = "realtime" | "fixed" | "none";
+
+/** A single recorded step */
+interface MacroStep {
+  type: MacroStepType;
+  /** Raw data string (UTF-8 keystrokes) */
+  data: string;
+  /** Human-readable label for key steps (e.g., "Enter", "Tab") */
+  label?: string;
+  /** Delay in ms before this step (from recording) */
+  delayMs: number;
+}
+
+/** A template variable */
+interface MacroVariable {
+  name: string;
+  defaultValue: string;
+  description: string;
+}
+
+/** A saved macro */
+interface Macro {
+  id: MacroId;
+  name: string;
+  description: string;
+  tags: string[];
+  folderId?: MacroFolderId;
+  delayMode: MacroDelayMode;
+  fixedDelayMs: number;
+  variables: MacroVariable[];
+  steps: MacroStep[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A macro folder */
+interface MacroFolder {
+  id: MacroFolderId;
+  name: string;
+  sortOrder: number;
+}
+
+/** Top-level macro storage structure */
+interface MacroStorage {
+  macros: Macro[];
+  folders: MacroFolder[];
+}
+
+/** Recording state tracked in the frontend */
+type RecordingState =
+  | { status: "idle" }
+  | { status: "recording"; sessionId: string; startTime: number; steps: MacroStep[] }
+  | { status: "saving"; steps: MacroStep[] };
+
+/** Playback state tracked in the frontend */
+type PlaybackState =
+  | { status: "idle" }
+  | {
+      status: "executing";
+      macroId: MacroId;
+      targetSessionIds: string[];
+      currentStep: number;
+      totalSteps: number;
+    };</code></pre>
+
+        <h3>New Rust Data Structures</h3>
+        <pre><code>// src-tauri/src/macros/storage.rs
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroStep {
+    #[serde(rename = "type")]
+    pub step_type: String,
+    pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option&lt;String&gt;,
+    #[serde(rename = "delayMs")]
+    pub delay_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroVariable {
+    pub name: String,
+    #[serde(rename = "defaultValue")]
+    pub default_value: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Macro {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub tags: Vec&lt;String&gt;,
+    #[serde(rename = "folderId", skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option&lt;String&gt;,
+    #[serde(rename = "delayMode")]
+    pub delay_mode: String,
+    #[serde(rename = "fixedDelayMs")]
+    pub fixed_delay_ms: u64,
+    pub variables: Vec&lt;MacroVariable&gt;,
+    pub steps: Vec&lt;MacroStep&gt;,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroFolder {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "sortOrder")]
+    pub sort_order: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroStorage {
+    pub macros: Vec&lt;Macro&gt;,
+    pub folders: Vec&lt;MacroFolder&gt;,
+}</code></pre>
+
+        <h3>Storage</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Location</th>
+                <th>Content</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>macros.json</code></td>
+                <td>Tauri app config dir</td>
+                <td>All macros and folders</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Follows the same persistence pattern as <code>connections.json</code> — JSON file with
+          <code>.bak</code> backup, recovery on corruption.
+        </p>
+
+        <h3>New Tauri IPC Commands</h3>
+        <pre><code>// src-tauri/src/commands/macros.rs
+
+#[tauri::command]
+pub async fn get_macros(app: AppHandle) -> Result&lt;MacroStorage, TerminalError&gt;;
+
+#[tauri::command]
+pub async fn save_macro(app: AppHandle, macro_data: Macro) -> Result&lt;(), TerminalError&gt;;
+
+#[tauri::command]
+pub async fn delete_macro(app: AppHandle, macro_id: String) -> Result&lt;(), TerminalError&gt;;
+
+#[tauri::command]
+pub async fn save_macro_folder(app: AppHandle, folder: MacroFolder) -> Result&lt;(), TerminalError&gt;;
+
+#[tauri::command]
+pub async fn delete_macro_folder(app: AppHandle, folder_id: String) -> Result&lt;(), TerminalError&gt;;
+
+#[tauri::command]
+pub async fn export_macro(app: AppHandle, macro_id: String, path: String) -> Result&lt;(), TerminalError&gt;;
+
+#[tauri::command]
+pub async fn import_macro(app: AppHandle, path: String) -> Result&lt;Macro, TerminalError&gt;;
+
+#[tauri::command]
+pub async fn reorder_macros(app: AppHandle, macro_ids: Vec&lt;String&gt;) -> Result&lt;(), TerminalError&gt;;</code></pre>
+
+        <h3>Frontend Store Changes</h3>
+        <pre><code>// Additions to src/store/appStore.ts (AppState interface)
+
+interface AppState {
+  // ... existing fields ...
+
+  /** All macros and folders */
+  macros: Macro[];
+  macroFolders: MacroFolder[];
+
+  /** Current recording state */
+  recordingState: RecordingState;
+
+  /** Current playback state */
+  playbackState: PlaybackState;
+
+  /** Macro CRUD actions */
+  loadMacros: () => Promise&lt;void&gt;;
+  saveMacro: (macro: Macro) => Promise&lt;void&gt;;
+  deleteMacro: (macroId: MacroId) => Promise&lt;void&gt;;
+  saveMacroFolder: (folder: MacroFolder) => Promise&lt;void&gt;;
+  deleteMacroFolder: (folderId: MacroFolderId) => Promise&lt;void&gt;;
+
+  /** Recording actions */
+  startRecording: (sessionId: string) => void;
+  stopRecording: () => MacroStep[];
+  captureInput: (data: string) => void;
+
+  /** Playback actions */
+  startPlayback: (macroId: MacroId, targetSessionIds: string[]) => void;
+  cancelPlayback: () => void;
+  updatePlaybackProgress: (currentStep: number) => void;
+}</code></pre>
+
+        <h3>New UI Components</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Path</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>MacroSidebar</code></td>
+                <td><code>src/components/MacroSidebar/MacroSidebar.tsx</code></td>
+                <td>Sidebar panel for browsing/searching macros</td>
+              </tr>
+              <tr>
+                <td><code>MacroItem</code></td>
+                <td><code>src/components/MacroSidebar/MacroItem.tsx</code></td>
+                <td>Single macro entry with context menu</td>
+              </tr>
+              <tr>
+                <td><code>MacroFolderItem</code></td>
+                <td><code>src/components/MacroSidebar/MacroFolderItem.tsx</code></td>
+                <td>Folder entry with expand/collapse and context menu</td>
+              </tr>
+              <tr>
+                <td><code>MacroEditor</code></td>
+                <td><code>src/components/MacroEditor/MacroEditor.tsx</code></td>
+                <td>Tab content for editing a macro</td>
+              </tr>
+              <tr>
+                <td><code>MacroStepEditor</code></td>
+                <td><code>src/components/MacroEditor/MacroStepEditor.tsx</code></td>
+                <td>Individual step row in the editor</td>
+              </tr>
+              <tr>
+                <td><code>MacroVariableEditor</code></td>
+                <td><code>src/components/MacroEditor/MacroVariableEditor.tsx</code></td>
+                <td>Variable table in the editor</td>
+              </tr>
+              <tr>
+                <td><code>MacroSaveDialog</code></td>
+                <td><code>src/components/MacroDialogs/MacroSaveDialog.tsx</code></td>
+                <td>Dialog shown after stopping recording</td>
+              </tr>
+              <tr>
+                <td><code>MacroTargetPicker</code></td>
+                <td><code>src/components/MacroDialogs/MacroTargetPicker.tsx</code></td>
+                <td>Terminal selection dialog for playback</td>
+              </tr>
+              <tr>
+                <td><code>MacroVariablePrompt</code></td>
+                <td><code>src/components/MacroDialogs/MacroVariablePrompt.tsx</code></td>
+                <td>Variable input dialog before playback</td>
+              </tr>
+              <tr>
+                <td><code>MacroPlaybackOverlay</code></td>
+                <td><code>src/components/MacroDialogs/MacroPlaybackOverlay.tsx</code></td>
+                <td>Progress overlay during playback</td>
+              </tr>
+              <tr>
+                <td><code>RecordingIndicator</code></td>
+                <td><code>src/components/StatusBar/RecordingIndicator.tsx</code></td>
+                <td>Status bar recording badge</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Sidebar Integration</h3>
+        <p>
+          Add <code>"macros"</code> to the <code>SidebarView</code> type and wire it into the
+          existing patterns:
+        </p>
+        <ul>
+          <li>
+            <code>src/components/ActivityBar/ActivityBar.tsx</code> — add a new entry to
+            <code>TOP_ITEMS</code> with a Lucide icon (<code>ListVideo</code>)
+          </li>
+          <li>
+            <code>src/components/Sidebar/Sidebar.tsx</code> — add a rendering branch for
+            <code>sidebarView === "macros"</code> → <code>&lt;MacroSidebar /&gt;</code>
+          </li>
+          <li><code>VIEW_TITLES</code> — add <code>macros: "Macros"</code></li>
+        </ul>
+
+        <h3>Tab Content Type</h3>
+        <p>
+          Add <code>"macro-editor"</code> to the <code>TabContentType</code> union in
+          <code>src/types/terminal.ts</code> and add a rendering branch in the terminal view that
+          renders <code>&lt;MacroEditor macroId={...} /&gt;</code> when
+          <code>tab.contentType === "macro-editor"</code>.
+        </p>
+
+        <h3>Recording Hook</h3>
+        <pre><code>// src/hooks/useMacroRecorder.ts
+
+/**
+ * Hook that intercepts xterm.onData to capture keystrokes during recording.
+ * Wraps the existing onData handler in Terminal.tsx.
+ *
+ * When recording is active:
+ * 1. Captures the raw data string and timestamp
+ * 2. Coalesces consecutive printable characters into text steps
+ * 3. Identifies special keys (Enter, Tab, Ctrl sequences) as key steps
+ * 4. Stores steps in the Zustand store's recordingState
+ * 5. Passes data through to sendInput unchanged
+ */</code></pre>
+        <p>
+          Integration point: in <code>Terminal.tsx</code>, the <code>xterm.onData</code> handler
+          (line ~215) is wrapped to call <code>captureInput(data)</code> from the store when
+          <code>recordingState.status === "recording"</code> and the session matches.
+        </p>
+
+        <h3>Playback Engine</h3>
+        <pre><code>// src/services/macroPlayback.ts
+
+/**
+ * Executes a macro on one or more terminal sessions.
+ *
+ * 1. Substitutes template variables in all text steps
+ * 2. Iterates through steps sequentially
+ * 3. For each step, calls sendInput() for all target sessions in parallel
+ * 4. Waits for the configured delay before the next step
+ * 5. Updates playback progress in the store
+ * 6. Respects cancellation via an AbortController
+ */</code></pre>
+        <p>
+          Uses <code>sendInput(sessionId, data)</code> from <code>src/services/api.ts</code> — no
+          new backend pathway is needed. Delays are implemented with <code>setTimeout</code> /
+          <code>Promise</code>-based sleep. Multi-terminal send calls <code>sendInput</code> for
+          each target session concurrently.
+        </p>
+
+        <h3>Settings Extension</h3>
+        <pre><code>// Addition to AppSettings in src/types/settings.ts
+
+interface MacroSettings {
+  /** Default delay mode for new recordings */
+  defaultDelayMode: MacroDelayMode;
+  /** Default fixed delay in ms */
+  defaultFixedDelayMs: number;
+  /** Keyboard shortcut for toggling recording */
+  recordShortcut: string;
+}</code></pre>
+        <pre><code>// Addition to AppSettings in src-tauri/src/settings.rs
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroSettings {
+    #[serde(rename = "defaultDelayMode", default = "default_delay_mode")]
+    pub default_delay_mode: String,
+    #[serde(rename = "defaultFixedDelayMs", default = "default_fixed_delay_ms")]
+    pub default_fixed_delay_ms: u64,
+    #[serde(rename = "recordShortcut", default = "default_record_shortcut")]
+    pub record_shortcut: String,
+}</code></pre>
+
+        <h3>Implementation Order</h3>
+        <ol>
+          <li>
+            Macro types + storage (<code>src/types/macro.ts</code>,
+            <code>src-tauri/src/macros/storage.rs</code>, Tauri commands, store CRUD).
+          </li>
+          <li>Macros Activity Bar view + sidebar (tree, search, Record/Import).</li>
+          <li>
+            Recording hook + Save dialog + recording indicators (tab REC marker, status-bar badge).
+          </li>
+          <li>Macro editor tab (steps table, variables table, delay-mode controls).</li>
+          <li>Playback engine + target picker + variable prompt + progress overlay.</li>
+          <li>Import/export, drag-and-drop reordering, settings, polish &amp; edge cases.</li>
+        </ol>
+
+        <h3>Implementation Status</h3>
+        <p>
+          Not started — this is a <code>backlog/</code> concept. Once implementation begins, run
+          <code>/sync-concept macro-recording</code> after each change to keep the Sync Ledger
+          current.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept macro-recording</code>. Records the last commit at
+            which the concept and code were reconciled, plus open divergences. The concept is the
+            source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (concept not yet implemented) ·
+          <strong>Status:</strong> diverged (entirely missing — backlog feature)
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Entire feature (per concept)</td>
+                <td>Not implemented — backlog</td>
+                <td>Missing</td>
+                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
