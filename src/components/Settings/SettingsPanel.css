@@ -361,7 +361,7 @@
   position: absolute;
   inset: 0;
   background-color: var(--bg-active);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   transition: background-color var(--transition-normal);
 }
 
@@ -386,7 +386,7 @@
 
 .settings-panel__toggle input:checked + .settings-panel__toggle-slider::before {
   transform: translateX(14px);
-  background-color: #ffffff;
+  background-color: var(--text-on-accent);
 }
 
 /* === Spin animation for reload === */

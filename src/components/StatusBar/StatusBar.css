@@ -360,6 +360,6 @@
   line-height: 14px;
   vertical-align: middle;
   background: #7c3aed;
-  color: #fff;
+  color: var(--text-on-accent);
   letter-spacing: 0.03em;
 }

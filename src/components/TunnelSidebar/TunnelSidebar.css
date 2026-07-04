@@ -22,7 +22,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .tunnel-sidebar__add-btn:hover {
@@ -120,7 +120,7 @@
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0;
 }
 

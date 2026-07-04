@@ -248,7 +248,7 @@
   height: 18px;
   padding: 0 4px;
   border: 1px solid var(--accent-color);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background-color: var(--bg-input, var(--bg-secondary));
   color: var(--text-primary);
   font-size: var(--font-size-sm);
@@ -262,7 +262,7 @@
   flex-shrink: 0;
   width: 18px;
   height: 18px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   color: var(--text-secondary);
 }
 
