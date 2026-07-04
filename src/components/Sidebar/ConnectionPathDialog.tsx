@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   Route,
   ChevronDown,
@@ -11,6 +10,7 @@ import {
   XCircle,
   Circle,
 } from "lucide-react";
+import { Modal, Button } from "@/components/ui";
 import { SavedConnection } from "@/types/connection";
 import { getJumpHosts } from "@/utils/jumpHost";
 import { probeConnectionPath, cancelConnectionPathProbe } from "@/services/api";
@@ -143,70 +143,65 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
   ];
 
   return (
-    <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="shortcuts-overlay__backdrop" />
-        <Dialog.Content className="connection-path-dialog" data-testid="connection-path-dialog">
-          <Dialog.Title className="connection-path-dialog__title">
-            <Route size={16} /> Connection Path
-          </Dialog.Title>
-          <Dialog.Description className="connection-path-dialog__subtitle">
-            {connection.name} reaches its target through{" "}
-            {hops.length === 1 ? "1 jump host" : `${hops.length} jump hosts`}.
-          </Dialog.Description>
-          <ol className="connection-path-dialog__chain">
-            {nodes.map((node, index) => {
-              const Icon = node.icon;
-              const isLast = index === nodes.length - 1;
-              // The "You" origin (index 0) is always reachable; probed nodes map
-              // to statuses[index - 1].
-              const status: NodeStatus =
-                index === 0 ? "connected" : (statuses[index - 1] ?? "pending");
-              const message = index === 0 ? undefined : messages[index - 1];
-              const { Icon: StatusIcon, spin } = statusIcon(status);
-              return (
-                <li
-                  key={index}
-                  className="connection-path-dialog__node"
-                  data-status={status}
-                  data-testid="connection-path-node"
-                >
-                  <div className="connection-path-dialog__row">
-                    <Icon size={15} className="connection-path-dialog__icon" />
-                    <span className="connection-path-dialog__label">{node.label}</span>
-                    <span className="connection-path-dialog__detail">{node.detail}</span>
-                    <StatusIcon
-                      size={15}
-                      className={`connection-path-dialog__status connection-path-dialog__status--${status}${
-                        spin ? " connection-path-dialog__status--spin" : ""
-                      }`}
-                      aria-label={`status: ${status}`}
-                    />
-                  </div>
-                  {message && (
-                    <span className="connection-path-dialog__error" role="alert">
-                      {message}
-                    </span>
-                  )}
-                  {!isLast && (
-                    <ChevronDown size={14} className="connection-path-dialog__arrow" aria-hidden />
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-          <div className="connection-path-dialog__actions">
-            <button
-              type="button"
-              className="connection-path-dialog__button"
-              onClick={onClose}
-              data-testid="connection-path-close"
+    <Modal
+      open={open}
+      onOpenChange={(isOpen) => !isOpen && onClose()}
+      data-testid="connection-path-dialog"
+      title={
+        <span className="connection-path-dialog__title-row">
+          <Route size={16} /> Connection Path
+        </span>
+      }
+      footer={
+        <Button variant="secondary" onClick={onClose} data-testid="connection-path-close">
+          Close
+        </Button>
+      }
+    >
+      <p className="connection-path-dialog__subtitle">
+        {connection.name} reaches its target through{" "}
+        {hops.length === 1 ? "1 jump host" : `${hops.length} jump hosts`}.
+      </p>
+      <ol className="connection-path-dialog__chain">
+        {nodes.map((node, index) => {
+          const Icon = node.icon;
+          const isLast = index === nodes.length - 1;
+          // The "You" origin (index 0) is always reachable; probed nodes map
+          // to statuses[index - 1].
+          const status: NodeStatus = index === 0 ? "connected" : (statuses[index - 1] ?? "pending");
+          const message = index === 0 ? undefined : messages[index - 1];
+          const { Icon: StatusIcon, spin } = statusIcon(status);
+          return (
+            <li
+              key={index}
+              className="connection-path-dialog__node"
+              data-status={status}
+              data-testid="connection-path-node"
             >
-              Close
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+              <div className="connection-path-dialog__row">
+                <Icon size={15} className="connection-path-dialog__icon" />
+                <span className="connection-path-dialog__label">{node.label}</span>
+                <span className="connection-path-dialog__detail">{node.detail}</span>
+                <StatusIcon
+                  size={15}
+                  className={`connection-path-dialog__status connection-path-dialog__status--${status}${
+                    spin ? " connection-path-dialog__status--spin" : ""
+                  }`}
+                  aria-label={`status: ${status}`}
+                />
+              </div>
+              {message && (
+                <span className="connection-path-dialog__error" role="alert">
+                  {message}
+                </span>
+              )}
+              {!isLast && (
+                <ChevronDown size={14} className="connection-path-dialog__arrow" aria-hidden />
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </Modal>
   );
 }
