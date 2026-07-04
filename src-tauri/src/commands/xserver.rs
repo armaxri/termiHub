@@ -49,13 +49,7 @@ pub async fn x_server_ensure(
 ) -> Result<XServerStatus, XServerError> {
     emit_progress(&app, "detect", "Checking for a local X server…", -1.0);
 
-    let provide = xserver::resolve_provide_automatically(&app);
-    let manager = manager.inner().clone();
-    let result = tokio::task::spawn_blocking(move || xserver::ensure_x_server(&manager, provide))
-        .await
-        .map_err(|e| XServerError::LaunchFailed {
-            message: format!("X server provisioning task failed: {e}"),
-        })?;
+    let result = xserver::ensure_off_reactor(&app, manager.inner().clone()).await;
 
     match &result {
         Ok(status) => emit_progress(
@@ -74,7 +68,10 @@ pub async fn x_server_ensure(
 /// Adopted external servers are never stopped — termiHub only shuts down what it
 /// started.
 #[tauri::command]
-pub fn x_server_stop(app: AppHandle, manager: State<'_, XServerManager>) -> Result<(), XServerError> {
+pub fn x_server_stop(
+    app: AppHandle,
+    manager: State<'_, XServerManager>,
+) -> Result<(), XServerError> {
     if !manager.has_managed_server() {
         return Ok(());
     }
@@ -92,28 +89,12 @@ pub fn x_server_stop(app: AppHandle, manager: State<'_, XServerManager>) -> Resu
 #[tauri::command]
 pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerError> {
     emit_progress(&app, "install", "Preparing X dependency install…", -1.0);
+    // The real installers are their own issues (#1048 VcXsrv, #1054 XQuartz);
+    // until then return the same typed guidance the orchestrator produces.
     let err = match XServerPlatform::current() {
-        XServerPlatform::Windows => XServerError::ProvisioningUnavailable {
-            message: "Automatic VcXsrv download is not yet available in this build. Install \
-                VcXsrv manually and start it on display :0."
-                .to_string(),
-        },
-        XServerPlatform::MacOs => XServerError::DependencyMissing {
-            message: "Automated XQuartz install is not yet available. Install it manually, then \
-                reconnect."
-                .to_string(),
-            dependency: "XQuartz".to_string(),
-            install_hint: Some(
-                "Download XQuartz from https://www.xquartz.org, then log out and back in."
-                    .to_string(),
-            ),
-            install_command: Some("brew install --cask xquartz".to_string()),
-        },
-        XServerPlatform::Linux => XServerError::Unsupported {
-            message: "termiHub never installs an X server on Linux. Install your distribution's \
-                Xorg or XWayland package via your package manager."
-                .to_string(),
-        },
+        XServerPlatform::Windows => XServerError::windows_provisioning_unavailable(),
+        XServerPlatform::MacOs => XServerError::xquartz_missing(),
+        XServerPlatform::Linux => XServerError::linux_install_unsupported(),
     };
     emit_progress(&app, "failed", &err.to_string(), 1.0);
     Err(err)

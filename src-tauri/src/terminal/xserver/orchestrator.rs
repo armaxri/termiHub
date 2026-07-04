@@ -40,90 +40,64 @@ pub fn classify(ctx: &EnsureContext) -> Result<XServerStatus, XServerError> {
     // A reachable server (managed or external) is always adopted — this is the
     // common, cross-platform happy path and must never regress existing X11.
     if let Some(display) = ctx.existing_display {
-        let (state, message) = if ctx.managed {
-            (
-                XServerState::Running,
-                format!("termiHub-managed X server on display :{display}"),
-            )
+        let message = if ctx.managed {
+            format!("termiHub-managed X server on display :{display}")
         } else {
-            (
-                XServerState::Adopted,
-                format!("Adopted an existing X server on display :{display}"),
-            )
+            format!("Adopted an existing X server on display :{display}")
         };
-        return Ok(XServerStatus {
-            state,
-            platform: ctx.platform,
-            display_number: Some(display),
-            managed: ctx.managed,
-            session_count: ctx.session_count,
-            dependency_available: Some(ctx.dependency_available),
-            message: Some(message),
-        });
+        return Ok(adopted_status(
+            ctx.platform,
+            display,
+            ctx.managed,
+            ctx.session_count,
+            Some(ctx.dependency_available),
+            Some(message),
+        ));
     }
 
-    // No server reachable — dispatch to the platform-specific guidance.
+    // No server reachable — dispatch to the platform-specific guidance. The
+    // Windows `provide_automatically` branch is the seam for #1048–#1050:
+    // automatic VcXsrv provisioning is not yet implemented, so it surfaces an
+    // actionable error rather than a silent no-op.
     match ctx.platform {
-        XServerPlatform::Windows => {
-            if ctx.provide_automatically {
-                // Seam for #1048–#1050: automatic VcXsrv provisioning is not yet
-                // implemented, so surface an actionable error rather than a
-                // silent no-op.
-                Err(XServerError::ProvisioningUnavailable {
-                    message: "Automatic X server provisioning is not yet available in this \
-                        build. Install VcXsrv and start it on display :0, then retry."
-                        .to_string(),
-                })
-            } else {
-                Err(XServerError::NoLocalServer {
-                    message: "No local X server is running. Enable \"Provide X server \
-                        automatically\" in Settings, or install and start VcXsrv on \
-                        display :0."
-                        .to_string(),
-                })
-            }
+        XServerPlatform::Windows if ctx.provide_automatically => {
+            Err(XServerError::windows_provisioning_unavailable())
         }
-        XServerPlatform::MacOs => {
-            if ctx.dependency_available {
-                Err(XServerError::ServerUnreachable {
-                    message: "XQuartz is installed but no X server is running. Launch XQuartz \
-                        and retry (termiHub attempts this automatically on connect)."
-                        .to_string(),
-                })
-            } else {
-                Err(XServerError::DependencyMissing {
-                    message: "XQuartz is not installed. Install it to use X11 forwarding."
-                        .to_string(),
-                    dependency: "XQuartz".to_string(),
-                    install_hint: Some(
-                        "Download XQuartz from https://www.xquartz.org, then log out and back \
-                        in so DISPLAY is set."
-                            .to_string(),
-                    ),
-                    install_command: Some("brew install --cask xquartz".to_string()),
-                })
-            }
+        XServerPlatform::Windows => Err(XServerError::windows_no_local_server()),
+        XServerPlatform::MacOs if ctx.dependency_available => {
+            Err(XServerError::macos_server_unreachable())
         }
-        XServerPlatform::Linux => {
-            if ctx.dependency_available {
-                Err(XServerError::ServerUnreachable {
-                    message: "An X server appears installed but no display was detected. On \
-                        Wayland, ensure XWayland is running and DISPLAY is set."
-                        .to_string(),
-                })
-            } else {
-                Err(XServerError::DependencyMissing {
-                    message: "No X server (Xorg/XWayland) was found.".to_string(),
-                    dependency: "Xorg/XWayland".to_string(),
-                    install_hint: Some(
-                        "Install your distribution's Xorg or XWayland package, or run termiHub \
-                        inside a graphical session."
-                            .to_string(),
-                    ),
-                    install_command: None,
-                })
-            }
+        XServerPlatform::MacOs => Err(XServerError::xquartz_missing()),
+        XServerPlatform::Linux if ctx.dependency_available => {
+            Err(XServerError::linux_server_unreachable())
         }
+        XServerPlatform::Linux => Err(XServerError::linux_x_missing()),
+    }
+}
+
+/// Build the [`XServerStatus`] for a reachable server. Shared by [`classify`]
+/// (adopt branch) and [`current_status`] so the "detected server" shape has a
+/// single source.
+fn adopted_status(
+    platform: XServerPlatform,
+    display: u32,
+    managed: bool,
+    session_count: u32,
+    dependency_available: Option<bool>,
+    message: Option<String>,
+) -> XServerStatus {
+    XServerStatus {
+        state: if managed {
+            XServerState::Running
+        } else {
+            XServerState::Adopted
+        },
+        platform,
+        display_number: Some(display),
+        managed,
+        session_count,
+        dependency_available,
+        message,
     }
 }
 
@@ -140,17 +114,22 @@ pub fn ensure_x_server(
     let platform = XServerPlatform::current();
     let dependency_available = dependency_available(platform);
 
-    // macOS: if XQuartz is installed but not yet running, nudge it up so the
-    // subsequent detection (and the SSH `DISPLAY` handshake) can succeed.
+    // Detect once. On macOS, if XQuartz is installed but not yet running, nudge
+    // it up and re-probe a single time so the SSH `DISPLAY` handshake can
+    // succeed.
     #[cfg(target_os = "macos")]
-    if !manager.has_managed_server() && dependency_available && detect(manager).is_none() {
-        macos::launch_xquartz();
-    }
-
-    let (existing_display, managed) = match detect(manager) {
-        Some((display, managed)) => (Some(display), managed),
-        None => (None, false),
+    let detected = {
+        let mut found = detect(manager);
+        if found.is_none() && !manager.has_managed_server() && dependency_available {
+            macos::launch_xquartz();
+            found = detect(manager);
+        }
+        found
     };
+    #[cfg(not(target_os = "macos"))]
+    let detected = detect(manager);
+
+    let (existing_display, managed) = detected.map_or((None, false), |(d, m)| (Some(d), m));
 
     let ctx = EnsureContext {
         platform,
@@ -169,19 +148,14 @@ pub fn current_status(manager: &XServerManager) -> XServerStatus {
     let platform = XServerPlatform::current();
     let dependency_available = Some(dependency_available(platform));
     match detect(manager) {
-        Some((display, managed)) => XServerStatus {
-            state: if managed {
-                XServerState::Running
-            } else {
-                XServerState::Adopted
-            },
+        Some((display, managed)) => adopted_status(
             platform,
-            display_number: Some(display),
+            display,
             managed,
-            session_count: manager.session_count(),
+            manager.session_count(),
             dependency_available,
-            message: None,
-        },
+            None,
+        ),
         None => XServerStatus {
             state: XServerState::Absent,
             platform,

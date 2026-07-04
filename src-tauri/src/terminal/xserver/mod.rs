@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::{AppHandle, Manager};
-use termihub_core::backends::ssh::x11::{ManagedXServer, XServerProvisioner};
+use termihub_core::backends::ssh::x11::{ManagedXServer, ManagedXServerSource, XServerProvisioner};
 
 use crate::connection::manager::ConnectionManager;
 
@@ -63,29 +63,34 @@ impl XServerProvisionerImpl {
 #[async_trait]
 impl XServerProvisioner for XServerProvisionerImpl {
     async fn ensure(&self) -> Result<Option<ManagedXServer>, String> {
-        let provide = resolve_provide_automatically(&self.app);
-        let manager = self.manager.clone();
-
-        // Detection does a short blocking TCP probe / filesystem scan; keep it
-        // off the async reactor.
-        let result = tokio::task::spawn_blocking(move || ensure_x_server(&manager, provide))
+        // Run the orchestrator for its side effects (detect / launch XQuartz /
+        // typed error), then forward to the managed server it recorded, if any.
+        // An adopted external server yields `None`, so core detection finds it.
+        ensure_off_reactor(&self.app, self.manager.clone())
             .await
-            .map_err(|e| format!("X server provisioning task failed: {e}"))?;
-
-        match result {
-            // A managed server (once #1049 spawns one) is forwarded to directly;
-            // an adopted external server yields `None` so core detection finds it.
-            Ok(_status) => {
-                use termihub_core::backends::ssh::x11::ManagedXServerSource;
-                Ok(self.manager.managed_server())
-            }
-            Err(err) => Err(err.to_string()),
-        }
+            .map(|_status| self.manager.managed_server())
+            .map_err(|e| e.to_string())
     }
 }
 
+/// Run [`ensure_x_server`] off the async reactor — detection does a brief
+/// blocking TCP probe / filesystem scan. Shared by the provisioner and the
+/// `x_server_ensure` command so the blocking-offload and settings resolution
+/// live in one place.
+pub(crate) async fn ensure_off_reactor(
+    app: &AppHandle,
+    manager: XServerManager,
+) -> Result<XServerStatus, XServerError> {
+    let provide = resolve_provide_automatically(app);
+    tokio::task::spawn_blocking(move || ensure_x_server(&manager, provide))
+        .await
+        .map_err(|e| XServerError::LaunchFailed {
+            message: format!("X server provisioning task failed: {e}"),
+        })?
+}
+
 /// Install the X server provisioner into core so the SSH connect path can reach
-/// it, and return the manager to register as Tauri state. Call once at startup.
+/// it. Call once at startup, after the manager is created.
 pub fn init(app: &AppHandle, manager: XServerManager) {
     let provisioner = Arc::new(XServerProvisionerImpl::new(app.clone(), manager));
     termihub_core::backends::ssh::x11::set_x_server_provisioner(provisioner);

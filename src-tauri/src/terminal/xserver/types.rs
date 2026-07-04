@@ -132,6 +132,84 @@ pub enum XServerError {
     Unsupported { message: String },
 }
 
+impl XServerError {
+    /// Windows: automatic VcXsrv provisioning is enabled but not yet implemented
+    /// (#1048–#1050). Shared by the orchestrator and the install command so the
+    /// guidance text has a single source.
+    pub fn windows_provisioning_unavailable() -> Self {
+        XServerError::ProvisioningUnavailable {
+            message: "Automatic VcXsrv provisioning is not yet available in this build. Install \
+                VcXsrv and start it on display :0, then retry."
+                .to_string(),
+        }
+    }
+
+    /// Windows: no server running and automatic provisioning is disabled.
+    pub fn windows_no_local_server() -> Self {
+        XServerError::NoLocalServer {
+            message: "No local X server is running. Enable \"Provide X server automatically\" in \
+                Settings, or install and start VcXsrv on display :0."
+                .to_string(),
+        }
+    }
+
+    /// macOS: XQuartz is not installed. Shared by the orchestrator and the
+    /// install command.
+    pub fn xquartz_missing() -> Self {
+        XServerError::DependencyMissing {
+            message: "XQuartz is not installed. Install it to use X11 forwarding.".to_string(),
+            dependency: "XQuartz".to_string(),
+            install_hint: Some(
+                "Download XQuartz from https://www.xquartz.org, then log out and back in so \
+                DISPLAY is set."
+                    .to_string(),
+            ),
+            install_command: Some("brew install --cask xquartz".to_string()),
+        }
+    }
+
+    /// macOS: XQuartz is installed but no server is running.
+    pub fn macos_server_unreachable() -> Self {
+        XServerError::ServerUnreachable {
+            message: "XQuartz is installed but no X server is running. Launch XQuartz and retry \
+                (termiHub attempts this automatically on connect)."
+                .to_string(),
+        }
+    }
+
+    /// Linux: no Xorg/XWayland found.
+    pub fn linux_x_missing() -> Self {
+        XServerError::DependencyMissing {
+            message: "No X server (Xorg/XWayland) was found.".to_string(),
+            dependency: "Xorg/XWayland".to_string(),
+            install_hint: Some(
+                "Install your distribution's Xorg or XWayland package, or run termiHub inside a \
+                graphical session."
+                    .to_string(),
+            ),
+            install_command: None,
+        }
+    }
+
+    /// Linux: an X server appears present but no display was detected.
+    pub fn linux_server_unreachable() -> Self {
+        XServerError::ServerUnreachable {
+            message: "An X server appears installed but no display was detected. On Wayland, \
+                ensure XWayland is running and DISPLAY is set."
+                .to_string(),
+        }
+    }
+
+    /// Linux: termiHub never installs an X server here.
+    pub fn linux_install_unsupported() -> Self {
+        XServerError::Unsupported {
+            message: "termiHub never installs an X server on Linux. Install your distribution's \
+                Xorg or XWayland package via your package manager."
+                .to_string(),
+        }
+    }
+}
+
 /// Progress event emitted during X server provisioning / dependency install.
 ///
 /// Deliberately mirrors [`AgentDeployProgress`](crate::terminal::agent_deploy::AgentDeployProgress)
