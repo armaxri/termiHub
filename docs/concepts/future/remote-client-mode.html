@@ -1,0 +1,1677 @@
+<!doctype html>
+<!--
+  Single-file concept: Remote Client Mode (Web & iPad).
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/backlog/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Remote Client Mode (Web &amp; iPad) (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Settings-specific structural styling (not part of the shared kit). */
+      .settings-nav {
+        width: 150px;
+        flex: 0 0 150px;
+        border-right: 1px solid var(--border-secondary);
+        padding: 8px 0;
+      }
+      .settings-nav__item {
+        padding: 6px 16px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        cursor: pointer;
+      }
+      .settings-nav__item:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+      .settings-nav__item--active {
+        color: var(--text-primary);
+        background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+        box-shadow: inset 2px 0 0 var(--accent-color);
+      }
+      .settings-pane {
+        flex: 1 1 auto;
+        overflow: auto;
+        padding: 18px 20px;
+      }
+      .settings-section-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      .settings-hint {
+        color: var(--text-secondary);
+        font-size: 12px;
+        margin: 0 0 14px;
+      }
+      .settings-group-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 18px 0 8px;
+      }
+      /* Generic form field row */
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 10px;
+      }
+      .field__label {
+        width: 140px;
+        flex: 0 0 140px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .field__control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .input {
+        height: 30px;
+        padding: 0 10px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        color: var(--text-primary);
+        font-family: inherit;
+      }
+      .input--addr {
+        width: 200px;
+      }
+      .input--port {
+        width: 90px;
+      }
+      .input--token {
+        width: 260px;
+        font-family: var(--font-mono);
+        letter-spacing: 0.12em;
+      }
+      .input--url {
+        width: 300px;
+        font-family: var(--font-mono);
+        color: var(--text-accent);
+      }
+      .field-select {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        width: 320px;
+        height: 30px;
+        padding: 0 10px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .field-select .li {
+        color: var(--text-secondary);
+      }
+      /* toggle */
+      .toggle {
+        position: relative;
+        width: 38px;
+        height: 20px;
+        border-radius: 999px;
+        background: var(--bg-active);
+        border: 1px solid var(--border-primary);
+        flex: 0 0 auto;
+      }
+      .toggle::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--text-secondary);
+        transition: none;
+      }
+      .toggle--on {
+        background: var(--accent-color);
+        border-color: var(--accent-color);
+      }
+      .toggle--on::after {
+        left: 20px;
+        background: #fff;
+      }
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .toggle-row__text {
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      /* small icon button next to inputs */
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .icon-btn .li {
+        width: 13px;
+        height: 13px;
+      }
+      /* QR placeholder */
+      .qr {
+        margin-top: 12px;
+        width: 132px;
+        height: 132px;
+        display: grid;
+        place-items: center;
+        background: #fff;
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        color: #0b0d12;
+      }
+      .qr .li {
+        width: 104px;
+        height: 104px;
+        stroke: #0b0d12;
+      }
+      .access-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 460px;
+        margin: 4px 0 0;
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        background: rgba(45, 215, 156, 0.1);
+        border: 1px solid var(--state-connected);
+        color: #8fe6c4;
+      }
+      .access-banner .li {
+        width: 14px;
+        height: 14px;
+      }
+      .disabled-note {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 460px;
+        margin: 4px 0 0;
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        background: rgba(212, 168, 67, 0.12);
+        border: 1px solid var(--color-warning);
+        color: #e6c577;
+      }
+      .disabled-note .li {
+        width: 14px;
+        height: 14px;
+      }
+      /* Standalone browser login screen — NOT the .app desktop chrome.
+         Built directly from theme CSS variables (centered card). */
+      .login-screen {
+        height: 460px;
+        display: grid;
+        place-items: center;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-secondary);
+        border-radius: 8px;
+        box-shadow: var(--shadow-overlay);
+      }
+      .login-card {
+        width: 360px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        padding: 28px 26px;
+        box-shadow: var(--shadow-overlay);
+      }
+      .login-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 4px;
+      }
+      .login-brand__mark {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-md);
+        background: var(--accent-color);
+        color: #fff;
+      }
+      .login-brand__mark .li {
+        width: 20px;
+        height: 20px;
+      }
+      .login-brand__name {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: -0.012em;
+      }
+      .login-target {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin: 0 0 20px;
+      }
+      .login-target .li {
+        width: 13px;
+        height: 13px;
+      }
+      .login-target code {
+        font-family: var(--font-mono);
+        color: var(--text-accent);
+      }
+      .login-label {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 0 0 6px;
+      }
+      .login-input {
+        width: 100%;
+        height: 34px;
+        padding: 0 11px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        font-size: 13px;
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        margin: 0 0 14px;
+      }
+      .login-btn {
+        width: 100%;
+        height: 36px;
+        border-radius: var(--radius-md);
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
+        cursor: pointer;
+        background: var(--accent-color);
+        border: 1px solid var(--accent-color);
+        color: #fff;
+      }
+      .login-or {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 18px 0;
+        color: var(--text-secondary);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .login-or::before,
+      .login-or::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-secondary);
+      }
+      .login-btn--secondary {
+        background: var(--bg-tertiary);
+        border-color: var(--border-primary);
+        color: var(--text-primary);
+      }
+      .login-field--mono input {
+        font-family: var(--font-family);
+      }
+      /* In-app connection bar — top of the web client window. */
+      .web-window {
+        height: 300px;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--border-secondary);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--bg-primary);
+        box-shadow: var(--shadow-overlay);
+      }
+      .conn-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 34px;
+        min-height: 34px;
+        padding: 0 12px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid
+          color-mix(in srgb, var(--accent-color) 35%, var(--border-secondary));
+        font-size: 12px;
+      }
+      .conn-bar__brand {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+      }
+      .conn-bar__brand .li {
+        width: 15px;
+        height: 15px;
+        color: var(--text-accent);
+      }
+      .conn-bar__agent {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--text-secondary);
+      }
+      .conn-bar__agent code {
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+      }
+      .conn-bar__spacer {
+        margin-left: auto;
+      }
+      .conn-bar__btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 24px;
+        padding: 0 10px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-primary);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .conn-bar__btn .li {
+        width: 13px;
+        height: 13px;
+      }
+      .health-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .health-dot--good {
+        background: var(--state-connected);
+      }
+      .health-dot--degraded {
+        background: var(--state-connecting);
+      }
+      .health-dot--down {
+        background: var(--state-disconnected);
+      }
+      .web-body {
+        flex: 1 1 auto;
+        display: flex;
+        min-height: 0;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry) — union of all mockup symbols. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24">
+        <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
+        <path d="m21 2-9.6 9.6" />
+        <circle cx="7.5" cy="15.5" r="5.5" />
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </symbol>
+      <symbol id="i-qr-code" viewBox="0 0 24 24">
+        <rect width="5" height="5" x="3" y="3" rx="1" />
+        <rect width="5" height="5" x="16" y="3" rx="1" />
+        <rect width="5" height="5" x="3" y="16" rx="1" />
+        <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+        <path d="M21 21v.01" />
+        <path d="M12 7v3a2 2 0 0 1-2 2H7" />
+        <path d="M3 12h.01" />
+        <path d="M12 3h.01" />
+        <path d="M12 16v.01" />
+        <path d="M16 12h1" />
+        <path d="M21 12v.01" />
+        <path d="M12 21v-1" />
+      </symbol>
+      <symbol id="i-smartphone" viewBox="0 0 24 24">
+        <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+        <path d="M12 18h.01" />
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 17 6-6-6-6" />
+        <path d="M12 19h8" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-log-out" viewBox="0 0 24 24">
+        <path d="m16 17 5-5-5-5" />
+        <path d="M21 12H9" />
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      </symbol>
+      <symbol id="i-wifi" viewBox="0 0 24 24">
+        <path d="M12 20h.01" />
+        <path d="M2 8.82a15 15 0 0 1 20 0" />
+        <path d="M5 12.859a10 10 0 0 1 14 0" />
+        <path d="M8.5 16.429a5 5 0 0 1 7 0" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Remote Client Mode (Web &amp; iPad)</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Future · post-v1</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues">#TBD</a></span>
+          <span><code>docs/concepts/future/remote-client-mode.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept remote-client-mode</code> to
+          reconcile it with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Enable termiHub to be accessed as a web application from a browser or as a native iPad
+          app, in addition to the existing desktop app. In both cases the client is a
+          <strong>pure remote client</strong>: all terminal backends, file access, and SSH handling
+          continue to run in a termiHub agent on a server, desktop, or Raspberry Pi. The client UI
+          connects to that agent over an authenticated WebSocket connection and renders the familiar
+          termiHub interface.
+        </p>
+        <p>
+          <strong>Motivation</strong>: Users increasingly want to manage remote infrastructure from
+          a browser tab or from an iPad while away from their desk. termiHub already has a capable
+          remote agent with JSON-RPC over TCP — this concept extends that transport to WebSocket +
+          HTTP to unlock both use-cases with a shared implementation.
+        </p>
+        <p><strong>Key goals</strong>:</p>
+        <ul>
+          <li>
+            <strong>Web client</strong>: The agent serves the React frontend as a static web app and
+            exposes a WebSocket endpoint; users open a browser URL instead of launching the desktop
+            app
+          </li>
+          <li>
+            <strong>iPad client</strong>: A Tauri iOS build (or PWA) connects to the same WebSocket
+            endpoint, providing a touch-optimised, App-Store-distributable experience
+          </li>
+          <li>
+            <strong>Shared transport abstraction</strong>: One frontend codebase, two transports —
+            Tauri IPC (desktop) and WebSocket (web/iPad) — selected at runtime via a thin adapter
+            layer
+          </li>
+          <li>
+            <strong>No local shell on constrained clients</strong>: iOS and browser sessions hide
+            the local-shell tab; all connections are remote (SSH, serial-via-agent, Docker, etc.)
+          </li>
+          <li>
+            <strong>Security first</strong>: TLS, token-based session auth, and per-connection
+            authorisation before any WebSocket upgrade is accepted
+          </li>
+        </ul>
+        <p><strong>Non-goals</strong>:</p>
+        <ul>
+          <li>
+            Replacing the desktop app — the Tauri desktop build remains the primary and most capable
+            target
+          </li>
+          <li>
+            Providing local PTY access on iOS (iOS platform restriction, cannot be worked around)
+          </li>
+          <li>
+            Full offline capability (both web and iPad modes require network access to an agent)
+          </li>
+        </ul>
+        <p>
+          The top-level client→agent architecture is diagrammed in
+          <a href="#behavior">States &amp; Sequences</a>.
+        </p>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The visual surfaces are specified by the mockups below — they describe the layout and
+          states. This section describes them; the mockups are authoritative for layout.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>web-access-settings.html</code></td>
+                <td>
+                  Desktop Settings → <strong>Web &amp; Mobile Access</strong> page (enable toggle,
+                  listener, TLS, auth, token, access URL + QR)
+                </td>
+              </tr>
+              <tr>
+                <td><code>remote-client-login-and-bar.html</code></td>
+                <td>
+                  The standalone web/iPad <strong>login screen</strong> (token + username/password)
+                  and the in-app <strong>connection bar</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Agent Configuration Screen (Desktop Only)</h3>
+        <p>
+          A new <strong>Web &amp; Mobile Access</strong> settings page (accessible from the Settings
+          sidebar) lets the user configure the agent's HTTP listener. See the
+          <em>Web &amp; Mobile Access</em> mockup below. The page exposes:
+        </p>
+        <ul>
+          <li>
+            <strong>Enable web access</strong> — master toggle; the listener does not bind until
+            this is on
+          </li>
+          <li>
+            <strong>Listen address / Port</strong> — defaults to <code>127.0.0.1</code> and
+            <code>7681</code>; <code>0.0.0.0</code> requires explicit user action (see Security
+            Considerations)
+          </li>
+          <li>
+            <strong>TLS mode</strong> — <code>Self-signed (auto-generated)</code> (default),
+            <code>Custom certificate + key</code>, or
+            <code>Disable TLS (LAN only, not recommended)</code>
+          </li>
+          <li>
+            <strong>Authentication mode</strong> — <code>Token</code> (long-lived copy/paste token,
+            default) or <code>Username + Password</code>
+          </li>
+          <li>
+            <strong>Token field</strong> — masked, with <strong>Regenerate</strong> and
+            <strong>Copy</strong> actions (shown for token mode)
+          </li>
+          <li>
+            <strong>Access URL</strong> — the resolved
+            <code>https://&lt;ip&gt;:&lt;port&gt;</code> URL with <strong>Copy</strong> and
+            <strong>Show QR</strong> actions
+          </li>
+        </ul>
+        <p>
+          The <strong>Show QR</strong> button displays a QR code the user can scan with an iPad or
+          phone to open the login screen directly.
+        </p>
+
+        <h3>Web Client (Browser)</h3>
+        <p>
+          The browser renders the full termiHub React SPA served from the agent's built-in HTTP
+          server. The experience is visually identical to the desktop app with the following
+          differences:
+        </p>
+        <ul>
+          <li>
+            <strong>No local-shell connection type</strong> — the connection type selector omits
+            "Local Shell"; existing local-shell connections in the workspace show a "not available
+            in remote mode" banner
+          </li>
+          <li>
+            <strong>Connection bar</strong> (top of window, replaces the OS title bar) — shows the
+            agent hostname/IP, a connection-health indicator (green/yellow/red dot), and a
+            disconnect button. See the connection bar in the
+            <em>Login &amp; Connection Bar</em> mockup below.
+          </li>
+          <li>
+            <strong>Login screen</strong> — shown before the main UI if the agent requires
+            authentication. It is a <strong>standalone browser page</strong> (not the termiHub
+            desktop chrome): a centered card offering a token field and a username/password
+            fallback. See the <em>Login &amp; Connection Bar</em> mockup below.
+          </li>
+          <li>
+            <strong>SFTP / file browser</strong> — fully functional; files are on the agent host,
+            not the client
+          </li>
+          <li>
+            <strong>Settings</strong> — saved to the agent; changes are reflected immediately for
+            all connected clients
+          </li>
+          <li>
+            <strong>Split views, drag-and-drop tabs</strong> — identical to desktop; no functional
+            reduction
+          </li>
+        </ul>
+
+        <h3>iPad Client (Tauri iOS / PWA)</h3>
+        <p>Same UI as the web client, with touch-specific additions:</p>
+        <ul>
+          <li>
+            <strong>On-screen toolbar</strong> (appears below the terminal, above the keyboard) with
+            <code>Tab</code>, <code>Esc</code>, <code>Ctrl</code>, <code>Alt</code>, arrow keys, and
+            a function-key row (<code>F1</code>–<code>F10</code>)
+          </li>
+          <li>
+            <strong>Side panel gesture</strong> — swipe right from the left edge to open the
+            connection sidebar; swipe left to close it (mirrors the Activity Bar behaviour on
+            desktop)
+          </li>
+          <li>
+            <strong>Split view</strong> — supported via a vertically stacked layout (horizontal
+            split is hidden on small screens; available on iPad landscape via settings toggle)
+          </li>
+          <li>
+            <strong>Pinch-to-zoom</strong> — adjusts terminal font size; double-tap resets to
+            default
+          </li>
+          <li>
+            <strong>Connection indicator</strong> — persistent pill in the top-right corner showing
+            agent hostname and latency; tap to expand a connection-detail sheet
+          </li>
+        </ul>
+
+        <!-- Mockup 1: web-access-settings.html -->
+        <div class="mockup-section">
+          <h3>Mockup — Settings · Web &amp; Mobile Access (desktop only)</h3>
+
+          <!-- ── State 1: Enabled / Listening ───────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>1 · Web access enabled (listening)</h2>
+            <div class="mockup-note">
+              Settings → <strong>Web &amp; Mobile Access</strong>. The master toggle
+              <span class="callout">A</span> is on, so the listener binds. The user sets the listen
+              address/port <span class="callout">B</span>, the TLS mode
+              <span class="callout">C</span>, and the auth mode + token
+              <span class="callout">D</span>. The resolved access URL
+              <span class="callout">E</span> and a scannable QR code <span class="callout">F</span>
+              let an iPad or phone reach the login screen.
+            </div>
+            <div class="app">
+              <div class="app__body">
+                <nav class="activity-bar">
+                  <div class="activity-bar__top">
+                    <button class="activity-bar__item" title="Connections">
+                      <svg class="li"><use href="#i-network" /></svg>
+                    </button>
+                    <button class="activity-bar__item" title="File Browser">
+                      <svg class="li"><use href="#i-folder-open" /></svg>
+                    </button>
+                  </div>
+                  <div class="activity-bar__bottom">
+                    <button class="activity-bar__item" title="Log Viewer">
+                      <svg class="li"><use href="#i-scroll-text" /></svg>
+                    </button>
+                    <button class="activity-bar__item activity-bar__item--active" title="Settings">
+                      <svg class="li"><use href="#i-settings" /></svg>
+                      <span class="activity-bar__indicator"></span>
+                    </button>
+                  </div>
+                </nav>
+
+                <aside class="sidebar">
+                  <div class="sidebar__header"><span class="sidebar__title">Settings</span></div>
+                  <div class="sidebar__content" style="display: flex; padding: 0">
+                    <div class="settings-nav">
+                      <div class="settings-nav__item">General</div>
+                      <div class="settings-nav__item">Appearance</div>
+                      <div class="settings-nav__item">Terminal</div>
+                      <div class="settings-nav__item">Security</div>
+                      <div class="settings-nav__item settings-nav__item--active">
+                        Web &amp; Mobile
+                      </div>
+                      <div class="settings-nav__item">Keyboard</div>
+                    </div>
+                  </div>
+                </aside>
+
+                <div class="terminal-view">
+                  <div class="settings-pane">
+                    <div class="settings-section-title">
+                      <svg class="li" style="margin-right: 4px"><use href="#i-globe" /></svg>
+                      Web &amp; Mobile Access
+                    </div>
+                    <div class="settings-hint">
+                      Serve the termiHub UI over HTTPS so browsers and the iPad app can connect to
+                      this agent.
+                    </div>
+
+                    <div class="toggle-row">
+                      <span class="toggle toggle--on"></span>
+                      <span class="toggle-row__text">Enable web access</span>
+                      <span class="callout">A</span>
+                    </div>
+
+                    <div class="field" style="margin-top: 14px">
+                      <span class="field__label">Listen address</span>
+                      <span class="field__control">
+                        <input class="input input--addr" value="0.0.0.0" />
+                        <span class="field__label" style="width: auto; flex: 0 0 auto">Port</span>
+                        <input class="input input--port" value="7681" />
+                        <span class="callout">B</span>
+                      </span>
+                    </div>
+
+                    <div class="settings-group-label">TLS</div>
+                    <div class="field">
+                      <span class="field__label">Mode</span>
+                      <span class="field__control">
+                        <div class="field-select">
+                          <span>
+                            <svg class="li" style="margin-right: 5px"><use href="#i-lock" /></svg>
+                            Self-signed (auto-generated)
+                          </span>
+                          <svg class="li"><use href="#i-chevron-down" /></svg>
+                        </div>
+                        <span class="callout">C</span>
+                      </span>
+                    </div>
+
+                    <div class="settings-group-label">Authentication</div>
+                    <div class="field">
+                      <span class="field__label">Mode</span>
+                      <span class="field__control">
+                        <div class="field-select">
+                          <span>
+                            <svg class="li" style="margin-right: 5px"><use href="#i-key" /></svg>
+                            Token
+                          </span>
+                          <svg class="li"><use href="#i-chevron-down" /></svg>
+                        </div>
+                        <span class="callout">D</span>
+                      </span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Token</span>
+                      <span class="field__control">
+                        <input class="input input--token" type="password" value="thx_3f9b2c8a1d" />
+                        <button class="btn icon-btn">
+                          <svg class="li"><use href="#i-refresh-cw" /></svg> Regenerate
+                        </button>
+                        <button class="btn icon-btn">
+                          <svg class="li"><use href="#i-copy" /></svg> Copy
+                        </button>
+                      </span>
+                    </div>
+
+                    <div class="settings-group-label">Access URL</div>
+                    <div class="field">
+                      <span class="field__label">URL</span>
+                      <span class="field__control">
+                        <input
+                          class="input input--url"
+                          readonly
+                          value="https://192.168.1.42:7681"
+                        />
+                        <button class="btn icon-btn">
+                          <svg class="li"><use href="#i-copy" /></svg> Copy
+                        </button>
+                        <button class="btn btn--primary icon-btn">
+                          <svg class="li"><use href="#i-qr-code" /></svg> Show QR
+                        </button>
+                        <span class="callout">E</span>
+                      </span>
+                    </div>
+
+                    <div class="access-banner">
+                      <svg class="li"><use href="#i-circle-check" /></svg>
+                      Listening — web access available at
+                      <code>https://192.168.1.42:7681</code>
+                    </div>
+
+                    <div class="qr" title="Scan to open the login screen">
+                      <svg class="li"><use href="#i-qr-code" /></svg>
+                    </div>
+                    <div class="settings-hint" style="margin: 8px 0 0; display: flex; gap: 6px">
+                      <svg class="li" style="width: 14px; height: 14px">
+                        <use href="#i-smartphone" />
+                      </svg>
+                      Scan with an iPad or phone to open the login screen
+                      <span class="callout">F</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="status-bar">
+                <div class="status-bar__section status-bar__section--left">
+                  <span class="status-bar__item">
+                    <svg class="li"><use href="#i-globe" /></svg> Web access · listening
+                  </span>
+                </div>
+                <div class="status-bar__section status-bar__section--center"></div>
+                <div class="status-bar__section status-bar__section--right">
+                  <span class="status-bar__item">2 clients</span>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">A</span> Master toggle — listener does not bind until on.
+                </li>
+                <li>
+                  <span class="callout">B</span> Listen address / port —
+                  <code>0.0.0.0</code> exposes the agent on the LAN (explicit opt-in); default is
+                  <code>127.0.0.1:7681</code>.
+                </li>
+                <li>
+                  <span class="callout">C</span> TLS mode (<code>Lock</code> icon) — Self-signed /
+                  Custom cert / Disable (LAN only).
+                </li>
+                <li>
+                  <span class="callout">D</span> Auth mode (<code>Key</code> icon) — Token or
+                  Username + Password; the masked token row offers Regenerate / Copy.
+                </li>
+                <li>
+                  <span class="callout">E</span> Access URL — resolved
+                  <code>https://&lt;ip&gt;:&lt;port&gt;</code>
+                  with Copy / Show QR.
+                </li>
+                <li>
+                  <span class="callout">F</span> QR code (<code>QrCode</code>) — scan to open the
+                  login screen on a mobile device.
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── State 2: control variants ──────────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>2 · Control states</h2>
+            <div class="mockup-note">
+              Key control variants. <strong>Disabled</strong> <span class="callout">G</span> =
+              master toggle off, listener stopped, fields greyed and URL/QR hidden.
+              <strong>TLS disabled</strong>
+              <span class="callout">H</span> = the not-recommended LAN-only mode shows a warning.
+              <strong>Username + Password</strong> auth mode <span class="callout">I</span> swaps
+              the token row for credential fields.
+            </div>
+            <div class="states">
+              <div>
+                <div class="state-label">Disabled <span class="callout">G</span></div>
+                <div class="toggle-row" style="margin-bottom: 8px">
+                  <span class="toggle"></span>
+                  <span class="toggle-row__text" style="color: var(--text-secondary)"
+                    >Enable web access</span
+                  >
+                </div>
+                <div class="disabled-note">
+                  <svg class="li"><use href="#i-triangle-alert" /></svg>
+                  Web access is off — the agent is reachable only from the desktop app.
+                </div>
+              </div>
+
+              <div>
+                <div class="state-label">
+                  TLS disabled (LAN only) <span class="callout">H</span>
+                </div>
+                <div class="field-select" style="width: auto">
+                  <span>
+                    <svg class="li" style="margin-right: 5px"><use href="#i-lock" /></svg>
+                    Disable TLS (LAN only)
+                  </span>
+                  <svg class="li"><use href="#i-chevron-down" /></svg>
+                </div>
+                <div class="disabled-note" style="width: auto; margin-top: 8px">
+                  <svg class="li"><use href="#i-triangle-alert" /></svg>
+                  Traffic is unencrypted — not recommended outside a trusted LAN.
+                </div>
+              </div>
+
+              <div>
+                <div class="state-label">Username + Password <span class="callout">I</span></div>
+                <div class="field" style="margin: 0 0 8px">
+                  <span class="field__label" style="width: 90px; flex: 0 0 90px">Username</span>
+                  <input class="input" style="width: 180px" value="admin" />
+                </div>
+                <div class="field" style="margin: 0">
+                  <span class="field__label" style="width: 90px; flex: 0 0 90px">Password</span>
+                  <input
+                    class="input"
+                    style="width: 180px"
+                    type="password"
+                    value="hunter2hunter2"
+                  />
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">G</span> Disabled — toggle off; URL, QR and listener
+                  removed.
+                </li>
+                <li>
+                  <span class="callout">H</span> TLS off — <code>TriangleAlert</code> warning;
+                  explicit opt-in required.
+                </li>
+                <li>
+                  <span class="callout">I</span> Password auth — token row replaced by Username /
+                  Password fields.
+                </li>
+              </ul>
+            </div>
+          </section>
+        </div>
+
+        <!-- Mockup 2: remote-client-login-and-bar.html -->
+        <div class="mockup-section">
+          <h3>Mockup — Login Screen &amp; Connection Bar (web / iPad)</h3>
+
+          <!-- ── Login screen ───────────────────────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>1 · Login screen (standalone browser page)</h2>
+            <div class="mockup-note">
+              Shown before the main UI when the agent requires authentication. This is a
+              <strong>standalone browser page</strong>, not the termiHub desktop chrome — a centered
+              card built from the theme variables. The primary token field
+              <span class="callout">A</span> is the default; a username/password fallback
+              <span class="callout">B</span> sits below the "or" divider.
+            </div>
+            <div class="login-screen">
+              <div class="login-card">
+                <div class="login-brand">
+                  <span class="login-brand__mark">
+                    <svg class="li"><use href="#i-terminal" /></svg>
+                  </span>
+                  <span class="login-brand__name">termiHub</span>
+                </div>
+                <div class="login-target">
+                  <svg class="li"><use href="#i-server" /></svg>
+                  Connect to agent at <code>agent.example.com</code>
+                </div>
+
+                <span class="login-label">
+                  <svg class="li" style="width: 12px; height: 12px; margin-right: 4px">
+                    <use href="#i-key" />
+                  </svg>
+                  Access Token
+                </span>
+                <input class="login-input" type="password" value="thx_3f9b2c8a1d4e7f00" />
+                <button class="login-btn">Connect</button>
+                <span class="callout" style="float: right; margin-top: -28px; margin-right: 6px"
+                  >A</span
+                >
+
+                <div class="login-or">or</div>
+
+                <div class="login-field--mono">
+                  <span class="login-label">Username</span>
+                  <input class="login-input" value="admin" />
+                  <span class="login-label">Password</span>
+                  <input class="login-input" type="password" value="hunter2hunter2" />
+                  <button class="login-btn login-btn--secondary">Sign in</button>
+                </div>
+                <span class="callout" style="float: right; margin-top: -28px; margin-right: 6px"
+                  >B</span
+                >
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">A</span> Token sign-in — primary; paste a long-lived agent
+                  token (<code>Key</code> icon).
+                </li>
+                <li>
+                  <span class="callout">B</span> Username + password fallback — used when the agent
+                  is in password auth mode.
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!-- ── Connection bar ─────────────────────────────────────────────── -->
+          <section class="mockup-section">
+            <h2>2 · Connection bar (in the web client, above the terminal)</h2>
+            <div class="mockup-note">
+              Once authenticated the web client shows a thin <strong>connection bar</strong> across
+              the top (it replaces the OS title bar). It carries the health dot
+              <span class="callout">C</span>, the agent host <span class="callout">D</span>, and a
+              disconnect button <span class="callout">E</span>. Below it is the familiar termiHub
+              terminal area.
+            </div>
+            <div class="web-window">
+              <div class="conn-bar">
+                <span class="conn-bar__brand">
+                  <svg class="li"><use href="#i-globe" /></svg> termiHub
+                </span>
+                <span class="conn-bar__agent">
+                  <span class="health-dot health-dot--good" title="Connection healthy"></span>
+                  <span class="callout">C</span>
+                  <svg class="li" style="width: 13px; height: 13px"><use href="#i-server" /></svg>
+                  <code>agent.example.com</code>
+                  <span class="callout">D</span>
+                </span>
+                <span class="conn-bar__spacer"></span>
+                <span class="conn-bar__agent">
+                  <svg class="li" style="width: 13px; height: 13px"><use href="#i-wifi" /></svg> 18
+                  ms
+                </span>
+                <button class="conn-bar__btn" title="Disconnect">
+                  <svg class="li"><use href="#i-log-out" /></svg> Disconnect
+                  <span class="callout">E</span>
+                </button>
+              </div>
+              <div class="web-body">
+                <div class="panel">
+                  <div class="tab-bar">
+                    <div class="tab tab--active">
+                      <svg class="li"><use href="#i-network" /></svg>
+                      <span class="state-dot state-dot--connected"></span>
+                      <span class="tab__title">prod-db-1</span>
+                      <button class="tab__close">
+                        <svg class="li"><use href="#i-x" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="terminal">
+                    <span class="prompt">prod-db-1 $</span> systemctl status postgres<span
+                      class="cursor"
+                    ></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="legend">
+              <ul>
+                <li>
+                  <span class="callout">C</span> Health dot — green / yellow / red, mirroring the
+                  <code>state-dot</code> colours (good / degraded / down).
+                </li>
+                <li>
+                  <span class="callout">D</span> Agent host (<code>Server</code> icon) + live
+                  latency.
+                </li>
+                <li>
+                  <span class="callout">E</span> Disconnect (<code>LogOut</code>) — closes the WS
+                  and returns to the login screen.
+                </li>
+              </ul>
+            </div>
+
+            <!-- health variants -->
+            <div class="state-label" style="margin-top: 18px">Health dot variants</div>
+            <div class="states" style="margin-top: 6px">
+              <div>
+                <span class="conn-bar__agent">
+                  <span class="health-dot health-dot--good"></span> Healthy (&lt; 50 ms)
+                </span>
+              </div>
+              <div>
+                <span class="conn-bar__agent">
+                  <span class="health-dot health-dot--degraded"></span> Degraded / high latency
+                </span>
+              </div>
+              <div>
+                <span class="conn-bar__agent">
+                  <span class="health-dot health-dot--down"></span> Reconnecting / down
+                </span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <p>
+          Detailed flows — the client connection handshake, the agent listener lifecycle, the client
+          session lifecycle, and the iPad launch path — are diagrammed in
+          <a href="#behavior">States &amp; Sequences</a>. Key rules:
+        </p>
+
+        <h3>Starting the Web Listener</h3>
+        <ol>
+          <li>User enables "Web &amp; Mobile Access" in Settings</li>
+          <li>
+            The Tauri backend starts an HTTP/WebSocket server on the configured address and port
+          </li>
+          <li>
+            A TLS certificate is generated (or loaded from disk) and stored in the credential store
+          </li>
+          <li>
+            The frontend build (Vite output) is embedded in the agent binary as static assets at
+            compile time (similar to how Tauri bundles the web view)
+          </li>
+          <li>
+            The agent logs a line:
+            <code>Web access available at https://&lt;ip&gt;:&lt;port&gt;</code>
+          </li>
+          <li>The access URL and QR code appear in the Settings panel</li>
+        </ol>
+
+        <h3>Transport Abstraction (Frontend)</h3>
+        <p>
+          The frontend today calls <code>import { invoke } from "@tauri-apps/api/core"</code> and
+          <code>import { listen } from "@tauri-apps/api/event"</code> throughout
+          <code>src/services/api.ts</code> and <code>src/services/events.ts</code>. In remote-client
+          mode these are replaced by a WebSocket transport that speaks the same JSON-RPC dialect as
+          the desktop-to-agent protocol.
+        </p>
+        <p>A thin adapter is selected at startup:</p>
+        <pre><code>src/services/
+  transport/
+    index.ts          ← selects TauriTransport or WebSocketTransport
+    TauriTransport.ts ← wraps invoke/listen (current behaviour)
+    WebSocketTransport.ts ← wraps WebSocket + JSON-RPC
+  api.ts              ← unchanged; calls transport.invoke(...)
+  events.ts           ← unchanged; calls transport.listen(...)</code></pre>
+        <p>
+          Detection: if <code>window.__TAURI__</code> is present → TauriTransport; otherwise →
+          WebSocketTransport.
+        </p>
+
+        <h3>Session Lifetime</h3>
+        <ul>
+          <li>Sessions are owned by the agent process, not the client connection</li>
+          <li>
+            If the WebSocket drops (network hiccup, iPad backgrounded), the terminal session
+            continues running on the agent
+          </li>
+          <li>
+            On reconnect the client receives a session list and can re-attach to running sessions
+          </li>
+          <li>
+            Desktop app sessions are not visible to web/iPad clients (separate session namespaces)
+          </li>
+        </ul>
+
+        <h3>No-Local-Shell Enforcement</h3>
+        <p>When the transport is WebSocketTransport:</p>
+        <ul>
+          <li>The connection type selector filters out <code>local_shell</code></li>
+          <li>
+            Workspace entries of type <code>local_shell</code> render a disabled "Local shell — not
+            available in remote mode" placeholder tab
+          </li>
+          <li>The "Open local shell" keyboard shortcut is suppressed</li>
+        </ul>
+
+        <h3>Multi-Client Behaviour</h3>
+        <p>
+          Multiple clients (e.g. desktop + browser simultaneously) can connect to the same agent:
+        </p>
+        <ul>
+          <li>Each client has independent tab layout and workspace view</li>
+          <li>
+            Sessions (terminal processes) can optionally be shared (broadcast-input feature) but are
+            not shared by default
+          </li>
+          <li>
+            Settings changes made by one client are reflected to all connected clients via a
+            <code>settings/changed</code> push event
+          </li>
+        </ul>
+
+        <h3>Security Considerations</h3>
+        <ul>
+          <li>
+            TLS is mandatory in the default configuration; disabling it requires an explicit opt-in
+          </li>
+          <li>
+            Session tokens are short-lived JWTs (8 h); a refresh endpoint extends them silently
+            while the client is active
+          </li>
+          <li>Tokens are never logged</li>
+          <li>
+            The agent binds to <code>127.0.0.1</code> by default; <code>0.0.0.0</code> requires
+            explicit user action
+          </li>
+          <li>
+            Rate-limiting on <code>/api/auth</code> (5 attempts per minute per IP) to prevent
+            brute-force
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Architecture Overview</span>
+          <pre class="mermaid">
+flowchart TD
+    subgraph Clients
+        A["Desktop App<br/>Tauri IPC"]
+        B["Browser<br/>WebSocket"]
+        C["iPad App<br/>WebSocket"]
+    end
+    subgraph Agent["termiHub Agent (server / desktop / RPi)"]
+        D["HTTP Server<br/>static assets + /api"]
+        E["WebSocket Endpoint<br/>/ws"]
+        F["JSON-RPC Dispatcher"]
+        G["Terminal Backends<br/>SSH · Docker · Serial · Telnet"]
+    end
+    A -->|Tauri IPC| F
+    B -->|WSS /ws| E
+    C -->|WSS /ws| E
+    E --> F
+    F --> G
+    B -->|HTTPS| D
+    C -->|HTTPS| D
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Client Connection Flow</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant Client as Browser / iPad
+    participant Agent as termiHub Agent
+    participant Auth as Auth Middleware
+
+    Client->>Agent: GET https://host:port/
+    Agent-->>Client: 200 index.html + assets
+    Client->>Agent: POST /api/auth  {token | user+pass}
+    Agent->>Auth: validate credentials
+    Auth-->>Agent: session token (JWT, 8h TTL)
+    Agent-->>Client: 200 {sessionToken}
+    Client->>Agent: WS Upgrade /ws  Authorization: Bearer &lt;token&gt;
+    Agent->>Auth: validate token
+    Auth-->>Agent: OK
+    Agent-->>Client: 101 Switching Protocols
+    Note over Client,Agent: JSON-RPC over WebSocket (same protocol as TCP agent)
+    Client->>Agent: session/create {type: "ssh", ...}
+    Agent-->>Client: session/output stream
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Agent Listener State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Disabled : initial state
+    Disabled --> Starting : user enables in Settings
+    Starting --> Listening : TLS cert ready, port bound
+    Starting --> Error : port in use / TLS failure
+    Error --> Starting : user retries / changes port
+    Listening --> Stopping : user disables in Settings
+    Listening --> Error : unexpected bind failure
+    Stopping --> Disabled : port released
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Client Session State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Unauthenticated : page load
+    Unauthenticated --> Authenticating : user submits token/password
+    Authenticating --> Connected : token valid, WS open
+    Authenticating --> Unauthenticated : auth failure
+    Connected --> Reconnecting : WS closed (network drop)
+    Reconnecting --> Connected : WS re-established, sessions re-attached
+    Reconnecting --> Unauthenticated : token expired
+    Connected --> Unauthenticated : user disconnects
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">iPad App Launch Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant App as iPad App
+    participant Store as Saved Connections
+    participant Agent
+
+    User->>App: opens app
+    App->>Store: load saved agent URLs
+    alt saved agents exist
+        App-->>User: show agent list
+        User->>App: tap agent
+    else no saved agents
+        App-->>User: "Add agent" screen
+        User->>App: enter URL (or scan QR)
+    end
+    App->>Agent: POST /api/auth
+    Agent-->>App: sessionToken
+    App->>Agent: WS /ws
+    Agent-->>App: session list
+    App-->>User: termiHub main UI
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the current project architecture at concept-creation time (April 2026); the
+          codebase may evolve before implementation begins. The architecture diagram lives in
+          <a href="#behavior">States &amp; Sequences</a>.
+        </p>
+
+        <h3>Phase 1 — Transport Abstraction (shared prerequisite)</h3>
+        <p><strong>Files to create / modify:</strong></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/services/transport/index.ts</code></td>
+                <td>New — transport selector</td>
+              </tr>
+              <tr>
+                <td><code>src/services/transport/TauriTransport.ts</code></td>
+                <td>New — wraps existing <code>invoke</code>/<code>listen</code></td>
+              </tr>
+              <tr>
+                <td><code>src/services/transport/WebSocketTransport.ts</code></td>
+                <td>New — JSON-RPC over WebSocket</td>
+              </tr>
+              <tr>
+                <td><code>src/services/api.ts</code></td>
+                <td>Refactor to call transport instead of Tauri API directly</td>
+              </tr>
+              <tr>
+                <td><code>src/services/events.ts</code></td>
+                <td>Refactor to subscribe through transport</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The JSON-RPC protocol over WebSocket mirrors the existing <code>core/src/protocol/</code>
+          message types. No changes to the protocol itself are needed.
+        </p>
+
+        <h3>Phase 2 — Agent HTTP / WebSocket Server</h3>
+        <p>
+          The agent (<code>agent/</code>) gains a new entry-point mode <code>--web</code> (alongside
+          existing <code>--stdio</code> and <code>--listen</code>):
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>agent/src/io/</code></td>
+                <td>Add <code>http.rs</code> — axum-based HTTP + WebSocket server</td>
+              </tr>
+              <tr>
+                <td><code>agent/src/main.rs</code></td>
+                <td>Add <code>--web</code> flag, bind HTTP listener</td>
+              </tr>
+              <tr>
+                <td><code>agent/src/handler/</code></td>
+                <td>Reuse existing JSON-RPC dispatcher unchanged</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The agent embeds the compiled frontend at build time using <code>include_dir!</code> or
+          equivalent. The Vite build output is checked into <code>agent/assets/</code> (git-ignored
+          large files; built by CI).
+        </p>
+        <p><strong>Rust dependencies to add:</strong></p>
+        <ul>
+          <li><code>axum</code> (HTTP + WebSocket)</li>
+          <li><code>tokio-tungstenite</code> (WebSocket framing)</li>
+          <li><code>jsonwebtoken</code> (JWT auth)</li>
+          <li><code>rcgen</code> (self-signed TLS cert generation)</li>
+          <li><code>rustls</code> (TLS, already transitively present)</li>
+        </ul>
+
+        <h3>Phase 3 — Desktop Agent Control (Settings UI)</h3>
+        <p>
+          The Tauri desktop app gains "Web &amp; Mobile Access" settings backed by a new config
+          section in <code>src-tauri/src/connection/config.rs</code> and a new Tauri command group
+          in <code>src-tauri/src/commands/web_access.rs</code>. The settings page layout is
+          specified by the <em>Web &amp; Mobile Access</em> mockup above.
+        </p>
+
+        <h3>Phase 4 — Tauri iOS Build</h3>
+        <p>
+          Tauri 2 supports iOS via <code>tauri ios init</code> / <code>tauri ios build</code>. The
+          key steps:
+        </p>
+        <ol>
+          <li>Add iOS target to <code>src-tauri/tauri.conf.json</code> capability definitions</li>
+          <li>
+            Disable local-shell connection type via a compile-time feature flag
+            <code>cfg(target_os = "ios")</code>
+          </li>
+          <li>Add touch toolbar component <code>src/components/Terminal/TouchToolbar.tsx</code></li>
+          <li>Responsive CSS breakpoints for iPad screen sizes</li>
+          <li>QR code scanner for agent URL entry (uses the Tauri camera plugin)</li>
+        </ol>
+        <p>
+          <strong>Note:</strong> Tauri iOS support is experimental as of Tauri 2.x. Validate that
+          the iOS build toolchain and WKWebView capabilities are stable enough before committing to
+          Phase 4. A PWA fallback (skipping the native wrapper) is viable if Tauri iOS proves too
+          immature.
+        </p>
+
+        <h3>Estimated Effort</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Phase</th>
+                <th>Effort</th>
+                <th>Dependency</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1 — Transport abstraction</td>
+                <td>2–3 weeks</td>
+                <td>None</td>
+              </tr>
+              <tr>
+                <td>2 — Agent HTTP/WS server</td>
+                <td>3–4 weeks</td>
+                <td>Phase 1</td>
+              </tr>
+              <tr>
+                <td>3 — Desktop settings UI</td>
+                <td>1 week</td>
+                <td>Phase 2</td>
+              </tr>
+              <tr>
+                <td>4 — Tauri iOS / PWA</td>
+                <td>4–6 weeks</td>
+                <td>Phases 1–3</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Phases 1–3 together deliver the web-browser client. Phase 4 adds the iPad app.</p>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          Not started — this is a <code>future/</code> concept. Once implementation begins, run
+          <code>/sync-concept remote-client-mode</code> after each change to keep the Sync Ledger
+          current.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            This ledger is maintained by the <code>/sync-concept remote-client-mode</code> skill. It
+            records the last commit at which the concept artifacts and the code were reconciled,
+            plus any open divergences.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (concept not yet implemented) ·
+          <strong>Status:</strong> diverged (entirely missing — future feature)
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Entire feature (per concept)</td>
+                <td>Not implemented — future</td>
+                <td>Missing</td>
+                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

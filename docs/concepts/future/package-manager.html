@@ -1,0 +1,2297 @@
+<!doctype html>
+<!--
+  Single-file concept: Package Manager for Extensions and Tools.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/backlog/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Package Manager for Extensions and Tools (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Mockup-only structural helpers built from theme vars (not app classes). */
+      .pkg-tabs {
+        display: flex;
+        gap: 2px;
+        padding: 6px 8px 4px;
+      }
+      .pkg-tab {
+        flex: 1;
+        text-align: center;
+        padding: 5px 0;
+        font-size: 12px;
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+      }
+      .pkg-tab--active {
+        color: var(--text-primary);
+        background: var(--bg-active);
+        border-color: var(--accent-color);
+      }
+      .pkg-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 4px 8px;
+        padding: 4px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .pkg-search .li {
+        width: 13px;
+        height: 13px;
+      }
+      .pkg-filter {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin: 0 8px 6px;
+        padding: 4px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .pkg-filter .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-secondary);
+      }
+      .pkg-sep {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 8px 4px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-disabled);
+      }
+      .pkg-sep::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-secondary);
+      }
+      /* Package card */
+      .pkg-card {
+        margin: 4px 8px;
+        padding: 8px 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+      }
+      .pkg-card__head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .pkg-card__head .li {
+        width: 15px;
+        height: 15px;
+        color: var(--text-secondary);
+      }
+      .pkg-card__name {
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text-primary);
+      }
+      .pkg-card__featured {
+        color: var(--color-warning);
+      }
+      .pkg-card__type {
+        margin-left: auto;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-secondary);
+        padding: 1px 6px;
+        border: 1px solid var(--border-secondary);
+        border-radius: 999px;
+      }
+      .pkg-card__desc {
+        margin: 4px 0 6px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        line-height: 1.4;
+      }
+      .pkg-card__meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .pkg-card__meta .li {
+        width: 12px;
+        height: 12px;
+      }
+      .pkg-card__foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 8px;
+      }
+      .pkg-btn {
+        padding: 3px 12px;
+        font-size: 11px;
+        font-family: inherit;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--accent-color);
+        background: var(--accent-color);
+        color: #fff;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .pkg-btn .li {
+        width: 12px;
+        height: 12px;
+      }
+      .pkg-btn--ghost {
+        background: var(--bg-tertiary);
+        border-color: var(--border-primary);
+        color: var(--text-primary);
+      }
+      /* update chip */
+      .pkg-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        padding: 1px 8px;
+        border-radius: 999px;
+      }
+      .pkg-chip .li {
+        width: 12px;
+        height: 12px;
+      }
+      .pkg-chip--update {
+        color: var(--color-warning);
+        background: rgba(212, 168, 67, 0.12);
+        border: 1px solid var(--color-warning);
+      }
+      .pkg-chip--ok {
+        color: var(--color-success);
+      }
+      .pkg-size {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+      }
+      /* update banner */
+      .pkg-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 4px 8px 2px;
+        padding: 7px 10px;
+        background: rgba(212, 168, 67, 0.1);
+        border: 1px solid var(--color-warning);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .pkg-banner .li {
+        width: 14px;
+        height: 14px;
+        color: var(--color-warning);
+      }
+      .pkg-banner__actions {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+      }
+      .pkg-banner__actions .btn--link {
+        padding: 0;
+        font-size: 12px;
+      }
+      /* installed footer */
+      .pkg-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 8px 8px 0;
+        padding-top: 8px;
+        border-top: 1px solid var(--border-secondary);
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .pkg-foot strong {
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+      }
+      /* Package detail panel */
+      .detail {
+        width: 260px;
+        background: var(--sidebar-bg);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .detail__head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px 10px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .detail__head .li {
+        width: 20px;
+        height: 20px;
+        color: var(--text-secondary);
+      }
+      .detail__title {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--text-primary);
+      }
+      .detail__sub {
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .detail__body {
+        padding: 10px 14px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+      .detail__desc {
+        color: var(--text-primary);
+        margin-bottom: 10px;
+      }
+      .detail__row {
+        display: flex;
+        justify-content: space-between;
+        padding: 2px 0;
+      }
+      .detail__row span:last-child {
+        color: var(--text-primary);
+      }
+      .detail__sec {
+        margin-top: 12px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-disabled);
+      }
+      .detail__dep {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 0;
+        color: var(--text-primary);
+      }
+      .detail__dep .li {
+        width: 12px;
+        height: 12px;
+        color: var(--text-secondary);
+      }
+      .detail__ext {
+        color: var(--color-warning);
+      }
+      .detail__actions {
+        display: flex;
+        gap: 8px;
+        padding: 12px 14px;
+        border-top: 1px solid var(--border-secondary);
+        flex-wrap: wrap;
+      }
+      .detail__actions .btn {
+        flex: 1;
+        text-align: center;
+      }
+      /* Install confirm dialog (built on .menu) */
+      .menu--install {
+        width: 340px;
+      }
+      .install__pkg {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+      }
+      .install__pkg .li {
+        width: 18px;
+        height: 18px;
+        color: var(--text-secondary);
+      }
+      .install__plan {
+        padding: 2px 14px 8px;
+        font-size: 12px;
+      }
+      .install__step {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        color: var(--text-primary);
+      }
+      .install__step .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-secondary);
+      }
+      .install__badge {
+        margin-left: auto;
+        font-size: 10px;
+        color: var(--text-secondary);
+        padding: 1px 6px;
+        border: 1px solid var(--border-secondary);
+        border-radius: 999px;
+      }
+      .install__ext {
+        margin-left: auto;
+        font-size: 10px;
+        color: var(--color-warning);
+        padding: 1px 6px;
+        border: 1px solid var(--color-warning);
+        border-radius: 999px;
+      }
+      .install__note {
+        margin: 4px 14px 0;
+        padding: 7px 10px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--text-secondary);
+        background: rgba(212, 168, 67, 0.08);
+        border: 1px solid var(--color-warning);
+        border-radius: var(--radius-sm);
+      }
+      .install__path {
+        margin: 6px 14px 0;
+        padding: 6px 10px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-sm);
+      }
+      .install__size {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 14px 0;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .install__size strong {
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Union of all mockup symbols. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-package" viewBox="0 0 24 24">
+        <path
+          d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"
+        />
+        <path d="M12 22V12" />
+        <polyline points="3.29 7 12 12 20.71 7" />
+        <path d="m7.5 4.27 9 5.15" />
+      </symbol>
+      <symbol id="i-box" viewBox="0 0 24 24">
+        <path
+          d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
+        />
+        <path d="m3.3 7 8.7 5 8.7-5" />
+        <path d="M12 22V12" />
+      </symbol>
+      <symbol id="i-blocks" viewBox="0 0 24 24">
+        <path
+          d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"
+        />
+        <rect x="14" y="2" width="8" height="8" rx="1" />
+      </symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24">
+        <path
+          d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"
+        />
+        <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+        <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+        <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+        <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      </symbol>
+      <symbol id="i-wrench" viewBox="0 0 24 24">
+        <path
+          d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"
+        />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <path d="m21 21-4.34-4.34" />
+        <circle cx="11" cy="11" r="8" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 15V3" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+      </symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24">
+        <path d="m5 12 7-7 7 7" />
+        <path d="M12 19V5" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-star" viewBox="0 0 24 24">
+        <path
+          d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.69 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.453 9.795a.53.53 0 0 1 .294-.906l5.166-.755a2.122 2.122 0 0 0 1.597-1.16z"
+        />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-external-link" viewBox="0 0 24 24">
+        <path d="M15 3h6v6" />
+        <path d="M10 14 21 3" />
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-hard-drive" viewBox="0 0 24 24">
+        <line x1="22" x2="2" y1="12" y2="12" />
+        <path
+          d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"
+        />
+        <line x1="6" x2="6.01" y1="16" y2="16" />
+        <line x1="10" x2="10.01" y1="16" y2="16" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Package Manager for Extensions and Tools</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Future · post-v1</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/521">#521</a></span
+          >
+          <span><code>docs/concepts/future/package-manager.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept package-manager</code> to
+          reconcile it with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          The <a href="../plugin-system/concept.md">Plugin System concept</a> defines how termiHub
+          loads and runs extensions at runtime — but it only supports local, manual installation
+          from <code>.termihub-plugin</code> files. There is no way to discover, browse, or
+          automatically update plugins, and no mechanism to manage tool packages for an embedded
+          Unix environment.
+        </p>
+        <p>
+          This concept introduces a <strong>Package Manager</strong> that sits on top of the plugin
+          system and provides:
+        </p>
+        <ul>
+          <li>
+            <strong>A curated plugin repository</strong> with browsable catalog, search, and
+            categorization
+          </li>
+          <li>
+            <strong>Dependency resolution</strong> between plugins and external tool requirements
+          </li>
+          <li><strong>Automatic updates</strong> with user-controlled update policies</li>
+          <li>
+            <strong>Tool packages</strong> (CLI utilities, shells, compilers) that can be installed
+            into a local tools directory — analogous to MobaXterm's MobApt
+          </li>
+          <li><strong>Size management</strong> with disk usage tracking and cleanup utilities</li>
+        </ul>
+
+        <h3>Relationship to Existing Concepts</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Concept</th>
+                <th>Scope</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="../plugin-system/concept.md">Plugin System</a></td>
+                <td>Runtime loading, extension points, sandboxing, permissions</td>
+              </tr>
+              <tr>
+                <td><strong>Package Manager</strong> (this document)</td>
+                <td>Discovery, repository, dependency resolution, updates, tool packages</td>
+              </tr>
+              <tr>
+                <td>
+                  <a href="../../backlog/embedded-unix-windows/concept.md"
+                    >Embedded Unix Environment</a
+                  >
+                </td>
+                <td>
+                  Bundled Unix tools on Windows — the package manager could serve as its package
+                  source
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The package manager <strong>depends on</strong> the plugin system being implemented first.
+          It extends the plugin system's "Install from file" workflow into a full repository-backed
+          package lifecycle.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Provide a <strong>repository</strong> of curated and community-contributed packages
+          </li>
+          <li>
+            Support <strong>two package types</strong>: plugins (termiHub extensions) and tools (CLI
+            utilities)
+          </li>
+          <li>Enable <strong>one-click install</strong> of plugins from the repository</li>
+          <li>Handle <strong>dependency resolution</strong> between packages</li>
+          <li>Support <strong>automatic and manual updates</strong> with configurable policies</li>
+          <li>Show <strong>installed size</strong> per package and total disk usage</li>
+          <li>
+            Allow <strong>multiple repository sources</strong> (official, community,
+            private/corporate)
+          </li>
+          <li>
+            Work <strong>cross-platform</strong> (Windows, macOS, Linux) with platform-aware
+            packages
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Hosting the repository infrastructure (CDN, backend) — this concept covers the
+            client-side design only
+          </li>
+          <li>Paid plugins or a commercial marketplace</li>
+          <li>User ratings, reviews, or social features in the initial version</li>
+          <li>Plugin development tooling (SDK, scaffolding, testing framework)</li>
+          <li>Running tool packages inside a containerized or sandboxed environment</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The visual surfaces are specified by the mockups below — they are authoritative for
+          layout. This section describes them.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Package Manager — Browse &amp; Installed</td>
+                <td>
+                  New <strong>Packages</strong> Activity Bar view: Browse tab (search, category
+                  filter, package cards) and Installed tab (per-package size, update chips,
+                  total-size footer, update banner)
+                </td>
+              </tr>
+              <tr>
+                <td>Package Manager — Detail &amp; Install</td>
+                <td>
+                  Package Detail panel (install vs. installed variants) and the Install /
+                  Tool-install confirm dialog with dependency review
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Activation point</h3>
+        <p>
+          A new <strong>Packages</strong> entry (lucide <code>Package</code> icon) sits in the
+          <strong>Activity Bar</strong>, replacing the plugin system's planned "Plugins" item.
+          Selecting it opens the Package Manager sidebar view, which carries two tabs:
+          <strong>Browse</strong> (repository) and <strong>Installed</strong> (local). See the
+          Browse &amp; Installed mockup states 1 and 2.
+        </p>
+
+        <h3>Browse tab</h3>
+        <p>
+          The Browse tab fetches the merged repository index and renders it as cards grouped into
+          sections: <strong>Featured</strong>, <strong>Terminal Backends</strong>, and
+          <strong>Tools</strong>. Above the cards sit a search box (filters by name, description,
+          tags, author — client-side) and a category filter dropdown (All / Plugins → Backends,
+          Themes, Protocol Parsers, Status Widgets / Tools → Shells, Utilities, Compilers,
+          Languages). Each card shows the package name, a type glyph (plugin vs. tool), version,
+          download count or size, and an <strong>Install</strong> button. See the Browse &amp;
+          Installed mockup state 1.
+        </p>
+
+        <h3>Installed tab</h3>
+        <p>
+          The Installed tab lists locally installed packages grouped by type
+          (<strong>Plugins</strong>, <strong>Tools</strong>), each with a state dot, version, and
+          <strong>on-disk size</strong>. Packages with a newer version available show an amber
+          <strong>update chip</strong> (<code>⬆ Update: vX.Y.Z</code>); up-to-date packages show a
+          <code>✓ Up to date</code> marker. A footer shows the <strong>total size</strong> and a
+          <strong>Clean unused…</strong> action. When updates exist, a subtle
+          <strong>update banner</strong> appears at the top of the tab with
+          <strong>Update All</strong>, <strong>Review…</strong>, and <strong>Dismiss</strong>
+          actions. See the Browse &amp; Installed mockup state 2.
+        </p>
+
+        <h3>Package detail panel</h3>
+        <p>
+          Clicking any card (in either tab) opens a <strong>detail panel</strong> in the sidebar
+          showing the description, category, downloads, size, license, dependencies, permissions,
+          and changelog. The action row is context-dependent: <strong>Install</strong> /
+          <strong>Homepage</strong> when not installed; <strong>Update</strong> /
+          <strong>Disable</strong> / <strong>Uninstall</strong> / <strong>Settings</strong> when
+          installed. See the Detail &amp; Install mockup states 1 and 2.
+        </p>
+
+        <h3>Install confirmation</h3>
+        <p>
+          Installing a package that pulls in dependencies opens an
+          <strong>Install confirm dialog</strong> built on the <code>.menu</code> overlay. It lists
+          the resolved install order (primary package plus auto-installed dependencies), notes any
+          <strong>external</strong> requirements (e.g. <code>kubectl</code>) that the user must
+          provide, and shows total download/install size. The <strong>Tool-install</strong> variant
+          additionally shows the target tools directory and platform/arch. See the Detail &amp;
+          Install mockup state 3.
+        </p>
+
+        <h3>Package Manager settings</h3>
+        <p>
+          A new <strong>Packages</strong> category in the Settings panel governs auto-update policy
+          (check interval, auto-install toggle, include pre-release), repository sources
+          (official/community/corporate with priority ordering and <strong>Add source…</strong>),
+          the tools directory path, and a disk-usage breakdown with <strong>Clear cache</strong>.
+          This panel is described here but not mocked separately.
+        </p>
+
+        <h3>Keyboard / discoverability</h3>
+        <p>
+          The Packages view is reachable purely through the Activity Bar item; there is no global
+          shortcut in v1. Tool packages, once installed, are immediately available on
+          <code>PATH</code> for all new terminal sessions without further user action.
+        </p>
+
+        <!-- Mockup 1 — Browse & Installed -->
+        <div class="mockup-section">
+          <h3>Mockup — Packages view: Browse &amp; Installed tabs</h3>
+
+          <h3>1 · Packages view — Browse tab</h3>
+          <div class="mockup-note">
+            New <strong>Packages</strong> Activity Bar item <span class="callout">A</span> opens the
+            Package Manager sidebar with <strong>Browse</strong> / <strong>Installed</strong> tabs
+            <span class="callout">B</span>. Browse shows a search box
+            <span class="callout">C</span>, a category filter <span class="callout">D</span>, and
+            package cards <span class="callout">E</span> grouped into Featured / Terminal Backends /
+            Tools.
+          </div>
+          <div class="app">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                  <button class="activity-bar__item activity-bar__item--active" title="Packages">
+                    <svg class="li"><use href="#i-package" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Log Viewer">
+                    <svg class="li"><use href="#i-scroll-text" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Packages</span></div>
+                <div class="pkg-tabs">
+                  <div class="pkg-tab pkg-tab--active">Browse</div>
+                  <div class="pkg-tab">Installed</div>
+                </div>
+                <div class="pkg-search">
+                  <svg class="li"><use href="#i-search" /></svg> Search packages…
+                </div>
+                <div class="pkg-filter">
+                  <span
+                    ><svg class="li"><use href="#i-blocks" /></svg> All categories</span
+                  >
+                  <svg class="li"><use href="#i-chevron-down" /></svg>
+                </div>
+                <div class="sidebar__content">
+                  <div class="pkg-sep">Featured</div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <svg class="li pkg-card__featured"><use href="#i-star" /></svg>
+                      <span class="pkg-card__name">Kubernetes Exec</span>
+                      <span class="pkg-card__type">Plugin</span>
+                    </div>
+                    <div class="pkg-card__desc">
+                      Terminal backend for Kubernetes pod exec sessions.
+                    </div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-card__meta">
+                        v1.2.0
+                        <span
+                          ><svg class="li"><use href="#i-download" /></svg> 4.2k</span
+                        >
+                      </span>
+                      <button class="pkg-btn">Install</button>
+                    </div>
+                  </div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <svg class="li pkg-card__featured"><use href="#i-star" /></svg>
+                      <span class="pkg-card__name">Dracula Theme</span>
+                      <span class="pkg-card__type">Theme</span>
+                    </div>
+                    <div class="pkg-card__desc">Dark theme with the classic Dracula palette.</div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-card__meta">
+                        v2.0.1
+                        <span
+                          ><svg class="li"><use href="#i-download" /></svg> 12k</span
+                        >
+                      </span>
+                      <button class="pkg-btn">Install</button>
+                    </div>
+                  </div>
+
+                  <div class="pkg-sep">Terminal Backends</div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <svg class="li"><use href="#i-network" /></svg>
+                      <span class="pkg-card__name">AWS CloudShell</span>
+                      <span class="pkg-card__type">Backend</span>
+                    </div>
+                    <div class="pkg-card__desc">Connect to AWS CloudShell environments.</div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-card__meta">
+                        v0.5.0
+                        <span
+                          ><svg class="li"><use href="#i-download" /></svg> 890</span
+                        >
+                      </span>
+                      <button class="pkg-btn">Install</button>
+                    </div>
+                  </div>
+
+                  <div class="pkg-sep">Tools</div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <svg class="li"><use href="#i-wrench" /></svg>
+                      <span class="pkg-card__name">git</span>
+                      <span class="pkg-card__type">Tool</span>
+                    </div>
+                    <div class="pkg-card__desc">Distributed version control system.</div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-card__meta">
+                        v2.44 <span class="pkg-size">3.2 MB</span>
+                      </span>
+                      <button class="pkg-btn">
+                        <svg class="li"><use href="#i-download" /></svg> Install
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+
+              <div class="terminal-view">
+                <div class="terminal-view__toolbar">
+                  <div class="terminal-view__toolbar-actions">
+                    <button class="terminal-view__toolbar-btn" title="New Terminal">
+                      <svg class="li"><use href="#i-plus" /></svg>
+                    </button>
+                    <button
+                      class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                      title="Toggle Sidebar"
+                    >
+                      <svg class="li"><use href="#i-panel-left" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">server-01</span>
+                        <button class="tab__close">
+                          <svg class="li"><use href="#i-x" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="terminal">
+                      <span class="prompt">server-01 $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">42 packages</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Packages Activity Bar item — lucide
+                <code>Package</code>, active with indicator (replaces the plugin system's "Plugins"
+                item).
+              </li>
+              <li><span class="callout">B</span> Browse / Installed tab switch.</li>
+              <li>
+                <span class="callout">C</span> Search box — filters by name, description, tags,
+                author.
+              </li>
+              <li>
+                <span class="callout">D</span> Category filter — All / Plugins (Backends, Themes,
+                Parsers, Widgets) / Tools (Shells, Utilities, Compilers, Languages).
+              </li>
+              <li>
+                <span class="callout">E</span> Package card — type glyph + name, type pill,
+                description, version, download count (plugins) or size (tools), and an
+                <strong>Install</strong> button. Featured cards carry a <code>Star</code>.
+              </li>
+            </ul>
+          </div>
+
+          <h3>2 · Packages view — Installed tab (updates available)</h3>
+          <div class="mockup-note">
+            The Installed tab groups packages by type with per-package on-disk size
+            <span class="callout">F</span>. Packages with a newer version show an amber update chip
+            <span class="callout">G</span>; up-to-date ones show <code>✓ Up to date</code>. An
+            update banner <span class="callout">H</span> sits at the top, and a footer
+            <span class="callout">I</span> shows total size + <strong>Clean unused…</strong>.
+          </div>
+          <div class="app">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                  <button class="activity-bar__item activity-bar__item--active" title="Packages">
+                    <svg class="li"><use href="#i-package" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Log Viewer">
+                    <svg class="li"><use href="#i-scroll-text" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Packages</span></div>
+                <div class="pkg-tabs">
+                  <div class="pkg-tab">Browse</div>
+                  <div class="pkg-tab pkg-tab--active">Installed</div>
+                </div>
+
+                <div class="pkg-banner">
+                  <svg class="li"><use href="#i-arrow-up" /></svg> 2 updates available
+                  <span class="pkg-banner__actions">
+                    <button class="btn--link">Update All</button>
+                    <button class="btn--link">Review…</button>
+                    <button class="btn--link">Dismiss</button>
+                  </span>
+                </div>
+
+                <div class="pkg-search">
+                  <svg class="li"><use href="#i-search" /></svg> Search installed…
+                </div>
+
+                <div class="sidebar__content">
+                  <div class="pkg-sep">Plugins (2)</div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <span class="state-dot state-dot--connected"></span>
+                      <span class="pkg-card__name">Kubernetes Exec</span>
+                      <span class="pkg-card__type">Plugin</span>
+                    </div>
+                    <div class="pkg-card__meta" style="margin-top: 4px">
+                      v1.2.0 <span class="pkg-size">1.4 MB</span>
+                    </div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-chip pkg-chip--update">
+                        <svg class="li"><use href="#i-arrow-up" /></svg> Update: v1.3.0
+                      </span>
+                      <button class="pkg-btn pkg-btn--ghost">Update</button>
+                    </div>
+                  </div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <span class="state-dot state-dot--connected"></span>
+                      <span class="pkg-card__name">Dracula Theme</span>
+                      <span class="pkg-card__type">Theme</span>
+                    </div>
+                    <div class="pkg-card__meta" style="margin-top: 4px">
+                      v2.0.1 <span class="pkg-size">42 KB</span>
+                    </div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-chip pkg-chip--ok">
+                        <svg class="li"><use href="#i-check" /></svg> Up to date
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="pkg-sep">Tools (3)</div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <svg class="li"><use href="#i-wrench" /></svg>
+                      <span class="pkg-card__name">git</span>
+                      <span class="pkg-card__type">Tool</span>
+                    </div>
+                    <div class="pkg-card__meta" style="margin-top: 4px">
+                      v2.44 <span class="pkg-size">3.2 MB</span>
+                    </div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-chip pkg-chip--update">
+                        <svg class="li"><use href="#i-arrow-up" /></svg> Update: v2.45
+                      </span>
+                      <button class="pkg-btn pkg-btn--ghost">Update</button>
+                    </div>
+                  </div>
+
+                  <div class="pkg-card">
+                    <div class="pkg-card__head">
+                      <svg class="li"><use href="#i-wrench" /></svg>
+                      <span class="pkg-card__name">python</span>
+                      <span class="pkg-card__type">Tool</span>
+                    </div>
+                    <div class="pkg-card__meta" style="margin-top: 4px">
+                      v3.12 <span class="pkg-size">28.7 MB</span>
+                    </div>
+                    <div class="pkg-card__foot">
+                      <span class="pkg-chip pkg-chip--ok">
+                        <svg class="li"><use href="#i-check" /></svg> Up to date
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="pkg-foot">
+                    <span>Total: <strong>33.4 MB</strong></span>
+                    <button class="pkg-btn pkg-btn--ghost">
+                      <svg class="li"><use href="#i-trash-2" /></svg> Clean unused…
+                    </button>
+                  </div>
+                </div>
+              </aside>
+
+              <div class="terminal-view">
+                <div class="terminal-view__toolbar">
+                  <div class="terminal-view__toolbar-actions">
+                    <button class="terminal-view__toolbar-btn" title="New Terminal">
+                      <svg class="li"><use href="#i-plus" /></svg>
+                    </button>
+                    <button
+                      class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                      title="Toggle Sidebar"
+                    >
+                      <svg class="li"><use href="#i-panel-left" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">server-01</span>
+                        <button class="tab__close">
+                          <svg class="li"><use href="#i-x" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="terminal">
+                      <span class="prompt">server-01 $</span> git --version<br />
+                      git version 2.44.0<br />
+                      <span class="prompt">server-01 $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">
+                  <svg class="li"><use href="#i-arrow-up" /></svg> 2 updates
+                </span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">F</span> Per-package on-disk size (monospace), grouped under
+                Plugins / Tools.
+              </li>
+              <li>
+                <span class="callout">G</span> Update chip — amber
+                <code>⬆ Update: vX.Y.Z</code> with an inline <strong>Update</strong> button;
+                up-to-date packages show <code>✓ Up to date</code>.
+              </li>
+              <li>
+                <span class="callout">H</span> Update banner — count + Update All / Review… /
+                Dismiss.
+              </li>
+              <li>
+                <span class="callout">I</span> Footer — total installed size +
+                <strong>Clean unused…</strong> cleanup action.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Mockup 2 — Detail & Install -->
+        <div class="mockup-section">
+          <h3>Mockup — Package Detail panel &amp; Install confirm dialog</h3>
+
+          <h3>1 &amp; 2 · Package Detail panel — not installed vs installed</h3>
+          <div class="mockup-note">
+            Clicking any card opens the detail panel in the sidebar. The action row
+            <span class="callout">A</span> changes by state: <strong>Install</strong> /
+            <strong>Homepage</strong> when not installed, <strong>Update</strong> /
+            <strong>Disable</strong> / <strong>Uninstall</strong> / <strong>Settings</strong> once
+            installed. Dependencies <span class="callout">B</span> mark external requirements
+            (amber).
+          </div>
+          <div class="states">
+            <div>
+              <p class="state-label">Not installed</p>
+              <div class="detail">
+                <div class="detail__head">
+                  <svg class="li"><use href="#i-package" /></svg>
+                  <div>
+                    <div class="detail__title">Kubernetes Exec</div>
+                    <div class="detail__sub">v1.2.0 · by k8s-contrib</div>
+                  </div>
+                </div>
+                <div class="detail__body">
+                  <div class="detail__desc">Terminal backend for Kubernetes pod exec sessions.</div>
+                  <div class="detail__row"><span>Category</span><span>Backends</span></div>
+                  <div class="detail__row"><span>Downloads</span><span>4,218</span></div>
+                  <div class="detail__row"><span>Size</span><span>1.4 MB</span></div>
+                  <div class="detail__row"><span>License</span><span>MIT</span></div>
+
+                  <div class="detail__sec">Dependencies</div>
+                  <div class="detail__dep detail__ext">
+                    <svg class="li"><use href="#i-triangle-alert" /></svg> kubectl (external)
+                  </div>
+
+                  <div class="detail__sec">Permissions</div>
+                  <div class="detail__dep">
+                    <svg class="li"><use href="#i-network" /></svg> Terminal, Network
+                  </div>
+
+                  <div class="detail__sec">Changelog</div>
+                  <div>v1.2.0 — Pod search</div>
+                  <div>v1.1.0 — Multi-container</div>
+                </div>
+                <div class="detail__actions">
+                  <button class="btn btn--primary">
+                    <svg class="li"><use href="#i-download" /></svg> Install
+                  </button>
+                  <button class="btn">
+                    <svg class="li"><use href="#i-external-link" /></svg> Homepage
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p class="state-label">Installed</p>
+              <div class="detail">
+                <div class="detail__head">
+                  <svg class="li"><use href="#i-package" /></svg>
+                  <div>
+                    <div class="detail__title">Kubernetes Exec</div>
+                    <div class="detail__sub">v1.2.0 · installed · Official</div>
+                  </div>
+                </div>
+                <div class="detail__body">
+                  <div class="detail__desc">Terminal backend for Kubernetes pod exec sessions.</div>
+                  <div class="detail__row"><span>Category</span><span>Backends</span></div>
+                  <div class="detail__row"><span>Installed size</span><span>1.4 MB</span></div>
+                  <div class="detail__row"><span>License</span><span>MIT</span></div>
+
+                  <div class="detail__sec">Update</div>
+                  <div class="detail__dep detail__ext">
+                    <svg class="li"><use href="#i-arrow-up" /></svg> v1.3.0 available
+                  </div>
+
+                  <div class="detail__sec">Dependencies</div>
+                  <div class="detail__dep">
+                    <svg class="li"><use href="#i-check" /></svg> kubectl (external) — found on PATH
+                  </div>
+                </div>
+                <div class="detail__actions">
+                  <button class="btn btn--primary">
+                    <svg class="li"><use href="#i-arrow-up" /></svg> Update
+                  </button>
+                  <button class="btn">Disable</button>
+                  <button class="btn">
+                    <svg class="li"><use href="#i-trash-2" /></svg> Uninstall
+                  </button>
+                  <button class="btn">
+                    <svg class="li"><use href="#i-settings" /></svg> Settings
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Context action row — Install / Homepage vs. Update /
+                Disable / Uninstall / Settings.
+              </li>
+              <li>
+                <span class="callout">B</span> Dependencies — external requirements flagged amber
+                (<code>TriangleAlert</code>); satisfied ones show a <code>Check</code>.
+              </li>
+            </ul>
+          </div>
+
+          <h3>3 · Install confirm dialog — dependency review &amp; tool install</h3>
+          <div class="mockup-note">
+            Installing a package that pulls in dependencies opens a confirm dialog on the
+            <code>.menu</code> overlay. It lists the resolved install order
+            <span class="callout">C</span> (primary + auto-installed deps), notes external
+            requirements <span class="callout">D</span>, and shows total download / install size
+            <span class="callout">E</span>. The tool-install variant adds the target tools directory
+            <span class="callout">F</span> and platform/arch.
+          </div>
+          <div class="states">
+            <div>
+              <p class="state-label">Plugin install — with dependency</p>
+              <div class="menu menu--install">
+                <div class="menu__title">Install Kubernetes Exec</div>
+                <div class="install__pkg">
+                  <svg class="li"><use href="#i-package" /></svg>
+                  <div>
+                    <div class="detail__title" style="font-size: 13px">ssh-tunnel-plugin v1.0</div>
+                    <div class="detail__sub">requires ssh-utils &gt;=1.0</div>
+                  </div>
+                </div>
+                <div class="install__plan">
+                  <div class="install__step">
+                    <svg class="li"><use href="#i-box" /></svg> ssh-utils v1.2
+                    <span class="install__badge">dependency</span>
+                  </div>
+                  <div class="install__step">
+                    <svg class="li"><use href="#i-package" /></svg> ssh-tunnel-plugin v1.0
+                    <span class="install__badge">requested</span>
+                  </div>
+                </div>
+                <div class="install__note">
+                  <strong>External:</strong> kubectl must be present on PATH — not installed
+                  automatically.
+                </div>
+                <div class="install__size">
+                  <span>Download <strong>0.9 MB</strong></span>
+                  <span>Installed <strong>2.3 MB</strong></span>
+                </div>
+                <div class="menu__footer">
+                  <button class="btn">Cancel</button>
+                  <button class="btn btn--primary" style="margin-left: auto">
+                    <svg class="li"><use href="#i-download" /></svg> Install
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p class="state-label">Tool install — git</p>
+              <div class="menu menu--install">
+                <div class="menu__title">Install Tool: git</div>
+                <div class="install__pkg">
+                  <svg class="li"><use href="#i-wrench" /></svg>
+                  <div>
+                    <div class="detail__title" style="font-size: 13px">git v2.44.0</div>
+                    <div class="detail__sub">Distributed version control system</div>
+                  </div>
+                </div>
+                <div class="install__plan">
+                  <div class="install__step">
+                    <svg class="li"><use href="#i-box" /></svg> openssl v3.2
+                    <span class="install__badge">dependency</span>
+                  </div>
+                  <div class="install__step">
+                    <svg class="li"><use href="#i-wrench" /></svg> git v2.44.0
+                    <span class="install__badge">requested</span>
+                  </div>
+                  <div class="install__step">
+                    <svg class="li"><use href="#i-hard-drive" /></svg> Platform: macOS (arm64)
+                  </div>
+                </div>
+                <div class="install__path">Installs to ~/.termihub/tools/git/</div>
+                <div class="install__size">
+                  <span>Download <strong>3.2 MB</strong></span>
+                  <span>Installed <strong>5.1 MB</strong></span>
+                </div>
+                <div class="menu__footer">
+                  <button class="btn">Cancel</button>
+                  <button class="btn btn--primary" style="margin-left: auto">
+                    <svg class="li"><use href="#i-download" /></svg> Install
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">C</span> Resolved install order — dependencies first
+                (<code>dependency</code>), then the requested package (<code>requested</code>).
+              </li>
+              <li>
+                <span class="callout">D</span> External requirement note — listed but not
+                auto-installed.
+              </li>
+              <li>
+                <span class="callout">E</span> Total download / installed size from the install
+                plan.
+              </li>
+              <li>
+                <span class="callout">F</span> Tool variant — target tools directory + resolved
+                platform/arch.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <p>
+          Detailed flows, the install/update pipelines, dependency resolution, PATH integration, and
+          error-handling state machines are diagrammed in
+          <a href="#behavior">States &amp; Sequences</a>. Key rules:
+        </p>
+
+        <h3>Package types</h3>
+        <p>The package manager handles two distinct package types:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Aspect</th>
+                <th>Plugin Packages</th>
+                <th>Tool Packages</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Purpose</strong></td>
+                <td>Extend termiHub (backends, themes, parsers)</td>
+                <td>Provide CLI utilities for terminal sessions</td>
+              </tr>
+              <tr>
+                <td><strong>Format</strong></td>
+                <td><code>.termihub-plugin</code> (ZIP with manifest)</td>
+                <td>Platform-specific archives (tar.gz / zip)</td>
+              </tr>
+              <tr>
+                <td><strong>Location</strong></td>
+                <td><code>&lt;app-data&gt;/plugins/&lt;id&gt;/</code></td>
+                <td><code>&lt;app-data&gt;/tools/&lt;id&gt;/</code></td>
+              </tr>
+              <tr>
+                <td><strong>Runtime</strong></td>
+                <td>Loaded by Plugin Manager at app startup</td>
+                <td>Available in <code>PATH</code> for all sessions</td>
+              </tr>
+              <tr>
+                <td><strong>Activation</strong></td>
+                <td>Requires explicit enable</td>
+                <td>Available immediately after install</td>
+              </tr>
+              <tr>
+                <td><strong>Dependencies</strong></td>
+                <td>Other plugins or external tools</td>
+                <td>Other tool packages</td>
+              </tr>
+              <tr>
+                <td><strong>Cross-platform</strong></td>
+                <td>May include per-platform native libraries</td>
+                <td>Always platform-specific binaries</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Repository structure</h3>
+        <p>
+          The package repository is a static file index served over HTTPS. No dynamic backend is
+          required — the repository can be hosted on any CDN or static file host.
+        </p>
+        <pre><code>Repository (HTTPS)
+├── index.json              # Full package catalog
+├── plugins/
+│   ├── k8s-exec/
+│   │   ├── metadata.json   # Package metadata + all versions
+│   │   └── 1.2.0/
+│   │       ├── k8s-exec-1.2.0-&lt;platform&gt;-&lt;arch&gt;.termihub-plugin
+│   │       └── checksums.sha256
+│   └── dracula-theme/ …
+└── tools/
+    ├── git/
+    │   ├── metadata.json
+    │   └── 2.44.0/
+    │       ├── git-2.44.0-&lt;platform&gt;-&lt;arch&gt;.{zip,tar.gz}
+    │       └── checksums.sha256
+    └── python/ …</code></pre>
+        <p>
+          The <code>index.json</code> provides a compact catalog (<code>id</code>,
+          <code>name</code>, <code>type</code>, <code>category</code>, <code>author</code>,
+          <code>description</code>, <code>latestVersion</code>, <code>platforms</code>,
+          <code>downloads</code>, <code>featured</code>, <code>tags</code>) for the Browse UI;
+          per-package <code>metadata.json</code> (versions, changelogs, dependencies, platform
+          assets) is fetched on demand when a detail panel opens.
+        </p>
+
+        <h3>Browsing and search</h3>
+        <ol>
+          <li>
+            On first open of Browse, the client fetches <code>index.json</code> from configured
+            repository sources.
+          </li>
+          <li>The merged index is cached locally with a configurable TTL (default: 24 hours).</li>
+          <li>
+            Search filters client-side on <code>name</code>, <code>description</code>,
+            <code>tags</code>, and <code>author</code>.
+          </li>
+          <li>The category filter narrows by <code>type</code> and <code>category</code>.</li>
+        </ol>
+
+        <h3>Installing a package</h3>
+        <p>
+          The user clicks <strong>Install</strong>; the manager resolves dependencies, shows the
+          confirm dialog when extra packages are pulled in, then downloads each archive, verifies
+          its SHA-256 checksum (and code signature when present), extracts it, and registers it with
+          the plugin system (plugins) or the managed-PATH registry (tools). See the
+          <strong>Installing a Package</strong> sequence in States &amp; Sequences.
+        </p>
+
+        <h3>Updating packages</h3>
+        <p>
+          Updates are discovered on an interval (daily/weekly/manual) by re-fetching the index with
+          <code>If-None-Match</code>. Available updates surface as the Installed-tab banner.
+          <strong>Update All</strong> or a reviewed subset downloads and replaces each package;
+          plugins with active sessions are queued for the next app restart rather than swapped
+          underneath a live session. See the <strong>Updating Packages</strong> flowchart in States
+          &amp; Sequences.
+        </p>
+
+        <h3>Dependency resolution</h3>
+        <p>
+          Dependencies are declared in package metadata. The resolver does a topological sort with
+          circular-dependency and conflict detection:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Dependency Type</th>
+                <th>Example</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Plugin → Plugin</strong></td>
+                <td>SSH Tunnel plugin depends on SSH Utils plugin</td>
+                <td>Auto-install SSH Utils first</td>
+              </tr>
+              <tr>
+                <td><strong>Plugin → Tool</strong></td>
+                <td>K8s Exec plugin requires <code>kubectl</code></td>
+                <td>Prompt to install kubectl tool package or note external requirement</td>
+              </tr>
+              <tr>
+                <td><strong>Tool → Tool</strong></td>
+                <td><code>git</code> depends on <code>openssl</code></td>
+                <td>Auto-install openssl first</td>
+              </tr>
+              <tr>
+                <td><strong>Version constraint</strong></td>
+                <td><code>&gt;=1.0.0, &lt;2.0.0</code></td>
+                <td>Install latest compatible version</td>
+              </tr>
+              <tr>
+                <td><strong>Conflict</strong></td>
+                <td>Two plugins provide the same connection type</td>
+                <td>Block install, show conflict message</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Uninstalling a package</h3>
+        <ol>
+          <li>
+            Check whether other installed packages depend on this one; warn and offer to uninstall
+            dependents.
+          </li>
+          <li>If the package is a plugin with active sessions, warn that sessions will close.</li>
+          <li>
+            Remove files from disk, update the installed list and PATH registry, and clear package
+            settings.
+          </li>
+        </ol>
+
+        <h3>Size management and cleanup</h3>
+        <p>
+          Each package tracks its on-disk size; the Installed tab shows per-package and total size.
+          The <strong>Clean unused</strong> action identifies tool packages unused for 90+ days,
+          download cache files older than 7 days, and orphaned plugin data. Cleanup is always
+          user-confirmed, never automatic.
+        </p>
+
+        <h3>Multiple repository sources</h3>
+        <p>
+          Users configure multiple sources with priority ordering —
+          <strong>Official</strong> (always present), <strong>Community</strong> (opt-in), and
+          <strong>Private/Corporate</strong>. When the same package ID exists in several repos, the
+          highest-priority source wins. See the <strong>Repository Source Resolution</strong> flow
+          in States &amp; Sequences.
+        </p>
+
+        <h3>Offline mode</h3>
+        <p>
+          With no network: Browse shows the cached index with a "cached" indicator; install/update
+          fail gracefully with a clear message; already-installed packages and on-disk tools keep
+          working.
+        </p>
+
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>Platform-limited package</strong>: shows "Not available for your platform"
+            instead of Install, with a note about supported platforms.
+          </li>
+          <li>
+            <strong>Insufficient disk space</strong>: checked before download; aborts with a clear
+            message.
+          </li>
+          <li>
+            <strong>Download interrupted</strong>: resumed via HTTP range requests, falling back to
+            re-download.
+          </li>
+          <li>
+            <strong>Repository unreachable</strong>: retried with exponential backoff (3 attempts)
+            then falls back to the cached index.
+          </li>
+          <li>
+            <strong>Malicious package</strong>: caught by checksum and (when available)
+            code-signature verification.
+          </li>
+          <li>
+            <strong>Version downgrade</strong>: explicitly supported via "Install specific version",
+            with a settings-loss warning.
+          </li>
+          <li>
+            <strong>Conflict with built-in</strong>: built-in features always win; the conflicting
+            package cannot install.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Installing a Package</span>
+          <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant UI as Package Manager UI
+    participant Store as App Store
+    participant PM as Package Manager (Rust)
+    participant Net as HTTP Client
+    participant FS as File System
+    participant PS as Plugin System
+
+    User->>UI: Click "Install" on package
+    UI->>PM: install_package(package_id, version)
+    PM->>PM: Resolve dependencies
+
+    alt Has unmet dependencies
+        PM-->>UI: Show dependency prompt
+        User->>UI: Confirm install with deps
+    end
+
+    loop For each package to install
+        PM->>Net: Download package archive
+        Net-->>PM: Package bytes + checksum
+        PM->>PM: Verify SHA-256 checksum
+        PM->>PM: Verify code signature (if signed)
+
+        alt Plugin package
+            PM->>FS: Extract to plugins/&lt;id&gt;/
+            PM->>PS: register_plugin(plugin_id)
+            PS-->>PM: Plugin metadata
+        else Tool package
+            PM->>FS: Extract to tools/&lt;id&gt;/
+            PM->>PM: Update PATH registry
+        end
+    end
+
+    PM->>Store: Update installed packages list
+    PM-->>UI: Installation complete
+    UI->>User: Show success notification
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Updating Packages</span>
+          <pre class="mermaid">
+flowchart TD
+    A[Check for updates] --> B[Fetch index.json from all repos]
+    B --> C[Compare installed versions vs latest]
+    C --> D{Updates available?}
+    D -->|No| E["Show 'all up to date'"]
+    D -->|Yes| F[Show update banner]
+
+    F --> G{User action}
+    G -->|Update All| H[Download & install all updates]
+    G -->|Review| I[Show update list with changelogs]
+    G -->|Dismiss| J[Hide banner until next check]
+
+    I --> K{User selects updates}
+    K --> H
+
+    H --> L[For each update]
+    L --> M{Plugin with active sessions?}
+    M -->|Yes| N[Queue for next restart]
+    M -->|No| O[Install immediately]
+    N --> P[Notify: update pending restart]
+    O --> Q[Replace old version]
+    Q --> R[Re-register with Plugin System]
+
+    style E fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+    style P fill:#2d2d2d,stroke:#cca700,color:#fff
+    style R fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Dependency Resolution</span>
+          <pre class="mermaid">
+flowchart TD
+    A[Install request: package X] --> B["Read X's dependencies"]
+    B --> C{All deps satisfied?}
+    C -->|Yes| D[Install X]
+    C -->|No| E[Collect unmet deps]
+    E --> F{Deps available in repos?}
+    F -->|No| G[Report missing deps]
+    F -->|Yes| H{Circular dependency?}
+    H -->|Yes| I[Report circular dep error]
+    H -->|No| J[Build install order via topological sort]
+    J --> K[Show user: will install X + deps]
+    K --> L{User confirms?}
+    L -->|No| M[Cancel]
+    L -->|Yes| N[Install in dependency order]
+    N --> D
+
+    style D fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+    style G fill:#2d2d2d,stroke:#f44747,color:#fff
+    style I fill:#2d2d2d,stroke:#f44747,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Package Lifecycle State Machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Available: Listed in repository
+
+    Available --> Downloading: User clicks Install
+    Downloading --> Installing: Download complete
+    Downloading --> Available: Download failed / cancelled
+
+    Installing --> Installed: Extraction + registration succeed
+    Installing --> Available: Installation failed
+
+    Installed --> Active: Plugin enabled / Tool in PATH
+    Installed --> Uninstalling: User clicks Uninstall
+
+    Active --> UpdateAvailable: New version in repo
+    Active --> Uninstalling: User clicks Uninstall
+    Active --> Installed: Plugin disabled
+
+    UpdateAvailable --> Downloading: User clicks Update
+    UpdateAvailable --> Active: User dismisses
+    UpdateAvailable --> Uninstalling: User clicks Uninstall
+
+    Uninstalling --> [*]: Files removed
+
+    state Active {
+        [*] --> Ready
+        Ready --> InUse: Sessions using this package
+        InUse --> Ready: All sessions closed
+        InUse --> PendingUpdate: Update queued (sessions active)
+        PendingUpdate --> Ready: App restart applies update
+    }
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Update Check Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant Timer as Update Timer
+    participant PM as Package Manager
+    participant Net as HTTP Client
+    participant Store as App Store
+    participant UI as Package Manager UI
+
+    Note over Timer: Triggered by interval<br/>(daily/weekly/manual)
+
+    Timer->>PM: check_for_updates()
+
+    loop For each configured repository
+        PM->>Net: GET index.json (If-None-Match: etag)
+        alt Index unchanged (304)
+            Net-->>PM: Not Modified
+        else Index updated (200)
+            Net-->>PM: New index + ETag
+            PM->>PM: Cache index locally
+        end
+    end
+
+    PM->>PM: Compare installed versions<br/>with latest in merged index
+
+    alt Updates found
+        PM->>Store: Set availableUpdates list
+        Store->>UI: Re-render update banner
+    else No updates
+        PM->>Store: Clear availableUpdates
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Repository Source Resolution</span>
+          <pre class="mermaid">
+flowchart TD
+    A[Search for package X] --> B[Query all configured repos]
+    B --> C[Repo 1: Official]
+    B --> D[Repo 2: Community]
+    B --> E[Repo 3: Corporate]
+
+    C --> F{Found?}
+    D --> G{Found?}
+    E --> H{Found?}
+
+    F -->|Yes| I[Priority 1]
+    G -->|Yes| J[Priority 2]
+    H -->|Yes| K[Priority 3]
+
+    F -->|No| L[ ]
+    G -->|No| M[ ]
+    H -->|No| N[ ]
+
+    I --> O{Multiple sources?}
+    J --> O
+    K --> O
+
+    O -->|Yes| P[Use highest-priority source]
+    O -->|No| Q[Use the single source]
+
+    P --> R[Return package metadata]
+    Q --> R
+
+    style R fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Tool Package PATH Integration</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant PM as Package Manager
+    participant FS as File System
+    participant Cfg as PATH Config
+    participant TM as Terminal Manager
+    participant Shell as New Terminal Session
+
+    PM->>FS: Extract tool to tools/&lt;id&gt;/bin/
+    PM->>Cfg: Add tools/&lt;id&gt;/bin/ to managed PATH list
+    PM->>Cfg: Persist managed PATH to config
+
+    Note over TM,Shell: When a new terminal starts
+
+    TM->>Cfg: Read managed PATH entries
+    TM->>TM: Prepend managed entries to system PATH
+    TM->>Shell: Spawn with augmented PATH
+
+    Note over Shell: Tool binaries now available<br/>e.g., 'git', 'python', etc.
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Dependency Resolution Sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant UI as Package Manager UI
+    participant PM as Package Manager
+    participant Resolver as Dependency Resolver
+    participant Net as HTTP Client
+
+    User->>UI: Install package "ssh-tunnel-plugin"
+    UI->>PM: install_package("ssh-tunnel-plugin", "latest")
+    PM->>Resolver: resolve("ssh-tunnel-plugin")
+
+    Resolver->>Resolver: Read manifest dependencies
+    Note over Resolver: Requires: ssh-utils >=1.0
+
+    Resolver->>Resolver: Check installed packages
+    Note over Resolver: ssh-utils not installed
+
+    Resolver->>Resolver: Check repo for ssh-utils
+    Resolver->>Resolver: Read ssh-utils dependencies
+    Note over Resolver: ssh-utils has no deps
+
+    Resolver->>Resolver: Topological sort
+    Resolver-->>PM: Install order:<br/>1. ssh-utils v1.2<br/>2. ssh-tunnel-plugin v1.0
+
+    PM-->>UI: Dependencies to install
+    UI->>User: "Will also install ssh-utils v1.2"
+    User->>UI: Confirm
+
+    PM->>Net: Download ssh-utils
+    PM->>PM: Install ssh-utils
+    PM->>Net: Download ssh-tunnel-plugin
+    PM->>PM: Install ssh-tunnel-plugin
+    PM-->>UI: All installed successfully
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Error Handling During Installation</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> DownloadStarted
+
+    DownloadStarted --> DownloadProgress: Receiving bytes
+    DownloadProgress --> DownloadProgress: More bytes
+    DownloadProgress --> DownloadComplete: All bytes received
+    DownloadProgress --> DownloadFailed: Network error
+
+    DownloadFailed --> Retrying: Attempt < 3
+    Retrying --> DownloadProgress: Resume download
+    DownloadFailed --> UserNotified: Attempts exhausted
+
+    DownloadComplete --> ChecksumVerify: Verify SHA-256
+    ChecksumVerify --> ExtractionStarted: Checksum matches
+    ChecksumVerify --> UserNotified: Checksum mismatch
+
+    ExtractionStarted --> ExtractionComplete: Files extracted
+    ExtractionStarted --> Rollback: Extraction error
+
+    ExtractionComplete --> Registration: Register with Plugin/Tool system
+    Registration --> Installed: Registration succeeds
+    Registration --> Rollback: Registration fails
+
+    Rollback --> UserNotified: Clean up partial files
+
+    UserNotified --> [*]: User sees error message
+    Installed --> [*]: Success
+
+    note right of Rollback
+        Partial installations are
+        always cleaned up to prevent
+        corrupted state
+    end note
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Architecture Overview</span>
+          <pre class="mermaid">
+flowchart TD
+    subgraph Frontend [React Frontend]
+        PMV[Package Manager View]
+        BT[Browse Tab]
+        IT[Installed Tab]
+        PD[Package Detail]
+        IC[Install Confirm]
+        UB[Update Banner]
+        PS[Package Settings]
+    end
+
+    subgraph IPC [Tauri IPC Bridge]
+        CMD[Package Commands]
+        EVT[Install Progress Events]
+    end
+
+    subgraph Backend [Rust Backend]
+        PM[Package Manager]
+        DR[Dependency Resolver]
+        RC[Repository Client]
+        DL[Download Manager]
+        LS[Local State]
+    end
+
+    subgraph External [External]
+        R1[Official Repo CDN]
+        R2[Community Repo]
+        R3[Corporate Repo]
+    end
+
+    subgraph Existing [Existing Systems]
+        PLG[Plugin System]
+        TM[Terminal Manager]
+    end
+
+    PMV --- BT
+    PMV --- IT
+    BT --> PD
+    IT --> PD
+    PD --> IC
+
+    BT <-->|invoke| CMD
+    IT <-->|invoke| CMD
+    IC <-->|invoke| CMD
+    PS <-->|invoke| CMD
+    EVT --> PMV
+
+    CMD <--> PM
+    PM --> DR
+    PM --> RC
+    PM --> DL
+    PM --> LS
+
+    RC --> R1
+    RC --> R2
+    RC --> R3
+
+    PM -->|register plugin| PLG
+    PM -->|update PATH| TM
+
+    style Frontend fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Backend fill:#2d1e3a,stroke:#b07acc,color:#fff
+    style External fill:#3a2e1e,stroke:#cca700,color:#fff
+    style Existing fill:#1e2a3a,stroke:#007acc,color:#fff
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the current project architecture at concept-creation time; the codebase may
+          evolve before implementation. The architecture diagram lives in
+          <a href="#behavior">States &amp; Sequences</a>.
+        </p>
+
+        <h3>Package metadata types (Rust)</h3>
+        <p>
+          A new <code>core/src/packages/</code> module defines the catalog and metadata types.
+          <code>PackageInfo</code> is the compact index entry (<code>id</code>, <code>name</code>,
+          <code>package_type</code>, <code>category</code>, <code>author</code>,
+          <code>description</code>, <code>latest_version</code>, <code>platforms</code>,
+          <code>downloads</code>, <code>featured</code>, <code>tags</code>).
+          <code>PackageMetadata</code> adds the full <code>versions</code> list (each
+          <code>VersionEntry</code> carries <code>changelog</code>, <code>dependencies</code>,
+          <code>size_bytes</code>, and per-platform <code>PlatformAsset</code> download URLs +
+          checksums), <code>license</code>, <code>homepage</code>, and <code>repository</code>.
+          <code>PackageType</code> is <code>Plugin | Tool</code>; <code>DependencyType</code> is
+          <code>Required</code> (auto-resolved) or <code>External</code> (noted but not
+          auto-installed); <code>Platform</code> is <code>Windows | Linux | Macos</code> and
+          <code>Arch</code> is <code>X86_64 | Aarch64</code>.
+        </p>
+
+        <h3>Package Manager service (Rust)</h3>
+        <p>
+          The <code>PackageManager</code> lives in
+          <code>src-tauri/src/packages/manager.rs</code> and orchestrates repository access,
+          downloads, and local package state. It holds the ordered <code>repositories</code>, a
+          cached merged index (with per-repo ETags), <code>LocalPackageState</code> (installed
+          packages + enabled/disabled + settings), a <code>reqwest::Client</code>, and the
+          <code>packages_dir</code> / <code>tools_dir</code> paths. Its surface:
+          <code>refresh_index</code>, <code>get_index</code>, <code>get_package_metadata</code>,
+          <code>resolve_install</code>, <code>execute_install</code>, <code>check_updates</code>,
+          <code>uninstall</code>, <code>list_installed</code>, <code>disk_usage</code>,
+          <code>clean_cache</code>, and <code>managed_path_entries</code>.
+        </p>
+
+        <h3>Dependency resolver</h3>
+        <p>
+          <code>src-tauri/src/packages/resolver.rs</code> provides <code>DependencyResolver</code>,
+          which reads the target version's dependency list, recursively resolves each dependency
+          against the index and installed set, detects circular dependencies and conflicts,
+          topologically sorts into an install order, separates external dependencies, and computes
+          total download/install sizes — returning an <code>InstallPlan</code> of
+          <code>InstallStep</code>s plus <code>ExternalDep</code>s.
+        </p>
+
+        <h3>Tauri commands</h3>
+        <p>
+          <code>src-tauri/src/commands/packages.rs</code> exposes:
+          <code>get_package_index(force_refresh)</code>,
+          <code>get_package_detail(package_id)</code>,
+          <code>resolve_package_install(package_id, version)</code>,
+          <code>install_package(package_id, version)</code>,
+          <code>uninstall_package(package_id)</code>, <code>check_package_updates</code>,
+          <code>update_packages(package_ids)</code>, <code>get_installed_packages</code>,
+          <code>get_package_disk_usage</code>, <code>clean_package_cache</code>,
+          <code>get_repository_sources</code>, and <code>update_repository_sources(sources)</code>.
+          Install/update progress streams to the UI via Tauri events
+          (<code>download-start/-progress/-complete</code>,
+          <code>install-start/-complete/-error</code>).
+        </p>
+
+        <h3>Frontend types, store, and components</h3>
+        <p>
+          <code>src/types/packages.ts</code> mirrors the Rust types (<code>PackageInfo</code>,
+          <code>PackageMetadata</code>, <code>VersionEntry</code>, <code>PackageDependency</code>,
+          <code>InstalledPackage</code>, <code>InstallPlan</code>, <code>InstallStep</code>,
+          <code>UpdateInfo</code>, <code>DiskUsage</code>, <code>RepositorySource</code>).
+          <code>appStore.ts</code> gains <code>packageIndex</code>, <code>installedPackages</code>,
+          <code>availableUpdates</code>, and <code>packageIndexLoading</code> state plus
+          <code>loadPackageIndex</code>, <code>loadInstalledPackages</code>,
+          <code>installPackage</code>, <code>uninstallPackage</code>,
+          <code>checkPackageUpdates</code>, and <code>updatePackages</code> actions.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Location</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>PackageManagerView</code></td>
+                <td><code>src/components/Packages/PackageManagerView.tsx</code></td>
+                <td>Main sidebar view with Browse/Installed tabs</td>
+              </tr>
+              <tr>
+                <td><code>PackageBrowseTab</code></td>
+                <td><code>src/components/Packages/PackageBrowseTab.tsx</code></td>
+                <td>Repository browsing with search and filters</td>
+              </tr>
+              <tr>
+                <td><code>PackageInstalledTab</code></td>
+                <td><code>src/components/Packages/PackageInstalledTab.tsx</code></td>
+                <td>List of installed packages with sizes</td>
+              </tr>
+              <tr>
+                <td><code>PackageCard</code></td>
+                <td><code>src/components/Packages/PackageCard.tsx</code></td>
+                <td>Card component for package in list</td>
+              </tr>
+              <tr>
+                <td><code>PackageDetailPanel</code></td>
+                <td><code>src/components/Packages/PackageDetailPanel.tsx</code></td>
+                <td>Expanded detail view for a package</td>
+              </tr>
+              <tr>
+                <td><code>InstallConfirmDialog</code></td>
+                <td><code>src/components/Packages/InstallConfirmDialog.tsx</code></td>
+                <td>Dependency review and install confirmation</td>
+              </tr>
+              <tr>
+                <td><code>UpdateBanner</code></td>
+                <td><code>src/components/Packages/UpdateBanner.tsx</code></td>
+                <td>Update notification banner</td>
+              </tr>
+              <tr>
+                <td><code>PackageSettings</code></td>
+                <td><code>src/components/Settings/PackageSettings.tsx</code></td>
+                <td>Settings panel for repositories, updates, disk usage</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Activity Bar integration</h3>
+        <p>
+          The Activity Bar gains a <code>packages</code> item (lucide <code>Package</code>) and the
+          Sidebar a conditional branch rendering <code>&lt;PackageManagerView /&gt;</code> when
+          <code>sidebarView === "packages"</code>. This replaces the plugin system's planned
+          "Plugins" item.
+        </p>
+
+        <h3>Tool PATH management</h3>
+        <p>
+          Tool binaries are added to the <code>PATH</code> of every new terminal session. Session
+          spawning (in <code>src-tauri/src/terminal/backend.rs</code> / session setup) reads
+          <code>managed_path_entries()</code> and prepends them to the inherited <code>PATH</code>,
+          joined with the platform path separator, so freshly installed tools (<code>git</code>,
+          <code>python</code>, …) are immediately resolvable. See the
+          <strong>Tool PATH Integration</strong> sequence in States &amp; Sequences.
+        </p>
+
+        <h3>Local state persistence</h3>
+        <p>
+          Package manager state persists as JSON in the app data directory:
+          <code>package-state.json</code> (installed + enabled/disabled),
+          <code>package-settings.json</code> (per-package config),
+          <code>package-repos.json</code> (sources), a <code>package-cache/</code> of downloaded
+          archives, and a <code>repo-cache/</code> of cached index files.
+        </p>
+
+        <h3>Implementation order</h3>
+        <ol>
+          <li>
+            <strong>Metadata types + repository client</strong> — <code>PackageInfo</code>/<code
+              >PackageMetadata</code
+            >
+            in core; index fetch + cache; basic retrieval commands.
+          </li>
+          <li>
+            <strong>Local state + dependency resolver</strong> — <code>LocalPackageState</code>
+            persistence; topological resolver with conflict detection; install-plan resolution.
+          </li>
+          <li>
+            <strong>Download + installation pipeline</strong> — download manager (checksum verify,
+            progress events, retry); plugin registration; tool extraction + PATH management.
+          </li>
+          <li>
+            <strong>Package Manager UI (Browse)</strong> — <code>PackageManagerView</code>,
+            <code>PackageBrowseTab</code>, <code>PackageCard</code>,
+            <code>PackageDetailPanel</code>; Activity Bar + Sidebar wiring.
+          </li>
+          <li>
+            <strong>Package Manager UI (Installed + updates)</strong> —
+            <code>PackageInstalledTab</code>, <code>UpdateBanner</code>,
+            <code>InstallConfirmDialog</code>; update checking and batch updates.
+          </li>
+          <li>
+            <strong>Settings + cleanup</strong> — <code>PackageSettings</code> (sources, update
+            policy, disk usage, cache cleanup).
+          </li>
+          <li>
+            <strong>Polish + docs</strong> — error-handling edge cases, offline mode, source
+            priority, user docs.
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          Not started — this is a <code>future/</code> concept. Once implementation begins, run
+          <code>/sync-concept package-manager</code> after each change to keep the Sync Ledger
+          current.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by the <code>/sync-concept package-manager</code> skill. It records the last
+            commit at which the concept artifacts and the code were reconciled, plus any open
+            divergences. The concept is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (concept not yet implemented) ·
+          <strong>Status:</strong> diverged (entirely missing — future feature)
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Entire feature (per concept)</td>
+                <td>Not implemented — future</td>
+                <td>Missing</td>
+                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
