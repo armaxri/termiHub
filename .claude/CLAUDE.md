@@ -16,9 +16,9 @@ gh issue list --label Concept
 ```
 
 - **Always confirm before implementing**: when picking up an issue, first show the user the issue title and description and ask for confirmation before starting any work
-- **Assign yourself to picked issues**: when picking up an issue, determine the current GitHub user via `gh api user -q .login` and assign them to the issue with `gh issue edit <N> --add-assignee <login>`. Before starting work, check if the issue already has an assignee — if so, warn the user that someone else may already be working on it (check for existing branches like `feature/*` or `bugfix/*` referencing the issue number)
+- **Assignment happens ONLY when _taking_ an issue to implement it — never at creation time**: when (and only when) picking up an existing issue to start work on it, determine the current GitHub user via `gh api user -q .login` and assign them with `gh issue edit <N> --add-assignee <login>`. Before starting work, check if the issue already has an assignee — if so, warn the user that someone else may already be working on it (check for existing branches like `feature/*` or `bugfix/*` referencing the issue number)
 - Reference issue numbers in commits and PRs (`Closes #N` / `Fixes #N`)
-- Create new issues for work discovered during development and label them appropriately
+- Create new issues for work discovered during development and label them appropriately. **Never add an assignee when _creating_ an issue** — not the user, not yourself. Newly created issues are always left unassigned so anyone can pick them up; assigning is exclusively the "taking an issue" action above.
 
 ### Concept Issues
 
