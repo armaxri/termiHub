@@ -402,4 +402,95 @@ mod tests {
     fn parse_display_invalid_number() {
         assert!(parse_display(":abc").is_none());
     }
+
+    // ── Managed-server-aware detection (issue #1051) ─────────────────────
+
+    /// A test double for a termiHub-managed X server source.
+    struct FakeManaged(Option<ManagedXServer>);
+
+    impl ManagedXServerSource for FakeManaged {
+        fn managed_server(&self) -> Option<ManagedXServer> {
+            self.0.clone()
+        }
+    }
+
+    /// Assert a connection is TCP to the expected host/port (cross-platform).
+    fn assert_tcp(conn: &LocalXConnection, host: &str, port: u16) {
+        match conn {
+            LocalXConnection::Tcp(h, p) => {
+                assert_eq!(h, host);
+                assert_eq!(*p, port);
+            }
+            #[cfg(unix)]
+            LocalXConnection::UnixSocket(_) => panic!("expected a TCP connection, got a Unix socket"),
+        }
+    }
+
+    #[test]
+    fn detect_prefers_managed_server_over_everything() {
+        // A managed server on display :0 must be returned as TCP 127.0.0.1:6000
+        // with no filesystem/xauth probing — even if DISPLAY happens to be set
+        // in the environment (managed is consulted first).
+        let src = FakeManaged(Some(ManagedXServer {
+            display_number: 0,
+            cookie: Some("deadbeef".to_string()),
+        }));
+        let info = detect_local_x_server(Some(&src)).expect("managed server should be detected");
+        assert_eq!(info.display_number, 0);
+        assert_tcp(&info.connection, "127.0.0.1", 6000);
+
+        // The managed cookie is returned directly, without shelling to `xauth`.
+        assert_eq!(
+            read_local_xauth_cookie(0, Some(&src)),
+            Some("deadbeef".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_managed_server_maps_display_to_port() {
+        // Display :3 → TCP port 6003.
+        let src = FakeManaged(Some(ManagedXServer {
+            display_number: 3,
+            cookie: None,
+        }));
+        let info = detect_local_x_server(Some(&src)).expect("managed server should be detected");
+        assert_eq!(info.display_number, 3);
+        assert_tcp(&info.connection, "127.0.0.1", 6003);
+    }
+
+    #[test]
+    fn managed_server_without_cookie_is_ac_mode() {
+        // A managed server started with `-ac` has no cookie; read must return
+        // None (and must not shell to `xauth`).
+        let src = FakeManaged(Some(ManagedXServer {
+            display_number: 0,
+            cookie: None,
+        }));
+        assert_eq!(read_local_xauth_cookie(0, Some(&src)), None);
+    }
+
+    #[test]
+    fn no_managed_server_does_not_short_circuit() {
+        // An empty managed source must behave exactly like `None`: detection
+        // falls through to the platform path (no panic, returns an Option).
+        let src = FakeManaged(None);
+        let _ = detect_local_x_server(Some(&src));
+    }
+
+    #[test]
+    fn tcp_probe_detects_open_and_refused_ports() {
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        // An open listener is detected.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let open_addr = listener.local_addr().expect("local addr");
+        assert!(probe_tcp_x_server_at(open_addr, Duration::from_millis(500)));
+
+        // A refused (closed) port is not detected.
+        let probe = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let closed_addr = probe.local_addr().expect("local addr");
+        drop(probe);
+        assert!(!probe_tcp_x_server_at(closed_addr, Duration::from_millis(200)));
+    }
 }
