@@ -1,14 +1,23 @@
-//! Local X server provisioning (Windows: VcXsrv).
+//! Local X server provisioning for SSH X11 forwarding.
 //!
-//! This module owns the lifecycle of a single shared local X server used for
-//! SSH X11 forwarding. On Windows it spawns and supervises a bundled/downloaded
-//! `vcxsrv.exe`; on other platforms it degrades to a report-only no-op that
-//! adopts whatever X server the system already provides.
+//! Makes a usable local X server available and manages its lifecycle so remote
+//! GUI apps can render as native windows. See the concept document
+//! `docs/concepts/backlog/x-server-provisioning.html`.
 //!
-//! The actual VcXsrv binary is resolved by the acquisition module (issue #1048);
-//! this manager takes an injectable resolver so it stays independently testable
-//! and buildable while that work lands in parallel.
+//! - [`acquire`] (#1048, Windows-only) resolves a known-good VcXsrv install on
+//!   disk via `cache → bundled → download → verify → extract`, without the user
+//!   running any installer.
+//! - [`manager`] (#1049) owns the lifecycle of a single shared X server: adopt an
+//!   existing server or spawn/supervise VcXsrv, reuse it across sessions, and
+//!   shut it down cleanly. It is cross-platform: on non-Windows hosts it degrades
+//!   to a report-only no-op that adopts the system's existing X server, which
+//!   also keeps the lifecycle logic unit-tested on every platform.
+//!
+//! DISPLAY/cookie provisioning (#1050) and the orchestrator/UI (#1052/#1053)
+//! build on top of these.
 
+#[cfg(windows)]
+pub mod acquire;
 pub mod manager;
 
 pub use manager::XServerManager;

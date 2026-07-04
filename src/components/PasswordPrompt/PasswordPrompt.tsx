@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Modal, Button } from "@/components/ui";
 import "./PasswordPrompt.css";
 
 /**
@@ -44,57 +44,50 @@ export function PasswordPrompt() {
   );
 
   return (
-    <Dialog.Root
+    <Modal
       open={open}
       onOpenChange={(v) => {
         if (!v) dismissPasswordPrompt();
       }}
+      title="SSH Password"
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            onClick={dismissPasswordPrompt}
+            data-testid="password-prompt-cancel"
+          >
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleSubmit} data-testid="password-prompt-connect">
+            Connect
+          </Button>
+        </>
+      }
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="password-prompt__overlay" />
-        <Dialog.Content className="password-prompt__content">
-          <Dialog.Title className="password-prompt__title">SSH Password</Dialog.Title>
-          <Dialog.Description className="password-prompt__description">
-            Enter password for {username}@{host}
-          </Dialog.Description>
-          <PasswordInput
-            className="password-prompt__input"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Password"
-            autoFocus
-            data-testid="password-prompt-input"
+      <p className="password-prompt__description">
+        Enter password for {username}@{host}
+      </p>
+      <PasswordInput
+        className="ui-input"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Password"
+        autoFocus
+        data-testid="password-prompt-input"
+      />
+      {storeActive && (
+        <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
+          <input
+            type="checkbox"
+            checked={savePassword}
+            onChange={(e) => setSavePassword(e.target.checked)}
+            data-testid="password-prompt-save-checkbox"
           />
-          {storeActive && (
-            <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
-              <input
-                type="checkbox"
-                checked={savePassword}
-                onChange={(e) => setSavePassword(e.target.checked)}
-                data-testid="password-prompt-save-checkbox"
-              />
-              Save password
-            </label>
-          )}
-          <div className="password-prompt__actions">
-            <button
-              className="password-prompt__btn password-prompt__btn--secondary"
-              onClick={dismissPasswordPrompt}
-              data-testid="password-prompt-cancel"
-            >
-              Cancel
-            </button>
-            <button
-              className="password-prompt__btn password-prompt__btn--primary"
-              onClick={handleSubmit}
-              data-testid="password-prompt-connect"
-            >
-              Connect
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          Save password
+        </label>
+      )}
+    </Modal>
   );
 }

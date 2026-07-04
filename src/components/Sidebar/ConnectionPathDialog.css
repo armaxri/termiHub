@@ -1,25 +1,11 @@
-.connection-path-dialog {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 360px;
-  max-width: calc(100vw - 32px);
-  padding: var(--spacing-lg, 16px);
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg, 8px);
-  box-shadow: var(--shadow-overlay, 0 8px 32px rgba(0, 0, 0, 0.3));
-  z-index: 1001;
-}
+/* Content-specific styles for the jump-host path visualization. The shell,
+   overlay, close button, and Close action come from the shared Modal + Button
+   primitives. */
 
-.connection-path-dialog__title {
+.connection-path-dialog__title-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 4px 0;
-  color: var(--text-primary);
-  font-size: 14px;
 }
 
 .connection-path-dialog__subtitle {
@@ -111,23 +97,4 @@
 .connection-path-dialog__arrow {
   color: var(--text-secondary);
   margin: 2px 0 2px 14px;
-}
-
-.connection-path-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
-}
-
-.connection-path-dialog__button {
-  padding: 4px 16px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md, 4px);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.connection-path-dialog__button:hover {
-  background: var(--bg-hover, var(--bg-tertiary));
 }

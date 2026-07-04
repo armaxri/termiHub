@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { previewImport, importConnectionsWithCredentials } from "@/services/api";
 import type { ImportPreview } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Modal, Button } from "@/components/ui";
 import "./ImportDialog.css";
 
 export function ImportDialog() {
@@ -80,102 +80,96 @@ export function ImportDialog() {
     [handleImport, preview, password]
   );
 
+  let footer: React.ReactNode = null;
+  if (success) {
+    footer = (
+      <Button variant="primary" onClick={handleClose}>
+        Done
+      </Button>
+    );
+  } else if (preview) {
+    footer = (
+      <>
+        <Button variant="secondary" onClick={handleClose} disabled={importing}>
+          Cancel
+        </Button>
+        {preview.hasEncryptedCredentials ? (
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => handleImport(false)}
+              disabled={importing}
+              data-testid="import-without-credentials"
+            >
+              Skip Credentials
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => handleImport(true)}
+              disabled={importing || !password}
+              data-testid="import-with-credentials"
+            >
+              Import with Credentials
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="primary"
+            onClick={() => handleImport(false)}
+            disabled={importing}
+            data-testid="import-submit"
+          >
+            Import
+          </Button>
+        )}
+      </>
+    );
+  }
+
   return (
-    <Dialog.Root open={open} onOpenChange={(v) => !v && handleClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="import-dialog__overlay" />
-        <Dialog.Content className="import-dialog__content">
-          <Dialog.Title className="import-dialog__title">Import Connections</Dialog.Title>
+    <Modal
+      open={open}
+      onOpenChange={(v) => !v && handleClose()}
+      title="Import Connections"
+      footer={footer}
+    >
+      {error && !success && <p className="import-dialog__error">{error}</p>}
 
-          {error && !success && <p className="import-dialog__error">{error}</p>}
+      {success ? (
+        <p className="import-dialog__success" data-testid="import-dialog-success">
+          {success}
+        </p>
+      ) : preview ? (
+        <>
+          <p className="import-dialog__description">
+            Found {preview.connectionCount} connection
+            {preview.connectionCount !== 1 ? "s" : ""}
+            {preview.folderCount > 0 &&
+              `, ${preview.folderCount} folder${preview.folderCount !== 1 ? "s" : ""}`}
+            {preview.agentCount > 0 &&
+              `, ${preview.agentCount} agent${preview.agentCount !== 1 ? "s" : ""}`}
+          </p>
 
-          {success ? (
-            <>
-              <p className="import-dialog__success" data-testid="import-dialog-success">
-                {success}
+          {preview.hasEncryptedCredentials && (
+            <div className="import-dialog__password-section">
+              <p className="import-dialog__hint">
+                This file contains encrypted credentials. Enter the export password to import them.
               </p>
-              <div className="import-dialog__actions">
-                <button
-                  className="import-dialog__btn import-dialog__btn--primary"
-                  onClick={handleClose}
-                >
-                  Done
-                </button>
-              </div>
-            </>
-          ) : preview ? (
-            <>
-              <Dialog.Description className="import-dialog__description">
-                Found {preview.connectionCount} connection
-                {preview.connectionCount !== 1 ? "s" : ""}
-                {preview.folderCount > 0 &&
-                  `, ${preview.folderCount} folder${preview.folderCount !== 1 ? "s" : ""}`}
-                {preview.agentCount > 0 &&
-                  `, ${preview.agentCount} agent${preview.agentCount !== 1 ? "s" : ""}`}
-              </Dialog.Description>
-
-              {preview.hasEncryptedCredentials && (
-                <div className="import-dialog__password-section">
-                  <p className="import-dialog__hint">
-                    This file contains encrypted credentials. Enter the export password to import
-                    them.
-                  </p>
-                  <PasswordInput
-                    className="import-dialog__input"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Export password"
-                    autoFocus
-                    data-testid="import-password"
-                  />
-                </div>
-              )}
-
-              <div className="import-dialog__actions">
-                <button
-                  className="import-dialog__btn import-dialog__btn--secondary"
-                  onClick={handleClose}
-                  disabled={importing}
-                >
-                  Cancel
-                </button>
-                {preview.hasEncryptedCredentials ? (
-                  <>
-                    <button
-                      className="import-dialog__btn import-dialog__btn--secondary"
-                      onClick={() => handleImport(false)}
-                      disabled={importing}
-                      data-testid="import-without-credentials"
-                    >
-                      Skip Credentials
-                    </button>
-                    <button
-                      className="import-dialog__btn import-dialog__btn--primary"
-                      onClick={() => handleImport(true)}
-                      disabled={importing || !password}
-                      data-testid="import-with-credentials"
-                    >
-                      {importing ? "Importing..." : "Import with Credentials"}
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="import-dialog__btn import-dialog__btn--primary"
-                    onClick={() => handleImport(false)}
-                    disabled={importing}
-                    data-testid="import-submit"
-                  >
-                    {importing ? "Importing..." : "Import"}
-                  </button>
-                )}
-              </div>
-            </>
-          ) : (
-            !error && <p className="import-dialog__description">Loading preview...</p>
+              <PasswordInput
+                className="ui-input"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Export password"
+                autoFocus
+                data-testid="import-password"
+              />
+            </div>
           )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </>
+      ) : (
+        !error && <p className="import-dialog__description">Loading preview...</p>
+      )}
+    </Modal>
   );
 }
