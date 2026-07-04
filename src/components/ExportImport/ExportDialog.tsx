@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { exportConnectionsEncrypted } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Modal, Button } from "@/components/ui";
 import "./ExportDialog.css";
 
 type ExportMode = "plain" | "encrypted";
@@ -66,87 +66,79 @@ export function ExportDialog() {
   }, [mode, password, passwordValid, setOpen]);
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="export-dialog__overlay" />
-        <Dialog.Content className="export-dialog__content">
-          <Dialog.Title className="export-dialog__title" data-testid="export-dialog-title">
-            Export Connections
-          </Dialog.Title>
+    <Modal
+      open={open}
+      onOpenChange={setOpen}
+      title={<span data-testid="export-dialog-title">Export Connections</span>}
+      footer={
+        <>
+          <Button variant="secondary" onClick={() => setOpen(false)} disabled={exporting}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleExport}
+            disabled={!passwordValid || exporting}
+            data-testid="export-submit"
+          >
+            Export
+          </Button>
+        </>
+      }
+    >
+      <fieldset className="export-dialog__fieldset">
+        <label className="export-dialog__radio-label">
+          <input
+            type="radio"
+            name="export-mode"
+            checked={mode === "plain"}
+            onChange={() => setMode("plain")}
+            data-testid="export-mode-plain"
+          />
+          Without credentials
+        </label>
+        <label className="export-dialog__radio-label">
+          <input
+            type="radio"
+            name="export-mode"
+            checked={mode === "encrypted"}
+            onChange={() => setMode("encrypted")}
+            data-testid="export-mode-encrypted"
+          />
+          With credentials (encrypted)
+        </label>
+      </fieldset>
 
-          <fieldset className="export-dialog__fieldset">
-            <label className="export-dialog__radio-label">
-              <input
-                type="radio"
-                name="export-mode"
-                checked={mode === "plain"}
-                onChange={() => setMode("plain")}
-                data-testid="export-mode-plain"
-              />
-              Without credentials
-            </label>
-            <label className="export-dialog__radio-label">
-              <input
-                type="radio"
-                name="export-mode"
-                checked={mode === "encrypted"}
-                onChange={() => setMode("encrypted")}
-                data-testid="export-mode-encrypted"
-              />
-              With credentials (encrypted)
-            </label>
-          </fieldset>
-
-          {mode === "encrypted" && (
-            <div className="export-dialog__password-section">
-              <p className="export-dialog__warning" data-testid="export-warning">
-                Credentials will be encrypted with AES-256-GCM. You will need this password to
-                import them on another machine.
-              </p>
-              <PasswordInput
-                className="export-dialog__input"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Encryption password (min 8 characters)"
-                autoFocus
-                data-testid="export-password"
-              />
-              <PasswordInput
-                className="export-dialog__input"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-                data-testid="export-confirm-password"
-              />
-              {passwordError && (
-                <p className="export-dialog__error" data-testid="export-password-error">
-                  {passwordError}
-                </p>
-              )}
-            </div>
+      {mode === "encrypted" && (
+        <div className="export-dialog__password-section">
+          <p className="export-dialog__warning" data-testid="export-warning">
+            Credentials will be encrypted with AES-256-GCM. You will need this password to import
+            them on another machine.
+          </p>
+          <PasswordInput
+            className="ui-input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Encryption password (min 8 characters)"
+            autoFocus
+            data-testid="export-password"
+          />
+          <PasswordInput
+            className="ui-input"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Confirm password"
+            data-testid="export-confirm-password"
+          />
+          {passwordError && (
+            <p className="export-dialog__error" data-testid="export-password-error">
+              {passwordError}
+            </p>
           )}
+        </div>
+      )}
 
-          {error && <p className="export-dialog__error">{error}</p>}
-
-          <div className="export-dialog__actions">
-            <button
-              className="export-dialog__btn export-dialog__btn--secondary"
-              onClick={() => setOpen(false)}
-              disabled={exporting}
-            >
-              Cancel
-            </button>
-            <button
-              className="export-dialog__btn export-dialog__btn--primary"
-              onClick={handleExport}
-              disabled={!passwordValid || exporting}
-              data-testid="export-submit"
-            >
-              {exporting ? "Exporting..." : "Export"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      {error && <p className="export-dialog__error">{error}</p>}
+    </Modal>
   );
 }

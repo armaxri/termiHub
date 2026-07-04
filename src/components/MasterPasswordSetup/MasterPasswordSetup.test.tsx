@@ -75,7 +75,7 @@ describe("MasterPasswordSetup", () => {
         root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />);
       });
 
-      expect(document.querySelector(".master-pw__title")?.textContent).toBe("Set Master Password");
+      expect(document.querySelector(".ui-modal__title")?.textContent).toBe("Set Master Password");
       expect(query("master-pw-warning")).not.toBeNull();
     });
 
@@ -141,7 +141,7 @@ describe("MasterPasswordSetup", () => {
         root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="change" />);
       });
 
-      expect(document.querySelector(".master-pw__title")?.textContent).toBe(
+      expect(document.querySelector(".ui-modal__title")?.textContent).toBe(
         "Change Master Password"
       );
       expect(query("master-pw-current")).not.toBeNull();
