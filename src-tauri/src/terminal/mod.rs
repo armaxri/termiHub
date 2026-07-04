@@ -6,3 +6,4 @@ pub mod agent_setup;
 pub mod backend;
 pub mod jsonrpc;
 pub mod x11_forward;
+pub mod xserver;
