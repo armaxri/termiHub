@@ -8,13 +8,12 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import { open } from "@tauri-apps/plugin-dialog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { detectAgentArch, setupRemoteAgent, RemoteArchInfo } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
-import { toast } from "@/components/ui";
+import { Modal, Button, Input, toast } from "@/components/ui";
 import "./AgentSetupDialog.css";
 
 interface AgentSetupDialogProps {
@@ -234,218 +233,206 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     (binarySource === "branch" && !branchName.trim());
 
   return (
-    <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="agent-setup-dialog__overlay" />
-        <Dialog.Content className="agent-setup-dialog__content">
-          <Dialog.Title className="agent-setup-dialog__title">
-            Setup Agent: {agent.name}
-          </Dialog.Title>
-          <Dialog.Description className="agent-setup-dialog__description">
-            Upload and install the termihub-agent binary on {agent.config.host}. The setup process
-            will be visible in an SSH terminal.
-          </Dialog.Description>
+    <Modal
+      open={isOpen}
+      onOpenChange={onOpenChange}
+      title={`Setup Agent: ${agent.name}`}
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            onClick={() => onOpenChange(false)}
+            data-testid="agent-setup-cancel"
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleSetup}
+            disabled={isSubmitDisabled}
+            data-testid="agent-setup-submit"
+          >
+            {loading ? "Setting up…" : "Start Setup"}
+          </Button>
+        </>
+      }
+    >
+      <div className="agent-setup-dialog__body">
+        <p className="agent-setup-dialog__description">
+          Upload and install the termihub-agent binary on {agent.config.host}. The setup process
+          will be visible in an SSH terminal.
+        </p>
 
-          {phase.kind === "detecting" && (
-            <div className="agent-setup-dialog__detecting">
-              <div className="agent-setup-dialog__spinner" />
-              <span className="agent-setup-dialog__detecting-label">
-                Connecting and detecting architecture…
-              </span>
-            </div>
-          )}
+        {phase.kind === "detecting" && (
+          <div className="agent-setup-dialog__detecting">
+            <div className="agent-setup-dialog__spinner" />
+            <span className="agent-setup-dialog__detecting-label">
+              Connecting and detecting architecture…
+            </span>
+          </div>
+        )}
 
-          {phase.kind === "error" && (
-            <div className="agent-setup-dialog__detection-error">
-              <p className="agent-setup-dialog__error">{phase.message}</p>
-              <button
-                className="agent-setup-dialog__btn agent-setup-dialog__btn--secondary"
-                onClick={runDetection}
-                type="button"
+        {phase.kind === "error" && (
+          <div className="agent-setup-dialog__detection-error">
+            <p className="agent-setup-dialog__error">{phase.message}</p>
+            <Button variant="secondary" onClick={runDetection}>
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {phase.kind === "ready" && (
+          <>
+            <div className="agent-setup-dialog__field">
+              <label className="agent-setup-dialog__label" htmlFor="arch-select">
+                Target Architecture
+              </label>
+              <select
+                id="arch-select"
+                className="agent-setup-dialog__select"
+                value={selectedArch}
+                onChange={(e) => setSelectedArch(e.target.value as ArchSuffix)}
+                data-testid="agent-setup-arch-select"
               >
-                Retry
-              </button>
-            </div>
-          )}
-
-          {phase.kind === "ready" && (
-            <>
-              <div className="agent-setup-dialog__field">
-                <label className="agent-setup-dialog__label" htmlFor="arch-select">
-                  Target Architecture
-                </label>
-                <select
-                  id="arch-select"
-                  className="agent-setup-dialog__input agent-setup-dialog__select"
-                  value={selectedArch}
-                  onChange={(e) => setSelectedArch(e.target.value as ArchSuffix)}
-                  data-testid="agent-setup-arch-select"
-                >
-                  {ARCH_OPTIONS.map((o) => (
-                    <option key={o.suffix} value={o.suffix}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                <span className="agent-setup-dialog__arch-hint">
-                  Detected: {phase.archInfo.os} / {phase.archInfo.arch}
-                  {!isKnownSuffix(phase.archInfo.archSuffix) && (
-                    <span className="agent-setup-dialog__unsupported">
-                      {" "}
-                      (unsupported — please verify the selection above)
-                    </span>
-                  )}
-                </span>
-              </div>
-
-              <div className="agent-setup-dialog__field">
-                <label className="agent-setup-dialog__label">Binary Source</label>
-                <div className="agent-setup-dialog__source-selector">
-                  <label
-                    className={`agent-setup-dialog__source-option${binarySource === "github" ? " agent-setup-dialog__source-option--selected" : ""}`}
-                  >
-                    <div className="agent-setup-dialog__source-option-header">
-                      <input
-                        type="radio"
-                        name="binarySource"
-                        value="github"
-                        checked={binarySource === "github"}
-                        onChange={() => setBinarySource("github")}
-                        data-testid="agent-setup-source-github"
-                      />
-                      <span>Download from GitHub</span>
-                    </div>
-                    {effectiveDownloadUrl && (
-                      <div className="agent-setup-dialog__url">{effectiveDownloadUrl}</div>
-                    )}
-                  </label>
-
-                  <label
-                    className={`agent-setup-dialog__source-option${binarySource === "branch" ? " agent-setup-dialog__source-option--selected" : ""}`}
-                  >
-                    <div className="agent-setup-dialog__source-option-header">
-                      <input
-                        type="radio"
-                        name="binarySource"
-                        value="branch"
-                        checked={binarySource === "branch"}
-                        onChange={() => setBinarySource("branch")}
-                        data-testid="agent-setup-source-branch"
-                      />
-                      <span>Branch build</span>
-                    </div>
-                    {binarySource === "branch" && (
-                      <>
-                        <input
-                          className="agent-setup-dialog__input"
-                          type="text"
-                          value={branchName}
-                          onChange={(e) => setBranchName(e.target.value)}
-                          placeholder="e.g. feature/666-my-branch"
-                          data-testid="agent-setup-branch-name"
-                        />
-                        {branchBuildUrl && (
-                          <div className="agent-setup-dialog__url">{branchBuildUrl}</div>
-                        )}
-                      </>
-                    )}
-                  </label>
-
-                  <label
-                    className={`agent-setup-dialog__source-option${binarySource === "local" ? " agent-setup-dialog__source-option--selected" : ""}`}
-                  >
-                    <div className="agent-setup-dialog__source-option-header">
-                      <input
-                        type="radio"
-                        name="binarySource"
-                        value="local"
-                        checked={binarySource === "local"}
-                        onChange={() => setBinarySource("local")}
-                        data-testid="agent-setup-source-local"
-                      />
-                      <span>Use local file</span>
-                    </div>
-                    {binarySource === "local" && (
-                      <div className="agent-setup-dialog__file-row">
-                        <input
-                          className="agent-setup-dialog__input"
-                          type="text"
-                          value={localBinaryPath}
-                          onChange={(e) => setLocalBinaryPath(e.target.value)}
-                          placeholder="Path to termihub-agent binary"
-                          data-testid="agent-setup-binary-path"
-                        />
-                        <button
-                          className="agent-setup-dialog__browse-btn"
-                          onClick={handleBrowse}
-                          type="button"
-                          data-testid="agent-setup-browse"
-                        >
-                          Browse
-                        </button>
-                      </div>
-                    )}
-                  </label>
-                </div>
-              </div>
-
-              <div className="agent-setup-dialog__field">
-                <label className="agent-setup-dialog__label">Remote Install Path</label>
-                <input
-                  className="agent-setup-dialog__input"
-                  type="text"
-                  value={remotePath}
-                  onChange={(e) => setRemotePath(e.target.value)}
-                  readOnly={isWindows}
-                  data-testid="agent-setup-remote-path"
-                />
-                {isWindows && (
-                  <span className="agent-setup-dialog__arch-hint">
-                    On Windows the agent is always installed under %LOCALAPPDATA%\termiHub\agent.
+                {ARCH_OPTIONS.map((o) => (
+                  <option key={o.suffix} value={o.suffix}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <span className="agent-setup-dialog__arch-hint">
+                Detected: {phase.archInfo.os} / {phase.archInfo.arch}
+                {!isKnownSuffix(phase.archInfo.archSuffix) && (
+                  <span className="agent-setup-dialog__unsupported">
+                    {" "}
+                    (unsupported — please verify the selection above)
                   </span>
                 )}
+              </span>
+            </div>
+
+            <div className="agent-setup-dialog__field">
+              <label className="agent-setup-dialog__label">Binary Source</label>
+              <div className="agent-setup-dialog__source-selector">
+                <label
+                  className={`agent-setup-dialog__source-option${binarySource === "github" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                >
+                  <div className="agent-setup-dialog__source-option-header">
+                    <input
+                      type="radio"
+                      name="binarySource"
+                      value="github"
+                      checked={binarySource === "github"}
+                      onChange={() => setBinarySource("github")}
+                      data-testid="agent-setup-source-github"
+                    />
+                    <span>Download from GitHub</span>
+                  </div>
+                  {effectiveDownloadUrl && (
+                    <div className="agent-setup-dialog__url">{effectiveDownloadUrl}</div>
+                  )}
+                </label>
+
+                <label
+                  className={`agent-setup-dialog__source-option${binarySource === "branch" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                >
+                  <div className="agent-setup-dialog__source-option-header">
+                    <input
+                      type="radio"
+                      name="binarySource"
+                      value="branch"
+                      checked={binarySource === "branch"}
+                      onChange={() => setBinarySource("branch")}
+                      data-testid="agent-setup-source-branch"
+                    />
+                    <span>Branch build</span>
+                  </div>
+                  {binarySource === "branch" && (
+                    <>
+                      <Input
+                        value={branchName}
+                        onChange={(e) => setBranchName(e.target.value)}
+                        placeholder="e.g. feature/666-my-branch"
+                        data-testid="agent-setup-branch-name"
+                      />
+                      {branchBuildUrl && (
+                        <div className="agent-setup-dialog__url">{branchBuildUrl}</div>
+                      )}
+                    </>
+                  )}
+                </label>
+
+                <label
+                  className={`agent-setup-dialog__source-option${binarySource === "local" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                >
+                  <div className="agent-setup-dialog__source-option-header">
+                    <input
+                      type="radio"
+                      name="binarySource"
+                      value="local"
+                      checked={binarySource === "local"}
+                      onChange={() => setBinarySource("local")}
+                      data-testid="agent-setup-source-local"
+                    />
+                    <span>Use local file</span>
+                  </div>
+                  {binarySource === "local" && (
+                    <div className="agent-setup-dialog__file-row">
+                      <Input
+                        value={localBinaryPath}
+                        onChange={(e) => setLocalBinaryPath(e.target.value)}
+                        placeholder="Path to termihub-agent binary"
+                        data-testid="agent-setup-binary-path"
+                      />
+                      <Button
+                        variant="secondary"
+                        onClick={handleBrowse}
+                        data-testid="agent-setup-browse"
+                      >
+                        Browse
+                      </Button>
+                    </div>
+                  )}
+                </label>
               </div>
+            </div>
 
-              {!isWindows && (
-                <div className="agent-setup-dialog__checkbox-row">
-                  <input
-                    type="checkbox"
-                    id="install-service"
-                    checked={installService}
-                    onChange={(e) => setInstallService(e.target.checked)}
-                    data-testid="agent-setup-install-service"
-                  />
-                  <label htmlFor="install-service">Install systemd service</label>
-                </div>
+            <div className="agent-setup-dialog__field">
+              <label className="agent-setup-dialog__label">Remote Install Path</label>
+              <Input
+                value={remotePath}
+                onChange={(e) => setRemotePath(e.target.value)}
+                readOnly={isWindows}
+                data-testid="agent-setup-remote-path"
+              />
+              {isWindows && (
+                <span className="agent-setup-dialog__arch-hint">
+                  On Windows the agent is always installed under %LOCALAPPDATA%\termiHub\agent.
+                </span>
               )}
-            </>
-          )}
+            </div>
 
-          {submitError && (
-            <p className="agent-setup-dialog__error" data-testid="agent-setup-error">
-              {submitError}
-            </p>
-          )}
+            {!isWindows && (
+              <div className="agent-setup-dialog__checkbox-row">
+                <input
+                  type="checkbox"
+                  id="install-service"
+                  checked={installService}
+                  onChange={(e) => setInstallService(e.target.checked)}
+                  data-testid="agent-setup-install-service"
+                />
+                <label htmlFor="install-service">Install systemd service</label>
+              </div>
+            )}
+          </>
+        )}
 
-          <div className="agent-setup-dialog__actions">
-            <button
-              className="agent-setup-dialog__btn agent-setup-dialog__btn--secondary"
-              onClick={() => onOpenChange(false)}
-              data-testid="agent-setup-cancel"
-            >
-              Cancel
-            </button>
-            <button
-              className="agent-setup-dialog__btn agent-setup-dialog__btn--primary"
-              onClick={handleSetup}
-              disabled={isSubmitDisabled}
-              data-testid="agent-setup-submit"
-            >
-              {loading ? "Setting up…" : "Start Setup"}
-            </button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        {submitError && (
+          <p className="agent-setup-dialog__error" data-testid="agent-setup-error">
+            {submitError}
+          </p>
+        )}
+      </div>
+    </Modal>
   );
 }
