@@ -30,6 +30,10 @@ tests/reports/*.json
 !.claude/skills
 .claude/skills/*
 !.claude/skills/sync-concept
+# Project agents are shared; personal agents under .claude/agents/ stay local.
+!.claude/agents
+.claude/agents/*
+!.claude/agents/ui-design.md
 *.suo
 *.ntvs*
 *.njsproj
