@@ -224,6 +224,13 @@ pub fn run() {
             app.manage(session_manager);
             app.manage(agent_manager);
 
+            // X server provisioning (epic #1047): manage the lifecycle-state
+            // manager and register the provisioner so the SSH connect path can
+            // ensure a local X server before X11 forwarding starts.
+            let x_server_manager = terminal::xserver::XServerManager::new();
+            terminal::xserver::init(app.handle(), x_server_manager.clone());
+            app.manage(x_server_manager);
+
             // Initialize tunnel manager with recovery loading.
             // On failure, the app still starts but tunnels are unavailable.
             match tunnel::tunnel_manager::TunnelManager::new(app.handle()) {
@@ -566,6 +573,11 @@ pub fn run() {
             commands::update::clear_skipped_version,
             commands::update::set_update_auto_check,
             commands::update::get_update_settings,
+            // X server provisioning
+            commands::xserver::x_server_status,
+            commands::xserver::x_server_ensure,
+            commands::xserver::x_server_stop,
+            commands::xserver::x_server_install_dependency,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
