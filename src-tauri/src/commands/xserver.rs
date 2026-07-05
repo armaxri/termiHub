@@ -90,17 +90,36 @@ pub fn x_server_stop(
 
 /// Install (or guide the install of) the platform's X dependency.
 ///
-/// The real installers are their own issues (#1048 VcXsrv, #1054 XQuartz); until
-/// they land this returns the same typed guidance the orchestrator produces, so
-/// the UI (#1053) has something concrete to show rather than a silent no-op.
+/// macOS runs a guided, consent-based XQuartz install (#1054): Homebrew when
+/// present, otherwise actionable download guidance. Windows VcXsrv acquisition
+/// (#1048) and Linux (never installs) still return their typed guidance so the
+/// UI (#1053) has something concrete to show.
 #[tauri::command]
 pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerError> {
     emit_progress(&app, "install", "Preparing X dependency install…", -1.0);
-    let err = match XServerPlatform::current() {
-        XServerPlatform::Windows => XServerError::windows_provisioning_unavailable(),
-        XServerPlatform::MacOs => XServerError::xquartz_missing(),
-        XServerPlatform::Linux => XServerError::linux_install_unsupported(),
-    };
-    emit_progress(&app, "failed", &err.to_string(), 1.0);
-    Err(err)
+    match XServerPlatform::current() {
+        XServerPlatform::MacOs => {
+            emit_progress(&app, "install", "Installing XQuartz…", -1.0);
+            match xserver::macos::install_xquartz().await {
+                Ok(()) => {
+                    emit_progress(&app, "ready", "XQuartz is ready.", 1.0);
+                    Ok(())
+                }
+                Err(err) => {
+                    emit_progress(&app, "failed", &err.to_string(), 1.0);
+                    Err(err)
+                }
+            }
+        }
+        XServerPlatform::Windows => {
+            let err = XServerError::windows_provisioning_unavailable();
+            emit_progress(&app, "failed", &err.to_string(), 1.0);
+            Err(err)
+        }
+        XServerPlatform::Linux => {
+            let err = XServerError::linux_install_unsupported();
+            emit_progress(&app, "failed", &err.to_string(), 1.0);
+            Err(err)
+        }
+    }
 }
