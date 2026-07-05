@@ -46,6 +46,7 @@ async-trait = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
 semver = "1"
 dirs = "6"
+which = "7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "fmt", "env-filter"] }
 chrono = "0.4"
