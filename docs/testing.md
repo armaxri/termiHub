@@ -868,6 +868,31 @@ To verify SSH tunnels actually work on macOS, do this manually against the tunne
 4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
 5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
 
+#### Linux X server detect-and-guide edge cases (#1055)
+
+The Linux X-server gap classifier (`src-tauri/src/terminal/xserver/linux_gap.rs`)
+turns an unreachable-server failure into a targeted hint. The classification is
+covered exhaustively by unit tests (fixtures → gap → error), but confirming the
+hint actually surfaces in a real edge-case environment is manual. A normal
+graphical desktop must be unaffected (server adopted, no prompt).
+
+To verify the **Wayland-without-XWayland** hint (the headline case):
+
+1. On a Wayland-only VM/session, ensure XWayland is not installed and no X
+   socket exists: `ls /tmp/.X11-unix` is empty and `echo $DISPLAY` is unset.
+2. In termiHub, open an SSH connection with **X11 forwarding** enabled.
+3. Confirm the connect surfaces the **XWayland** dependency hint (install
+   `xwayland`, then reconnect) — not a generic "no display" error.
+
+Optional additional cases:
+
+- **Headless:** on a box with no local display (no `DISPLAY`, no
+  `/tmp/.X11-unix`, no `Xorg`/`Xwayland`), connect with X11 forwarding and
+  confirm the headless hint (graphical session / Xvfb) appears.
+- **Sandboxed socket:** run termiHub as a Flatpak/Snap without the X socket
+  granted; confirm the hint names the `--socket=x11` / `--socket=fallback-x11`
+  grant.
+
 ### Legacy Guided Manual Test Runner (YAML)
 
 The remaining manual test items are still defined as machine-readable YAML in [`tests/manual/*.yaml`](../tests/manual/). The standalone runner presents applicable tests one at a time, manages infrastructure, and generates a JSON report. It is being subsumed by the harness flow above:
