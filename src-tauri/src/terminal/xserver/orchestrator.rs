@@ -46,7 +46,7 @@ pub fn ensure_x_server(
     // SSH `DISPLAY` handshake can succeed.
     #[cfg(target_os = "macos")]
     if dependency && detect_local_x_server().is_none() {
-        macos::launch_xquartz();
+        super::macos::launch_xquartz();
     }
 
     // 1. Let the manager adopt/reuse/spawn (TCP-based; covers Windows + managed).
@@ -212,27 +212,13 @@ fn report(
 ///   running-server TCP probe, and managed acquisition is #1048.
 fn dependency_available(platform: XServerPlatform) -> bool {
     match platform {
-        XServerPlatform::MacOs => {
-            std::path::Path::new("/opt/X11").exists()
-                || std::path::Path::new("/Applications/Utilities/XQuartz.app").exists()
-        }
+        XServerPlatform::MacOs => super::macos::xquartz_installed(),
         XServerPlatform::Linux => {
             std::path::Path::new("/tmp/.X11-unix").is_dir()
                 || super::binary_on_path("Xwayland")
                 || super::binary_on_path("Xorg")
         }
         XServerPlatform::Windows => false,
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod macos {
-    /// Best-effort launch of XQuartz. Errors are ignored — detection afterwards
-    /// decides whether a server actually came up.
-    pub(super) fn launch_xquartz() {
-        let _ = std::process::Command::new("open")
-            .args(["-a", "XQuartz"])
-            .spawn();
     }
 }
 

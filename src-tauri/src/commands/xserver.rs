@@ -90,17 +90,39 @@ pub fn x_server_stop(
 
 /// Install (or guide the install of) the platform's X dependency.
 ///
-/// The real installers are their own issues (#1048 VcXsrv, #1054 XQuartz); until
-/// they land this returns the same typed guidance the orchestrator produces, so
-/// the UI (#1053) has something concrete to show rather than a silent no-op.
+/// macOS runs a guided, consent-based XQuartz install (#1054): Homebrew when
+/// present, otherwise actionable download guidance. Windows VcXsrv acquisition
+/// (#1048) and Linux (never installs) still return their typed guidance so the
+/// UI (#1053) has something concrete to show.
 #[tauri::command]
 pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerError> {
     emit_progress(&app, "install", "Preparing X dependency install…", -1.0);
-    let err = match XServerPlatform::current() {
-        XServerPlatform::Windows => XServerError::windows_provisioning_unavailable(),
-        XServerPlatform::MacOs => XServerError::xquartz_missing(),
-        XServerPlatform::Linux => XServerError::linux_install_unsupported(),
-    };
-    emit_progress(&app, "failed", &err.to_string(), 1.0);
-    Err(err)
+    match XServerPlatform::current() {
+        XServerPlatform::MacOs => finish(
+            &app,
+            xserver::macos::install_xquartz().await,
+            "XQuartz is ready.",
+        ),
+        XServerPlatform::Windows => finish(
+            &app,
+            Err(XServerError::windows_provisioning_unavailable()),
+            "",
+        ),
+        XServerPlatform::Linux => finish(&app, Err(XServerError::linux_install_unsupported()), ""),
+    }
+}
+
+/// Emit the terminal progress event for an install `result` and return it, so the
+/// success/failure tail is written once. Mirrors the `Ok/Err => emit` shape
+/// [`x_server_ensure`] already uses.
+fn finish(
+    app: &AppHandle,
+    result: Result<(), XServerError>,
+    ok_message: &str,
+) -> Result<(), XServerError> {
+    match &result {
+        Ok(()) => emit_progress(app, "ready", ok_message, 1.0),
+        Err(err) => emit_progress(app, "failed", &err.to_string(), 1.0),
+    }
+    result
 }
