@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
+import { Button, toast } from "@/components/ui";
 import {
   networkWolSend,
   networkWolDevicesList,
@@ -58,8 +59,11 @@ export function WolPanel() {
         { mac: device.mac, sentAt: new Date().toLocaleTimeString() },
         ...prev.slice(0, 9),
       ]);
+      toast.success(`Magic packet sent to ${device.name}`);
     } catch (err) {
       setError(String(err));
+      frontendLog("wol_panel", `WoL wake failed: ${err}`);
+      toast.error(`Wake failed: ${err}`);
     }
   }, []);
 
@@ -76,8 +80,11 @@ export function WolPanel() {
         port,
       });
       await loadDevices();
+      toast.success(`Saved device "${name}"`);
     } catch (err) {
       setError(String(err));
+      frontendLog("wol_panel", `WoL device save failed: ${err}`);
+      toast.error(`Save failed: ${err}`);
     }
   }, [mac, broadcast, port, loadDevices]);
 
@@ -88,6 +95,8 @@ export function WolPanel() {
         await loadDevices();
       } catch (err) {
         setError(String(err));
+        frontendLog("wol_panel", `WoL device delete failed: ${err}`);
+        toast.error(`Delete failed: ${err}`);
       }
     },
     [loadDevices]
@@ -98,15 +107,16 @@ export function WolPanel() {
       <div className="network-panel__header">
         <span className="network-panel__title">Wake-on-LAN</span>
         <div className="network-panel__actions">
-          <button
-            className="network-panel__btn network-panel__btn--run"
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Power size={14} />}
             onClick={handleSend}
             disabled={!mac.trim()}
             data-testid="wol-send"
           >
-            <Power size={14} />
             Send
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -152,32 +162,36 @@ export function WolPanel() {
         <div key={device.id} className="wol-device-row">
           <span className="wol-device-row__name">{device.name}</span>
           <span className="wol-device-row__mac">{device.mac}</span>
-          <button
-            className="network-panel__icon-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Zap size={13} />}
             onClick={() => handleWakeDevice(device)}
             title="Wake"
-          >
-            <Zap size={13} />
-          </button>
-          <button
-            className="network-panel__icon-btn network-panel__icon-btn--danger"
+            aria-label="Wake device"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Trash2 size={13} />}
             onClick={() => handleDeleteDevice(device.id)}
             title="Delete"
-          >
-            <Trash2 size={13} />
-          </button>
+            aria-label="Delete device"
+          />
         </div>
       ))}
 
-      <button
-        className="network-panel__save-btn"
+      <Button
+        variant="secondary"
+        size="sm"
+        icon={<Save size={13} />}
         onClick={handleSaveDevice}
         disabled={!mac.trim()}
         data-testid="wol-save-device"
+        style={{ alignSelf: "flex-start" }}
       >
-        <Save size={13} />
         Save Current
-      </button>
+      </Button>
 
       {/* History */}
       {history.length > 0 && (

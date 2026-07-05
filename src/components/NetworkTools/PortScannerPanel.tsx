@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
+import { Button } from "@/components/ui";
 import {
   networkPortScan,
   networkPortScanCancel,
@@ -80,14 +81,14 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     subscribe,
   });
 
-  const handleRun = useCallback(() => {
+  const handleRun = useCallback(async () => {
     if (portCount > 1000) {
       const confirmed = window.confirm(
         `Scanning ${portCount} ports may take several minutes. Continue?`
       );
       if (!confirmed) return;
     }
-    void run();
+    await run();
   }, [portCount, run]);
 
   // Only show the Host column when results span more than one host
@@ -121,20 +122,20 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         <span className="network-panel__title">Port Scanner</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <button className="network-panel__btn network-panel__btn--stop" onClick={stop}>
-              <StopCircle size={14} />
+            <Button variant="danger" size="sm" icon={<StopCircle size={14} />} onClick={stop}>
               Stop
-            </button>
+            </Button>
           ) : (
-            <button
-              className="network-panel__btn network-panel__btn--run"
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Play size={14} />}
               onClick={handleRun}
               disabled={!host.trim()}
               data-testid="port-scanner-run"
             >
-              <Play size={14} />
               Run
-            </button>
+            </Button>
           )}
         </div>
       </div>

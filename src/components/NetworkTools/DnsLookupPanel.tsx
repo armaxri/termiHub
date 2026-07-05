@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { Play } from "lucide-react";
+import { Button } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType, DiagnosticStatus } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
@@ -70,15 +71,16 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       <div className="network-panel__header">
         <span className="network-panel__title">DNS Lookup</span>
         <div className="network-panel__actions">
-          <button
-            className="network-panel__btn network-panel__btn--run"
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Play size={14} />}
             onClick={handleRun}
             disabled={!hostname.trim() || status === "running"}
             data-testid="dns-run"
           >
-            <Play size={14} />
             Run
-          </button>
+          </Button>
         </div>
       </div>
 
