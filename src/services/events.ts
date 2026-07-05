@@ -7,6 +7,7 @@ import { LogEntry } from "@/types/terminal";
 import { TunnelState, TunnelStats } from "@/types/tunnel";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
+import { XServerProgress } from "@/types/xserver";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -504,6 +505,19 @@ export async function onJumpHostProbeComplete(
   callback: (payload: ProbeCompletePayload) => void
 ): Promise<UnlistenFn> {
   return await listen<ProbeCompletePayload>("jump-host-probe-complete", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to X server provisioning progress emitted during `x_server_ensure`
+ * (download / launch / verify steps). `progress = -1` marks an indeterminate
+ * step. Returns the unlisten handle (#1053).
+ */
+export async function onXServerProgress(
+  callback: (progress: XServerProgress) => void
+): Promise<UnlistenFn> {
+  return await listen<XServerProgress>("x-server-progress", (event) => {
     callback(event.payload);
   });
 }

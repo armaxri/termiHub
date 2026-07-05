@@ -39,13 +39,62 @@ export interface XServerStatusReport {
 
 /**
  * Progress update emitted while the managed X server is being provisioned or
- * started. Reserved for later PRs (deploy/start flows).
+ * started (the `x-server-progress` event, fired during `x_server_ensure`).
  */
 export interface XServerProgress {
   /** Machine-readable identifier for the current step. */
   step: string;
   /** Human-readable description of the current step. */
   message: string;
-  /** Completion fraction in the range `0`–`1`. */
+  /**
+   * Completion fraction in the range `0`–`1`, or `-1` for an indeterminate
+   * step (render a looping/indeterminate progress bar).
+   */
   progress: number;
+}
+
+/**
+ * Machine-readable classification of an X server provisioning failure. Drives
+ * how the setup dialog recovers: `dependencyMissing` offers an install action;
+ * the rest offer a plain retry with the human-readable `message`.
+ */
+export type XServerErrorKind =
+  | "provisioningUnavailable"
+  | "noLocalServer"
+  | "dependencyMissing"
+  | "serverUnreachable"
+  | "launchFailed"
+  | "unsupported";
+
+/**
+ * Typed error rejected by `x_server_ensure` / `x_server_install_dependency`.
+ * Serialized from the tagged Rust `XServerError`; optional fields are omitted
+ * when the backend has no value. `dependencyMissing` carries the missing
+ * `dependency` plus optional install guidance.
+ */
+export interface XServerError {
+  /** Failure classification. */
+  kind: XServerErrorKind;
+  /** Human-readable failure detail. */
+  message: string;
+  /** Name of the missing dependency (only for `dependencyMissing`). */
+  dependency?: string;
+  /** Human-readable hint on how to install the dependency. */
+  installHint?: string;
+  /** A concrete shell command that installs the dependency, if available. */
+  installCommand?: string;
+}
+
+/**
+ * Type guard for {@link XServerError}: an object carrying a string `kind` and a
+ * string `message`. Use to narrow the `unknown` a rejected Tauri command
+ * surfaces before reading typed guidance.
+ */
+export function isXServerError(e: unknown): e is XServerError {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    typeof (e as { kind?: unknown }).kind === "string" &&
+    typeof (e as { message?: unknown }).message === "string"
+  );
 }
