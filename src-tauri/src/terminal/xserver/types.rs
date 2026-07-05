@@ -1,8 +1,9 @@
-//! Shared types for the X server provisioning subsystem (epic #1047, #1052).
+//! Frontend-facing types for the X server provisioning command surface (#1052).
 //!
-//! These describe, in a frontend-friendly shape, *what state a local X server is
-//! in* and *why provisioning could not complete*. They are returned by the
-//! `x_server_*` Tauri commands and carried by progress events.
+//! The lifecycle logic lives in [`super::manager`] (#1049); these types are the
+//! serializable shapes the `x_server_*` Tauri commands and progress events hand
+//! to the UI (#1053): a status report, a typed/actionable error, and a progress
+//! payload.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,10 +37,10 @@ impl XServerPlatform {
     }
 }
 
-/// Lifecycle state of the local X server, mirroring the state machine in
-/// concept #1044. Only a subset is reachable until the Windows provisioning
-/// internals (#1048–#1050) land; the download/verify/extract states are wired
-/// here so the command/event surface is stable for the UI (#1053).
+/// Coarse lifecycle state of the local X server, as reported to the UI.
+///
+/// Maps from [`super::manager::XServerStatus`] plus cross-platform detection of
+/// an adopted (user-run) server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum XServerState {
@@ -49,25 +50,15 @@ pub enum XServerState {
     Adopted,
     /// A termiHub-managed server is running.
     Running,
-    /// Downloading the pinned VcXsrv archive (Windows, #1048).
-    Downloading,
-    /// Verifying the downloaded archive checksum (Windows, #1048).
-    Verifying,
-    /// Extracting the archive into the data dir (Windows, #1048).
-    Extracting,
-    /// Launching the managed server process (#1049).
-    Starting,
-    /// Provisioning or launch failed.
+    /// The last provisioning/launch attempt failed.
     Failed,
-    /// The managed server was stopped.
-    Stopped,
 }
 
 /// A coherent snapshot of the local X server situation, returned by
 /// `x_server_status` / `x_server_ensure`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct XServerStatus {
+pub struct XServerStatusReport {
     /// Current lifecycle state.
     pub state: XServerState,
     /// Host platform (drives which provisioning strategy applies).
@@ -77,8 +68,6 @@ pub struct XServerStatus {
     pub display_number: Option<u32>,
     /// Whether the active server was started by termiHub (vs. adopted external).
     pub managed: bool,
-    /// Number of X11 sessions currently using the server (idle-shutdown refcount).
-    pub session_count: u32,
     /// Whether the platform's X dependency is installed (XQuartz / Xorg / VcXsrv).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dependency_available: Option<bool>,
@@ -96,7 +85,7 @@ pub struct XServerStatus {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum XServerError {
     /// Automatic provisioning is enabled but not yet implemented in this build
-    /// (Windows VcXsrv acquire/lifecycle/auth — issues #1048–#1050).
+    /// (Windows VcXsrv download consent flow — remaining epic #1047 work).
     #[error("{message}")]
     ProvisioningUnavailable { message: String },
 
@@ -133,9 +122,9 @@ pub enum XServerError {
 }
 
 impl XServerError {
-    /// Windows: automatic VcXsrv provisioning is enabled but not yet implemented
-    /// (#1048–#1050). Shared by the orchestrator and the install command so the
-    /// guidance text has a single source.
+    /// Windows: automatic VcXsrv provisioning is enabled but not yet wired
+    /// (awaiting the download-consent flow). Shared by the orchestrator and the
+    /// install command so the guidance text has a single source.
     pub fn windows_provisioning_unavailable() -> Self {
         XServerError::ProvisioningUnavailable {
             message: "Automatic VcXsrv provisioning is not yet available in this build. Install \
@@ -234,7 +223,6 @@ mod tests {
 
     #[test]
     fn platform_current_is_one_of_the_variants() {
-        // Compiles and returns a value on every CI platform.
         let p = XServerPlatform::current();
         assert!(matches!(
             p,
@@ -244,39 +232,31 @@ mod tests {
 
     #[test]
     fn status_serializes_camel_case_and_omits_none() {
-        let status = XServerStatus {
+        let status = XServerStatusReport {
             state: XServerState::Adopted,
             platform: XServerPlatform::Linux,
             display_number: Some(0),
             managed: false,
-            session_count: 1,
             dependency_available: Some(true),
             message: None,
         };
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"state\":\"adopted\""));
         assert!(json.contains("\"displayNumber\":0"));
-        assert!(json.contains("\"sessionCount\":1"));
         assert!(json.contains("\"dependencyAvailable\":true"));
-        // None message is omitted.
         assert!(!json.contains("message"));
     }
 
     #[test]
     fn error_serializes_with_kind_tag() {
-        let err = XServerError::DependencyMissing {
-            message: "XQuartz is not installed.".to_string(),
-            dependency: "XQuartz".to_string(),
-            install_hint: None,
-            install_command: Some("brew install --cask xquartz".to_string()),
-        };
+        let err = XServerError::xquartz_missing();
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("\"kind\":\"dependencyMissing\""));
         assert!(json.contains("\"dependency\":\"XQuartz\""));
         assert!(json.contains("\"installCommand\":\"brew install --cask xquartz\""));
-        // Skipped None field must be absent.
-        assert!(!json.contains("installHint"));
-        // thiserror Display surfaces the message.
-        assert_eq!(err.to_string(), "XQuartz is not installed.");
+        assert_eq!(
+            err.to_string(),
+            "XQuartz is not installed. Install it to use X11 forwarding."
+        );
     }
 }

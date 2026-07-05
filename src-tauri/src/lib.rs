@@ -30,6 +30,34 @@ use session::registry::build_desktop_registry;
 use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
 use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer};
 
+/// Build the shared X server lifecycle manager (issue #1049).
+///
+/// On Windows it provides a managed VcXsrv instance; on other platforms it is a
+/// report-only no-op that adopts the system's existing X server. The default
+/// policy is to stop the managed server once the last X11 session closes.
+///
+/// A placeholder `vcxsrv.exe` resolver is injected: adoption of an
+/// already-running X server works today, while spawning a managed server
+/// surfaces a clear error. The acquisition module (`xserver::acquire`, #1048)
+/// exists, but resolving it downloads VcXsrv, which the concept gates behind a
+/// user consent prompt — so the real resolver is wired by the provisioning
+/// orchestrator (#1052) once the consent flow exists, not here.
+fn build_xserver_manager() -> terminal::xserver::XServerManager {
+    use terminal::xserver::manager::{CommandLauncher, TcpPortProbe};
+
+    terminal::xserver::XServerManager::new(
+        Box::new(TcpPortProbe),
+        Box::new(CommandLauncher),
+        Box::new(|| {
+            anyhow::bail!(
+                "managed X server provisioning is not wired yet (awaiting consent flow, #1052)"
+            )
+        }),
+        cfg!(windows),
+        true,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let log_buffer = create_log_buffer();
@@ -42,6 +70,10 @@ pub fn run() {
         .with(capture_layer)
         .init();
 
+    // Shared X server manager (#1049), held as an `Arc` so the provisioner
+    // (#1052) and the Tauri commands can both reference the same instance.
+    let x_server_manager = Arc::new(build_xserver_manager());
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -51,6 +83,7 @@ pub fn run() {
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
+        .manage(x_server_manager.clone())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(log_buffer);
 
@@ -224,12 +257,10 @@ pub fn run() {
             app.manage(session_manager);
             app.manage(agent_manager);
 
-            // X server provisioning (epic #1047): manage the lifecycle-state
-            // manager and register the provisioner so the SSH connect path can
-            // ensure a local X server before X11 forwarding starts.
-            let x_server_manager = terminal::xserver::XServerManager::new();
+            // X server provisioning (#1052): register the provisioner so the SSH
+            // connect path can ensure a local X server before X11 forwarding
+            // starts. The manager itself (#1049) is created and managed above.
             terminal::xserver::init(app.handle(), x_server_manager.clone());
-            app.manage(x_server_manager);
 
             // Initialize tunnel manager with recovery loading.
             // On failure, the app still starts but tunnels are unavailable.
@@ -602,6 +633,11 @@ pub fn run() {
                         .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
                     {
                         mgr.stop_all();
+                    }
+                    // Stop the managed X server so no orphan vcxsrv.exe is left
+                    // behind (issue #1049). Adopted external servers are untouched.
+                    if let Some(mgr) = handle.try_state::<Arc<terminal::xserver::XServerManager>>() {
+                        mgr.stop();
                     }
                 });
             }

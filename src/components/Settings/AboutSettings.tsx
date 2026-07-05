@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Github, ExternalLink } from "lucide-react";
+import { Github, ExternalLink, ScrollText } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getAppInfo, type AppInfo } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
@@ -7,6 +7,8 @@ import "./AboutSettings.css";
 
 const GITHUB_URL = "https://github.com/armaxri/termiHub";
 const LICENSE_URL = "https://github.com/armaxri/termiHub/blob/main/LICENSE";
+const THIRD_PARTY_LICENSES_URL =
+  "https://github.com/armaxri/termiHub/blob/main/THIRD_PARTY_LICENSES.md";
 
 /** Settings page section showing app version, project links, and license info. */
 export function AboutSettings() {
@@ -24,6 +26,12 @@ export function AboutSettings() {
 
   const handleLicense = () => {
     openUrl(LICENSE_URL).catch((err) => frontendLog("about", `Failed to open license URL: ${err}`));
+  };
+
+  const handleThirdPartyLicenses = () => {
+    openUrl(THIRD_PARTY_LICENSES_URL).catch((err) =>
+      frontendLog("about", `Failed to open third-party licenses URL: ${err}`)
+    );
   };
 
   return (
@@ -78,6 +86,14 @@ export function AboutSettings() {
           >
             <ExternalLink size={13} />
             View License
+          </button>
+          <button
+            className="settings-panel__btn"
+            onClick={handleThirdPartyLicenses}
+            data-testid="about-third-party-licenses-link"
+          >
+            <ScrollText size={13} />
+            Third-Party Licenses
           </button>
         </div>
       </div>

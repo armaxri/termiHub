@@ -1,19 +1,21 @@
-//! X server provisioning subsystem (epic #1047, issue #1052).
+//! Local X server provisioning for SSH X11 forwarding (epic #1047).
 //!
-//! Ties together the cross-platform [`ensure_x_server`] orchestrator, the
-//! [`XServerManager`] lifecycle-state seam, and the [`XServerProvisionerImpl`]
-//! that bridges core's SSH connect path (which cannot depend on the desktop app
-//! layer) to this orchestrator. The Tauri command surface lives in
-//! [`crate::commands::xserver`].
+//! Makes a usable local X server available and manages its lifecycle so remote
+//! GUI apps can render as native windows. See the concept document
+//! `docs/concepts/backlog/x-server-provisioning.html`.
 //!
-//! The Windows-only [`acquire`] submodule (#1048) makes a known-good VcXsrv
-//! install available on disk (`cache → bundled → download → verify → extract`);
-//! the orchestrator's Windows provisioning path builds on it once lifecycle
-//! (#1049) and DISPLAY/auth (#1050) land.
+//! - [`acquire`] (#1048, Windows-only) resolves a known-good VcXsrv install on
+//!   disk via `cache → bundled → download → verify → extract`.
+//! - [`manager`] (#1049) owns the lifecycle of a single shared X server: adopt,
+//!   spawn/supervise, reuse across sessions, idle shutdown.
+//! - This module (#1052) adds the cross-platform [`ensure_x_server`]
+//!   orchestrator, the [`XServerProvisionerImpl`] that bridges core's SSH connect
+//!   path (which cannot depend on the desktop app layer) to it, and the Tauri
+//!   command surface in [`crate::commands::xserver`].
 
 #[cfg(windows)]
 pub mod acquire;
-mod manager;
+pub mod manager;
 mod orchestrator;
 mod types;
 
@@ -28,7 +30,7 @@ use crate::connection::manager::ConnectionManager;
 pub use manager::XServerManager;
 pub use orchestrator::{current_status, ensure_x_server};
 pub use types::{
-    XServerError, XServerPlatform, XServerProgress, XServerStatus, X_SERVER_PROGRESS_EVENT,
+    XServerError, XServerPlatform, XServerProgress, XServerStatusReport, X_SERVER_PROGRESS_EVENT,
 };
 
 /// Resolve whether automatic X server provisioning is enabled.
@@ -51,18 +53,17 @@ pub fn resolve_provide_automatically(app: &AppHandle) -> bool {
 /// The desktop-side [`XServerProvisioner`] registered into core at startup.
 ///
 /// Core's SSH connect path calls [`ensure`](XServerProvisioner::ensure) before
-/// starting X11 forwarding; this implementation runs the orchestrator (off the
-/// async reactor, since detection briefly blocks) and returns the managed server
-/// to forward to — or `Ok(None)` to let core adopt a user-run server, or an
-/// actionable `Err` message.
+/// starting X11 forwarding; this runs the orchestrator (off the async reactor,
+/// since detection briefly blocks) and returns the managed server to forward to
+/// — or `Ok(None)` to let core adopt a user-run server, or an actionable `Err`.
 pub struct XServerProvisionerImpl {
     app: AppHandle,
-    manager: XServerManager,
+    manager: Arc<XServerManager>,
 }
 
 impl XServerProvisionerImpl {
     /// Create a provisioner bound to the app handle and shared manager.
-    pub fn new(app: AppHandle, manager: XServerManager) -> Self {
+    pub fn new(app: AppHandle, manager: Arc<XServerManager>) -> Self {
         Self { app, manager }
     }
 }
@@ -70,12 +71,13 @@ impl XServerProvisionerImpl {
 #[async_trait]
 impl XServerProvisioner for XServerProvisionerImpl {
     async fn ensure(&self) -> Result<Option<ManagedXServer>, String> {
-        // Run the orchestrator for its side effects (detect / launch XQuartz /
-        // typed error), then forward to the managed server it recorded, if any.
-        // An adopted external server yields `None`, so core detection finds it.
+        // Run the orchestrator for its side effects (adopt / spawn / launch
+        // XQuartz / typed error). A termiHub-managed server is then handed to the
+        // forwarder directly; an adopted external server yields `None`, so core
+        // detection finds it (covering Unix-socket servers on macOS/Linux).
         ensure_off_reactor(&self.app, self.manager.clone())
             .await
-            .map(|_status| self.manager.managed_server())
+            .map(|_report| self.manager.managed_server())
             .map_err(|e| e.to_string())
     }
 }
@@ -86,8 +88,8 @@ impl XServerProvisioner for XServerProvisionerImpl {
 /// live in one place.
 pub(crate) async fn ensure_off_reactor(
     app: &AppHandle,
-    manager: XServerManager,
-) -> Result<XServerStatus, XServerError> {
+    manager: Arc<XServerManager>,
+) -> Result<XServerStatusReport, XServerError> {
     let provide = resolve_provide_automatically(app);
     tokio::task::spawn_blocking(move || ensure_x_server(&manager, provide))
         .await
@@ -98,7 +100,7 @@ pub(crate) async fn ensure_off_reactor(
 
 /// Install the X server provisioner into core so the SSH connect path can reach
 /// it. Call once at startup, after the manager is created.
-pub fn init(app: &AppHandle, manager: XServerManager) {
+pub fn init(app: &AppHandle, manager: Arc<XServerManager>) {
     let provisioner = Arc::new(XServerProvisionerImpl::new(app.clone(), manager));
     termihub_core::backends::ssh::x11::set_x_server_provisioner(provisioner);
 }

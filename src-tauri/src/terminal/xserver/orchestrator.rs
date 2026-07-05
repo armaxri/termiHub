@@ -1,185 +1,166 @@
 //! The cross-platform `ensure_x_server()` orchestrator (#1052).
 //!
-//! A single entry point the SSH connect flow calls when `enable_x11_forwarding`
-//! is set: *ensure a usable local X server, per platform*, or return a typed,
-//! actionable error. The per-platform *internals* (VcXsrv acquisition #1048,
-//! lifecycle #1049, auth #1050; XQuartz install #1054; Linux gap classification
-//! #1055) are their own issues — this module owns the **dispatch** and the
-//! adopt-existing / typed-error decision.
+//! A thin layer over the [`XServerManager`] lifecycle manager (#1049): it drives
+//! the manager's adopt/spawn logic, adds the pieces that are specific to the
+//! *connection flow* — best-effort XQuartz launch on macOS, cross-platform
+//! detection of a Unix-socket server the manager's TCP probe can't see, and
+//! typed, actionable per-platform errors — and reports a frontend-friendly
+//! status. The per-platform install internals (VcXsrv download #1047 remainder,
+//! XQuartz install #1054, Linux gap classification #1055) are their own issues.
 
 use termihub_core::backends::ssh::x11::detect_local_x_server;
 
-use super::manager::XServerManager;
-use super::types::{XServerError, XServerPlatform, XServerState, XServerStatus};
-
-/// Inputs to the pure platform-dispatch decision, decoupled from any real
-/// system probing so the dispatch logic is unit-testable on every platform.
-#[derive(Debug, Clone)]
-pub struct EnsureContext {
-    /// Host platform.
-    pub platform: XServerPlatform,
-    /// Whether automatic provisioning is enabled (resolved from settings).
-    pub provide_automatically: bool,
-    /// Display number of a reachable server, if one was detected.
-    pub existing_display: Option<u32>,
-    /// Whether the detected server is termiHub-managed (vs. adopted external).
-    pub managed: bool,
-    /// Whether the platform's X dependency is installed.
-    pub dependency_available: bool,
-    /// Active X11 session count (for the returned status).
-    pub session_count: u32,
-}
-
-/// Pure per-platform decision: given the situation, either report a usable
-/// server ([`Ok`]) or a typed, actionable failure ([`Err`]).
-///
-/// This is the heart of the orchestrator and is deliberately side-effect-free so
-/// the "dispatches to the correct platform path; failures → typed errors"
-/// acceptance criterion can be verified without a real X server on any CI host.
-pub fn classify(ctx: &EnsureContext) -> Result<XServerStatus, XServerError> {
-    // A reachable server (managed or external) is always adopted — this is the
-    // common, cross-platform happy path and must never regress existing X11.
-    if let Some(display) = ctx.existing_display {
-        let message = if ctx.managed {
-            format!("termiHub-managed X server on display :{display}")
-        } else {
-            format!("Adopted an existing X server on display :{display}")
-        };
-        return Ok(adopted_status(
-            ctx.platform,
-            display,
-            ctx.managed,
-            ctx.session_count,
-            Some(ctx.dependency_available),
-            Some(message),
-        ));
-    }
-
-    // No server reachable — dispatch to the platform-specific guidance. The
-    // Windows `provide_automatically` branch is the seam for #1048–#1050:
-    // automatic VcXsrv provisioning is not yet implemented, so it surfaces an
-    // actionable error rather than a silent no-op.
-    match ctx.platform {
-        XServerPlatform::Windows if ctx.provide_automatically => {
-            Err(XServerError::windows_provisioning_unavailable())
-        }
-        XServerPlatform::Windows => Err(XServerError::windows_no_local_server()),
-        XServerPlatform::MacOs if ctx.dependency_available => {
-            Err(XServerError::macos_server_unreachable())
-        }
-        XServerPlatform::MacOs => Err(XServerError::xquartz_missing()),
-        XServerPlatform::Linux if ctx.dependency_available => {
-            Err(XServerError::linux_server_unreachable())
-        }
-        XServerPlatform::Linux => Err(XServerError::linux_x_missing()),
-    }
-}
-
-/// Build the [`XServerStatus`] for a reachable server. Shared by [`classify`]
-/// (adopt branch) and [`current_status`] so the "detected server" shape has a
-/// single source.
-fn adopted_status(
-    platform: XServerPlatform,
-    display: u32,
-    managed: bool,
-    session_count: u32,
-    dependency_available: Option<bool>,
-    message: Option<String>,
-) -> XServerStatus {
-    XServerStatus {
-        state: if managed {
-            XServerState::Running
-        } else {
-            XServerState::Adopted
-        },
-        platform,
-        display_number: Some(display),
-        managed,
-        session_count,
-        dependency_available,
-        message,
-    }
-}
+use super::manager::{XServerManager, XServerStatus as ManagedStatus};
+use super::types::{XServerError, XServerPlatform, XServerState, XServerStatusReport};
 
 /// Ensure a usable local X server for the current platform.
 ///
-/// Performs real detection (consulting the manager first, then the platform
-/// fallbacks in [`detect_local_x_server`]), best-effort launches XQuartz on
-/// macOS when it is installed but idle, then applies the pure [`classify`]
-/// decision. Returns a coherent status or a typed, actionable error.
+/// Resolution order: the manager's own adopt/spawn (`ensure_running`) → a
+/// cross-platform detection fallback for a user-run server the TCP probe can't
+/// see (e.g. XQuartz on a Unix socket) → a typed, actionable error.
 pub fn ensure_x_server(
     manager: &XServerManager,
     provide_automatically: bool,
-) -> Result<XServerStatus, XServerError> {
+) -> Result<XServerStatusReport, XServerError> {
     let platform = XServerPlatform::current();
-    let dependency_available = dependency_available(platform);
+    let dependency = dependency_available(platform);
 
-    // Detect once. On macOS, if XQuartz is installed but not yet running, nudge
-    // it up and re-probe a single time so the SSH `DISPLAY` handshake can
-    // succeed.
+    // macOS: if XQuartz is installed but idle, nudge it up so detection and the
+    // SSH `DISPLAY` handshake can succeed.
     #[cfg(target_os = "macos")]
-    let detected = {
-        let mut found = detect(manager);
-        if found.is_none() && !manager.has_managed_server() && dependency_available {
-            macos::launch_xquartz();
-            found = detect(manager);
-        }
-        found
-    };
-    #[cfg(not(target_os = "macos"))]
-    let detected = detect(manager);
+    if dependency && detect_local_x_server(None).is_none() {
+        macos::launch_xquartz();
+    }
 
-    let (existing_display, managed) = detected.map_or((None, false), |(d, m)| (Some(d), m));
+    // 1. Let the manager adopt/reuse/spawn (TCP-based; covers Windows + managed).
+    if let Ok(info) = manager.ensure_running() {
+        let state = if info.managed {
+            XServerState::Running
+        } else {
+            XServerState::Adopted
+        };
+        return Ok(report(
+            platform,
+            state,
+            Some(info.display),
+            info.managed,
+            dependency,
+        ));
+    }
 
-    let ctx = EnsureContext {
+    // 2. Fall back to cross-platform detection for a user-run server the TCP
+    //    probe cannot see (DISPLAY / Unix socket on macOS & Linux).
+    if let Some(local) = detect_local_x_server(None) {
+        return Ok(report(
+            platform,
+            XServerState::Adopted,
+            Some(local.display_number),
+            false,
+            dependency,
+        ));
+    }
+
+    // 3. Nothing usable — return actionable, typed guidance.
+    Err(classify_failure(
         platform,
         provide_automatically,
-        existing_display,
-        managed,
-        dependency_available,
-        session_count: manager.session_count(),
-    };
-    classify(&ctx)
+        dependency,
+    ))
 }
 
-/// Report the current X server status without any side effects (no launching,
-/// no provisioning). Backs the `x_server_status` command.
-pub fn current_status(manager: &XServerManager) -> XServerStatus {
+/// Report the current X server status without side effects (no launching, no
+/// provisioning). Backs the `x_server_status` command.
+pub fn current_status(manager: &XServerManager) -> XServerStatusReport {
     let platform = XServerPlatform::current();
-    let dependency_available = Some(dependency_available(platform));
-    match detect(manager) {
-        Some((display, managed)) => adopted_status(
+    let dependency = dependency_available(platform);
+
+    match manager.status() {
+        ManagedStatus::Running { display } => report(
             platform,
-            display,
-            managed,
-            manager.session_count(),
-            dependency_available,
-            None,
+            XServerState::Running,
+            Some(display),
+            true,
+            dependency,
         ),
-        None => XServerStatus {
-            state: XServerState::Absent,
+        ManagedStatus::Adopted { display } => report(
             platform,
-            display_number: None,
-            managed: false,
-            session_count: manager.session_count(),
-            dependency_available,
-            message: Some("No local X server detected.".to_string()),
-        },
+            XServerState::Adopted,
+            Some(display),
+            false,
+            dependency,
+        ),
+        ManagedStatus::Failed { message } => {
+            let mut r = report(platform, XServerState::Failed, None, false, dependency);
+            r.message = Some(message);
+            r
+        }
+        ManagedStatus::Stopped => {
+            // The manager only tracks TCP servers; consult cross-platform
+            // detection for an adopted Unix-socket server it can't see.
+            match detect_local_x_server(None) {
+                Some(local) => report(
+                    platform,
+                    XServerState::Adopted,
+                    Some(local.display_number),
+                    false,
+                    dependency,
+                ),
+                None => {
+                    let mut r = report(platform, XServerState::Absent, None, false, dependency);
+                    r.message = Some("No local X server detected.".to_string());
+                    r
+                }
+            }
+        }
     }
 }
 
-/// Detect a reachable local server, returning `(display_number, managed)`.
-///
-/// A termiHub-managed server (recorded in the manager) wins; otherwise the core
-/// platform detection (DISPLAY / Unix sockets / Windows TCP probe) is used.
-fn detect(manager: &XServerManager) -> Option<(u32, bool)> {
-    use termihub_core::backends::ssh::x11::ManagedXServerSource;
-    if let Some(server) = manager.managed_server() {
-        return Some((server.display_number, true));
+/// Pure per-platform decision for the *no server available* case: which typed,
+/// actionable error to surface. Side-effect-free so the "dispatches to the
+/// correct platform path; failures → typed errors" acceptance criterion is
+/// verifiable on any CI host.
+pub fn classify_failure(
+    platform: XServerPlatform,
+    provide_automatically: bool,
+    dependency_available: bool,
+) -> XServerError {
+    match platform {
+        XServerPlatform::Windows if provide_automatically => {
+            XServerError::windows_provisioning_unavailable()
+        }
+        XServerPlatform::Windows => XServerError::windows_no_local_server(),
+        XServerPlatform::MacOs if dependency_available => XServerError::macos_server_unreachable(),
+        XServerPlatform::MacOs => XServerError::xquartz_missing(),
+        XServerPlatform::Linux if dependency_available => XServerError::linux_server_unreachable(),
+        XServerPlatform::Linux => XServerError::linux_x_missing(),
     }
-    // Pass `None`: the managed case is handled above, so this probes only for a
-    // user-run server.
-    detect_local_x_server(None).map(|info| (info.display_number, false))
+}
+
+/// Build a status report with an adoption/managed message derived from the state.
+fn report(
+    platform: XServerPlatform,
+    state: XServerState,
+    display_number: Option<u32>,
+    managed: bool,
+    dependency_available: bool,
+) -> XServerStatusReport {
+    let message = match (state, display_number) {
+        (XServerState::Running, Some(d)) => {
+            Some(format!("termiHub-managed X server on display :{d}"))
+        }
+        (XServerState::Adopted, Some(d)) => {
+            Some(format!("Adopted an existing X server on display :{d}"))
+        }
+        _ => None,
+    };
+    XServerStatusReport {
+        state,
+        platform,
+        display_number,
+        managed,
+        dependency_available: Some(dependency_available),
+        message,
+    }
 }
 
 /// Whether the platform's X dependency is installed.
@@ -232,62 +213,21 @@ mod macos {
 mod tests {
     use super::*;
 
-    fn ctx(platform: XServerPlatform) -> EnsureContext {
-        EnsureContext {
-            platform,
-            provide_automatically: false,
-            existing_display: None,
-            managed: false,
-            dependency_available: false,
-            session_count: 0,
-        }
-    }
-
-    #[test]
-    fn adopts_existing_external_server_on_any_platform() {
-        for platform in [
-            XServerPlatform::Windows,
-            XServerPlatform::MacOs,
-            XServerPlatform::Linux,
-        ] {
-            let mut c = ctx(platform);
-            c.existing_display = Some(0);
-            let status = classify(&c).expect("existing server is adopted");
-            assert_eq!(status.state, XServerState::Adopted);
-            assert_eq!(status.display_number, Some(0));
-            assert!(!status.managed);
-        }
-    }
-
-    #[test]
-    fn managed_existing_server_reports_running() {
-        let mut c = ctx(XServerPlatform::Windows);
-        c.existing_display = Some(0);
-        c.managed = true;
-        let status = classify(&c).expect("managed server is running");
-        assert_eq!(status.state, XServerState::Running);
-        assert!(status.managed);
-    }
-
     #[test]
     fn windows_with_auto_provisioning_returns_provisioning_unavailable() {
-        let mut c = ctx(XServerPlatform::Windows);
-        c.provide_automatically = true;
-        let err = classify(&c).expect_err("no server, auto on → typed error");
+        let err = classify_failure(XServerPlatform::Windows, true, false);
         assert!(matches!(err, XServerError::ProvisioningUnavailable { .. }));
     }
 
     #[test]
     fn windows_without_auto_provisioning_returns_no_local_server() {
-        let c = ctx(XServerPlatform::Windows); // provide_automatically = false
-        let err = classify(&c).expect_err("no server, auto off → typed error");
+        let err = classify_failure(XServerPlatform::Windows, false, false);
         assert!(matches!(err, XServerError::NoLocalServer { .. }));
     }
 
     #[test]
     fn macos_without_xquartz_returns_dependency_missing() {
-        let c = ctx(XServerPlatform::MacOs); // dependency_available = false
-        let err = classify(&c).expect_err("no XQuartz → typed error");
+        let err = classify_failure(XServerPlatform::MacOs, false, false);
         match err {
             XServerError::DependencyMissing {
                 dependency,
@@ -306,16 +246,13 @@ mod tests {
 
     #[test]
     fn macos_with_xquartz_but_no_server_returns_unreachable() {
-        let mut c = ctx(XServerPlatform::MacOs);
-        c.dependency_available = true;
-        let err = classify(&c).expect_err("XQuartz present, idle → typed error");
+        let err = classify_failure(XServerPlatform::MacOs, false, true);
         assert!(matches!(err, XServerError::ServerUnreachable { .. }));
     }
 
     #[test]
     fn linux_without_x_server_returns_dependency_missing() {
-        let c = ctx(XServerPlatform::Linux); // dependency_available = false
-        let err = classify(&c).expect_err("no Xorg → typed error");
+        let err = classify_failure(XServerPlatform::Linux, false, false);
         match err {
             XServerError::DependencyMissing { dependency, .. } => {
                 assert_eq!(dependency, "Xorg/XWayland");
@@ -326,18 +263,22 @@ mod tests {
 
     #[test]
     fn linux_with_dependency_but_no_display_returns_unreachable() {
-        let mut c = ctx(XServerPlatform::Linux);
-        c.dependency_available = true;
-        let err = classify(&c).expect_err("Xorg present, no DISPLAY → typed error");
+        let err = classify_failure(XServerPlatform::Linux, false, true);
         assert!(matches!(err, XServerError::ServerUnreachable { .. }));
     }
 
     #[test]
-    fn current_status_reports_session_count() {
-        let mgr = XServerManager::new();
-        mgr.register_session();
-        let status = current_status(&mgr);
-        assert_eq!(status.session_count, 1);
-        assert_eq!(status.platform, XServerPlatform::current());
+    fn report_sets_adopted_message_and_display() {
+        let r = report(
+            XServerPlatform::Linux,
+            XServerState::Adopted,
+            Some(7),
+            false,
+            true,
+        );
+        assert_eq!(r.state, XServerState::Adopted);
+        assert_eq!(r.display_number, Some(7));
+        assert!(!r.managed);
+        assert!(r.message.unwrap().contains(":7"));
     }
 }

@@ -10,5 +10,7 @@
   `x_server_status` / `x_server_ensure` / `x_server_stop` /
   `x_server_install_dependency` and a `x-server-progress` event expose the
   subsystem to the UI (settings and Open Connections surfaces land in #1053).
-  Automatic VcXsrv provisioning on Windows is not yet available — that arrives
-  with #1048–#1050 (#1052, epic #1047).
+  The orchestrator drives the X server lifecycle manager (#1049) and wires it
+  into the SSH connect path. Fully automatic VcXsrv download on Windows still
+  awaits the consent flow and cookie auth (#1050), so spawning a managed server
+  returns an actionable error for now (#1052, epic #1047).

@@ -11,12 +11,16 @@
 //! | [`x_server_install_dependency`] | Install/guide the platform X dependency. |
 //!
 //! Progress is reported via the [`X_SERVER_PROGRESS_EVENT`] event, whose payload
-//! ([`XServerProgress`]) mirrors the agent-deploy progress shape.
+//! ([`XServerProgress`]) mirrors the agent-deploy progress shape. The lifecycle
+//! itself lives in [`crate::terminal::xserver::manager`] (#1049).
+
+use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
+use crate::terminal::xserver::manager::XServerStatus as ManagedStatus;
 use crate::terminal::xserver::{
-    self, XServerError, XServerManager, XServerPlatform, XServerProgress, XServerStatus,
+    self, XServerError, XServerManager, XServerPlatform, XServerProgress, XServerStatusReport,
     X_SERVER_PROGRESS_EVENT,
 };
 
@@ -34,7 +38,7 @@ fn emit_progress(app: &AppHandle, step: &str, message: &str, progress: f64) {
 
 /// Report the current local X server status without side effects.
 #[tauri::command]
-pub fn x_server_status(manager: State<'_, XServerManager>) -> XServerStatus {
+pub fn x_server_status(manager: State<'_, Arc<XServerManager>>) -> XServerStatusReport {
     xserver::current_status(&manager)
 }
 
@@ -45,8 +49,8 @@ pub fn x_server_status(manager: State<'_, XServerManager>) -> XServerStatus {
 #[tauri::command]
 pub async fn x_server_ensure(
     app: AppHandle,
-    manager: State<'_, XServerManager>,
-) -> Result<XServerStatus, XServerError> {
+    manager: State<'_, Arc<XServerManager>>,
+) -> Result<XServerStatusReport, XServerError> {
     emit_progress(&app, "detect", "Checking for a local X server…", -1.0);
 
     let result = xserver::ensure_off_reactor(&app, manager.inner().clone()).await;
@@ -70,9 +74,9 @@ pub async fn x_server_ensure(
 #[tauri::command]
 pub fn x_server_stop(
     app: AppHandle,
-    manager: State<'_, XServerManager>,
+    manager: State<'_, Arc<XServerManager>>,
 ) -> Result<(), XServerError> {
-    if !manager.has_managed_server() {
+    if !matches!(manager.status(), ManagedStatus::Running { .. }) {
         return Ok(());
     }
     manager.stop();
@@ -82,15 +86,12 @@ pub fn x_server_stop(
 
 /// Install (or guide the install of) the platform's X dependency.
 ///
-/// The actual installers are their own issues — Windows VcXsrv acquisition
-/// (#1048) and macOS XQuartz install (#1054). Until they land this returns a
-/// typed, actionable error carrying the manual install guidance, so the UI
-/// (#1053) has something concrete to show rather than a silent no-op.
+/// The real installers are their own issues (#1048 VcXsrv, #1054 XQuartz); until
+/// they land this returns the same typed guidance the orchestrator produces, so
+/// the UI (#1053) has something concrete to show rather than a silent no-op.
 #[tauri::command]
 pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerError> {
     emit_progress(&app, "install", "Preparing X dependency install…", -1.0);
-    // The real installers are their own issues (#1048 VcXsrv, #1054 XQuartz);
-    // until then return the same typed guidance the orchestrator produces.
     let err = match XServerPlatform::current() {
         XServerPlatform::Windows => XServerError::windows_provisioning_unavailable(),
         XServerPlatform::MacOs => XServerError::xquartz_missing(),
