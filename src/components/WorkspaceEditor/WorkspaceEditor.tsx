@@ -214,7 +214,8 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                   data-testid={`workspace-group-chip-${index}`}
                 >
                   {renamingGroupIndex === index ? (
-                    <input
+                    <Input
+                      inline
                       autoFocus
                       className="workspace-group-chip__rename-input"
                       value={renameValue}

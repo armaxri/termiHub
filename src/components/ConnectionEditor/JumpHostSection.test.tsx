@@ -80,14 +80,32 @@ function render(
   });
 }
 
-/** Set a value on a React-controlled <input>/<select> and fire the native event. */
-function setValue(el: HTMLInputElement | HTMLSelectElement, value: string, event = "input") {
-  const proto =
-    el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+/** Set a value on a React-controlled <input> and fire the native input event. */
+function setValue(el: HTMLInputElement, value: string, event = "input") {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   act(() => {
     setter?.call(el, value);
     el.dispatchEvent(new Event(event, { bubbles: true }));
+  });
+}
+
+/**
+ * Select an option in a shared {@link Select} (Radix) primitive addressed by
+ * its trigger test id. Opens via the keyboard path (mirrors ui/Select.test.tsx,
+ * which avoids the pointer-capture jsdom gap), then clicks the option whose text
+ * matches `label`.
+ */
+function selectOption(triggerTestId: string, label: string) {
+  const trigger = query(triggerTestId) as HTMLButtonElement;
+  act(() => {
+    trigger.focus();
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  const option = Array.from(document.querySelectorAll('[role="option"]')).find((o) =>
+    o.textContent?.includes(label)
+  ) as HTMLElement | undefined;
+  act(() => {
+    option?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
 }
 
@@ -141,7 +159,7 @@ describe("JumpHostSection", () => {
     expect((query("jump-host-host-0") as HTMLInputElement).value).toBe("bastion.example.com");
     expect((query("jump-host-port-0") as HTMLInputElement).value).toBe("2222");
     expect((query("jump-host-username-0") as HTMLInputElement).value).toBe("admin");
-    expect((query("jump-host-auth-method-0") as HTMLSelectElement).value).toBe("key");
+    expect(query("jump-host-auth-method-0")?.getAttribute("data-value")).toBe("key");
     expect(query("jump-host-key-path-0")).toBeTruthy();
     expect(query("jump-host-password-0")).toBeNull();
     // A single hop is not wrapped in a numbered card.
@@ -170,7 +188,7 @@ describe("JumpHostSection", () => {
   it("switching auth method merges into the hop", () => {
     const onChange = vi.fn();
     render([HOP], onChange);
-    setValue(query("jump-host-auth-method-0") as HTMLSelectElement, "password", "change");
+    selectOption("jump-host-auth-method-0", "Password");
     expect(onChange).toHaveBeenCalledWith([{ ...HOP, authMethod: "password" }]);
   });
 
@@ -313,16 +331,16 @@ describe("JumpHostSection", () => {
 
   it("renders the dropdown (not inline fields) for a saved-connection hop", () => {
     render([{ ...HOP, connectionId: "Work/bastion" }], vi.fn(), { savedConnections: OPTIONS });
-    const select = query("jump-host-connection-0") as HTMLSelectElement;
+    const select = query("jump-host-connection-0");
     expect(select).toBeTruthy();
-    expect(select.value).toBe("Work/bastion");
+    expect(select?.getAttribute("data-value")).toBe("Work/bastion");
     expect(query("jump-host-host-0")).toBeNull();
   });
 
   it("picking a different connection updates connectionId", () => {
     const onChange = vi.fn();
     render([{ ...HOP, connectionId: "Work/bastion" }], onChange, { savedConnections: OPTIONS });
-    setValue(query("jump-host-connection-0") as HTMLSelectElement, "Work/edge", "change");
+    selectOption("jump-host-connection-0", "Work / edge");
     expect(onChange).toHaveBeenCalledWith([{ ...HOP, connectionId: "Work/edge" }]);
   });
 
@@ -337,7 +355,9 @@ describe("JumpHostSection", () => {
 
   it("shows a 'not found' option for a reference whose connection is gone", () => {
     render([{ ...HOP, connectionId: "deleted-id" }], vi.fn(), { savedConnections: OPTIONS });
-    const select = query("jump-host-connection-0") as HTMLSelectElement;
-    expect(select.textContent).toContain("not found");
+    // The Select trigger renders the selected item's label, which for a missing
+    // reference is the synthesized "<id> (not found)" entry.
+    const select = query("jump-host-connection-0");
+    expect(select?.textContent).toContain("not found");
   });
 });

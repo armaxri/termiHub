@@ -161,6 +161,30 @@
   box-shadow: var(--shadow-focus);
 }
 
+/*
+ * Borderless inline variant: blends into a surrounding element (e.g. a rename
+ * input inside a pill chip). Drops the border, background, fixed height, and
+ * horizontal padding so it inherits the container's font/color; keeps the
+ * primitive's focus behavior but suppresses the ring/border since the ambient
+ * container already communicates focus context.
+ */
+.ui-input--inline {
+  height: auto;
+  width: auto;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+.ui-input--inline:focus {
+  border: none;
+  box-shadow: none;
+}
+
 /* ── Field ──────────────────────────────────────────────────────────── */
 .ui-field {
   display: flex;
