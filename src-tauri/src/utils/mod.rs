@@ -2,6 +2,7 @@ pub mod docker_detect;
 pub mod download;
 pub mod errors;
 pub mod expand;
+pub mod fs;
 pub mod log_capture;
 pub mod portable;
 pub mod remote_exec;

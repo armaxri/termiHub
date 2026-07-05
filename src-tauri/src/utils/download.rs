@@ -5,9 +5,11 @@
 //! resolution ([`crate::terminal::agent_binary`]) and VcXsrv acquisition
 //! ([`crate::terminal::xserver::acquire`]) both need (consolidated per #1077).
 
+use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use tracing::info;
 
 /// Download `url` and write the full response body to `dest`, creating parent
 /// directories as needed.
@@ -19,11 +21,38 @@ use anyhow::{bail, Result};
 /// Uses `reqwest::blocking`, so it must be called off the async reactor (e.g.
 /// inside `spawn_blocking`). A non-success status is an error and nothing is
 /// written to `dest`.
-pub fn download_to_file<F>(_url: &str, _dest: &Path, _on_progress: F) -> Result<()>
+pub fn download_to_file<F>(url: &str, dest: &Path, on_progress: F) -> Result<()>
 where
     F: Fn(u64, u64),
 {
-    bail!("download_to_file not implemented yet")
+    let response = reqwest::blocking::Client::new()
+        .get(url)
+        .send()
+        .with_context(|| format!("Failed to start download from {url}"))?;
+
+    if !response.status().is_success() {
+        bail!("Download failed: HTTP {} for {url}", response.status());
+    }
+
+    let total = response.content_length().unwrap_or(0);
+    let bytes = response
+        .bytes()
+        .with_context(|| format!("Failed to read response body from {url}"))?;
+    on_progress(bytes.len() as u64, total);
+
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+    fs::write(dest, &bytes)
+        .with_context(|| format!("Failed to write download to {}", dest.display()))?;
+
+    info!(
+        "Downloaded {url} to {} ({} bytes)",
+        dest.display(),
+        bytes.len()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
