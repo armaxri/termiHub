@@ -14,6 +14,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use rand::rngs::OsRng;
 use rand::RngCore;
 
 /// MIT-MAGIC-COOKIE-1 length in bytes (→ 32 hex chars).
@@ -29,17 +30,13 @@ const FAMILY_WILD: u16 = 0xFFFF;
 /// Generate a fresh random 16-byte MIT-MAGIC-COOKIE-1.
 pub fn generate_cookie() -> [u8; COOKIE_LEN] {
     let mut cookie = [0u8; COOKIE_LEN];
-    rand::rngs::OsRng.fill_bytes(&mut cookie);
+    OsRng.fill_bytes(&mut cookie);
     cookie
 }
 
 /// Lowercase-hex encoding of a cookie (32 chars for a 16-byte cookie).
 pub fn cookie_to_hex(cookie: &[u8]) -> String {
-    use std::fmt::Write;
-    cookie.iter().fold(String::with_capacity(cookie.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    hex::encode(cookie)
 }
 
 /// Build the binary `.Xauthority` record for `display` and `cookie`.
@@ -101,7 +98,12 @@ impl XAuthProvider for FileXAuthProvider {
 
         std::fs::create_dir_all(&self.dir)
             .with_context(|| format!("failed to create auth dir: {}", self.dir.display()))?;
-        let auth_file = self.dir.join(format!(".Xauthority-termihub-{display}"));
+        // Key the file on PID as well as display so concurrent termiHub
+        // instances (e.g. parallel dev checkouts) don't clobber each other.
+        let auth_file = self.dir.join(format!(
+            ".Xauthority-termihub-{}-{display}",
+            std::process::id()
+        ));
         std::fs::write(&auth_file, &record)
             .with_context(|| format!("failed to write .Xauthority: {}", auth_file.display()))?;
 
@@ -127,7 +129,7 @@ mod tests {
 
     fn parse_record(bytes: &[u8]) -> ParsedRecord {
         let mut pos = 0;
-        let mut read_u16 = |bytes: &[u8], pos: &mut usize| {
+        let read_u16 = |bytes: &[u8], pos: &mut usize| {
             let v = u16::from_be_bytes([bytes[*pos], bytes[*pos + 1]]);
             *pos += 2;
             v
@@ -169,14 +171,14 @@ mod tests {
         let hex = cookie_to_hex(&cookie);
         assert_eq!(hex.len(), 32);
         assert!(hex.starts_with("00ff1a2b"));
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(hex
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]
     fn xauthority_record_has_expected_layout() {
-        let cookie: [u8; COOKIE_LEN] = [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-        ];
+        let cookie: [u8; COOKIE_LEN] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
         let record = xauthority_record(0, &cookie);
         let parsed = parse_record(&record);
         assert_eq!(parsed.family, FAMILY_WILD);
