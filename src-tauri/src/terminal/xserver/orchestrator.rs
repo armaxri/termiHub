@@ -12,6 +12,7 @@ use termihub_core::backends::ssh::x11::{
     detect_local_x_server, read_local_xauth_cookie, LocalXServerInfo, ResolvedXServer,
 };
 
+use super::linux_gap::{self, LinuxXEnv};
 use super::manager::{XServerManager, XServerStatus as ManagedStatus};
 use super::types::{XServerError, XServerPlatform, XServerState, XServerStatusReport};
 
@@ -90,11 +91,20 @@ pub fn ensure_x_server(
         return Ok(EnsureOutcome { report, resolved });
     }
 
-    // 3. Nothing usable — return actionable, typed guidance.
+    // 3. Nothing usable — return actionable, typed guidance. On Linux the
+    //    specific gap (Wayland-without-XWayland / headless / sandboxed socket)
+    //    is classified from an environment snapshot; other platforms ignore it,
+    //    so only pay for the snapshot's filesystem/PATH scans on Linux.
+    let linux_env = if platform == XServerPlatform::Linux {
+        LinuxXEnv::detect()
+    } else {
+        LinuxXEnv::unknown()
+    };
     Err(classify_failure(
         platform,
         provide_automatically,
         dependency,
+        &linux_env,
     ))
 }
 
@@ -153,6 +163,7 @@ pub fn classify_failure(
     platform: XServerPlatform,
     provide_automatically: bool,
     dependency_available: bool,
+    linux_env: &LinuxXEnv,
 ) -> XServerError {
     match platform {
         XServerPlatform::Windows if provide_automatically => {
@@ -161,8 +172,8 @@ pub fn classify_failure(
         XServerPlatform::Windows => XServerError::windows_no_local_server(),
         XServerPlatform::MacOs if dependency_available => XServerError::macos_server_unreachable(),
         XServerPlatform::MacOs => XServerError::xquartz_missing(),
-        XServerPlatform::Linux if dependency_available => XServerError::linux_server_unreachable(),
-        XServerPlatform::Linux => XServerError::linux_x_missing(),
+        // Linux never installs a server; the specific gap decides the hint.
+        XServerPlatform::Linux => linux_gap::classify(linux_env).to_error(),
     }
 }
 
@@ -207,20 +218,11 @@ fn dependency_available(platform: XServerPlatform) -> bool {
         }
         XServerPlatform::Linux => {
             std::path::Path::new("/tmp/.X11-unix").is_dir()
-                || binary_on_path("Xwayland")
-                || binary_on_path("Xorg")
+                || super::binary_on_path("Xwayland")
+                || super::binary_on_path("Xorg")
         }
         XServerPlatform::Windows => false,
     }
-}
-
-/// Whether `name` resolves to an executable on `PATH` (best-effort).
-///
-/// Uses the `which` crate so `PATH` parsing and platform executable rules
-/// (Windows `PATHEXT`, etc.) are handled by a maintained library rather than a
-/// hand-rolled split.
-fn binary_on_path(name: &str) -> bool {
-    which::which(name).is_ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -238,21 +240,30 @@ mod macos {
 mod tests {
     use super::*;
 
+    // Windows/macOS cases ignore the Linux env; pass the neutral `unknown()`
+    // snapshot. The Linux gap logic itself is covered exhaustively in
+    // `linux_gap`'s own tests.
+
     #[test]
     fn windows_with_auto_provisioning_returns_provisioning_unavailable() {
-        let err = classify_failure(XServerPlatform::Windows, true, false);
+        let err = classify_failure(XServerPlatform::Windows, true, false, &LinuxXEnv::unknown());
         assert!(matches!(err, XServerError::ProvisioningUnavailable { .. }));
     }
 
     #[test]
     fn windows_without_auto_provisioning_returns_no_local_server() {
-        let err = classify_failure(XServerPlatform::Windows, false, false);
+        let err = classify_failure(
+            XServerPlatform::Windows,
+            false,
+            false,
+            &LinuxXEnv::unknown(),
+        );
         assert!(matches!(err, XServerError::NoLocalServer { .. }));
     }
 
     #[test]
     fn macos_without_xquartz_returns_dependency_missing() {
-        let err = classify_failure(XServerPlatform::MacOs, false, false);
+        let err = classify_failure(XServerPlatform::MacOs, false, false, &LinuxXEnv::unknown());
         match err {
             XServerError::DependencyMissing {
                 dependency,
@@ -271,14 +282,19 @@ mod tests {
 
     #[test]
     fn macos_with_xquartz_but_no_server_returns_unreachable() {
-        let err = classify_failure(XServerPlatform::MacOs, false, true);
+        let err = classify_failure(XServerPlatform::MacOs, false, true, &LinuxXEnv::unknown());
         assert!(matches!(err, XServerError::ServerUnreachable { .. }));
     }
 
     #[test]
     fn linux_without_x_server_returns_dependency_missing() {
-        let err = classify_failure(XServerPlatform::Linux, false, false);
-        match err {
+        // No display, an x11 session claimed, but no server binary or socket.
+        let env = LinuxXEnv {
+            display: Some(":0".to_string()),
+            xdg_session_type: Some("x11".to_string()),
+            ..LinuxXEnv::unknown()
+        };
+        match classify_failure(XServerPlatform::Linux, false, false, &env) {
             XServerError::DependencyMissing { dependency, .. } => {
                 assert_eq!(dependency, "Xorg/XWayland");
             }
@@ -288,8 +304,31 @@ mod tests {
 
     #[test]
     fn linux_with_dependency_but_no_display_returns_unreachable() {
-        let err = classify_failure(XServerPlatform::Linux, false, true);
+        // Xorg installed but no reachable display → unreachable, not missing.
+        let env = LinuxXEnv {
+            display: Some(":0".to_string()),
+            xdg_session_type: Some("x11".to_string()),
+            xorg_on_path: true,
+            ..LinuxXEnv::unknown()
+        };
+        let err = classify_failure(XServerPlatform::Linux, false, true, &env);
         assert!(matches!(err, XServerError::ServerUnreachable { .. }));
+    }
+
+    #[test]
+    fn linux_wayland_without_xwayland_returns_xwayland_dependency() {
+        // The headline edge case: Wayland session, no XWayland, no socket.
+        let env = LinuxXEnv {
+            wayland_display: Some("wayland-0".to_string()),
+            xdg_session_type: Some("wayland".to_string()),
+            ..LinuxXEnv::unknown()
+        };
+        match classify_failure(XServerPlatform::Linux, false, false, &env) {
+            XServerError::DependencyMissing { dependency, .. } => {
+                assert_eq!(dependency, "XWayland");
+            }
+            other => panic!("expected DependencyMissing(XWayland), got {other:?}"),
+        }
     }
 
     #[test]

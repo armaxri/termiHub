@@ -189,6 +189,44 @@ impl XServerError {
         }
     }
 
+    /// Linux: a Wayland session without XWayland, so X11 forwarding has no X
+    /// server to render into. The one Linux case that needs a package install.
+    pub fn linux_xwayland_missing() -> Self {
+        XServerError::DependencyMissing {
+            message: "This is a Wayland session without XWayland, so there is no X server for \
+                X11 forwarding to use."
+                .to_string(),
+            dependency: "XWayland".to_string(),
+            install_hint: Some(
+                "Install your distribution's XWayland package (e.g. `xwayland`, `xorg-xwayland`, \
+                or `xwayland` via your package manager), then reconnect."
+                    .to_string(),
+            ),
+            install_command: None,
+        }
+    }
+
+    /// Linux: termiHub is confined by a Flatpak/Snap sandbox that is not exposing
+    /// the host X socket.
+    pub fn linux_sandbox_socket_hidden() -> Self {
+        XServerError::ServerUnreachable {
+            message: "termiHub is running in a Flatpak/Snap sandbox that is not exposing the host \
+                X socket. Grant X access to the sandbox (e.g. `--socket=x11`, or \
+                `--socket=fallback-x11` on Wayland) and reconnect."
+                .to_string(),
+        }
+    }
+
+    /// Linux: no local display at all (headless system).
+    pub fn linux_headless() -> Self {
+        XServerError::NoLocalServer {
+            message: "No local display was found — this looks like a headless system. X11 \
+                forwarding renders remote apps on a local X server, so run termiHub in a graphical \
+                session, or start a virtual framebuffer (e.g. Xvfb) and set DISPLAY."
+                .to_string(),
+        }
+    }
+
     /// Linux: termiHub never installs an X server here.
     pub fn linux_install_unsupported() -> Self {
         XServerError::Unsupported {
