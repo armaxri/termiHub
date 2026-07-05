@@ -42,8 +42,15 @@ use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer}
 /// exists, but resolving it downloads VcXsrv, which the concept gates behind a
 /// user consent prompt — so the real resolver is wired by the provisioning
 /// orchestrator (#1052) once the consent flow exists, not here.
+///
+/// The cookie provider (#1050) writes `.Xauthority` files under a temp
+/// subdirectory; the files are ephemeral, regenerated per server start and
+/// removed on stop.
 fn build_xserver_manager() -> terminal::xserver::XServerManager {
+    use terminal::xserver::auth::FileXAuthProvider;
     use terminal::xserver::manager::{CommandLauncher, TcpPortProbe};
+
+    let auth_dir = std::env::temp_dir().join("termihub-xserver");
 
     terminal::xserver::XServerManager::new(
         Box::new(TcpPortProbe),
@@ -53,6 +60,7 @@ fn build_xserver_manager() -> terminal::xserver::XServerManager {
                 "managed X server provisioning is not wired yet (awaiting consent flow, #1052)"
             )
         }),
+        Box::new(FileXAuthProvider::new(auth_dir)),
         cfg!(windows),
         true,
     )
