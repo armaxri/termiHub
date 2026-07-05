@@ -35,6 +35,24 @@ pub use types::{
     XServerError, XServerPlatform, XServerProgress, XServerStatusReport, X_SERVER_PROGRESS_EVENT,
 };
 
+/// Whether `name` resolves to an executable on `PATH` (best-effort).
+///
+/// Shared by the orchestrator's dependency probe and the Linux gap detector.
+/// Always `false` on Windows, where X-server discovery goes through the running
+/// server's TCP probe rather than a `PATH` lookup.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn binary_on_path(name: &str) -> bool {
+    let Ok(path) = std::env::var("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join(name).exists())
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn binary_on_path(_name: &str) -> bool {
+    false
+}
+
 /// Resolve whether automatic X server provisioning is enabled.
 ///
 /// Reads the global `provideXServerAutomatically` setting; when unset it

@@ -76,9 +76,24 @@ impl LinuxXEnv {
             wayland_display: env_nonempty("WAYLAND_DISPLAY"),
             xdg_session_type: env_nonempty("XDG_SESSION_TYPE"),
             x11_socket_present: x11_socket_present(),
-            xwayland_on_path: binary_on_path("Xwayland"),
-            xorg_on_path: binary_on_path("Xorg"),
+            xwayland_on_path: super::binary_on_path("Xwayland"),
+            xorg_on_path: super::binary_on_path("Xorg"),
             sandbox: detect_sandbox(),
+        }
+    }
+
+    /// A neutral snapshot with nothing present, for non-Linux callers that must
+    /// pass a [`LinuxXEnv`] the Linux-specific classification never consumes.
+    /// Avoids the filesystem/PATH scans of [`detect`](Self::detect) off Linux.
+    pub fn unknown() -> Self {
+        LinuxXEnv {
+            display: None,
+            wayland_display: None,
+            xdg_session_type: None,
+            x11_socket_present: false,
+            xwayland_on_path: false,
+            xorg_on_path: false,
+            sandbox: SandboxKind::None,
         }
     }
 }
@@ -101,14 +116,6 @@ fn x11_socket_present() -> bool {
             .strip_prefix('X')
             .is_some_and(|rest| rest.parse::<u32>().is_ok())
     })
-}
-
-/// Whether `name` resolves to a file on `PATH` (best-effort).
-fn binary_on_path(name: &str) -> bool {
-    let Ok(path) = std::env::var("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| dir.join(name).exists())
 }
 
 /// Detect the sandbox termiHub is confined by, if any.
@@ -143,27 +150,26 @@ pub enum LinuxXGap {
 /// orchestrator's adopt/reuse/spawn and cross-platform detection have all come
 /// up empty — so a "normal desktop" never reaches here.
 pub fn classify(env: &LinuxXEnv) -> LinuxXGap {
-    // 1. A sandbox is hiding the host socket: we're confined, no socket is
+    // 1. A live socket exists but earlier probes couldn't connect → present but
+    //    unreachable (misconfigured/permission), not missing. Checked first so
+    //    the remaining guards all operate on the known socket-absent world.
+    if env.x11_socket_present {
+        return LinuxXGap::ServerUnreachable;
+    }
+
+    // 2. A sandbox is hiding the host socket: we're confined and no socket is
     //    visible, yet a compositor/server clearly exists (graphical session or
-    //    an installed binary). Checked first — the real fix is a socket grant,
-    //    not installing anything.
+    //    an installed binary). The real fix is a socket grant, not an install.
     if env.sandbox != SandboxKind::None
-        && !env.x11_socket_present
         && (env.is_wayland() || env.is_x11_session() || env.has_x_server_binary())
     {
         return LinuxXGap::SandboxSocketHidden;
     }
 
-    // 2. Wayland session with no XWayland and no X socket → the one case where
-    //    Linux genuinely needs a package installed to forward X11.
-    if env.is_wayland() && !env.xwayland_on_path && !env.x11_socket_present {
+    // 3. Wayland session with no XWayland → the one case where Linux genuinely
+    //    needs a package installed to forward X11.
+    if env.is_wayland() && !env.xwayland_on_path {
         return LinuxXGap::WaylandWithoutXwayland;
-    }
-
-    // 3. A socket exists but earlier probes couldn't connect → present but
-    //    unreachable (misconfigured/permission), not missing.
-    if env.x11_socket_present {
-        return LinuxXGap::ServerUnreachable;
     }
 
     // 4. No display, no graphical session, and no server binary → headless box.
@@ -175,9 +181,9 @@ pub fn classify(env: &LinuxXEnv) -> LinuxXGap {
         return LinuxXGap::Headless;
     }
 
-    // 5. A server binary (or a live graphical session) exists but nothing was
-    //    reachable → unreachable rather than missing.
-    if env.has_x_server_binary() || env.is_wayland() {
+    // 5. A server binary exists (incl. a Wayland session that got past guard 3
+    //    because XWayland is installed) but nothing was reachable → unreachable.
+    if env.has_x_server_binary() {
         return LinuxXGap::ServerUnreachable;
     }
 
