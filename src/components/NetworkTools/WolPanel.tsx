@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
-import { Button, toast } from "@/components/ui";
+import { Button, Tooltip, toast } from "@/components/ui";
 import {
   networkWolSend,
   networkWolDevicesList,
@@ -162,22 +162,24 @@ export function WolPanel() {
         <div key={device.id} className="wol-device-row">
           <span className="wol-device-row__name">{device.name}</span>
           <span className="wol-device-row__mac">{device.mac}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Zap size={13} />}
-            onClick={() => handleWakeDevice(device)}
-            title="Wake"
-            aria-label="Wake device"
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Trash2 size={13} />}
-            onClick={() => handleDeleteDevice(device.id)}
-            title="Delete"
-            aria-label="Delete device"
-          />
+          <Tooltip content="Wake" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Zap size={13} />}
+              onClick={() => handleWakeDevice(device)}
+              aria-label={`Wake ${device.name}`}
+            />
+          </Tooltip>
+          <Tooltip content="Delete" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Trash2 size={13} />}
+              onClick={() => handleDeleteDevice(device.id)}
+              aria-label={`Delete ${device.name}`}
+            />
+          </Tooltip>
         </div>
       ))}
 

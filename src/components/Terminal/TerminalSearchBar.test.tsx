@@ -6,10 +6,28 @@
  * variant (secondary when active, ghost when inactive).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import { TerminalSearchBar } from "./TerminalSearchBar";
+
+// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
+// mounts the tooltip-wrapped icon buttons; shim them so the search bar renders.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
 
 const findNext = vi.fn();
 const findPrevious = vi.fn();
@@ -58,9 +76,14 @@ afterEach(() => {
   container.remove();
 });
 
+/** Wrap so the shared Tooltip primitive finds its provider (zero delay). */
+function withTooltip(ui: React.ReactElement): React.ReactElement {
+  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
+}
+
 async function render() {
   await act(async () => {
-    root.render(<TerminalSearchBar tabId={TAB_ID} />);
+    root.render(withTooltip(<TerminalSearchBar tabId={TAB_ID} />));
   });
   await flush();
 }

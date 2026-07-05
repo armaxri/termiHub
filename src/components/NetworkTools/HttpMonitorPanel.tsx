@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, StopCircle, RefreshCw } from "lucide-react";
-import { Button, toast } from "@/components/ui";
+import { Button, Tooltip, toast } from "@/components/ui";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
@@ -149,14 +149,15 @@ export function HttpMonitorPanel() {
       <div className="network-panel__header">
         <span className="network-panel__title">HTTP Monitor</span>
         <div className="network-panel__actions">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<RefreshCw size={14} />}
-            onClick={loadMonitors}
-            title="Refresh monitor list"
-            aria-label="Refresh monitor list"
-          />
+          <Tooltip content="Refresh monitor list" side="bottom">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<RefreshCw size={14} />}
+              onClick={loadMonitors}
+              aria-label="Refresh monitor list"
+            />
+          </Tooltip>
           {activeMonitorId ? (
             <Button
               variant="danger"
@@ -311,14 +312,15 @@ export function HttpMonitorPanel() {
               <span className="http-monitor-row__meta">
                 {m.config.method} · every {m.config.intervalMs / 1000}s
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<StopCircle size={13} />}
-                onClick={() => handleStopMonitor(m.config.id)}
-                title="Stop"
-                aria-label="Stop monitor"
-              />
+              <Tooltip content="Stop" side="left">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<StopCircle size={13} />}
+                  onClick={() => handleStopMonitor(m.config.id)}
+                  aria-label={`Stop monitoring ${m.config.url}`}
+                />
+              </Tooltip>
             </div>
           ))}
         </>

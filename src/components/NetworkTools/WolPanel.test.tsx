@@ -6,15 +6,32 @@
  * (toast on success/failure) per the reactive design rule.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import {
   networkWolSend,
   networkWolDevicesList,
   networkWolDeviceDelete,
 } from "@/services/networkApi";
-import { toast } from "@/components/ui";
+import { toast, TooltipProvider } from "@/components/ui";
 import { WolPanel } from "./WolPanel";
+
+// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
+// mounts the tooltip-wrapped icon buttons; shim them so the panel renders.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
 
 vi.mock("@/services/networkApi", () => ({
   networkWolSend: vi.fn(() => Promise.resolve()),
@@ -42,9 +59,14 @@ async function flush() {
   });
 }
 
+/** Wrap so the shared Tooltip primitive finds its provider (zero delay). */
+function withTooltip(ui: React.ReactElement): React.ReactElement {
+  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
+}
+
 async function renderPanel() {
   await act(async () => {
-    root.render(<WolPanel />);
+    root.render(withTooltip(<WolPanel />));
   });
   await flush();
 }
@@ -103,7 +125,7 @@ describe("WolPanel — Button migration", () => {
 
     await renderPanel();
 
-    const wakeBtn = container.querySelector<HTMLButtonElement>('[aria-label="Wake device"]')!;
+    const wakeBtn = container.querySelector<HTMLButtonElement>('[aria-label="Wake NAS"]')!;
     expect(wakeBtn).not.toBeNull();
     expect(wakeBtn.classList.contains("ui-btn--ghost")).toBe(true);
 
@@ -123,7 +145,7 @@ describe("WolPanel — Button migration", () => {
     await renderPanel();
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Wake device"]')!.click();
+      container.querySelector<HTMLButtonElement>('[aria-label="Wake NAS"]')!.click();
     });
     await flush();
 
@@ -140,7 +162,7 @@ describe("WolPanel — Button migration", () => {
     await renderPanel();
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Delete device"]')!.click();
+      container.querySelector<HTMLButtonElement>('[aria-label="Delete NAS"]')!.click();
     });
     await flush();
 

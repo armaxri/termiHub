@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import { Tooltip } from "@/components/ui";
 
 interface TabProps {
   tab: TerminalTab;
@@ -103,17 +104,19 @@ export function Tab({
         {tab.title}
       </span>
       {tab.persistentConnectionId && <span className="tab__persistent-badge">∞</span>}
-      <button
-        className="tab__close"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        title="Close"
-        data-testid={`tab-close-${tab.id}`}
-      >
-        <X size={14} />
-      </button>
+      <Tooltip content="Close" side="bottom">
+        <button
+          className="tab__close"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          aria-label="Close"
+          data-testid={`tab-close-${tab.id}`}
+        >
+          <X size={14} />
+        </button>
+      </Tooltip>
     </div>
   );
 

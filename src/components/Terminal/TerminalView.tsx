@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
+import { Tooltip } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { TestBridge } from "@/testbridge/TestBridge";
@@ -253,48 +254,58 @@ export function TerminalView() {
         <div className="terminal-view__toolbar">
           <TabGroupChips />
           <div className="terminal-view__toolbar-actions">
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleNewTerminal}
-              title="New Terminal"
-              data-testid="terminal-view-new-terminal"
-            >
-              <Plus size={16} />
-            </button>
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleSplitHorizontal}
-              title="Split Terminal Right"
-              data-testid="terminal-view-split-horizontal"
-            >
-              <Columns2 size={16} />
-            </button>
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleSplitVertical}
-              title="Split Terminal Down"
-              data-testid="terminal-view-split-vertical"
-            >
-              <Rows2 size={16} />
-            </button>
-            {allLeaves.length > 1 && (
+            <Tooltip content="New Terminal" side="bottom">
               <button
                 className="terminal-view__toolbar-btn"
-                onClick={handleClosePanel}
-                title="Close Panel"
-                data-testid="terminal-view-close-panel"
+                onClick={handleNewTerminal}
+                aria-label="New Terminal"
+                data-testid="terminal-view-new-terminal"
               >
-                <X size={16} />
+                <Plus size={16} />
               </button>
+            </Tooltip>
+            <Tooltip content="Split Terminal Right" side="bottom">
+              <button
+                className="terminal-view__toolbar-btn"
+                onClick={handleSplitHorizontal}
+                aria-label="Split Terminal Right"
+                data-testid="terminal-view-split-horizontal"
+              >
+                <Columns2 size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip content="Split Terminal Down" side="bottom">
+              <button
+                className="terminal-view__toolbar-btn"
+                onClick={handleSplitVertical}
+                aria-label="Split Terminal Down"
+                data-testid="terminal-view-split-vertical"
+              >
+                <Rows2 size={16} />
+              </button>
+            </Tooltip>
+            {allLeaves.length > 1 && (
+              <Tooltip content="Close Panel" side="bottom">
+                <button
+                  className="terminal-view__toolbar-btn"
+                  onClick={handleClosePanel}
+                  aria-label="Close Panel"
+                  data-testid="terminal-view-close-panel"
+                >
+                  <X size={16} />
+                </button>
+              </Tooltip>
             )}
-            <button
-              className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
-              onClick={toggleSidebar}
-              title={sidebarToggleTitle}
-              data-testid="terminal-view-toggle-sidebar"
-            >
-              <PanelLeft size={16} />
-            </button>
+            <Tooltip content={sidebarToggleTitle} side="bottom">
+              <button
+                className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
+                onClick={toggleSidebar}
+                aria-label={sidebarToggleTitle}
+                data-testid="terminal-view-toggle-sidebar"
+              >
+                <PanelLeft size={16} />
+              </button>
+            </Tooltip>
           </div>
         </div>
         <div className="terminal-view__content">
