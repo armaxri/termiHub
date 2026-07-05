@@ -1,0 +1,107 @@
+/*
+ * Styles for the X server setup / provisioning dialog (issue 1053). The overlay,
+ * head, body padding, and footer all come from the shared Modal primitive; only
+ * the consent copy, progress bar, and error guidance layout live here. All
+ * values reference design tokens.
+ */
+
+.x-server-setup__consent,
+.x-server-setup__provisioning,
+.x-server-setup__error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.x-server-setup__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+
+.x-server-setup__lead-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--accent-color);
+}
+
+.x-server-setup__body-text,
+.x-server-setup__step,
+.x-server-setup__hint,
+.x-server-setup__error-message {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.x-server-setup__step {
+  color: var(--text-primary);
+}
+
+.x-server-setup__error-message {
+  color: var(--text-primary);
+}
+
+/* Progress bar */
+.x-server-setup__progress {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-full);
+}
+
+.x-server-setup__progress-fill {
+  height: 100%;
+  background: var(--accent-color);
+  border-radius: var(--radius-full);
+  transition: width var(--transition-normal);
+}
+
+.x-server-setup__progress-fill--indeterminate {
+  width: 40%;
+  animation: x-server-setup-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes x-server-setup-indeterminate {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .x-server-setup__progress-fill {
+    transition: none;
+  }
+  .x-server-setup__progress-fill--indeterminate {
+    /* Show a static partial bar instead of a looping animation. */
+    animation: none;
+    margin-left: 0;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+/* Dependency install command block */
+.x-server-setup__command {
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.x-server-setup__command code {
+  font-family: inherit;
+}
