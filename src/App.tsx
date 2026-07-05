@@ -16,7 +16,7 @@ import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
-import { ToastProvider } from "@/components/ui";
+import { ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
@@ -233,83 +233,85 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="app">
-        {layoutConfig.activityBarPosition === "top" && <ActivityBar horizontal />}
-        <div className={`app__main app__main--ab-${layoutConfig.activityBarPosition}`}>
-          {layoutConfig.activityBarPosition === "left" && <ActivityBar />}
-          {layoutConfig.sidebarPosition === "left" && layoutConfig.sidebarVisible && (
-            <>
-              <Sidebar width={sidebarWidth} />
-              {!sidebarCollapsed && (
-                <div
-                  className={`sidebar-resize-handle${isResizing ? " sidebar-resize-handle--active" : ""}`}
-                  data-testid="sidebar-resize-handle"
-                  {...handleProps}
-                />
-              )}
-            </>
-          )}
-          <TerminalView />
-          {layoutConfig.sidebarPosition === "right" && layoutConfig.sidebarVisible && (
-            <>
-              {!sidebarCollapsed && (
-                <div
-                  className={`sidebar-resize-handle${isResizing ? " sidebar-resize-handle--active" : ""}`}
-                  data-testid="sidebar-resize-handle"
-                  {...handleProps}
-                />
-              )}
-              <Sidebar width={sidebarWidth} />
-            </>
-          )}
-          {layoutConfig.activityBarPosition === "right" && <ActivityBar />}
+      <TooltipProvider>
+        <div className="app">
+          {layoutConfig.activityBarPosition === "top" && <ActivityBar horizontal />}
+          <div className={`app__main app__main--ab-${layoutConfig.activityBarPosition}`}>
+            {layoutConfig.activityBarPosition === "left" && <ActivityBar />}
+            {layoutConfig.sidebarPosition === "left" && layoutConfig.sidebarVisible && (
+              <>
+                <Sidebar width={sidebarWidth} />
+                {!sidebarCollapsed && (
+                  <div
+                    className={`sidebar-resize-handle${isResizing ? " sidebar-resize-handle--active" : ""}`}
+                    data-testid="sidebar-resize-handle"
+                    {...handleProps}
+                  />
+                )}
+              </>
+            )}
+            <TerminalView />
+            {layoutConfig.sidebarPosition === "right" && layoutConfig.sidebarVisible && (
+              <>
+                {!sidebarCollapsed && (
+                  <div
+                    className={`sidebar-resize-handle${isResizing ? " sidebar-resize-handle--active" : ""}`}
+                    data-testid="sidebar-resize-handle"
+                    {...handleProps}
+                  />
+                )}
+                <Sidebar width={sidebarWidth} />
+              </>
+            )}
+            {layoutConfig.activityBarPosition === "right" && <ActivityBar />}
+          </div>
+          {layoutConfig.statusBarVisible && <StatusBar />}
+          <PasswordPrompt />
+          <CustomizeLayoutDialog />
+          <ExportDialog />
+          <ImportDialog />
+          <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
+          <MasterPasswordSetup
+            open={masterPasswordSetupOpen}
+            onOpenChange={(open) => {
+              if (!open) closeMasterPasswordSetup();
+            }}
+            mode={masterPasswordSetupMode}
+          />
+          <RecoveryDialog
+            open={recoveryDialogOpen}
+            onOpenChange={setRecoveryDialogOpen}
+            warnings={recoveryWarnings}
+          />
+          <ShortcutsOverlay open={shortcutsOverlayOpen} onOpenChange={setShortcutsOverlayOpen} />
+          <OverlayViewPanel />
+          <LargePasteDialog
+            open={largePasteDialog.open}
+            charCount={largePasteDialog.charCount}
+            onConfirm={() => {
+              largePasteDialog.onConfirm?.();
+              closeLargePasteDialog();
+            }}
+            onCancel={closeLargePasteDialog}
+          />
+          <OpenSavedFileDialog
+            open={openSavedFileDialog.open}
+            filePath={openSavedFileDialog.filePath}
+            askAgain={settings.askOpenSavedFileInTab ?? true}
+            onAskAgainChange={(askAgain) =>
+              updateSettings({ ...settings, askOpenSavedFileInTab: askAgain })
+            }
+            onOpen={() => {
+              openEditorTab(openSavedFileDialog.filePath, false);
+              closeOpenSavedFileDialog();
+            }}
+            onCancel={closeOpenSavedFileDialog}
+          />
+          <UpdateNotification />
+          <ConfirmCloseTabDialog />
+          <ToastProvider />
         </div>
-        {layoutConfig.statusBarVisible && <StatusBar />}
-        <PasswordPrompt />
-        <CustomizeLayoutDialog />
-        <ExportDialog />
-        <ImportDialog />
-        <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
-        <MasterPasswordSetup
-          open={masterPasswordSetupOpen}
-          onOpenChange={(open) => {
-            if (!open) closeMasterPasswordSetup();
-          }}
-          mode={masterPasswordSetupMode}
-        />
-        <RecoveryDialog
-          open={recoveryDialogOpen}
-          onOpenChange={setRecoveryDialogOpen}
-          warnings={recoveryWarnings}
-        />
-        <ShortcutsOverlay open={shortcutsOverlayOpen} onOpenChange={setShortcutsOverlayOpen} />
-        <OverlayViewPanel />
-        <LargePasteDialog
-          open={largePasteDialog.open}
-          charCount={largePasteDialog.charCount}
-          onConfirm={() => {
-            largePasteDialog.onConfirm?.();
-            closeLargePasteDialog();
-          }}
-          onCancel={closeLargePasteDialog}
-        />
-        <OpenSavedFileDialog
-          open={openSavedFileDialog.open}
-          filePath={openSavedFileDialog.filePath}
-          askAgain={settings.askOpenSavedFileInTab ?? true}
-          onAskAgainChange={(askAgain) =>
-            updateSettings({ ...settings, askOpenSavedFileInTab: askAgain })
-          }
-          onOpen={() => {
-            openEditorTab(openSavedFileDialog.filePath, false);
-            closeOpenSavedFileDialog();
-          }}
-          onCancel={closeOpenSavedFileDialog}
-        />
-        <UpdateNotification />
-        <ConfirmCloseTabDialog />
-        <ToastProvider />
-      </div>
+      </TooltipProvider>
     </ErrorBoundary>
   );
 }
