@@ -953,8 +953,12 @@ flowchart TB
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (concept not yet implemented) ·
-          <strong>Status:</strong> diverged (entirely missing — backlog feature)
+          <strong>Last synced:</strong> 2026-07-05 at commit <code>17a7bba2</code> ·
+          <strong>Status:</strong> diverged — <strong>backend implemented</strong> (acquire #1048,
+          manager #1049, auth #1050, detection #1051, orchestrator + Tauri commands #1052, seam
+          refactor #1087); <strong>frontend UI pending</strong> (#1053). Three artifacts describe
+          the pre-#1087 detection design and need updating to the current layering (tracked in
+          #1100).
         </p>
 
         <h3>Open divergences</h3>
@@ -972,37 +976,74 @@ flowchart TB
             <tbody>
               <tr>
                 <td>1</td>
-                <td>X server provisioning subsystem (<code>src-tauri/.../xserver/</code>)</td>
-                <td>Not implemented — backlog feature</td>
-                <td>Missing</td>
-                <td>Implement per order above, then re-sync</td>
+                <td>
+                  "Detection decision flow" diagram + "Detection fix (x11.rs)" prose:
+                  <code>detect_local_x_server</code> consults a registered managed server first and
+                  returns TCP loopback + known cookie
+                </td>
+                <td>
+                  Post-#1087, core detection is <strong>not</strong> managed-aware. The desktop
+                  orchestrator/provisioner resolves the managed server into a
+                  <code>ResolvedXServer</code> and threads it to <code>X11Forwarder::start</code>;
+                  <code>detect_local_x_server()</code> handles only the user-run fallback (DISPLAY /
+                  socket / Windows TCP:6000). Observable behavior is unchanged — the seam moved up a
+                  layer.
+                </td>
+                <td>Design reality (approved #1087 refactor)</td>
+                <td>Edit concept — redraw the detection diagram + reword the prose (#1100)</td>
               </tr>
               <tr>
                 <td>2</td>
-                <td>Managed-server-aware detection + Windows TCP:6000 probe</td>
                 <td>
-                  <code>x11.rs</code> scans <code>/tmp/.X11-unix</code> + shells to
-                  <code>xauth</code> only
+                  Session-open sequence diagram: <code>Orch-->>Conn: LocalXServerInfo(:0, cookie)</code>
                 </td>
-                <td>Diverged</td>
-                <td>Extend <code>detect_local_x_server</code> / cookie lookup</td>
+                <td>
+                  Provisioner returns <code>Option&lt;ResolvedXServer&gt;</code>;
+                  <code>ensure_x_server</code> returns
+                  <code>EnsureOutcome { report, resolved }</code>
+                </td>
+                <td>Design reality (#1087)</td>
+                <td>Edit concept — relabel to <code>ResolvedXServer</code> (#1100)</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>
-                  Settings <code>provideXServerAutomatically</code> /
-                  <code>stopXServerWhenIdle</code>
+                  Impl-details table row <code>core/src/backends/ssh/x11.rs</code> →
+                  "managed-server-aware detection; Windows TCP:6000 probe"
                 </td>
-                <td>Not present in SSH schema</td>
-                <td>Missing</td>
-                <td>Add schema fields once orchestrator lands</td>
+                <td>
+                  Windows TCP:6000 probe present; managed-awareness removed from detection in #1087
+                </td>
+                <td>Design reality (#1087)</td>
+                <td>Edit concept — reword row (#1100)</td>
               </tr>
               <tr>
                 <td>4</td>
-                <td>"X Servers" section in Open Connections panel</td>
+                <td>
+                  Settings <code>provideXServerAutomatically</code> /
+                  <code>stopXServerWhenIdle</code> rendered by <code>DynamicForm</code>
+                </td>
+                <td>
+                  Backend fields exist (<code>settings.rs</code>:
+                  <code>provide_x_server_automatically</code>,
+                  <code>stop_x_server_when_idle</code>); no settings UI yet
+                </td>
+                <td>Missing (partial)</td>
+                <td>Implement settings UI in #1053</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>First-run consent + provisioning-progress UI (Mockup 1)</td>
+                <td>No frontend consent/progress surface; backend emits progress events</td>
+                <td>Missing</td>
+                <td>Implement in #1053</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>"X Servers" section in Open Connections panel (Mockup 2)</td>
                 <td>Not present in <code>OpenConnectionsModal.tsx</code></td>
                 <td>Missing</td>
-                <td>Add <code>Section</code> after backend command surface exists</td>
+                <td>Implement in #1053</td>
               </tr>
             </tbody>
           </table>
@@ -1020,9 +1061,16 @@ flowchart TB
             </thead>
             <tbody>
               <tr>
+                <td>2026-07-05</td>
                 <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>
+                  Backend subsystem implemented across the epic: <code>acquire.rs</code> (#1048),
+                  <code>manager.rs</code> (#1049), <code>auth.rs</code> (#1050), managed detection +
+                  Windows TCP:6000 probe (#1051), <code>orchestrator.rs</code> + four Tauri commands
+                  (#1052), and the managed-source seam collapse (#1087). Settings fields
+                  <code>provideXServerAutomatically</code> / <code>stopXServerWhenIdle</code> exist
+                  in <code>settings.rs</code>. Remaining work is the frontend UI (#1053).
+                </td>
               </tr>
             </tbody>
           </table>

@@ -155,6 +155,16 @@ pub struct AppSettings {
     /// Default value for X11 Forwarding toggle in new SSH connections.
     #[serde(default = "default_true")]
     pub default_x11_forwarding: bool,
+    /// Whether termiHub automatically provides a local X server for SSH X11
+    /// forwarding (epic #1047). `None` means "use the platform default":
+    /// prompt-then-download on Windows, off elsewhere. See
+    /// [`crate::terminal::xserver::resolve_provide_automatically`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provide_x_server_automatically: Option<bool>,
+    /// Whether a termiHub-managed X server is stopped once its last X11 session
+    /// closes (idle shutdown). Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub stop_x_server_when_idle: bool,
     /// When `true` (default), the open tab groups and layout are auto-saved on
     /// every change and restored on the next startup. When `false`, the app
     /// always starts with a fresh empty session.
@@ -230,6 +240,8 @@ impl Default for AppSettings {
             ask_open_saved_file_in_tab: true,
             default_shell_integration: true,
             default_x11_forwarding: true,
+            provide_x_server_automatically: None,
+            stop_x_server_when_idle: true,
             restore_last_session_on_startup: true,
             layout: None,
             credential_storage_mode: None,
@@ -472,6 +484,44 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
         assert!(!deserialized.restore_last_session_on_startup);
+    }
+
+    #[test]
+    fn x_server_defaults() {
+        let settings = AppSettings::default();
+        // Provisioning preference is unset (platform default resolved elsewhere).
+        assert!(settings.provide_x_server_automatically.is_none());
+        // Idle shutdown is on by default.
+        assert!(settings.stop_x_server_when_idle);
+    }
+
+    #[test]
+    fn x_server_provide_none_omitted_but_stop_idle_serialized() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("provideXServerAutomatically"));
+        assert!(json.contains("stopXServerWhenIdle"));
+    }
+
+    #[test]
+    fn x_server_settings_round_trip() {
+        let settings = AppSettings {
+            provide_x_server_automatically: Some(true),
+            stop_x_server_when_idle: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.provide_x_server_automatically, Some(true));
+        assert!(!deserialized.stop_x_server_when_idle);
+    }
+
+    #[test]
+    fn x_server_legacy_json_defaults_stop_idle_true() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.provide_x_server_automatically.is_none());
+        assert!(settings.stop_x_server_when_idle);
     }
 
     #[test]

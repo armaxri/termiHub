@@ -27,6 +27,7 @@ import {
   JumpHostConfig,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
+import { Button, Input, Select, Toggle } from "@/components/ui";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
   buildDefaults,
@@ -911,13 +912,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <h3 className="settings-panel__category-title">General</h3>
         <label className="settings-form__field">
           <span className="settings-form__label">Name</span>
-          <input
+          <Input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Connection name"
             autoFocus
-            className={nameError ? "settings-form__input--error" : ""}
+            error={!!nameError}
             data-testid="connection-editor-name-input"
           />
           {nameError && (
@@ -932,18 +933,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         {!isAgentTransportMode && (
           <label className="settings-form__field">
             <span className="settings-form__label">Type</span>
-            <select
+            <Select
               value={selectedType}
-              onChange={(e) => handleTypeChange(e.target.value)}
+              onChange={handleTypeChange}
+              options={typeOptions}
               disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
+              aria-label="Type"
               data-testid="connection-editor-type-select"
-            >
-              {typeOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
         )}
         {!isAgentTransportMode && (
@@ -955,18 +952,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         {!isAnyAgentMode && enabledExternalFiles.length > 0 && (
           <label className="settings-form__field">
             <span className="settings-form__label">Storage File</span>
-            <select
+            <Select
               value={sourceFile ?? ""}
-              onChange={(e) => setSourceFile(e.target.value || null)}
+              onChange={(v) => setSourceFile(v || null)}
+              options={[
+                { value: "", label: "Default (connections.json)" },
+                ...enabledExternalFiles.map((f) => ({ value: f.path, label: f.path })),
+              ]}
+              aria-label="Storage File"
               data-testid="connection-editor-source-file"
-            >
-              <option value="">Default (connections.json)</option>
-              {enabledExternalFiles.map((f) => (
-                <option key={f.path} value={f.path}>
-                  {f.path}
-                </option>
-              ))}
-            </select>
+            />
           </label>
         )}
       </div>
@@ -999,15 +994,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       {showSshAgentSetup && (
         <div className="settings-panel__category" data-testid="ssh-agent-setup-section">
           <h3 className="settings-panel__category-title">SSH Agent</h3>
-          <button
-            type="button"
-            className="connection-editor__btn connection-editor__btn--secondary connection-editor__setup-agent-btn"
+          <Button
+            variant="secondary"
+            size="sm"
+            className="connection-editor__setup-agent-btn"
+            icon={<KeyRound size={13} aria-hidden />}
             onClick={handleSetupSshAgent}
             data-testid="ssh-setup-agent"
           >
-            <KeyRound size={13} aria-hidden />
             Setup SSH Agent
-          </button>
+          </Button>
           <p className="settings-form__hint">
             Opens a terminal that starts your SSH agent and adds your keys (<code>ssh-add</code>),
             so agent authentication can find them.
@@ -1020,15 +1016,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <h3 className="settings-panel__category-title">Session</h3>
           <div className="settings-form__field">
             <span className="settings-form__label">Persistent session</span>
-            <label className="settings-panel__toggle">
-              <input
-                type="checkbox"
-                checked={persistent}
-                onChange={(e) => setPersistent(e.target.checked)}
-                data-testid="connection-editor-persistent"
-              />
-              <span className="settings-panel__toggle-slider" />
-            </label>
+            <Toggle
+              checked={persistent}
+              onCheckedChange={setPersistent}
+              aria-label="Persistent session"
+              data-testid="connection-editor-persistent"
+            />
             <span className="settings-form__hint">
               Keep the session alive when the tab is closed
             </span>
@@ -1113,29 +1106,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <div className="connection-editor__content">{renderContent()}</div>
       </div>
       <div className="connection-editor__actions">
-        <button
-          className="connection-editor__btn connection-editor__btn--secondary"
-          onClick={handleCancel}
-          data-testid="connection-editor-cancel"
-        >
+        <Button variant="secondary" onClick={handleCancel} data-testid="connection-editor-cancel">
           Cancel
-        </button>
+        </Button>
         {!isAgentTransportMode && (
-          <button
-            className="connection-editor__btn connection-editor__btn--primary"
+          <Button
+            variant="primary"
             onClick={handleSaveAndConnect}
             data-testid="connection-editor-save-connect"
           >
             Save &amp; Connect
-          </button>
+          </Button>
         )}
-        <button
-          className="connection-editor__btn connection-editor__btn--primary"
-          onClick={handleSave}
-          data-testid="connection-editor-save"
-        >
+        <Button variant="primary" onClick={handleSave} data-testid="connection-editor-save">
           Save
-        </button>
+        </Button>
       </div>
       <UnsavedChangesDialog
         open={pendingCloseRequest?.tabId === tabId}

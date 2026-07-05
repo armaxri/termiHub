@@ -42,7 +42,11 @@ describe("LargePasteDialog", () => {
     const dialog = document.querySelector('[data-testid="large-paste-dialog"]');
     expect(dialog).toBeTruthy();
     expect(dialog!.classList.contains("ui-modal")).toBe(true);
-    expect(dialog!.textContent).toContain("12,345");
+    // The component groups the count with `toLocaleString()`, so the separator
+    // is locale-dependent ("12,345" in en-US, "12.345" in en-DE). Assert against
+    // the same locale-formatted value rather than a hard-coded US separator so
+    // the test passes regardless of the runner's default locale.
+    expect(dialog!.textContent).toContain(baseProps.charCount.toLocaleString());
   });
 
   it("Paste button fires onConfirm", () => {

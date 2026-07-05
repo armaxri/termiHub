@@ -176,11 +176,25 @@ impl SshConnector for RusshSshConnector {
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
         if config.enable_x11_forwarding {
-            // No managed X server source yet — the Windows XServerManager
-            // (issue #1049) will supply one here; until then detection falls
-            // back to a user-run server.
-            let managed = None;
-            match X11Forwarder::start(config, &mut session, registry, alive.clone(), managed).await
+            // Ensure a usable local X server via the app-registered provisioner
+            // (epic #1047). It resolves the concrete server (managed or adopted)
+            // so the forwarder does not re-probe. When none is registered (core
+            // standalone / tests) `resolved` is `None` and the forwarder falls
+            // back to detecting a user-run server. A provisioning failure is
+            // logged with its actionable message and the session continues
+            // without display forwarding rather than aborting the whole connect.
+            use super::x11::x_server_provisioner;
+            let resolved = match x_server_provisioner() {
+                Some(provisioner) => match provisioner.ensure().await {
+                    Ok(resolved) => resolved,
+                    Err(message) => {
+                        tracing::warn!("X server provisioning failed: {message}");
+                        None
+                    }
+                },
+                None => None,
+            };
+            match X11Forwarder::start(config, &mut session, registry, alive.clone(), resolved).await
             {
                 Ok((forwarder, display_num, cookie)) => {
                     x11_display = Some(display_num);

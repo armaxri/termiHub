@@ -27,6 +27,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { workspace = true }
+hex = "0.4"
 serde_json = { workspace = true }
 portable-pty = "0.8"
 russh = { workspace = true }
@@ -45,6 +46,7 @@ async-trait = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
 semver = "1"
 dirs = "6"
+which = "7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "fmt", "env-filter"] }
 chrono = "0.4"
@@ -79,7 +81,6 @@ keyring = { version = "3", default-features = false, features = ["windows-native
 # on other platforms.
 zip = "2"
 sha2 = "0.10"
-hex = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux Secret Service backend. The `async-secret-service` backend talks to the

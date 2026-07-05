@@ -749,22 +749,23 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
     renderEditor(CONN_WITHOUT_EXPLICIT_DEFAULTS.id);
     await flushEffects();
 
-    // Checkbox shows as checked because the schema default is true
-    const checkbox = container.querySelector(
+    // Toggle shows as on because the schema default is true (Radix Switch:
+    // read `aria-checked` rather than a native checkbox `.checked`).
+    const toggle = container.querySelector(
       '[data-testid="field-shellIntegration"]'
-    ) as HTMLInputElement;
-    expect(checkbox).not.toBeNull();
-    expect(checkbox.checked).toBe(true);
+    ) as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
 
-    // Uncheck → dirty
+    // Toggle off → dirty
     await act(async () => {
-      checkbox.click();
+      toggle.click();
     });
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
-    // Re-check (back to schema default) → clean
+    // Toggle back on (schema default) → clean
     await act(async () => {
-      checkbox.click();
+      toggle.click();
     });
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });

@@ -52,7 +52,7 @@
 }
 
 .update-notification__dot--amber {
-  background: #f59e0b;
+  background: var(--color-notice);
 }
 
 .update-notification__close {

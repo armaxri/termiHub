@@ -42,8 +42,15 @@ use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer}
 /// exists, but resolving it downloads VcXsrv, which the concept gates behind a
 /// user consent prompt — so the real resolver is wired by the provisioning
 /// orchestrator (#1052) once the consent flow exists, not here.
+///
+/// The cookie provider (#1050) writes `.Xauthority` files under a temp
+/// subdirectory; the files are ephemeral, regenerated per server start and
+/// removed on stop.
 fn build_xserver_manager() -> terminal::xserver::XServerManager {
+    use terminal::xserver::auth::FileXAuthProvider;
     use terminal::xserver::manager::{CommandLauncher, TcpPortProbe};
+
+    let auth_dir = std::env::temp_dir().join("termihub-xserver");
 
     terminal::xserver::XServerManager::new(
         Box::new(TcpPortProbe),
@@ -53,6 +60,7 @@ fn build_xserver_manager() -> terminal::xserver::XServerManager {
                 "managed X server provisioning is not wired yet (awaiting consent flow, #1052)"
             )
         }),
+        Box::new(FileXAuthProvider::new(auth_dir)),
         cfg!(windows),
         true,
     )
@@ -70,6 +78,10 @@ pub fn run() {
         .with(capture_layer)
         .init();
 
+    // Shared X server manager (#1049), held as an `Arc` so the provisioner
+    // (#1052) and the Tauri commands can both reference the same instance.
+    let x_server_manager = Arc::new(build_xserver_manager());
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -79,7 +91,7 @@ pub fn run() {
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
-        .manage(build_xserver_manager())
+        .manage(x_server_manager.clone())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(log_buffer);
 
@@ -252,6 +264,11 @@ pub fn run() {
             let session_manager = SessionManager::new(registry, agent_manager.clone());
             app.manage(session_manager);
             app.manage(agent_manager);
+
+            // X server provisioning (#1052): register the provisioner so the SSH
+            // connect path can ensure a local X server before X11 forwarding
+            // starts. The manager itself (#1049) is created and managed above.
+            terminal::xserver::init(app.handle(), x_server_manager.clone());
 
             // Initialize tunnel manager with recovery loading.
             // On failure, the app still starts but tunnels are unavailable.
@@ -595,6 +612,11 @@ pub fn run() {
             commands::update::clear_skipped_version,
             commands::update::set_update_auto_check,
             commands::update::get_update_settings,
+            // X server provisioning
+            commands::xserver::x_server_status,
+            commands::xserver::x_server_ensure,
+            commands::xserver::x_server_stop,
+            commands::xserver::x_server_install_dependency,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -622,7 +644,7 @@ pub fn run() {
                     }
                     // Stop the managed X server so no orphan vcxsrv.exe is left
                     // behind (issue #1049). Adopted external servers are untouched.
-                    if let Some(mgr) = handle.try_state::<terminal::xserver::XServerManager>() {
+                    if let Some(mgr) = handle.try_state::<Arc<terminal::xserver::XServerManager>>() {
                         mgr.stop();
                     }
                 });
