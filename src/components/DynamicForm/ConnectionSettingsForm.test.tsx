@@ -106,6 +106,16 @@ describe("ConnectionSettingsForm", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    // Radix Select (the migrated auth-method dropdown) probes pointer-capture
+    // and scroll APIs that jsdom omits.
+    if (!Element.prototype.hasPointerCapture) {
+      Element.prototype.hasPointerCapture = () => false;
+      Element.prototype.setPointerCapture = () => {};
+      Element.prototype.releasePointerCapture = () => {};
+    }
+    if (!Element.prototype.scrollIntoView) {
+      Element.prototype.scrollIntoView = () => {};
+    }
   });
 
   afterEach(() => {
@@ -136,10 +146,12 @@ describe("ConnectionSettingsForm", () => {
   });
 
   it("updates conditional fields when the test bridge selects an option", async () => {
-    // Regression: the auth-method <select> is a react-hook-form Controller, whose
+    // Regression: the auth-method dropdown is a react-hook-form Controller, whose
     // watched value drives `visibleWhen`. A bridge `select` must actually update
-    // that value so dependent fields (keyPath) appear — i.e. it must fire the
-    // event RHF listens to, exactly like the `type` command does for inputs.
+    // that value so dependent fields (keyPath) appear — i.e. it must drive the
+    // migrated Radix Select the way a real user does. The live harness wraps
+    // `select` in a retry (`wait`), so mirror that here; in a WebView one call
+    // suffices, but Radix binds its portalled option handlers a tick after open.
     renderForm(SSH_SCHEMA, { authMethod: "password", port: 22 }, vi.fn());
     expect(query("dynamic-field-keyPath")).toBeNull();
 
@@ -154,9 +166,11 @@ describe("ConnectionSettingsForm", () => {
       resizeWindow: async () => {},
       screenshot: async () => "data:image/png;base64,AAAA",
     };
-    await act(async () => {
-      await dispatchCommand({ action: "select", testId: "field-authMethod", value: "key" }, deps);
-    });
+    for (let i = 0; i < 3 && query("dynamic-field-keyPath") === null; i++) {
+      await act(async () => {
+        await dispatchCommand({ action: "select", testId: "field-authMethod", value: "key" }, deps);
+      });
+    }
 
     expect(query("dynamic-field-keyPath")).toBeTruthy();
     expect(query("dynamic-field-password")).toBeNull();

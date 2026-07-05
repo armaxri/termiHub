@@ -8,6 +8,8 @@ import {
   DynamicForwardConfig,
 } from "@/types/tunnel";
 import { TunnelEditorMeta } from "@/types/terminal";
+import { Button, Input, Select, Field, Toggle, toast } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
 import { TunnelDiagram } from "./TunnelDiagram";
 import "./TunnelEditor.css";
 
@@ -118,9 +120,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       try {
         await saveTunnel(config);
         if (andStart) {
-          startTunnel(config.id).catch((err) =>
-            console.error("Failed to start tunnel after save:", err)
-          );
+          startTunnel(config.id).catch((err) => {
+            frontendLog("tunnel_editor", `Failed to start tunnel after save: ${err}`);
+            toast.error("Failed to start tunnel");
+          });
         }
         // Find panelId for this tab and close it
         const { findLeafByTab } = await import("@/utils/panelTree");
@@ -129,7 +132,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           closeTab(tabId, leaf.id);
         }
       } catch (err) {
-        console.error("Failed to save tunnel:", err);
+        frontendLog("tunnel_editor", `Failed to save tunnel: ${err}`);
+        throw err instanceof Error ? err : new Error("Failed to save tunnel");
       }
     },
     [
@@ -155,6 +159,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     }
   }, [rootPanel, tabId, closeTab]);
 
+  const sshOptions = sshConnections.map((c) => ({ value: c.id, label: c.name }));
+
   return (
     <div
       className={`tunnel-editor ${isVisible ? "" : "tunnel-editor--hidden"}`}
@@ -167,34 +173,27 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       </div>
 
       <div className="tunnel-editor__form" data-testid="tunnel-editor-form">
-        <div className="tunnel-editor__field">
-          <label className="tunnel-editor__label">Name</label>
-          <input
-            className="tunnel-editor__input"
+        <Field label="Name" htmlFor={`tunnel-name-${tabId}`}>
+          <Input
+            id={`tunnel-name-${tabId}`}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Dev Database"
             data-testid="tunnel-editor-name"
           />
-        </div>
+        </Field>
 
-        <div className="tunnel-editor__field">
-          <label className="tunnel-editor__label">SSH Connection</label>
-          <select
-            className="tunnel-editor__select"
-            value={sshConnectionId}
-            onChange={(e) => setSshConnectionId(e.target.value)}
+        <Field label="SSH Connection" htmlFor={`tunnel-ssh-${tabId}`}>
+          <Select
+            value={sshConnectionId || undefined}
+            onChange={setSshConnectionId}
+            options={sshOptions}
+            placeholder="No SSH connections available"
+            aria-label="SSH Connection"
             data-testid="tunnel-editor-ssh-connection"
-          >
-            {sshConnections.length === 0 && <option value="">No SSH connections available</option>}
-            {sshConnections.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+          />
+        </Field>
 
         <div className="tunnel-editor__field">
           <label className="tunnel-editor__label">Tunnel Type</label>
@@ -232,48 +231,52 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <>
             <span className="tunnel-editor__section-title">Local Bind</span>
             <div className="tunnel-editor__row">
-              <div className="tunnel-editor__field">
-                <label className="tunnel-editor__label">Local Host</label>
-                <input
-                  className="tunnel-editor__input"
+              <Field label="Local Host" htmlFor={`tunnel-local-host-${tabId}`}>
+                <Input
+                  id={`tunnel-local-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.localHost}
                   onChange={(e) => updateConfig("localHost", e.target.value)}
                 />
-              </div>
-              <div className="tunnel-editor__field tunnel-editor__port-field">
-                <label className="tunnel-editor__label">Local Port</label>
-                <input
-                  className="tunnel-editor__input"
+              </Field>
+              <Field
+                label="Local Port"
+                htmlFor={`tunnel-local-port-${tabId}`}
+                className="tunnel-editor__port-field"
+              >
+                <Input
+                  id={`tunnel-local-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.localPort}
                   onChange={(e) => updateConfig("localPort", parseInt(e.target.value) || 0)}
                   data-testid="tunnel-editor-local-port"
                 />
-              </div>
+              </Field>
             </div>
             <span className="tunnel-editor__section-title">Remote Target</span>
             <div className="tunnel-editor__row">
-              <div className="tunnel-editor__field">
-                <label className="tunnel-editor__label">Remote Host</label>
-                <input
-                  className="tunnel-editor__input"
+              <Field label="Remote Host" htmlFor={`tunnel-remote-host-${tabId}`}>
+                <Input
+                  id={`tunnel-remote-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.remoteHost}
                   onChange={(e) => updateConfig("remoteHost", e.target.value)}
                   data-testid="tunnel-editor-remote-host"
                 />
-              </div>
-              <div className="tunnel-editor__field tunnel-editor__port-field">
-                <label className="tunnel-editor__label">Remote Port</label>
-                <input
-                  className="tunnel-editor__input"
+              </Field>
+              <Field
+                label="Remote Port"
+                htmlFor={`tunnel-remote-port-${tabId}`}
+                className="tunnel-editor__port-field"
+              >
+                <Input
+                  id={`tunnel-remote-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.remotePort}
                   onChange={(e) => updateConfig("remotePort", parseInt(e.target.value) || 0)}
                   data-testid="tunnel-editor-remote-port"
                 />
-              </div>
+              </Field>
             </div>
           </>
         )}
@@ -282,45 +285,49 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <>
             <span className="tunnel-editor__section-title">Remote Bind (on SSH Server)</span>
             <div className="tunnel-editor__row">
-              <div className="tunnel-editor__field">
-                <label className="tunnel-editor__label">Remote Host</label>
-                <input
-                  className="tunnel-editor__input"
+              <Field label="Remote Host" htmlFor={`tunnel-r-remote-host-${tabId}`}>
+                <Input
+                  id={`tunnel-r-remote-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.remoteHost}
                   onChange={(e) => updateConfig("remoteHost", e.target.value)}
                 />
-              </div>
-              <div className="tunnel-editor__field tunnel-editor__port-field">
-                <label className="tunnel-editor__label">Remote Port</label>
-                <input
-                  className="tunnel-editor__input"
+              </Field>
+              <Field
+                label="Remote Port"
+                htmlFor={`tunnel-r-remote-port-${tabId}`}
+                className="tunnel-editor__port-field"
+              >
+                <Input
+                  id={`tunnel-r-remote-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.remotePort}
                   onChange={(e) => updateConfig("remotePort", parseInt(e.target.value) || 0)}
                 />
-              </div>
+              </Field>
             </div>
             <span className="tunnel-editor__section-title">Local Target</span>
             <div className="tunnel-editor__row">
-              <div className="tunnel-editor__field">
-                <label className="tunnel-editor__label">Local Host</label>
-                <input
-                  className="tunnel-editor__input"
+              <Field label="Local Host" htmlFor={`tunnel-r-local-host-${tabId}`}>
+                <Input
+                  id={`tunnel-r-local-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.localHost}
                   onChange={(e) => updateConfig("localHost", e.target.value)}
                 />
-              </div>
-              <div className="tunnel-editor__field tunnel-editor__port-field">
-                <label className="tunnel-editor__label">Local Port</label>
-                <input
-                  className="tunnel-editor__input"
+              </Field>
+              <Field
+                label="Local Port"
+                htmlFor={`tunnel-r-local-port-${tabId}`}
+                className="tunnel-editor__port-field"
+              >
+                <Input
+                  id={`tunnel-r-local-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.localPort}
                   onChange={(e) => updateConfig("localPort", parseInt(e.target.value) || 0)}
                 />
-              </div>
+              </Field>
             </div>
           </>
         )}
@@ -329,78 +336,64 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <>
             <span className="tunnel-editor__section-title">SOCKS5 Proxy Bind</span>
             <div className="tunnel-editor__row">
-              <div className="tunnel-editor__field">
-                <label className="tunnel-editor__label">Local Host</label>
-                <input
-                  className="tunnel-editor__input"
+              <Field label="Local Host" htmlFor={`tunnel-d-local-host-${tabId}`}>
+                <Input
+                  id={`tunnel-d-local-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.localHost}
                   onChange={(e) => updateConfig("localHost", e.target.value)}
                 />
-              </div>
-              <div className="tunnel-editor__field tunnel-editor__port-field">
-                <label className="tunnel-editor__label">Local Port</label>
-                <input
-                  className="tunnel-editor__input"
+              </Field>
+              <Field
+                label="Local Port"
+                htmlFor={`tunnel-d-local-port-${tabId}`}
+                className="tunnel-editor__port-field"
+              >
+                <Input
+                  id={`tunnel-d-local-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.localPort}
                   onChange={(e) => updateConfig("localPort", parseInt(e.target.value) || 0)}
                 />
-              </div>
+              </Field>
             </div>
           </>
         )}
 
         <div className="tunnel-editor__checkbox-row">
-          <input
-            className="tunnel-editor__checkbox"
-            type="checkbox"
-            id={`auto-start-${tabId}`}
-            checked={autoStart}
-            onChange={(e) => setAutoStart(e.target.checked)}
-          />
+          <Toggle id={`auto-start-${tabId}`} checked={autoStart} onCheckedChange={setAutoStart} />
           <label className="tunnel-editor__checkbox-label" htmlFor={`auto-start-${tabId}`}>
             Auto-start when app launches
           </label>
         </div>
 
         <div className="tunnel-editor__checkbox-row">
-          <input
-            className="tunnel-editor__checkbox"
-            type="checkbox"
-            id={`reconnect-${tabId}`}
-            checked={reconnect}
-            onChange={(e) => setReconnect(e.target.checked)}
-          />
+          <Toggle id={`reconnect-${tabId}`} checked={reconnect} onCheckedChange={setReconnect} />
           <label className="tunnel-editor__checkbox-label" htmlFor={`reconnect-${tabId}`}>
             Reconnect automatically on disconnect
           </label>
         </div>
 
         <div className="tunnel-editor__actions">
-          <button
-            className="tunnel-editor__btn tunnel-editor__btn--primary"
+          <Button
+            variant="primary"
             onClick={() => handleSave(false)}
             disabled={!sshConnectionId}
             data-testid="tunnel-editor-save"
           >
             Save
-          </button>
-          <button
-            className="tunnel-editor__btn tunnel-editor__btn--primary"
+          </Button>
+          <Button
+            variant="primary"
             onClick={() => handleSave(true)}
             disabled={!sshConnectionId}
             data-testid="tunnel-editor-save-start"
           >
             Save &amp; Start
-          </button>
-          <button
-            className="tunnel-editor__btn"
-            onClick={handleCancel}
-            data-testid="tunnel-editor-cancel"
-          >
+          </Button>
+          <Button variant="secondary" onClick={handleCancel} data-testid="tunnel-editor-cancel">
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </div>

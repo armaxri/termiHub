@@ -1,6 +1,7 @@
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { IconPickerDialog } from "./IconPickerDialog";
 import { IconByName } from "@/utils/connectionIcons";
+import { Button } from "@/components/ui";
 import { useState } from "react";
 
 interface ConnectionAppearanceSettingsProps {
@@ -29,23 +30,23 @@ export function ConnectionAppearanceSettings({
           {color && (
             <div className="connection-editor__color-preview" style={{ backgroundColor: color }} />
           )}
-          <button
-            className="connection-editor__btn connection-editor__btn--secondary"
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setColorPickerOpen(true)}
             data-testid="connection-editor-color-picker"
           >
             {color ? "Change" : "Set Color"}
-          </button>
+          </Button>
           {color && (
-            <button
-              className="connection-editor__btn connection-editor__btn--secondary"
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => onColorChange(undefined)}
               data-testid="connection-editor-clear-color"
             >
               Clear
-            </button>
+            </Button>
           )}
         </div>
         <span className="settings-form__hint">
@@ -57,23 +58,23 @@ export function ConnectionAppearanceSettings({
         <span className="settings-form__label">Icon</span>
         <div className="connection-editor__color-row">
           {icon && <IconByName name={icon} size={18} />}
-          <button
-            className="connection-editor__btn connection-editor__btn--secondary"
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setIconPickerOpen(true)}
             data-testid="connection-editor-icon-picker"
           >
             {icon ? "Change" : "Set Icon"}
-          </button>
+          </Button>
           {icon && (
-            <button
-              className="connection-editor__btn connection-editor__btn--secondary"
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => onIconChange(undefined)}
               data-testid="connection-editor-clear-icon"
             >
               Clear
-            </button>
+            </Button>
           )}
         </div>
         <span className="settings-form__hint">

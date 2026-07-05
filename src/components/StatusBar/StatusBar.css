@@ -343,7 +343,7 @@
 }
 
 .update-indicator__dot--amber {
-  background: #f59e0b;
+  background: var(--color-notice);
 }
 
 .update-indicator__dot--red {
@@ -359,7 +359,7 @@
   font-weight: 600;
   line-height: 14px;
   vertical-align: middle;
-  background: #7c3aed;
+  background: var(--color-badge-dev);
   color: var(--text-on-accent);
   letter-spacing: 0.03em;
 }
