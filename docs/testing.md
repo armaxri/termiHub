@@ -894,6 +894,35 @@ Optional additional cases:
   granted; confirm the hint names the `--socket=x11` / `--socket=fallback-x11`
   grant.
 
+#### macOS XQuartz detect + guided install (#1054)
+
+macOS can't embed an X server, so termiHub detects XQuartz and offers an
+explicit, consent-based install (`src-tauri/src/terminal/xserver/macos.rs`).
+Detection is unit-tested (mock FS), but the guided install and forwarded
+rendering are macOS-only and manual (per ADR-5). **No install may ever run
+silently** — it happens only on the explicit install action.
+
+On a clean macOS **without** XQuartz (`/opt/X11` and
+`/Applications/Utilities/XQuartz.app` both absent):
+
+1. Open an SSH connection with **X11 forwarding** enabled. Confirm it surfaces
+   the **XQuartz missing** guidance (with a link to xquartz.org) — no silent
+   install, no generic failure.
+2. Trigger the install action (the `x_server_install_dependency` command, via
+   the #1053 UI once present):
+   - **With Homebrew installed:** confirm `brew install --cask xquartz` runs
+     (admin auth prompted by brew/macOS), progress is shown, and it reports
+     success.
+   - **Without Homebrew:** confirm it returns the actionable xquartz.org
+     download guidance rather than doing nothing or failing opaquely.
+
+With XQuartz **present**:
+
+1. Connect with X11 forwarding to a host running a GUI app (e.g. `xclock`).
+   Confirm termiHub launches XQuartz if it isn't running (`open -a XQuartz`) and
+   the remote window renders locally. (XQuartz's "Allow connections from network
+   clients" preference may be required.)
+
 #### VcXsrv provisioning: first-run download + offline re-run (Windows, #1076)
 
 termiHub downloads a pinned, minimal VcXsrv `.zip` from its GitHub releases on
