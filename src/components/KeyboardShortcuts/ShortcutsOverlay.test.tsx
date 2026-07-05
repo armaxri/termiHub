@@ -40,13 +40,21 @@ describe("ShortcutsOverlay", () => {
     expect(overlay).not.toBeNull();
   });
 
+  it("renders through the shared Modal primitive", () => {
+    act(() => {
+      root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+    });
+    // The shell comes from the Modal primitive (.ui-modal), not a bespoke overlay.
+    const modal = document.querySelector('.ui-modal[data-testid="shortcuts-overlay"]');
+    expect(modal).not.toBeNull();
+    expect(modal?.querySelector(".ui-modal__title")?.textContent).toBe("Keyboard Shortcuts");
+  });
+
   it("shows the title", () => {
     act(() => {
       root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
     });
-    expect(document.querySelector(".shortcuts-overlay__title")?.textContent).toBe(
-      "Keyboard Shortcuts"
-    );
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("Keyboard Shortcuts");
   });
 
   it("renders the search input", () => {
@@ -114,9 +122,7 @@ describe("ShortcutsOverlay", () => {
     act(() => {
       root.render(<ShortcutsOverlay open={true} onOpenChange={onOpenChange} />);
     });
-    const closeBtn = document.querySelector(
-      '[data-testid="shortcuts-overlay-close"]'
-    ) as HTMLElement;
+    const closeBtn = document.querySelector('[data-testid="modal-close"]') as HTMLElement;
     act(() => {
       closeBtn.click();
     });
