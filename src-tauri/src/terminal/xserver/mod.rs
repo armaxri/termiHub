@@ -74,12 +74,12 @@ impl XServerProvisioner for XServerProvisionerImpl {
     async fn ensure(&self) -> Result<Option<ResolvedXServer>, String> {
         // Run the orchestrator (adopt / spawn / launch XQuartz / typed error) and
         // hand the connect path the server it resolved — managed or adopted —
-        // together with its cookie, so the forwarder performs no second probe. A
-        // `None` resolved server (no reachable server) lets core fall back to
-        // detection.
+        // together with its cookie, so the forwarder performs no second probe.
+        // `Ok` always carries a resolved server; the "nothing usable" case is an
+        // `Err`, and the "no provisioner registered" case is handled in core.
         ensure_off_reactor(&self.app, self.manager.clone())
             .await
-            .map(|outcome| outcome.resolved)
+            .map(|outcome| Some(outcome.resolved))
             .map_err(|e| e.to_string())
     }
 }

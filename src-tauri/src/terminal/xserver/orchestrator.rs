@@ -24,9 +24,9 @@ use super::types::{XServerError, XServerPlatform, XServerState, XServerStatusRep
 pub struct EnsureOutcome {
     /// Frontend-friendly status (state, platform, message).
     pub report: XServerStatusReport,
-    /// Where to forward to, when a usable server was resolved; `None` when the
-    /// call returned a report without a reachable server.
-    pub resolved: Option<ResolvedXServer>,
+    /// The server the SSH connect path should forward to (managed or adopted).
+    /// Present on every `Ok`; the "no server at all" case is an `Err` instead.
+    pub resolved: ResolvedXServer,
 }
 
 /// Ensure a usable local X server for the current platform.
@@ -51,53 +51,43 @@ pub fn ensure_x_server(
     // 1. Let the manager adopt/reuse/spawn (TCP-based; covers Windows + managed).
     if let Ok(info) = manager.ensure_running() {
         // Both managed and TCP-adopted servers are reached at 127.0.0.1:6000+n;
-        // resolve here so the forwarder need not probe again. A managed server's
-        // cookie is known up front; an adopted one's is read via `xauth` (a
-        // no-op on Windows, where an `-ac` server needs no cookie).
-        let (state, cookie) = if info.managed {
-            (
-                XServerState::Running,
-                manager.managed_server().and_then(|m| m.cookie),
-            )
-        } else {
-            (XServerState::Adopted, read_local_xauth_cookie(info.display))
-        };
-        let resolved = ResolvedXServer {
-            info: LocalXServerInfo::tcp_loopback(info.display),
-            cookie,
+        // resolve here so the forwarder need not probe again. A server termiHub
+        // spawned reports its cookie up front (`managed_server()`); an adopted
+        // one's is read via `xauth` (a no-op on Windows, where an `-ac` server
+        // needs none).
+        let (state, managed, resolved) = match manager.managed_server() {
+            Some(server) => (XServerState::Running, true, server.resolved()),
+            None => (
+                XServerState::Adopted,
+                false,
+                ResolvedXServer {
+                    info: LocalXServerInfo::tcp_loopback(info.display),
+                    cookie: read_local_xauth_cookie(info.display),
+                },
+            ),
         };
         let report = report(
             platform,
             state,
-            Some(info.display),
-            info.managed,
+            Some(resolved.info.display_number),
+            managed,
             dependency,
         );
-        return Ok(EnsureOutcome {
-            report,
-            resolved: Some(resolved),
-        });
+        return Ok(EnsureOutcome { report, resolved });
     }
 
     // 2. Fall back to cross-platform detection for a user-run server the TCP
     //    probe cannot see (DISPLAY / Unix socket on macOS & Linux). Thread the
     //    resolved info (and its cookie) straight through to the forwarder.
-    if let Some(local) = detect_local_x_server() {
-        let cookie = read_local_xauth_cookie(local.display_number);
+    if let Some(resolved) = ResolvedXServer::detect_user_run() {
         let report = report(
             platform,
             XServerState::Adopted,
-            Some(local.display_number),
+            Some(resolved.info.display_number),
             false,
             dependency,
         );
-        return Ok(EnsureOutcome {
-            report,
-            resolved: Some(ResolvedXServer {
-                info: local,
-                cookie,
-            }),
-        });
+        return Ok(EnsureOutcome { report, resolved });
     }
 
     // 3. Nothing usable — return actionable, typed guidance.
@@ -405,7 +395,7 @@ mod tests {
             let outcome = ensure_x_server(&mgr, true).expect("managed server ensured");
 
             assert_eq!(outcome.report.state, XServerState::Running);
-            let resolved = outcome.resolved.expect("resolved server threaded through");
+            let resolved = outcome.resolved;
             assert_eq!(resolved.info.display_number, 0);
             assert_tcp_loopback(&resolved.info.connection, 6000);
             assert_eq!(resolved.cookie.as_deref(), Some(FAKE_COOKIE));
@@ -420,7 +410,7 @@ mod tests {
             let outcome = ensure_x_server(&mgr, true).expect("adopted server ensured");
 
             assert_eq!(outcome.report.state, XServerState::Adopted);
-            let resolved = outcome.resolved.expect("resolved adopted server threaded");
+            let resolved = outcome.resolved;
             assert_eq!(resolved.info.display_number, 0);
             assert_tcp_loopback(&resolved.info.connection, 6000);
         }

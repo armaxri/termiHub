@@ -87,6 +87,19 @@ pub struct ResolvedXServer {
     pub cookie: Option<String>,
 }
 
+impl ResolvedXServer {
+    /// Resolve a user-run X server (no termiHub provisioner) into a forwarding
+    /// target: [`detect_local_x_server`] for the connection, then
+    /// [`read_local_xauth_cookie`] for its cookie. `None` when no local server is
+    /// found. Shared by [`X11Forwarder::start`]'s no-provisioner fallback and the
+    /// desktop orchestrator so user-run resolution lives in one place.
+    pub fn detect_user_run() -> Option<Self> {
+        let info = detect_local_x_server()?;
+        let cookie = read_local_xauth_cookie(info.display_number);
+        Some(Self { info, cookie })
+    }
+}
+
 /// A hook the desktop app installs so the SSH connect path can ensure a usable
 /// local X server *before* X11 forwarding starts.
 ///
@@ -147,21 +160,18 @@ impl X11Forwarder {
         alive: Arc<AtomicBool>,
         resolved: Option<ResolvedXServer>,
     ) -> Result<(Self, u32, Option<String>), SessionError> {
-        let (local_x, xauth_cookie) = match resolved {
-            // Provisioner already resolved the server — forward to it directly.
-            Some(resolved) => (resolved.info, resolved.cookie),
-            // No provisioner: detect a user-run server and read its cookie.
-            None => {
-                let info = detect_local_x_server().ok_or_else(|| {
-                    SessionError::SpawnFailed(
-                        "No local X server detected. Start an X server (XQuartz on macOS)."
-                            .to_string(),
-                    )
-                })?;
-                let cookie = read_local_xauth_cookie(info.display_number);
-                (info, cookie)
-            }
-        };
+        // Use the provisioner-resolved server as-is; without one, detect a
+        // user-run server here (the sole fallback probe on the connect path).
+        let ResolvedXServer {
+            info: local_x,
+            cookie: xauth_cookie,
+        } = resolved
+            .or_else(ResolvedXServer::detect_user_run)
+            .ok_or_else(|| {
+                SessionError::SpawnFailed(
+                    "No local X server detected. Start an X server (XQuartz on macOS).".to_string(),
+                )
+            })?;
 
         info!(
             "X11 forwarding: using local X server at display :{}",
@@ -435,10 +445,7 @@ fn detect_from_sockets() -> Option<LocalXServerInfo> {
 fn detect_from_tcp_probe() -> Option<LocalXServerInfo> {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 6000));
     if probe_tcp_x_server_at(addr, std::time::Duration::from_millis(300)) {
-        Some(LocalXServerInfo {
-            display_number: 0,
-            connection: LocalXConnection::Tcp("127.0.0.1".to_string(), 6000),
-        })
+        Some(LocalXServerInfo::tcp_loopback(0))
     } else {
         None
     }
