@@ -19,6 +19,13 @@ gh issue list --label Concept
 - **Assignment happens ONLY when _taking_ an issue to implement it — never at creation time**: when (and only when) picking up an existing issue to start work on it, determine the current GitHub user via `gh api user -q .login` and assign them with `gh issue edit <N> --add-assignee <login>`. Before starting work, check if the issue already has an assignee — if so, warn the user that someone else may already be working on it (check for existing branches like `feature/*` or `bugfix/*` referencing the issue number)
 - Reference issue numbers in commits and PRs (`Closes #N` / `Fixes #N`)
 - Create new issues for work discovered during development and label them appropriately. **Never add an assignee when _creating_ an issue** — not the user, not yourself. Newly created issues are always left unassigned so anyone can pick them up; assigning is exclusively the "taking an issue" action above.
+- **Automatically file follow-up issues for deferred or discovered work — do this without being asked.** Whenever you finish an issue but leave something behind, open a follow-up issue as part of wrapping up (not a question for the user). File one when any of these hold:
+  - You deliberately narrowed scope to keep a PR reviewable (e.g. migrated some of N groups, "one group per PR").
+  - You found work that is genuinely out of the current issue's scope (an adjacent component, a related bug, a latent issue).
+  - The issue's stated acceptance / "done when" is only partially met, or a ratchet/allowlist/TODO still has pending entries that a later change must clear.
+  - You noted "left for a follow-up", "out of scope", or "worth a dedicated change" anywhere in your report, commits, or PR body.
+
+  Each follow-up issue must: reference the originating issue and PR (e.g. "Follow-up to #N (PR #M)"); carry the right label (`Ready2Implement` for actionable work, `Concept` for design-only); stay **unassigned**; and give a concrete **Scope** checklist plus a **Done when** criterion. Then link it from the originating PR body so the deferral is traceable. Prefer one precise follow-up per distinct piece of deferred work over a single vague catch-all.
 
 ### Concept Issues
 
