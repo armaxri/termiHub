@@ -50,12 +50,16 @@ pub struct PinnedVcxsrv {
 
 /// The VcXsrv build termiHub provisions.
 ///
-/// NOTE: `sha256` is a placeholder until the minimal `.zip` artifact is
-/// published to termiHub's GitHub releases (tracked with the GPL-3.0 licensing
-/// work, #1056). Until then a real download is *rejected* by verification and
-/// never executed — which is the safe failure mode. The offline unit tests
-/// exercise verification and extraction against synthetic archives, so they do
-/// not depend on this value.
+/// NOTE: `sha256` is a placeholder until the minimal `.zip` artifact is built
+/// and published to termiHub's GitHub releases (#1076). Build it reproducibly
+/// from an installed VcXsrv with `scripts/internal/package-vcxsrv.ps1`, which
+/// prints the SHA-256 to paste here (or run it with `-UpdateAcquire` to patch
+/// this field), then publish the printed artifact. Until then a real download
+/// is *rejected* by verification and never executed — the safe failure mode.
+/// The offline unit tests exercise verification and extraction against synthetic
+/// archives, so they do not depend on this value; the networked
+/// `pinned_artifact_downloads_verifies_and_contains_exe` test (`#[ignore]`)
+/// confirms the real artifact once it is published.
 pub const PINNED_VCXSRV: PinnedVcxsrv = PinnedVcxsrv {
     version: "21.1.13",
     zip_url: "https://github.com/armaxri/termiHub/releases/download/vcxsrv-21.1.13/vcxsrv-21.1.13-minimal.zip",
