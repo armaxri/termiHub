@@ -17,6 +17,7 @@
 pub mod acquire;
 pub mod auth;
 mod linux_gap;
+mod macos;
 pub mod manager;
 mod orchestrator;
 mod types;

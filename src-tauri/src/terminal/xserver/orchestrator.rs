@@ -212,10 +212,7 @@ fn report(
 ///   running-server TCP probe, and managed acquisition is #1048.
 fn dependency_available(platform: XServerPlatform) -> bool {
     match platform {
-        XServerPlatform::MacOs => {
-            std::path::Path::new("/opt/X11").exists()
-                || std::path::Path::new("/Applications/Utilities/XQuartz.app").exists()
-        }
+        XServerPlatform::MacOs => super::macos::xquartz_installed(),
         XServerPlatform::Linux => {
             std::path::Path::new("/tmp/.X11-unix").is_dir()
                 || super::binary_on_path("Xwayland")
