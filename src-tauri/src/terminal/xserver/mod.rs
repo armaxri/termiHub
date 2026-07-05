@@ -24,12 +24,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::{AppHandle, Manager};
-use termihub_core::backends::ssh::x11::{ManagedXServer, ManagedXServerSource, XServerProvisioner};
+use termihub_core::backends::ssh::x11::{ResolvedXServer, XServerProvisioner};
 
 use crate::connection::manager::ConnectionManager;
 
 pub use manager::XServerManager;
-pub use orchestrator::{current_status, ensure_x_server};
+pub use orchestrator::{current_status, ensure_x_server, EnsureOutcome};
 pub use types::{
     XServerError, XServerPlatform, XServerProgress, XServerStatusReport, X_SERVER_PROGRESS_EVENT,
 };
@@ -71,14 +71,15 @@ impl XServerProvisionerImpl {
 
 #[async_trait]
 impl XServerProvisioner for XServerProvisionerImpl {
-    async fn ensure(&self) -> Result<Option<ManagedXServer>, String> {
-        // Run the orchestrator for its side effects (adopt / spawn / launch
-        // XQuartz / typed error). A termiHub-managed server is then handed to the
-        // forwarder directly; an adopted external server yields `None`, so core
-        // detection finds it (covering Unix-socket servers on macOS/Linux).
+    async fn ensure(&self) -> Result<Option<ResolvedXServer>, String> {
+        // Run the orchestrator (adopt / spawn / launch XQuartz / typed error) and
+        // hand the connect path the server it resolved — managed or adopted —
+        // together with its cookie, so the forwarder performs no second probe. A
+        // `None` resolved server (no reachable server) lets core fall back to
+        // detection.
         ensure_off_reactor(&self.app, self.manager.clone())
             .await
-            .map(|_report| self.manager.managed_server())
+            .map(|outcome| outcome.resolved)
             .map_err(|e| e.to_string())
     }
 }
@@ -90,7 +91,7 @@ impl XServerProvisioner for XServerProvisionerImpl {
 pub(crate) async fn ensure_off_reactor(
     app: &AppHandle,
     manager: Arc<XServerManager>,
-) -> Result<XServerStatusReport, XServerError> {
+) -> Result<EnsureOutcome, XServerError> {
     let provide = resolve_provide_automatically(app);
     tokio::task::spawn_blocking(move || ensure_x_server(&manager, provide))
         .await
