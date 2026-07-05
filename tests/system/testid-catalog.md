@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**454** literal · **123** dynamic · **16** indirect.
+**456** literal · **123** dynamic · **18** indirect.
 
 ## Literal test IDs
 
@@ -268,6 +268,8 @@ Fixed strings — match exactly.
 | `network-monitors-section` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-new-monitor` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-tools-sidebar` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `open-connections-x-server-row` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-x-servers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-ports-panel` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-ports-refresh` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-saved-file-ask-again` | `src/components/Terminal/OpenSavedFileDialog.tsx` |
@@ -613,9 +615,11 @@ where the component is used, not at the `data-testid` site.
 | `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
+| `{killTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
+| `{testId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
