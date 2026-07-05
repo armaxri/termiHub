@@ -12,3 +12,4 @@ pub mod session;
 pub mod tunnel;
 pub mod update;
 pub mod workspace;
+pub mod xserver;

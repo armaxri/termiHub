@@ -5,9 +5,10 @@
 //! to async proxy tasks that bridge to the local X server.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use tracing::{debug, error, info, warn};
 
 use crate::config::SshConfig;
@@ -55,6 +56,62 @@ pub struct ManagedXServer {
 pub trait ManagedXServerSource: Send + Sync {
     /// Returns the currently managed local X server, if termiHub started one.
     fn managed_server(&self) -> Option<ManagedXServer>;
+}
+
+/// A [`ManagedXServerSource`] that always reports a single, fixed managed server.
+///
+/// Lets the SSH connect path hand a just-ensured [`ManagedXServer`] to
+/// [`X11Forwarder::start`] without reaching for a global.
+pub struct SingleManagedServer(ManagedXServer);
+
+impl SingleManagedServer {
+    /// Wrap a managed server so it can be passed as a [`ManagedXServerSource`].
+    pub fn new(server: ManagedXServer) -> Self {
+        Self(server)
+    }
+}
+
+impl ManagedXServerSource for SingleManagedServer {
+    fn managed_server(&self) -> Option<ManagedXServer> {
+        Some(self.0.clone())
+    }
+}
+
+/// A hook the desktop app installs so the SSH connect path can ensure a usable
+/// local X server *before* X11 forwarding starts.
+///
+/// Core cannot provision servers itself — VcXsrv acquisition, process lifecycle,
+/// and the per-platform install flows all live in the desktop app layer
+/// (`src-tauri`, epic #1047 / concept #1044). This trait is the seam: the app
+/// registers an implementation via [`set_x_server_provisioner`] at startup, and
+/// [`connect_shell`](super::connector::SshConnector) consults it whenever
+/// `enable_x11_forwarding` is set. When no provisioner is registered (core used
+/// standalone, or in tests) behavior is unchanged — detection falls back to a
+/// user-run server.
+#[async_trait]
+pub trait XServerProvisioner: Send + Sync {
+    /// Ensure a usable local X server exists.
+    ///
+    /// - `Ok(Some(server))` — a termiHub-managed server is ready; forward to it.
+    /// - `Ok(None)` — no managed server is needed (a user-run server was adopted,
+    ///   or provisioning is disabled); fall back to detection.
+    /// - `Err(message)` — provisioning failed; `message` is an actionable,
+    ///   user-facing explanation surfaced to the UI (never a silent no-op).
+    async fn ensure(&self) -> Result<Option<ManagedXServer>, String>;
+}
+
+static PROVISIONER: OnceLock<Arc<dyn XServerProvisioner>> = OnceLock::new();
+
+/// Install the process-wide X server provisioner (called once at app startup).
+///
+/// The first registration wins; later calls are ignored.
+pub fn set_x_server_provisioner(provisioner: Arc<dyn XServerProvisioner>) {
+    let _ = PROVISIONER.set(provisioner);
+}
+
+/// Returns the registered X server provisioner, if any.
+pub fn x_server_provisioner() -> Option<Arc<dyn XServerProvisioner>> {
+    PROVISIONER.get().cloned()
 }
 
 /// Manages X11 forwarding over an SSH tunnel.
@@ -572,6 +629,27 @@ mod tests {
             cookie: None,
         }));
         assert_eq!(read_local_xauth_cookie(0, Some(&src)), None);
+    }
+
+    #[test]
+    fn single_managed_server_adapter_reports_its_server() {
+        // The adapter used by the connect path to hand a just-ensured server to
+        // the forwarder must report exactly that server, and drive detection to
+        // the managed TCP loopback path.
+        let adapter = SingleManagedServer::new(ManagedXServer {
+            display_number: 2,
+            cookie: Some("cafebabe".to_string()),
+        });
+        let server = adapter.managed_server().expect("adapter reports a server");
+        assert_eq!(server.display_number, 2);
+
+        let info = detect_local_x_server(Some(&adapter)).expect("managed server detected");
+        assert_eq!(info.display_number, 2);
+        assert_tcp(&info.connection, "127.0.0.1", 6002);
+        assert_eq!(
+            read_local_xauth_cookie(2, Some(&adapter)),
+            Some("cafebabe".to_string())
+        );
     }
 
     #[test]
