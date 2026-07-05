@@ -1,21 +1,8 @@
 /*
- * Backdrop retained for other in-flight branches that still reference it;
- * scheduled for a post-merge cleanup. The overlay shell (content, header,
- * title, close, body) now comes from the shared Modal primitive.
+ * The overlay shell (backdrop, content, header, title, close, body) now comes
+ * from the shared Modal primitive (Phase 4). Only the search field and the
+ * shortcuts table remain component-specific.
  */
-.shortcuts-overlay__backdrop {
-  position: fixed;
-  inset: 0;
-  background-color: var(--overlay-bg);
-  backdrop-filter: var(--overlay-blur);
-  -webkit-backdrop-filter: var(--overlay-blur);
-  z-index: 1000;
-}
-
-.shortcuts-overlay__backdrop[data-state="open"] {
-  animation: dialog-overlay-show 200ms ease;
-}
-
 .shortcuts-overlay__search {
   margin-bottom: var(--spacing-md);
 }

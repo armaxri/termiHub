@@ -56,15 +56,19 @@ pub async fn x_server_ensure(
     let result = xserver::ensure_off_reactor(&app, manager.inner().clone()).await;
 
     match &result {
-        Ok(status) => emit_progress(
+        Ok(outcome) => emit_progress(
             &app,
             "ready",
-            status.message.as_deref().unwrap_or("X server ready."),
+            outcome
+                .report
+                .message
+                .as_deref()
+                .unwrap_or("X server ready."),
             1.0,
         ),
         Err(err) => emit_progress(&app, "failed", &err.to_string(), 1.0),
     }
-    result
+    result.map(|outcome| outcome.report)
 }
 
 /// Stop the termiHub-managed X server, if one is running.

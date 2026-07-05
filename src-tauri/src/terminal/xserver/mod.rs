@@ -25,12 +25,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::{AppHandle, Manager};
-use termihub_core::backends::ssh::x11::{ManagedXServer, ManagedXServerSource, XServerProvisioner};
+use termihub_core::backends::ssh::x11::{ResolvedXServer, XServerProvisioner};
 
 use crate::connection::manager::ConnectionManager;
 
 pub use manager::XServerManager;
-pub use orchestrator::{current_status, ensure_x_server};
+pub use orchestrator::{current_status, ensure_x_server, EnsureOutcome};
 pub use types::{
     XServerError, XServerPlatform, XServerProgress, XServerStatusReport, X_SERVER_PROGRESS_EVENT,
 };
@@ -38,19 +38,11 @@ pub use types::{
 /// Whether `name` resolves to an executable on `PATH` (best-effort).
 ///
 /// Shared by the orchestrator's dependency probe and the Linux gap detector.
-/// Always `false` on Windows, where X-server discovery goes through the running
-/// server's TCP probe rather than a `PATH` lookup.
-#[cfg(not(target_os = "windows"))]
+/// Uses the `which` crate so `PATH` parsing and platform executable rules
+/// (Windows `PATHEXT`, etc.) are handled by a maintained library rather than a
+/// hand-rolled split.
 pub(super) fn binary_on_path(name: &str) -> bool {
-    let Ok(path) = std::env::var("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| dir.join(name).exists())
-}
-
-#[cfg(target_os = "windows")]
-pub(super) fn binary_on_path(_name: &str) -> bool {
-    false
+    which::which(name).is_ok()
 }
 
 /// Resolve whether automatic X server provisioning is enabled.
@@ -90,14 +82,15 @@ impl XServerProvisionerImpl {
 
 #[async_trait]
 impl XServerProvisioner for XServerProvisionerImpl {
-    async fn ensure(&self) -> Result<Option<ManagedXServer>, String> {
-        // Run the orchestrator for its side effects (adopt / spawn / launch
-        // XQuartz / typed error). A termiHub-managed server is then handed to the
-        // forwarder directly; an adopted external server yields `None`, so core
-        // detection finds it (covering Unix-socket servers on macOS/Linux).
+    async fn ensure(&self) -> Result<Option<ResolvedXServer>, String> {
+        // Run the orchestrator (adopt / spawn / launch XQuartz / typed error) and
+        // hand the connect path the server it resolved — managed or adopted —
+        // together with its cookie, so the forwarder performs no second probe.
+        // `Ok` always carries a resolved server; the "nothing usable" case is an
+        // `Err`, and the "no provisioner registered" case is handled in core.
         ensure_off_reactor(&self.app, self.manager.clone())
             .await
-            .map(|_report| self.manager.managed_server())
+            .map(|outcome| Some(outcome.resolved))
             .map_err(|e| e.to_string())
     }
 }
@@ -109,7 +102,7 @@ impl XServerProvisioner for XServerProvisionerImpl {
 pub(crate) async fn ensure_off_reactor(
     app: &AppHandle,
     manager: Arc<XServerManager>,
-) -> Result<XServerStatusReport, XServerError> {
+) -> Result<EnsureOutcome, XServerError> {
     let provide = resolve_provide_automatically(app);
     tokio::task::spawn_blocking(move || ensure_x_server(&manager, provide))
         .await

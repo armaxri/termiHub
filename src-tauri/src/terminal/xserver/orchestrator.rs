@@ -8,11 +8,27 @@
 //! status. The per-platform install internals (VcXsrv download #1047 remainder,
 //! XQuartz install #1054, Linux gap classification #1055) are their own issues.
 
-use termihub_core::backends::ssh::x11::detect_local_x_server;
+use termihub_core::backends::ssh::x11::{
+    detect_local_x_server, read_local_xauth_cookie, LocalXServerInfo, ResolvedXServer,
+};
 
 use super::linux_gap::{self, LinuxXEnv};
 use super::manager::{XServerManager, XServerStatus as ManagedStatus};
 use super::types::{XServerError, XServerPlatform, XServerState, XServerStatusReport};
+
+/// Outcome of [`ensure_x_server`]: the UI-facing status report plus, on success,
+/// the fully-resolved server the SSH connect path should forward to.
+///
+/// Threading the resolved server here (rather than re-detecting it in
+/// [`X11Forwarder::start`](termihub_core::backends::ssh::x11::X11Forwarder::start))
+/// removes the second socket/DISPLAY/TCP probe on the connect hot path (#1087).
+pub struct EnsureOutcome {
+    /// Frontend-friendly status (state, platform, message).
+    pub report: XServerStatusReport,
+    /// The server the SSH connect path should forward to (managed or adopted).
+    /// Present on every `Ok`; the "no server at all" case is an `Err` instead.
+    pub resolved: ResolvedXServer,
+}
 
 /// Ensure a usable local X server for the current platform.
 ///
@@ -22,43 +38,57 @@ use super::types::{XServerError, XServerPlatform, XServerState, XServerStatusRep
 pub fn ensure_x_server(
     manager: &XServerManager,
     provide_automatically: bool,
-) -> Result<XServerStatusReport, XServerError> {
+) -> Result<EnsureOutcome, XServerError> {
     let platform = XServerPlatform::current();
     let dependency = dependency_available(platform);
 
     // macOS: if XQuartz is installed but idle, nudge it up so detection and the
     // SSH `DISPLAY` handshake can succeed.
     #[cfg(target_os = "macos")]
-    if dependency && detect_local_x_server(None).is_none() {
+    if dependency && detect_local_x_server().is_none() {
         macos::launch_xquartz();
     }
 
     // 1. Let the manager adopt/reuse/spawn (TCP-based; covers Windows + managed).
     if let Ok(info) = manager.ensure_running() {
-        let state = if info.managed {
-            XServerState::Running
-        } else {
-            XServerState::Adopted
+        // Both managed and TCP-adopted servers are reached at 127.0.0.1:6000+n;
+        // resolve here so the forwarder need not probe again. A server termiHub
+        // spawned reports its cookie up front (`managed_server()`); an adopted
+        // one's is read via `xauth` (a no-op on Windows, where an `-ac` server
+        // needs none).
+        let (state, managed, resolved) = match manager.managed_server() {
+            Some(server) => (XServerState::Running, true, server.resolved()),
+            None => (
+                XServerState::Adopted,
+                false,
+                ResolvedXServer {
+                    info: LocalXServerInfo::tcp_loopback(info.display),
+                    cookie: read_local_xauth_cookie(info.display),
+                },
+            ),
         };
-        return Ok(report(
+        let report = report(
             platform,
             state,
-            Some(info.display),
-            info.managed,
+            Some(resolved.info.display_number),
+            managed,
             dependency,
-        ));
+        );
+        return Ok(EnsureOutcome { report, resolved });
     }
 
     // 2. Fall back to cross-platform detection for a user-run server the TCP
-    //    probe cannot see (DISPLAY / Unix socket on macOS & Linux).
-    if let Some(local) = detect_local_x_server(None) {
-        return Ok(report(
+    //    probe cannot see (DISPLAY / Unix socket on macOS & Linux). Thread the
+    //    resolved info (and its cookie) straight through to the forwarder.
+    if let Some(resolved) = ResolvedXServer::detect_user_run() {
+        let report = report(
             platform,
             XServerState::Adopted,
-            Some(local.display_number),
+            Some(resolved.info.display_number),
             false,
             dependency,
-        ));
+        );
+        return Ok(EnsureOutcome { report, resolved });
     }
 
     // 3. Nothing usable — return actionable, typed guidance. On Linux the
@@ -107,7 +137,7 @@ pub fn current_status(manager: &XServerManager) -> XServerStatusReport {
         ManagedStatus::Stopped => {
             // The manager only tracks TCP servers; consult cross-platform
             // detection for an adopted Unix-socket server it can't see.
-            match detect_local_x_server(None) {
+            match detect_local_x_server() {
                 Some(local) => report(
                     platform,
                     XServerState::Adopted,
@@ -314,5 +344,114 @@ mod tests {
         assert_eq!(r.display_number, Some(7));
         assert!(!r.managed);
         assert!(r.message.unwrap().contains(":7"));
+    }
+
+    // ── Resolved-server threading (#1087) ────────────────────────────────
+    //
+    // These exercise `ensure_x_server` end-to-end with an injected manager to
+    // prove the resolved server (the thing that removes the forwarder's second
+    // probe) is threaded through. Skipped on macOS, where `ensure_x_server`
+    // best-effort launches XQuartz when idle — an unwanted side effect in a unit
+    // test. The resolution logic is platform-independent, so Windows + Linux
+    // coverage is sufficient.
+    #[cfg(not(target_os = "macos"))]
+    mod resolved {
+        use super::*;
+        use crate::terminal::xserver::auth::{XAuth, XAuthProvider};
+        use crate::terminal::xserver::manager::{ManagedProcess, PortProbe, XServerLauncher};
+        use std::path::{Path, PathBuf};
+        use termihub_core::backends::ssh::x11::LocalXConnection;
+
+        const FAKE_COOKIE: &str = "0011223344556677889900aabbccddee";
+
+        struct FakeProbe {
+            open: Vec<u16>,
+        }
+        impl PortProbe for FakeProbe {
+            fn is_open(&self, port: u16) -> bool {
+                self.open.contains(&port)
+            }
+        }
+
+        struct FakeProc;
+        impl ManagedProcess for FakeProc {
+            fn is_alive(&mut self) -> bool {
+                true
+            }
+            fn terminate(&mut self) {}
+        }
+
+        struct FakeLauncher;
+        impl XServerLauncher for FakeLauncher {
+            fn launch(
+                &self,
+                _exe: &Path,
+                _display: u32,
+                _auth_file: Option<&Path>,
+            ) -> anyhow::Result<Box<dyn ManagedProcess>> {
+                Ok(Box::new(FakeProc))
+            }
+        }
+
+        struct FakeAuth;
+        impl XAuthProvider for FakeAuth {
+            fn provision(&self, _display: u32) -> anyhow::Result<XAuth> {
+                Ok(XAuth {
+                    auth_file: PathBuf::from("fake/.Xauthority"),
+                    cookie_hex: FAKE_COOKIE.to_string(),
+                })
+            }
+        }
+
+        fn manager(open: Vec<u16>, provides_managed: bool) -> XServerManager {
+            XServerManager::new(
+                Box::new(FakeProbe { open }),
+                Box::new(FakeLauncher),
+                Box::new(|| Ok(PathBuf::from("vcxsrv.exe"))),
+                Box::new(FakeAuth),
+                provides_managed,
+                false,
+            )
+        }
+
+        fn assert_tcp_loopback(conn: &LocalXConnection, port: u16) {
+            match conn {
+                LocalXConnection::Tcp(host, p) => {
+                    assert_eq!(host, "127.0.0.1");
+                    assert_eq!(*p, port);
+                }
+                #[cfg(unix)]
+                LocalXConnection::UnixSocket(_) => panic!("expected TCP loopback, got a socket"),
+            }
+        }
+
+        #[test]
+        fn spawned_managed_server_is_resolved_with_cookie() {
+            // No port open → the manager spawns a managed server on :0. The
+            // outcome carries the resolved TCP-loopback target and the known
+            // cookie, so the forwarder needs no second probe or `xauth` call.
+            let mgr = manager(vec![], true);
+            let outcome = ensure_x_server(&mgr, true).expect("managed server ensured");
+
+            assert_eq!(outcome.report.state, XServerState::Running);
+            let resolved = outcome.resolved;
+            assert_eq!(resolved.info.display_number, 0);
+            assert_tcp_loopback(&resolved.info.connection, 6000);
+            assert_eq!(resolved.cookie.as_deref(), Some(FAKE_COOKIE));
+        }
+
+        #[test]
+        fn adopted_tcp_server_is_resolved_as_loopback() {
+            // A reachable server on :0 is adopted and resolved to TCP loopback
+            // (its cookie, if any, is read via `xauth` and is environment
+            // dependent, so it is not asserted here).
+            let mgr = manager(vec![6000], false);
+            let outcome = ensure_x_server(&mgr, true).expect("adopted server ensured");
+
+            assert_eq!(outcome.report.state, XServerState::Adopted);
+            let resolved = outcome.resolved;
+            assert_eq!(resolved.info.display_number, 0);
+            assert_tcp_loopback(&resolved.info.connection, 6000);
+        }
     }
 }

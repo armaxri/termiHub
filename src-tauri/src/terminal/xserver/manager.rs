@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::Result;
-use termihub_core::backends::ssh::x11::{ManagedXServer, ManagedXServerSource};
+use termihub_core::backends::ssh::x11::ManagedXServer;
 use tracing::warn;
 
 use super::auth::XAuthProvider;
@@ -340,15 +340,15 @@ fn remove_auth_file(path: &Option<PathBuf>) {
     }
 }
 
-impl ManagedXServerSource for XServerManager {
-    /// Report the server termiHub itself started so core X11 detection can skip
-    /// its filesystem/`xauth` probing (issue #1049 seam; consumers wired in
-    /// #1052). Adopted external servers are intentionally excluded — they are
-    /// discovered by the normal TCP probe and are not termiHub-managed.
+impl XServerManager {
+    /// Report the server termiHub itself started, so the orchestrator can resolve
+    /// it (display + cookie) for the connect path without any filesystem/`xauth`
+    /// probing (#1050). Adopted external servers are intentionally excluded — they
+    /// are discovered by the normal TCP probe and are not termiHub-managed.
     ///
-    /// The cookie is the MIT-MAGIC-COOKIE-1 the managed server was launched with
-    /// (#1050), or `None` when it fell back to `-ac` mode.
-    fn managed_server(&self) -> Option<ManagedXServer> {
+    /// The cookie is the MIT-MAGIC-COOKIE-1 the managed server was launched with,
+    /// or `None` when it fell back to `-ac` mode.
+    pub fn managed_server(&self) -> Option<ManagedXServer> {
         let inner = self.inner.lock().expect("xserver lock");
         match inner.status {
             XServerStatus::Running { display } => Some(ManagedXServer {
@@ -812,7 +812,7 @@ mod tests {
         assert_eq!(launcher.count(), 0);
     }
 
-    // -- core detection seam (ManagedXServerSource) -------------------------
+    // -- managed-server reporting (orchestrator resolution seam) ------------
 
     #[test]
     fn managed_server_reports_only_our_spawned_server() {

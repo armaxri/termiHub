@@ -889,9 +889,47 @@ Optional additional cases:
 - **Headless:** on a box with no local display (no `DISPLAY`, no
   `/tmp/.X11-unix`, no `Xorg`/`Xwayland`), connect with X11 forwarding and
   confirm the headless hint (graphical session / Xvfb) appears.
+
 - **Sandboxed socket:** run termiHub as a Flatpak/Snap without the X socket
   granted; confirm the hint names the `--socket=x11` / `--socket=fallback-x11`
   grant.
+
+#### VcXsrv provisioning: first-run download + offline re-run (Windows, #1076)
+
+termiHub downloads a pinned, minimal VcXsrv `.zip` from its GitHub releases on
+first use of SSH X11 forwarding, SHA-256-verifies it, and extracts a runnable
+`vcxsrv.exe` (`src-tauri/src/terminal/xserver/acquire.rs`). Building and
+publishing that artifact is a release step; the acquisition path is then
+verified on a **clean Windows box** (no VcXsrv installed).
+
+Build & publish the artifact (once per pinned version):
+
+1. Install the pinned VcXsrv (currently **21.1.13**) from
+   <https://github.com/marchaesen/vcxsrv/releases> on a build machine.
+2. Run `scripts/internal/package-vcxsrv.ps1 -UpdateAcquire`. It stages a minimal
+   tree, writes `target/vcxsrv-package/vcxsrv-<version>-minimal.zip`, prints the
+   SHA-256, and patches `PINNED_VCXSRV.sha256` in `acquire.rs`.
+3. Publish the printed artifact: `gh release create vcxsrv-<version> <zip>
+--title "VcXsrv <version> (minimal, for termiHub X11)"
+--notes "GPL-3.0. See THIRD_PARTY_LICENSES.md and licenses/GPL-3.0.txt."`.
+4. Confirm the automated check passes against the live asset:
+   `cargo test -p termihub -- --ignored pinned_artifact_downloads_verifies_and_contains_exe`.
+
+Verify acquisition end-to-end on a **clean Windows box** (no VcXsrv installed):
+
+1. First run — download + verify + extract: trigger X server provisioning (open
+   an SSH connection with X11 forwarding, or use the Settings/Open Connections X
+   server control once #1053 lands). Confirm the pinned `.zip` downloads,
+   verifies, and yields a runnable `vcxsrv.exe` under the app data dir
+   (`<data>/xserver/vcxsrv-<version>/vcxsrv.exe`; portable mode uses the
+   `data/` folder). An X client from the forwarded session should display.
+2. Offline re-run — cache reuse: disconnect the network and repeat. Provisioning
+   must **not** attempt a download; it reuses the already-extracted tree and the
+   X client displays again.
+3. Tamper check (optional): corrupt the cached `vcxsrv.exe` to zero bytes and
+   confirm the next provisioning re-resolves (download when online, or a clear
+   error offline) rather than launching a broken server.
+   > > > > > > > origin/develop
 
 ### Legacy Guided Manual Test Runner (YAML)
 
