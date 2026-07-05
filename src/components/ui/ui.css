@@ -320,6 +320,38 @@
   background: var(--text-on-accent);
 }
 
+/* ── Tooltip (Radix Tooltip skin) ───────────────────────────────────── */
+.ui-tooltip__content {
+  max-width: 260px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-dropdown);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-dropdown);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  letter-spacing: var(--letter-spacing-ui);
+  z-index: var(--z-toast);
+  user-select: none;
+}
+
+.ui-tooltip__arrow {
+  fill: var(--bg-dropdown);
+}
+
+/* Shared enter motion: fade + slight rise/slide from the trigger side. */
+.ui-tooltip__content[data-state="delayed-open"] {
+  animation: ui-fade-in var(--transition-normal);
+}
+.ui-tooltip__content[data-state="instant-open"] {
+  animation: ui-fade-in var(--transition-fast);
+}
+.ui-tooltip__content[data-state="closed"] {
+  animation: ui-fade-out var(--transition-fast);
+}
+
 /* ── Modal (Radix Dialog skin) ──────────────────────────────────────── */
 .ui-modal__overlay {
   position: fixed;
@@ -466,7 +498,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ui-modal__overlay[data-state],
-  .ui-modal[data-state] {
+  .ui-modal[data-state],
+  .ui-tooltip__content[data-state] {
     animation: none;
   }
   .ui-btn,

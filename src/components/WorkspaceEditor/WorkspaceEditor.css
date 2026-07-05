@@ -47,20 +47,6 @@
   color: var(--text-secondary);
 }
 
-.workspace-editor__input {
-  padding: 6px 8px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-}
-
-.workspace-editor__input:focus {
-  border-color: var(--accent-color);
-}
-
 .workspace-editor__layout-section {
   display: flex;
   flex-direction: column;
@@ -84,30 +70,6 @@
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border-primary);
-}
-
-.workspace-editor__btn {
-  padding: 6px 16px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.workspace-editor__btn:hover {
-  background: var(--bg-hover);
-}
-
-.workspace-editor__btn--primary {
-  background: var(--accent-color);
-  color: white;
-  border-color: var(--accent-color);
-}
-
-.workspace-editor__btn--primary:hover {
-  opacity: 0.9;
 }
 
 /* Group Strip */

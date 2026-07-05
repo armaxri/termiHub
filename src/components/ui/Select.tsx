@@ -55,7 +55,12 @@ export function SelectItem({
   children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <RadixSelect.Item className="ui-select__item" value={value} disabled={disabled}>
+    <RadixSelect.Item
+      className="ui-select__item"
+      value={value}
+      disabled={disabled}
+      data-value={value}
+    >
       <RadixSelect.ItemText>{children}</RadixSelect.ItemText>
       <RadixSelect.ItemIndicator className="ui-select__item-indicator">
         <Check width={14} height={14} aria-hidden="true" />
@@ -86,6 +91,7 @@ export function Select({
         className="ui-select__trigger"
         aria-label={rest["aria-label"]}
         data-testid={testid}
+        data-value={value ?? ""}
       >
         <RadixSelect.Value placeholder={placeholder} />
         <RadixSelect.Icon className="ui-select__icon">

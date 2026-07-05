@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, statSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, sep } from "path";
 import { fileURLToPath } from "url";
 
 /**
@@ -14,6 +14,31 @@ import { fileURLToPath } from "url";
 
 const COMPONENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "components");
 
+/** Absolute path of the shared primitive layer, excluded from most guards. */
+const UI_DIR = join(COMPONENTS_DIR, "ui");
+
+/**
+ * Recursively collect files under `dir` whose name passes `match`.
+ *
+ * @param dir Absolute directory to walk.
+ * @param match Predicate on the file's basename.
+ * @param skipDir Optional absolute directory subtree to skip entirely.
+ * @returns Absolute paths of all matching files found.
+ */
+function collectFiles(dir: string, match: (name: string) => boolean, skipDir?: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      if (skipDir && full === skipDir) continue;
+      out.push(...collectFiles(full, match, skipDir));
+    } else if (match(entry)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
 /**
  * Recursively collect every `*.css` file under the components tree.
  *
@@ -21,19 +46,15 @@ const COMPONENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "comp
  * @returns Absolute paths of all `.css` files found.
  */
 function collectCssFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      out.push(...collectCssFiles(full));
-    } else if (entry.endsWith(".css")) {
-      out.push(full);
-    }
-  }
-  return out;
+  return collectFiles(dir, (name) => name.endsWith(".css"));
 }
 
 const cssFiles = collectCssFiles(COMPONENTS_DIR);
+
+/** Normalize an absolute path to POSIX separators for allowlist matching. */
+function toPosix(p: string): string {
+  return p.split(sep).join("/");
+}
 
 /**
  * Documented allowlist of files permitted to contain a bare `#fff`/`#ffffff`.
@@ -43,6 +64,68 @@ const cssFiles = collectCssFiles(COMPONENTS_DIR);
  * the final report if a genuinely token-less pure-white case is reintroduced.
  */
 const WHITE_ALLOWLIST: string[] = [];
+
+/**
+ * Shrinking ratchet: files still carrying a bespoke `__btn` class instead of the
+ * shared `Button` primitive (src/components/ui/Button.tsx).
+ *
+ * This list is deliberately over-permissive, never asserted to be free of stale
+ * entries, and MUST shrink toward empty: as each area migrates onto the `Button`
+ * primitive (tracked by follow-up issues), its entry is removed here. The guard's
+ * value is the ratchet — a currently-clean file that reintroduces `__btn` FAILS.
+ *
+ * ConnectionEditor / TunnelEditor / WorkspaceEditor are being migrated in a
+ * parallel PR (#1085); leaving them allowlisted here is harmless (over-permissive)
+ * until that lands. Do NOT assert this list has no stale entries — that would
+ * cause cross-PR breakage.
+ *
+ * Paths are repo-relative suffixes (POSIX separators), matched with `endsWith`.
+ */
+const BESPOKE_BTN_ALLOWLIST: string[] = [
+  "ConnectionEditor/ConnectionAppearanceSettings.tsx",
+  "ConnectionEditor/ConnectionEditor.css",
+  "ConnectionEditor/ConnectionEditor.tsx",
+  "NetworkTools/DnsLookupPanel.tsx",
+  "NetworkTools/HttpMonitorPanel.tsx",
+  "NetworkTools/NetworkTools.css",
+  "NetworkTools/OpenPortsPanel.tsx",
+  "NetworkTools/PingPanel.tsx",
+  "NetworkTools/PortScannerPanel.tsx",
+  "NetworkTools/TraceroutePanel.tsx",
+  "NetworkTools/WolPanel.tsx",
+  "Settings/AboutSettings.tsx",
+  "Settings/CustomGrammarsSettings.tsx",
+  "Settings/ExternalFilesSettings.tsx",
+  "Settings/FileTypeSettings.tsx",
+  "Settings/PortableModeSettings.tsx",
+  "Settings/SecuritySettings.tsx",
+  "Settings/SerialPortSettings.tsx",
+  "Settings/SettingsPanel.css",
+  "Settings/UpdateSettings.tsx",
+  "Sidebar/FileBrowser.css",
+  "Sidebar/FileBrowser.tsx",
+  "Terminal/TerminalSearchBar.css",
+  "Terminal/TerminalSearchBar.tsx",
+  "TunnelEditor/TunnelEditor.css",
+  "TunnelEditor/TunnelEditor.tsx",
+  "UpdateNotification/UpdateNotification.css",
+  "UpdateNotification/UpdateNotification.tsx",
+  "WorkspaceEditor/WorkspaceEditor.css",
+  "WorkspaceEditor/WorkspaceEditor.tsx",
+];
+
+/**
+ * Documented allowlist of component CSS files permitted to carry a standalone
+ * raw hex literal.
+ *
+ * Empty by design: the only standalone raw-hex usages (the StatusBar update /
+ * develop-badge indicators and the UpdateNotification amber dot) were migrated to
+ * `--color-notice` / `--color-badge-dev` tokens in #1083. `var(--token, #hex)`
+ * fallbacks are exempt from the guard (see the raw-hex ratchet test) and do not
+ * belong here. Add an entry only with a written justification if a genuinely
+ * token-less raw hex is reintroduced.
+ */
+const RAW_HEX_CSS_ALLOWLIST: string[] = [];
 
 describe("CSS token discipline (#1059)", () => {
   it("finds component CSS files to scan", () => {
@@ -84,5 +167,80 @@ describe("CSS token discipline (#1059)", () => {
     const contents = readFileSync(tabGroupChips as string, "utf8");
     expect(contents).not.toMatch(/scrollbar-width:\s*none/i);
     expect(contents).not.toMatch(/-webkit-scrollbar\s*\{\s*display:\s*none/i);
+  });
+});
+
+describe("Design-system regression guards (#1083)", () => {
+  /**
+   * (3a) Dialogs must compose from the `Modal` primitive
+   * (src/components/ui/Modal.tsx), which is the single sanctioned wrapper over
+   * `@radix-ui/react-dialog`. No component OUTSIDE the primitive layer may import
+   * the Radix dialog directly. Clean today (empty offender set expected).
+   */
+  it("has no direct @radix-ui/react-dialog imports outside the ui/ primitives", () => {
+    const sourceFiles = collectFiles(
+      COMPONENTS_DIR,
+      (name) => name.endsWith(".tsx") || name.endsWith(".ts"),
+      UI_DIR
+    );
+    const importRe = /@radix-ui\/react-dialog/;
+    const offenders = sourceFiles
+      .filter((file) => importRe.test(readFileSync(file, "utf8")))
+      .map(toPosix);
+    expect(
+      offenders,
+      "Dialogs must compose from the Modal primitive (src/components/ui/Modal.tsx); " +
+        `do not import @radix-ui/react-dialog directly in: ${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+
+  /**
+   * (3b) Bespoke `__btn` ratchet. A currently-clean file that introduces a
+   * `__btn` class instead of the shared `Button` primitive FAILS. Known
+   * offenders live in BESPOKE_BTN_ALLOWLIST (a shrinking ratchet — see its
+   * doc comment).
+   */
+  it("introduces no new bespoke __btn classes outside the allowlist", () => {
+    const files = collectFiles(
+      COMPONENTS_DIR,
+      (name) => (name.endsWith(".tsx") || name.endsWith(".css")) && !name.endsWith(".test.tsx"),
+      UI_DIR
+    );
+    const offenders = files
+      .filter((file) => readFileSync(file, "utf8").includes("__btn"))
+      .map(toPosix)
+      .filter((file) => !BESPOKE_BTN_ALLOWLIST.some((allowed) => file.endsWith(allowed)));
+    expect(
+      offenders,
+      "Compose from the Button primitive (src/components/ui/Button.tsx) instead of a " +
+        `bespoke __btn class in: ${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+
+  /**
+   * (3c) Standalone raw-hex ratchet in component CSS. `var(--token, #hex)`
+   * fallbacks are acceptable defensive defaults and are exempt: any line where
+   * the hex sits inside a `var(...)` fallback is ignored. A currently-clean file
+   * that adds a bare raw hex (e.g. `background: #123456;`) FAILS. Allowlist is
+   * empty after #1083 migrated the last standalone usages to tokens.
+   */
+  it("introduces no new standalone raw hex literals in component CSS", () => {
+    // A line is exempt when its hex appears inside a var() fallback, e.g.
+    // `color: var(--color-error, #f44336);`.
+    const varFallbackRe = /var\([^)]*#[0-9a-f]/i;
+    const rawHexRe = /#[0-9a-f]{3,8}\b/i;
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      if (toPosix(file).includes("/components/ui/")) continue;
+      if (RAW_HEX_CSS_ALLOWLIST.some((allowed) => file.endsWith(allowed))) continue;
+      const lines = readFileSync(file, "utf8").split("\n");
+      const hasRawHex = lines.some((line) => !varFallbackRe.test(line) && rawHexRe.test(line));
+      if (hasRawHex) offenders.push(toPosix(file));
+    }
+    expect(
+      offenders,
+      "Reference a token from src/styles/variables.css instead of a raw hex literal in: " +
+        `${offenders.join(", ")}`
+    ).toEqual([]);
   });
 });

@@ -52,12 +52,16 @@ pub struct PinnedVcxsrv {
 
 /// The VcXsrv build termiHub provisions.
 ///
-/// NOTE: `sha256` is a placeholder until the minimal `.zip` artifact is
-/// published to termiHub's GitHub releases (tracked with the GPL-3.0 licensing
-/// work, #1056). Until then a real download is *rejected* by verification and
-/// never executed — which is the safe failure mode. The offline unit tests
-/// exercise verification and extraction against synthetic archives, so they do
-/// not depend on this value.
+/// NOTE: `sha256` is a placeholder until the minimal `.zip` artifact is built
+/// and published to termiHub's GitHub releases (#1076). Build it reproducibly
+/// from an installed VcXsrv with `scripts/internal/package-vcxsrv.ps1`, which
+/// prints the SHA-256 to paste here (or run it with `-UpdateAcquire` to patch
+/// this field), then publish the printed artifact. Until then a real download
+/// is *rejected* by verification and never executed — the safe failure mode.
+/// The offline unit tests exercise verification and extraction against synthetic
+/// archives, so they do not depend on this value; the networked
+/// `pinned_artifact_downloads_verifies_and_contains_exe` test (`#[ignore]`)
+/// confirms the real artifact once it is published.
 pub const PINNED_VCXSRV: PinnedVcxsrv = PinnedVcxsrv {
     version: "21.1.13",
     zip_url: "https://github.com/armaxri/termiHub/releases/download/vcxsrv-21.1.13/vcxsrv-21.1.13-minimal.zip",
@@ -565,6 +569,43 @@ mod tests {
             .sha256
             .chars()
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    /// Release-verification (networked, `#[ignore]` by default): fetch the
+    /// published pinned `.zip`, confirm it matches `PINNED_VCXSRV.sha256`, and
+    /// that it extracts a runnable `vcxsrv.exe`. This is the automated half of
+    /// issue #1076's acceptance criteria — run it once the artifact is published
+    /// and the SHA-256 filled in:
+    ///
+    /// ```text
+    /// cargo test -p termihub -- --ignored pinned_artifact_downloads_verifies_and_contains_exe
+    /// ```
+    ///
+    /// It stays ignored so the normal offline test run never reaches the network
+    /// and never fails on the placeholder SHA before the artifact exists.
+    #[test]
+    #[ignore = "networked release-verification: requires the published VcXsrv artifact (#1076)"]
+    fn pinned_artifact_downloads_verifies_and_contains_exe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = tmp.path().join("vcxsrv-pinned.zip");
+
+        let bytes = reqwest::blocking::get(PINNED_VCXSRV.zip_url)
+            .expect("request pinned VcXsrv zip")
+            .error_for_status()
+            .expect("pinned VcXsrv URL must resolve to a published asset")
+            .bytes()
+            .expect("read pinned VcXsrv zip body");
+        fs::write(&zip, &bytes).unwrap();
+
+        verify_sha256(&zip, PINNED_VCXSRV.sha256)
+            .expect("published artifact must match PINNED_VCXSRV.sha256");
+
+        let out = tmp.path().join("tree");
+        extract_zip(&zip, &out).unwrap();
+        assert!(
+            is_nonempty_file(&out.join(VCXSRV_EXE)),
+            "published artifact must contain a non-empty {VCXSRV_EXE} at its root"
+        );
     }
 
     // ----- licensing / compliance (GPL-3.0, #1056) --------------------------

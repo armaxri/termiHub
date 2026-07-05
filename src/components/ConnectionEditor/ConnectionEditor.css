@@ -47,50 +47,8 @@
   flex-shrink: 0;
 }
 
-.connection-editor__btn {
-  padding: var(--spacing-xs) var(--spacing-md);
-  font-size: var(--font-size-sm);
-  border-radius: var(--radius-md);
-  transition:
-    background-color var(--transition-fast),
-    transform var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.connection-editor__btn--primary {
-  background-color: var(--accent-color);
-  color: var(--text-on-accent);
-}
-
-.connection-editor__btn--primary:hover {
-  background-color: var(--accent-hover);
-  box-shadow: 0 2px 12px rgba(61, 125, 232, 0.35);
-}
-
-.connection-editor__btn--primary:active {
-  transform: translateY(1px) scale(0.98);
-  box-shadow: none;
-}
-
-.connection-editor__btn--secondary {
-  color: var(--text-secondary);
-}
-
-.connection-editor__btn--secondary:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.connection-editor__btn--secondary:active {
-  transform: translateY(1px) scale(0.98);
-}
-
 .connection-editor__setup-agent-btn {
   align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--border-color);
 }
 
 .connection-editor__color-row {
@@ -126,13 +84,6 @@
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.3px;
-}
-
-.settings-form__field input,
-.settings-form__field select {
-  width: 100%;
-  height: 28px;
-  font-size: var(--font-size-sm);
 }
 
 .settings-form__field--checkbox {
