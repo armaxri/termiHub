@@ -262,9 +262,6 @@ def render(buckets: "dict[str, dict]") -> str:
         "",
         "- **Regenerate:** `python scripts/build-testid-catalog.py`",
         "- **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`",
-        "",
-        f"**{len(literal)}** literal · **{len(dynamic)}** dynamic · "
-        f"**{len(indirect)}** indirect.",
     ]
 
     lines += _section(

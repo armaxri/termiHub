@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { X, ChevronUp, ChevronDown, CaseSensitive, Regex } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useTerminalRegistry } from "./TerminalRegistry";
+import { Tooltip } from "@/components/ui";
 import "./TerminalSearchBar.css";
 
 interface TerminalSearchBarProps {
@@ -86,29 +87,43 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         placeholder="Find..."
         spellCheck={false}
       />
-      <button
-        className={`terminal-search-bar__btn${caseSensitive ? " terminal-search-bar__btn--active" : ""}`}
-        onClick={() => setCaseSensitive(!caseSensitive)}
-        title="Match Case"
-      >
-        <CaseSensitive size={14} />
-      </button>
-      <button
-        className={`terminal-search-bar__btn${useRegex ? " terminal-search-bar__btn--active" : ""}`}
-        onClick={() => setUseRegex(!useRegex)}
-        title="Use Regular Expression"
-      >
-        <Regex size={14} />
-      </button>
-      <button className="terminal-search-bar__btn" onClick={handleFindPrevious} title="Previous">
-        <ChevronUp size={14} />
-      </button>
-      <button className="terminal-search-bar__btn" onClick={handleFindNext} title="Next">
-        <ChevronDown size={14} />
-      </button>
-      <button className="terminal-search-bar__btn" onClick={handleClose} title="Close">
-        <X size={14} />
-      </button>
+      <Tooltip content="Match Case" side="bottom">
+        <button
+          className={`terminal-search-bar__btn${caseSensitive ? " terminal-search-bar__btn--active" : ""}`}
+          onClick={() => setCaseSensitive(!caseSensitive)}
+          aria-label="Match Case"
+        >
+          <CaseSensitive size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip content="Use Regular Expression" side="bottom">
+        <button
+          className={`terminal-search-bar__btn${useRegex ? " terminal-search-bar__btn--active" : ""}`}
+          onClick={() => setUseRegex(!useRegex)}
+          aria-label="Use Regular Expression"
+        >
+          <Regex size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip content="Previous" side="bottom">
+        <button
+          className="terminal-search-bar__btn"
+          onClick={handleFindPrevious}
+          aria-label="Previous"
+        >
+          <ChevronUp size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip content="Next" side="bottom">
+        <button className="terminal-search-bar__btn" onClick={handleFindNext} aria-label="Next">
+          <ChevronDown size={14} />
+        </button>
+      </Tooltip>
+      <Tooltip content="Close" side="bottom">
+        <button className="terminal-search-bar__btn" onClick={handleClose} aria-label="Close">
+          <X size={14} />
+        </button>
+      </Tooltip>
     </div>
   );
 }
