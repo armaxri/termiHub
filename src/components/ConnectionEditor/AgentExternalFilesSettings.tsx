@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { ExternalAgentFile } from "@/types/terminal";
+import { Button, Input, Toggle } from "@/components/ui";
 
 interface AgentExternalFilesSettingsProps {
   files: ExternalAgentFile[];
@@ -58,36 +59,35 @@ export function AgentExternalFilesSettings({ files, onChange }: AgentExternalFil
               className="settings-panel__file-item"
               data-testid="agent-external-file-row"
             >
-              <label className="settings-panel__toggle">
-                <input
-                  type="checkbox"
-                  checked={file.enabled}
-                  onChange={() => handleToggle(file.path)}
-                  data-testid="agent-external-file-toggle"
-                />
-                <span className="settings-panel__toggle-slider" />
-              </label>
+              <Toggle
+                checked={file.enabled}
+                onCheckedChange={() => handleToggle(file.path)}
+                aria-label={`Toggle ${file.path}`}
+                data-testid="agent-external-file-toggle"
+              />
               <span
                 className={`settings-panel__file-path settings-panel__file-path--rtl${!file.enabled ? " settings-panel__file-path--disabled" : ""}`}
                 title={file.path}
               >
                 {file.path}
               </span>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 className="settings-panel__file-remove"
+                icon={<Trash2 size={14} />}
                 onClick={() => handleRemove(file.path)}
                 title="Remove file"
+                aria-label="Remove file"
                 data-testid="agent-external-file-remove"
-              >
-                <Trash2 size={14} />
-              </button>
+              />
             </li>
           ))}
         </ul>
       )}
 
       <div className="settings-form__list-row" style={{ marginTop: "var(--spacing-sm)" }}>
-        <input
+        <Input
           type="text"
           className="settings-form__list-input"
           value={newPath}
@@ -98,15 +98,16 @@ export function AgentExternalFilesSettings({ files, onChange }: AgentExternalFil
           placeholder="/home/user/team-connections.json"
           data-testid="agent-external-file-input"
         />
-        <button
-          className="settings-form__list-browse"
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Plus size={12} />}
           onClick={handleAdd}
           disabled={!newPath.trim()}
           data-testid="agent-external-file-add"
           title="Add external connection file path"
-        >
-          <Plus size={12} />
-        </button>
+          aria-label="Add external connection file path"
+        />
       </div>
     </div>
   );

@@ -12,6 +12,7 @@ import {
   LineEnding,
 } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
+import { XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
   SavedConnection,
@@ -260,6 +261,16 @@ export async function getDefaultShell(): Promise<string | null> {
 /** Check if a local X server is available for X11 forwarding */
 export async function checkX11Available(): Promise<boolean> {
   return await invoke<boolean>("check_x11_available");
+}
+
+/** Get the status of the shared X server that termiHub manages or has adopted. */
+export async function xServerStatus(): Promise<XServerStatusReport> {
+  return await invoke<XServerStatusReport>("x_server_status");
+}
+
+/** Stop the termiHub-managed X server. Rejects with an XServerError on failure. */
+export async function xServerStop(): Promise<void> {
+  return await invoke<void>("x_server_stop");
 }
 
 /** Check whether the SSH agent is running, stopped, or not installed. */

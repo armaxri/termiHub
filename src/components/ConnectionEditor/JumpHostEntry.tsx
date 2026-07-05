@@ -2,6 +2,7 @@ import type { JumpHostConfig } from "@/types/connection";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Input, Select, SelectItem } from "@/components/ui";
 
 interface JumpHostEntryProps {
   /** The hop being edited. */
@@ -80,24 +81,27 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
       {mode === "saved" ? (
         <div className="settings-form__field">
           <span className="settings-form__label">Connection</span>
-          <select
+          <Select
             value={hop.connectionId ?? ""}
-            onChange={(e) => onChange({ connectionId: e.target.value })}
+            onChange={(v) => onChange({ connectionId: v })}
+            aria-label="Connection"
             data-testid={tid("connection")}
           >
-            {refMissing && <option value={hop.connectionId}>{hop.connectionId} (not found)</option>}
+            {refMissing && (
+              <SelectItem value={hop.connectionId ?? ""}>{hop.connectionId} (not found)</SelectItem>
+            )}
             {savedConnections.map((opt) => (
-              <option key={opt.id} value={opt.id}>
+              <SelectItem key={opt.id} value={opt.id}>
                 {opt.label}
-              </option>
+              </SelectItem>
             ))}
-          </select>
+          </Select>
         </div>
       ) : (
         <>
           <div className="settings-form__field">
             <span className="settings-form__label">Host</span>
-            <input
+            <Input
               type="text"
               value={hop.host}
               onChange={(e) => onChange({ host: e.target.value })}
@@ -108,7 +112,7 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
 
           <div className="settings-form__field">
             <span className="settings-form__label">Port</span>
-            <input
+            <Input
               type="number"
               value={hop.port}
               min={1}
@@ -122,7 +126,7 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
 
           <div className="settings-form__field">
             <span className="settings-form__label">Username</span>
-            <input
+            <Input
               type="text"
               value={hop.username}
               onChange={(e) => onChange({ username: e.target.value })}
@@ -133,17 +137,13 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
 
           <div className="settings-form__field">
             <span className="settings-form__label">Auth Method</span>
-            <select
+            <Select
               value={hop.authMethod}
-              onChange={(e) => onChange({ authMethod: e.target.value })}
+              onChange={(v) => onChange({ authMethod: v })}
+              options={AUTH_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+              aria-label="Auth Method"
               data-testid={tid("auth-method")}
-            >
-              {AUTH_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           {hop.authMethod === "key" && (
@@ -174,7 +174,7 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
 
       <div className="settings-form__field">
         <span className="settings-form__label">Connect Timeout (s)</span>
-        <input
+        <Input
           type="number"
           value={hop.connectTimeoutSecs ?? ""}
           min={1}

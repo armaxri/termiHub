@@ -16,6 +16,10 @@ vi.mock("@/services/api", () => ({
   closeTerminal: vi.fn(() => Promise.resolve()),
   closeAgentSession: vi.fn(() => Promise.resolve()),
   cancelConnecting: (id: string) => cancelConnecting(id),
+  xServerStatus: vi.fn(() =>
+    Promise.resolve({ state: "absent", platform: "linux", managed: false })
+  ),
+  xServerStop: vi.fn(() => Promise.resolve()),
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
