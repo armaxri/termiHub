@@ -34,6 +34,7 @@ tests/reports/*.json
 !.claude/agents
 .claude/agents/*
 !.claude/agents/ui-design.md
+!.claude/agents/state-machine.md
 *.suo
 *.ntvs*
 *.njsproj
