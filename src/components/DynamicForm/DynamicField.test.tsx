@@ -166,10 +166,10 @@ describe("DynamicField", () => {
         required: false,
       };
       renderField(field, true, vi.fn());
-      const input = query("field-removeOnExit") as HTMLInputElement;
-      expect(input).toBeTruthy();
-      expect(input.type).toBe("checkbox");
-      expect(input.checked).toBe(true);
+      const toggle = query("field-removeOnExit") as HTMLButtonElement;
+      expect(toggle).toBeTruthy();
+      expect(toggle.getAttribute("role")).toBe("switch");
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
     });
 
     it("renders label text", () => {
@@ -192,8 +192,8 @@ describe("DynamicField", () => {
         default: true,
       };
       renderField(field, undefined, vi.fn());
-      const input = query("field-shellIntegration") as HTMLInputElement;
-      expect(input.checked).toBe(true);
+      const toggle = query("field-shellIntegration") as HTMLButtonElement;
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
     });
 
     it("falls back to false when value is undefined and no schema default", () => {
@@ -204,8 +204,8 @@ describe("DynamicField", () => {
         required: false,
       };
       renderField(field, undefined, vi.fn());
-      const input = query("field-flag") as HTMLInputElement;
-      expect(input.checked).toBe(false);
+      const toggle = query("field-flag") as HTMLButtonElement;
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
     });
   });
 
@@ -224,12 +224,12 @@ describe("DynamicField", () => {
         required: true,
       };
       renderField(field, "key", vi.fn());
-      const select = query("field-authMethod") as HTMLSelectElement;
-      expect(select.value).toBe("key");
-      expect(select.options.length).toBe(2);
-      expect(select.options[0].text).toBe("SSH Key");
-      expect(select.options[1].text).toBe("Password");
-      expect(select.disabled).toBe(false);
+      // The Select primitive (Radix skin) exposes its value via `data-value` on
+      // the trigger button and shows the selected option's label as its text.
+      const trigger = query("field-authMethod") as HTMLButtonElement;
+      expect(trigger.getAttribute("data-value")).toBe("key");
+      expect(trigger.textContent).toContain("SSH Key");
+      expect(trigger.hasAttribute("disabled")).toBe(false);
     });
 
     it("disables select when only one option exists", () => {
@@ -243,9 +243,9 @@ describe("DynamicField", () => {
         required: true,
       };
       renderField(field, "docker", vi.fn());
-      const select = query("field-runtime") as HTMLSelectElement;
-      expect(select.disabled).toBe(true);
-      expect(select.options.length).toBe(1);
+      const trigger = query("field-runtime") as HTMLButtonElement;
+      expect(trigger.hasAttribute("disabled")).toBe(true);
+      expect(trigger.getAttribute("data-value")).toBe("docker");
     });
   });
 
@@ -499,7 +499,8 @@ describe("DynamicField", () => {
       renderField(volumeField, items, vi.fn());
       expect((query("field-volumes-hostPath-0") as HTMLInputElement).value).toBe("/data");
       expect((query("field-volumes-containerPath-0") as HTMLInputElement).value).toBe("/mnt");
-      expect((query("field-volumes-readOnly-0") as HTMLInputElement).checked).toBe(true);
+      // The per-row boolean is a Toggle (Radix Switch) — read `aria-checked`.
+      expect(query("field-volumes-readOnly-0")?.getAttribute("aria-checked")).toBe("true");
     });
 
     it("adds new item with defaults", () => {

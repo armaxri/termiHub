@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
-import { Modal, Button, Input } from "@/components/ui";
+import { Modal, Button, Input, Select } from "@/components/ui";
 import {
   EmbeddedServerConfig,
   NetworkInterface,
@@ -204,20 +204,19 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
             <div className="server-dialog__row">
               <label className="server-dialog__label server-dialog__label--inline">
                 Bind Address
-                <select
-                  className="server-dialog__input"
+                <Select
                   value={form.bindHost}
-                  onChange={(e) => handleBindHostChange(e.target.value)}
-                  data-testid="server-dialog-bind-host"
-                >
-                  {interfaces.map((iface) => (
-                    <option key={`${iface.name}-${iface.addr}`} value={iface.addr}>
-                      {iface.addr === "0.0.0.0" || iface.addr === "127.0.0.1"
+                  onChange={handleBindHostChange}
+                  options={interfaces.map((iface) => ({
+                    value: iface.addr,
+                    label:
+                      iface.addr === "0.0.0.0" || iface.addr === "127.0.0.1"
                         ? `${iface.addr} — ${iface.name}`
-                        : `${iface.addr} (${iface.name})`}
-                    </option>
-                  ))}
-                </select>
+                        : `${iface.addr} (${iface.name})`,
+                  }))}
+                  aria-label="Bind Address"
+                  data-testid="server-dialog-bind-host"
+                />
               </label>
               <label className="server-dialog__label server-dialog__label--inline">
                 Port

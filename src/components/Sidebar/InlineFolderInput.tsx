@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Folder, Check, X } from "lucide-react";
+import { Input } from "@/components/ui";
 
 interface InlineFolderInputProps {
   depth: number;
@@ -24,7 +25,7 @@ export function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderIn
       style={{ paddingLeft: `${depth * 16 + 8}px` }}
     >
       <Folder size={16} />
-      <input
+      <Input
         className="connection-tree__inline-input"
         type="text"
         value={name}
