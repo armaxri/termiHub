@@ -4,6 +4,7 @@ import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
+import { isWindows } from "@/utils/platform";
 import { KeyPathInput } from "./KeyPathInput";
 
 const SHELL_LABELS: Record<string, string> = {
@@ -211,6 +212,51 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               </label>
               <span className="settings-form__hint">
                 Pre-enable X11 Forwarding for new SSH connections.
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(show("provideXServerAutomatically") || show("stopXServerWhenIdle")) && (
+        <div className="settings-panel__category">
+          <h3 className="settings-panel__category-title">X Server</h3>
+
+          {show("provideXServerAutomatically") && (
+            <div className="settings-form__field">
+              <span className="settings-form__label">Provide X Server Automatically</span>
+              <label className="settings-panel__toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.provideXServerAutomatically ?? isWindows()}
+                  onChange={(e) =>
+                    onChange({ ...settings, provideXServerAutomatically: e.target.checked })
+                  }
+                  data-testid="settings-provide-x-server"
+                />
+                <span className="settings-panel__toggle-slider" />
+              </label>
+              <span className="settings-form__hint">
+                Windows: download &amp; run VcXsrv automatically. macOS/Linux: use the
+                detected/guided server.
+              </span>
+            </div>
+          )}
+
+          {show("stopXServerWhenIdle") && (
+            <div className="settings-form__field">
+              <span className="settings-form__label">Stop X Server When Idle</span>
+              <label className="settings-panel__toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.stopXServerWhenIdle ?? true}
+                  onChange={(e) => onChange({ ...settings, stopXServerWhenIdle: e.target.checked })}
+                  data-testid="settings-stop-x-server-idle"
+                />
+                <span className="settings-panel__toggle-slider" />
+              </label>
+              <span className="settings-form__hint">
+                Shut the managed X server down once no connection is using it.
               </span>
             </div>
           )}

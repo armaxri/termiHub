@@ -9,7 +9,7 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**454** literal · **123** dynamic · **16** indirect.
+**456** literal · **123** dynamic · **16** indirect.
 
 ## Literal test IDs
 
@@ -346,8 +346,10 @@ Fixed strings — match exactly.
 | `settings-menu-open` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-open-connections` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-updates` | `src/components/ActivityBar/ActivityBar.tsx` |
+| `settings-provide-x-server` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-restore-last-session` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-serial-port-prefixes` | `src/components/Settings/SerialPortSettings.tsx` |
+| `settings-stop-x-server-idle` | `src/components/Settings/GeneralSettings.tsx` |
 | `shortcuts-overlay` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `shortcuts-overlay-search` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `sidebar` | `src/components/Sidebar/Sidebar.tsx` |
