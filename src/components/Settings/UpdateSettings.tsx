@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
 import { setUpdateAutoCheck, getAppInfo, type AppInfo } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { Button } from "@/components/ui";
 import "./UpdateSettings.css";
 
 interface UpdateSettingsProps {
@@ -61,11 +62,13 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
     }
   };
 
-  const handleOpenDownloads = () => {
-    if (updateInfo?.releaseUrl) {
-      openUrl(updateInfo.releaseUrl).catch((err) =>
-        frontendLog("update", `Failed to open release URL: ${err}`)
-      );
+  const handleOpenDownloads = async () => {
+    if (!updateInfo?.releaseUrl) return;
+    try {
+      await openUrl(updateInfo.releaseUrl);
+    } catch (err) {
+      frontendLog("update", `Failed to open release URL: ${err}`);
+      throw err;
     }
   };
 
@@ -133,27 +136,31 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
           </div>
 
           <div className="update-settings__actions">
-            <button
-              className="settings-panel__btn"
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={
+                isChecking ? (
+                  <Loader2 size={12} className="settings-panel__spin" />
+                ) : (
+                  <RefreshCw size={12} />
+                )
+              }
               onClick={() => checkForUpdates(true)}
               disabled={isChecking}
               data-testid="update-check-now"
             >
-              {isChecking ? (
-                <Loader2 size={12} className="settings-panel__spin" />
-              ) : (
-                <RefreshCw size={12} />
-              )}
               {isChecking ? "Checking…" : "Check Now"}
-            </button>
+            </Button>
             {updateCheckState === "available" && updateInfo?.available && (
-              <button
-                className="settings-panel__btn settings-panel__btn--primary"
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={handleOpenDownloads}
                 data-testid="update-open-downloads"
               >
                 Open Downloads Page
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -199,13 +206,14 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
             <span className="update-settings__label">Skipped version</span>
             <span className="update-settings__skipped-row">
               v{skippedVersion}
-              <button
-                className="settings-panel__btn"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={handleClearSkipped}
                 data-testid="update-clear-skipped"
               >
                 Clear
-              </button>
+              </Button>
             </span>
           </div>
         </div>

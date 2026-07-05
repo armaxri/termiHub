@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Button } from "@/components/ui";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -250,17 +251,18 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
               )}
               <div className="settings-panel__inline-dialog-actions">
-                <button
-                  className="settings-panel__btn settings-panel__btn--primary"
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
                   data-testid="master-password-confirm-btn"
                 >
                   {switching ? "Switching…" : "Confirm"}
-                </button>
-                <button className="settings-panel__btn" onClick={resetSwitchDialogs}>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -279,17 +281,18 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
               )}
               <div className="settings-panel__inline-dialog-actions">
-                <button
-                  className="settings-panel__btn settings-panel__btn--primary"
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
                   data-testid="confirm-switch-confirm-btn"
                 >
                   {switching ? "Switching…" : "Confirm"}
-                </button>
-                <button className="settings-panel__btn" onClick={resetSwitchDialogs}>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -337,13 +340,14 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               </label>
 
               <div className="settings-panel__field">
-                <button
-                  className="settings-panel__btn"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   data-testid="change-master-password-btn"
                   onClick={() => setChangingPassword(true)}
                 >
                   Change Master Password
-                </button>
+                </Button>
               </div>
 
               {changingPassword && (
@@ -378,16 +382,17 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     <p className="settings-panel__inline-dialog-error">{changePasswordError}</p>
                   )}
                   <div className="settings-panel__inline-dialog-actions">
-                    <button
-                      className="settings-panel__btn settings-panel__btn--primary"
+                    <Button
+                      variant="primary"
+                      size="sm"
                       onClick={handleChangePassword}
                       data-testid="change-master-password-confirm-btn"
                     >
                       Change
-                    </button>
-                    <button className="settings-panel__btn" onClick={resetChangePasswordDialog}>
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={resetChangePasswordDialog}>
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
