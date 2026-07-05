@@ -22,6 +22,9 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use termihub_core::backends::ssh::x11::{ManagedXServer, ManagedXServerSource};
+use tracing::warn;
+
+use super::auth::XAuthProvider;
 
 /// TCP base port for X11: display `:N` listens on `6000 + N`.
 pub const X11_BASE_PORT: u16 = 6000;
@@ -145,6 +148,11 @@ impl DisplayInfo {
 struct Inner {
     status: XServerStatus,
     child: Option<Box<dyn ManagedProcess>>,
+    /// Hex MIT-MAGIC-COOKIE-1 the running managed server was launched with, or
+    /// `None` when it runs in `-ac` mode.
+    cookie: Option<String>,
+    /// `.Xauthority` file backing the current managed server, removed on stop.
+    auth_file: Option<PathBuf>,
     /// Number of live X11 sessions using the server.
     refcount: usize,
     /// Stop the managed server when the last session closes.
@@ -157,11 +165,10 @@ pub struct XServerManager {
     probe: Box<dyn PortProbe>,
     launcher: Box<dyn XServerLauncher>,
     resolver: Box<dyn Fn() -> Result<PathBuf> + Send + Sync>,
+    auth: Box<dyn XAuthProvider>,
     /// `true` on platforms that provide a managed server (Windows); `false`
     /// elsewhere, where the manager only adopts/report an existing server.
     provides_managed: bool,
-    /// Optional `-auth` cookie file (wired by #1050); `None` uses `-ac`.
-    auth_file: Mutex<Option<PathBuf>>,
 }
 
 impl XServerManager {
@@ -171,6 +178,7 @@ impl XServerManager {
         probe: Box<dyn PortProbe>,
         launcher: Box<dyn XServerLauncher>,
         resolver: Box<dyn Fn() -> Result<PathBuf> + Send + Sync>,
+        auth: Box<dyn XAuthProvider>,
         provides_managed: bool,
         stop_when_idle: bool,
     ) -> Self {
@@ -178,21 +186,16 @@ impl XServerManager {
             inner: Mutex::new(Inner {
                 status: XServerStatus::Stopped,
                 child: None,
+                cookie: None,
+                auth_file: None,
                 refcount: 0,
                 stop_when_idle,
             }),
             probe,
             launcher,
             resolver,
+            auth,
             provides_managed,
-            auth_file: Mutex::new(None),
-        }
-    }
-
-    /// Set the `-auth` cookie file used for future launches (issue #1050).
-    pub fn set_auth_file(&self, path: Option<PathBuf>) {
-        if let Ok(mut guard) = self.auth_file.lock() {
-            *guard = path;
         }
     }
 
@@ -285,14 +288,28 @@ impl XServerManager {
             anyhow::anyhow!(msg)
         })?;
 
-        let auth = self.auth_file.lock().expect("auth lock").clone();
-        match self.launcher.launch(&exe, display, auth.as_deref()) {
+        // Provision MIT-MAGIC-COOKIE-1 auth. On failure, fall back to `-ac`
+        // (loopback-only, no auth) so forwarding still works, with a warning.
+        let auth = match self.auth.provision(display) {
+            Ok(auth) => Some(auth),
+            Err(e) => {
+                warn!("X server: cookie provisioning failed, launching with -ac: {e}");
+                None
+            }
+        };
+        let auth_path = auth.as_ref().map(|a| a.auth_file.clone());
+
+        match self.launcher.launch(&exe, display, auth_path.as_deref()) {
             Ok(child) => {
                 inner.child = Some(child);
+                inner.cookie = auth.as_ref().map(|a| a.cookie_hex.clone());
+                inner.auth_file = auth_path;
                 inner.status = XServerStatus::Running { display };
                 Ok(DisplayInfo::managed(display))
             }
             Err(e) => {
+                // Do not leak the cookie file if the process never started.
+                remove_auth_file(&auth_path);
                 let msg = format!("failed to spawn X server: {e}");
                 inner.status = XServerStatus::Failed {
                     message: msg.clone(),
@@ -307,9 +324,19 @@ impl XServerManager {
         if let Some(child) = inner.child.as_mut() {
             child.terminate();
         }
+        remove_auth_file(&inner.auth_file);
         inner.child = None;
+        inner.cookie = None;
+        inner.auth_file = None;
         inner.refcount = 0;
         inner.status = XServerStatus::Stopped;
+    }
+}
+
+/// Best-effort removal of a written `.Xauthority` file.
+fn remove_auth_file(path: &Option<PathBuf>) {
+    if let Some(path) = path {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -319,15 +346,14 @@ impl ManagedXServerSource for XServerManager {
     /// #1052). Adopted external servers are intentionally excluded — they are
     /// discovered by the normal TCP probe and are not termiHub-managed.
     ///
-    /// The cookie is always `None` for now: managed servers currently launch in
-    /// `-ac` (loopback-only, no auth) mode until MIT-MAGIC-COOKIE-1 provisioning
-    /// lands in #1050.
+    /// The cookie is the MIT-MAGIC-COOKIE-1 the managed server was launched with
+    /// (#1050), or `None` when it fell back to `-ac` mode.
     fn managed_server(&self) -> Option<ManagedXServer> {
         let inner = self.inner.lock().expect("xserver lock");
         match inner.status {
             XServerStatus::Running { display } => Some(ManagedXServer {
                 display_number: display,
-                cookie: None,
+                cookie: inner.cookie.clone(),
             }),
             _ => None,
         }
@@ -499,9 +525,48 @@ mod tests {
         Box::new(|| Ok(PathBuf::from("vcxsrv.exe")))
     }
 
+    /// Fixed cookie the success-path fake provider hands out.
+    const FAKE_COOKIE: &str = "0011223344556677889900aabbccddee";
+
+    /// Auth provider fake: `Some(cookie)` → success (no disk I/O); `None` →
+    /// provisioning failure, exercising the `-ac` fallback.
+    struct FakeAuth {
+        cookie: Option<String>,
+    }
+
+    impl XAuthProvider for FakeAuth {
+        fn provision(&self, _display: u32) -> Result<super::super::auth::XAuth> {
+            match &self.cookie {
+                Some(cookie) => Ok(super::super::auth::XAuth {
+                    auth_file: PathBuf::from("C:/tmp/.Xauthority-fake"),
+                    cookie_hex: cookie.clone(),
+                }),
+                None => anyhow::bail!("fake provisioning failure"),
+            }
+        }
+    }
+
     fn manager_with(
         open_ports: &[u16],
         launcher: Arc<FakeLauncher>,
+        provides_managed: bool,
+        stop_when_idle: bool,
+    ) -> XServerManager {
+        manager_with_auth(
+            open_ports,
+            launcher,
+            Box::new(FakeAuth {
+                cookie: Some(FAKE_COOKIE.to_string()),
+            }),
+            provides_managed,
+            stop_when_idle,
+        )
+    }
+
+    fn manager_with_auth(
+        open_ports: &[u16],
+        launcher: Arc<FakeLauncher>,
+        auth: Box<dyn XAuthProvider>,
         provides_managed: bool,
         stop_when_idle: bool,
     ) -> XServerManager {
@@ -509,6 +574,7 @@ mod tests {
             Box::new(FakeProbe::with_open(open_ports)),
             Box::new(launcher),
             resolver_ok(),
+            auth,
             provides_managed,
             stop_when_idle,
         )
@@ -578,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn spawns_managed_server_when_none_present() {
+    fn spawns_managed_server_with_cookie_auth() {
         let launcher = FakeLauncher::new();
         let mgr = manager_with(&[], launcher.clone(), true, true);
 
@@ -588,13 +654,31 @@ mod tests {
         assert_eq!(info.port, 6000);
         assert_eq!(launcher.count(), 1);
         assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
-        // launched with -ac (no auth file configured yet)
-        assert!(launcher
-            .last_args
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|a| a == "-ac"));
+        // Default is cookie auth: launched with -auth, not -ac.
+        let args = launcher.last_args.lock().unwrap();
+        assert!(args.iter().any(|a| a == "-auth"));
+        assert!(!args.iter().any(|a| a == "-ac"));
+    }
+
+    #[test]
+    fn falls_back_to_ac_when_cookie_provisioning_fails() {
+        let launcher = FakeLauncher::new();
+        let mgr = manager_with_auth(
+            &[],
+            launcher.clone(),
+            Box::new(FakeAuth { cookie: None }),
+            true,
+            true,
+        );
+
+        mgr.ensure_running().unwrap();
+        let args = launcher.last_args.lock().unwrap();
+        assert!(args.iter().any(|a| a == "-ac"), "must fall back to -ac");
+        assert!(!args.iter().any(|a| a == "-auth"));
+        assert!(
+            mgr.managed_server().unwrap().cookie.is_none(),
+            "-ac mode reports no cookie"
+        );
     }
 
     // -- reuse across sessions ---------------------------------------------
@@ -738,13 +822,13 @@ mod tests {
         // Nothing running yet.
         assert!(mgr.managed_server().is_none());
 
-        // A server we spawned is reported (cookie deferred to #1050).
+        // A server we spawned is reported with its MIT-MAGIC-COOKIE-1.
         mgr.ensure_running().unwrap();
         let managed = mgr
             .managed_server()
             .expect("managed server should be reported");
         assert_eq!(managed.display_number, 0);
-        assert!(managed.cookie.is_none());
+        assert_eq!(managed.cookie.as_deref(), Some(FAKE_COOKIE));
 
         // After stopping, nothing is reported.
         mgr.stop();
