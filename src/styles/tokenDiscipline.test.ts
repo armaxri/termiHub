@@ -74,17 +74,14 @@ const WHITE_ALLOWLIST: string[] = [];
  * primitive (tracked by follow-up issues), its entry is removed here. The guard's
  * value is the ratchet — a currently-clean file that reintroduces `__btn` FAILS.
  *
- * ConnectionEditor / TunnelEditor / WorkspaceEditor are being migrated in a
- * parallel PR (#1085); leaving them allowlisted here is harmless (over-permissive)
- * until that lands. Do NOT assert this list has no stale entries — that would
+ * ConnectionEditor / TunnelEditor / WorkspaceEditor were migrated onto the
+ * `Button` primitive in #1085 and #1094; their now-clean entries were removed
+ * from this list. Do NOT assert this list has no stale entries — that would
  * cause cross-PR breakage.
  *
  * Paths are repo-relative suffixes (POSIX separators), matched with `endsWith`.
  */
 const BESPOKE_BTN_ALLOWLIST: string[] = [
-  "ConnectionEditor/ConnectionAppearanceSettings.tsx",
-  "ConnectionEditor/ConnectionEditor.css",
-  "ConnectionEditor/ConnectionEditor.tsx",
   "NetworkTools/DnsLookupPanel.tsx",
   "NetworkTools/HttpMonitorPanel.tsx",
   "NetworkTools/NetworkTools.css",
@@ -106,12 +103,8 @@ const BESPOKE_BTN_ALLOWLIST: string[] = [
   "Sidebar/FileBrowser.tsx",
   "Terminal/TerminalSearchBar.css",
   "Terminal/TerminalSearchBar.tsx",
-  "TunnelEditor/TunnelEditor.css",
-  "TunnelEditor/TunnelEditor.tsx",
   "UpdateNotification/UpdateNotification.css",
   "UpdateNotification/UpdateNotification.tsx",
-  "WorkspaceEditor/WorkspaceEditor.css",
-  "WorkspaceEditor/WorkspaceEditor.tsx",
 ];
 
 /**

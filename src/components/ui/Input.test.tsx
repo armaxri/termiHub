@@ -55,4 +55,24 @@ describe("Input", () => {
     expect(input.value).toBe("hello");
     expect(input.placeholder).toBe("host");
   });
+
+  it("does not apply the inline modifier by default", () => {
+    render(<Input data-testid="in" />);
+    const input = document.querySelector('[data-testid="in"]') as HTMLInputElement;
+    expect(input.classList.contains("ui-input--inline")).toBe(false);
+  });
+
+  it("applies the inline modifier when inline is set", () => {
+    render(<Input data-testid="in" inline />);
+    const input = document.querySelector('[data-testid="in"]') as HTMLInputElement;
+    expect(input.classList.contains("ui-input")).toBe(true);
+    expect(input.classList.contains("ui-input--inline")).toBe(true);
+  });
+
+  it("keeps the error modifier alongside the inline modifier", () => {
+    render(<Input data-testid="in" inline error />);
+    const input = document.querySelector('[data-testid="in"]') as HTMLInputElement;
+    expect(input.classList.contains("ui-input--inline")).toBe(true);
+    expect(input.classList.contains("ui-input--error")).toBe(true);
+  });
 });

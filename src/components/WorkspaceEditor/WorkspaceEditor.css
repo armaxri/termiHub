@@ -116,14 +116,13 @@
   user-select: none;
 }
 
+/*
+ * Sizing-only override for the inline rename input; the borderless/transparent
+ * skin (no border/background, inherited font/color) comes from the `inline`
+ * variant of the shared Input primitive (.ui-input--inline).
+ */
 .workspace-group-chip__rename-input {
   width: 80px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 12px;
-  outline: none;
-  padding: 0;
 }
 
 .workspace-group-chip__close {
