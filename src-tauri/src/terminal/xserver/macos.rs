@@ -34,6 +34,10 @@ fn any_path_exists<P: AsRef<Path>>(paths: &[P]) -> bool {
 
 /// Best-effort launch of XQuartz when it is installed but idle. Errors are
 /// ignored — detection afterwards decides whether a server actually came up.
+///
+/// Only this fn is macOS-gated (`open -a` is nonsensical elsewhere and its caller
+/// is `#[cfg(target_os = "macos")]`); the rest of the module stays ungated so the
+/// cross-platform `dependency_available` / install-command match arms compile.
 #[cfg(target_os = "macos")]
 pub(super) fn launch_xquartz() {
     let _ = std::process::Command::new("open")
@@ -54,8 +58,10 @@ pub(crate) async fn install_xquartz() -> Result<(), XServerError> {
     }
     if !super::binary_on_path("brew") {
         // No automated path available (the hosted `.pkg` installer is a follow-up)
-        // → hand back the download guidance rather than doing anything silently.
-        return Err(XServerError::xquartz_missing());
+        // → hand back post-click download guidance rather than doing anything
+        // silently. Distinct from the detect-path `xquartz_missing` (no brew
+        // command, since brew is what's missing here).
+        return Err(XServerError::xquartz_manual_install_required());
     }
     run_brew_install().await
 }

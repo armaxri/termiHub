@@ -98,28 +98,33 @@ pub fn x_server_stop(
 pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerError> {
     emit_progress(&app, "install", "Preparing X dependency install…", -1.0);
     match XServerPlatform::current() {
-        XServerPlatform::MacOs => {
-            emit_progress(&app, "install", "Installing XQuartz…", -1.0);
-            match xserver::macos::install_xquartz().await {
-                Ok(()) => {
-                    emit_progress(&app, "ready", "XQuartz is ready.", 1.0);
-                    Ok(())
-                }
-                Err(err) => {
-                    emit_progress(&app, "failed", &err.to_string(), 1.0);
-                    Err(err)
-                }
-            }
-        }
-        XServerPlatform::Windows => {
-            let err = XServerError::windows_provisioning_unavailable();
-            emit_progress(&app, "failed", &err.to_string(), 1.0);
-            Err(err)
-        }
+        XServerPlatform::MacOs => finish(
+            &app,
+            xserver::macos::install_xquartz().await,
+            "XQuartz is ready.",
+        ),
+        XServerPlatform::Windows => finish(
+            &app,
+            Err(XServerError::windows_provisioning_unavailable()),
+            "",
+        ),
         XServerPlatform::Linux => {
-            let err = XServerError::linux_install_unsupported();
-            emit_progress(&app, "failed", &err.to_string(), 1.0);
-            Err(err)
+            finish(&app, Err(XServerError::linux_install_unsupported()), "")
         }
     }
+}
+
+/// Emit the terminal progress event for an install `result` and return it, so the
+/// success/failure tail is written once. Mirrors the `Ok/Err => emit` shape
+/// [`x_server_ensure`] already uses.
+fn finish(
+    app: &AppHandle,
+    result: Result<(), XServerError>,
+    ok_message: &str,
+) -> Result<(), XServerError> {
+    match &result {
+        Ok(()) => emit_progress(app, "ready", ok_message, 1.0),
+        Err(err) => emit_progress(app, "failed", &err.to_string(), 1.0),
+    }
+    result
 }

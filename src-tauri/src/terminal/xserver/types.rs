@@ -157,6 +157,29 @@ impl XServerError {
         }
     }
 
+    /// macOS: the user asked to install XQuartz but no automated installer is
+    /// available (Homebrew absent, and the hosted `.pkg` path is a follow-up).
+    ///
+    /// Distinct from the detect-path [`xquartz_missing`](Self::xquartz_missing):
+    /// this is a *post-click* response, so its message is phrased accordingly and
+    /// it carries **no** `install_command` (there is no working one without
+    /// Homebrew) — only the download guidance the UI turns into "Open xquartz.org".
+    pub fn xquartz_manual_install_required() -> Self {
+        XServerError::DependencyMissing {
+            message: "XQuartz can't be installed automatically because Homebrew was not found. \
+                Download XQuartz from https://www.xquartz.org, then log out and back in so \
+                DISPLAY is set."
+                .to_string(),
+            dependency: "XQuartz".to_string(),
+            install_hint: Some(
+                "Download XQuartz from https://www.xquartz.org, or install Homebrew first and \
+                retry the automatic install."
+                    .to_string(),
+            ),
+            install_command: None,
+        }
+    }
+
     /// macOS: XQuartz is installed but no server is running.
     pub fn macos_server_unreachable() -> Self {
         XServerError::ServerUnreachable {
@@ -283,6 +306,26 @@ mod tests {
         assert!(json.contains("\"displayNumber\":0"));
         assert!(json.contains("\"dependencyAvailable\":true"));
         assert!(!json.contains("message"));
+    }
+
+    #[test]
+    fn manual_install_required_has_download_guidance_but_no_brew_command() {
+        // Post-click "no automated installer" response must not hand back a brew
+        // command (Homebrew is absent in this branch) yet must still guide the
+        // download.
+        match XServerError::xquartz_manual_install_required() {
+            XServerError::DependencyMissing {
+                dependency,
+                install_hint,
+                install_command,
+                ..
+            } => {
+                assert_eq!(dependency, "XQuartz");
+                assert_eq!(install_command, None);
+                assert!(install_hint.unwrap_or_default().contains("xquartz.org"));
+            }
+            other => panic!("expected DependencyMissing, got {other:?}"),
+        }
     }
 
     #[test]
