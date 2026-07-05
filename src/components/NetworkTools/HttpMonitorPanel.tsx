@@ -9,6 +9,7 @@ import {
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
 import { frontendLog } from "@/utils/frontendLog";
+import { Tooltip } from "@/components/ui";
 
 const MAX_HISTORY = 120;
 
@@ -147,13 +148,15 @@ export function HttpMonitorPanel() {
       <div className="network-panel__header">
         <span className="network-panel__title">HTTP Monitor</span>
         <div className="network-panel__actions">
-          <button
-            className="network-panel__btn network-panel__btn--run"
-            onClick={loadMonitors}
-            title="Refresh monitor list"
-          >
-            <RefreshCw size={14} />
-          </button>
+          <Tooltip content="Refresh monitor list" side="bottom">
+            <button
+              className="network-panel__btn network-panel__btn--run"
+              onClick={loadMonitors}
+              aria-label="Refresh monitor list"
+            >
+              <RefreshCw size={14} />
+            </button>
+          </Tooltip>
           {activeMonitorId ? (
             <button
               className="network-panel__btn network-panel__btn--stop"
@@ -306,13 +309,15 @@ export function HttpMonitorPanel() {
               <span className="http-monitor-row__meta">
                 {m.config.method} · every {m.config.intervalMs / 1000}s
               </span>
-              <button
-                className="network-panel__icon-btn network-panel__icon-btn--danger"
-                onClick={() => handleStopMonitor(m.config.id)}
-                title="Stop"
-              >
-                <StopCircle size={13} />
-              </button>
+              <Tooltip content="Stop" side="left">
+                <button
+                  className="network-panel__icon-btn network-panel__icon-btn--danger"
+                  onClick={() => handleStopMonitor(m.config.id)}
+                  aria-label={`Stop monitoring ${m.config.url}`}
+                >
+                  <StopCircle size={13} />
+                </button>
+              </Tooltip>
             </div>
           ))}
         </>

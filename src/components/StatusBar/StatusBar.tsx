@@ -9,6 +9,7 @@ import type { ConnectionTypeInfo } from "@/services/api";
 import { SystemStats } from "@/types/monitoring";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
+import { Tooltip } from "@/components/ui";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import "./StatusBar.css";
@@ -151,14 +152,16 @@ export function StatusBar() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
             <span className="status-bar__item">{editorStatus.encoding}</span>
-            <button
-              className="status-bar__item status-bar__item--interactive"
-              onClick={() => editorActions?.toggleEol()}
-              title="Toggle line endings"
-              data-testid="status-bar-eol"
-            >
-              {editorStatus.eol}
-            </button>
+            <Tooltip content="Toggle line endings" side="top">
+              <button
+                className="status-bar__item status-bar__item--interactive"
+                onClick={() => editorActions?.toggleEol()}
+                aria-label="Toggle line endings"
+                data-testid="status-bar-eol"
+              >
+                {editorStatus.eol}
+              </button>
+            </Tooltip>
             <LanguageSelector
               currentLanguage={editorStatus.language}
               languages={editorStatus.availableLanguages}
@@ -206,16 +209,20 @@ function ServicesIndicator() {
 
   if (runningCount === 0) return null;
 
+  const servicesLabel = `${runningCount} service${runningCount !== 1 ? "s" : ""} running — click to open Services`;
+
   return (
-    <button
-      className="status-bar__item status-bar__item--interactive"
-      title={`${runningCount} service${runningCount !== 1 ? "s" : ""} running — click to open Services`}
-      data-testid="services-indicator"
-      onClick={() => setSidebarView("services")}
-    >
-      <Server size={12} />
-      {runningCount}
-    </button>
+    <Tooltip content={servicesLabel} side="top">
+      <button
+        className="status-bar__item status-bar__item--interactive"
+        aria-label={servicesLabel}
+        data-testid="services-indicator"
+        onClick={() => setSidebarView("services")}
+      >
+        <Server size={12} />
+        {runningCount}
+      </button>
+    </Tooltip>
   );
 }
 

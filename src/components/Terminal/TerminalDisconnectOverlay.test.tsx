@@ -1,8 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
+import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+
+// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
+// mounts its trigger; shim them so the tooltip-wrapped dismiss button renders.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+
+/** Wrap a subtree so the shared Tooltip primitive finds its provider. */
+function withTooltip(ui: React.ReactElement): React.ReactElement {
+  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
+}
 
 // Stub lucide-react icons used in the overlay
 vi.mock("lucide-react", () => ({
@@ -39,7 +62,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
 
   it("renders the overlay with the disconnected heading", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(container.querySelector("[data-testid='terminal-disconnect-overlay']")).not.toBeNull();
@@ -48,7 +71,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
 
   it("renders reconnect and view-scrollback buttons", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(
@@ -64,7 +87,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -83,7 +106,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     useAppStore.setState({ terminalExitedTabs: { "tab-1": true }, terminalRetryCounters: {} });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -106,7 +129,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -149,7 +172,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
 
   it("shows reconnecting heading and a stop button", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(container.textContent).toContain("Reconnecting");
@@ -160,7 +183,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
 
   it("stop button transitions tab from reconnecting to exited", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -182,7 +205,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(
@@ -193,7 +216,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
 
   it("does not show trigger error box when no error is set", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(
@@ -228,7 +251,7 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
 
   it("shows error heading and the error message", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(container.textContent).toContain("Reconnect failed");
@@ -238,7 +261,7 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
 
   it("try-again button clears error and increments retry counter", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
