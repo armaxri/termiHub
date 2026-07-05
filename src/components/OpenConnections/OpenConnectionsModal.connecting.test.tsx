@@ -76,9 +76,18 @@ describe("OpenConnectionsModal — Connecting section", () => {
 
     const killBtn = rows[0].querySelector(".oc-row__kill") as HTMLButtonElement;
     expect(killBtn).not.toBeNull();
+    // Kill is now the shared Button primitive (retains .oc-row__kill as a hook).
+    expect(killBtn.classList.contains("ui-btn")).toBe(true);
     act(() => killBtn.click());
 
     expect(cancelConnecting).toHaveBeenCalledWith("tab-1");
+  });
+
+  it("renders through the shared Modal primitive", () => {
+    renderWithConnectingTab();
+    const modal = document.querySelector(".ui-modal");
+    expect(modal).not.toBeNull();
+    expect(modal?.querySelector(".ui-modal__title")?.textContent).toContain("Open Connections");
   });
 
   it("shows no Connecting section when nothing is connecting", () => {
