@@ -16,6 +16,7 @@
 #[cfg(windows)]
 pub mod acquire;
 pub mod auth;
+mod linux_gap;
 pub mod manager;
 mod orchestrator;
 mod types;
