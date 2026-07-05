@@ -51,6 +51,15 @@
   --color-warning: #d4a843;
   --color-error: #ef6b5a;
   --color-info: #6db0ff;
+  /*
+   * Notice amber: brighter than --color-warning, reserved for
+   * "update available" indicator dots (status bar + update notification).
+   * --color-badge-dev: purple fill for the "develop channel" badge.
+   * Saturated solid fills that read on both dark and light themes; kept as
+   * single :root values like the other indicator dots (--state-*).
+   */
+  --color-notice: #f59e0b;
+  --color-badge-dev: #7c3aed;
 
   /* State indicator dots */
   --state-connected: #2dd79c;
