@@ -16,6 +16,7 @@
 #[cfg(windows)]
 pub mod acquire;
 pub mod auth;
+mod linux_gap;
 pub mod manager;
 mod orchestrator;
 mod types;
@@ -33,6 +34,16 @@ pub use orchestrator::{current_status, ensure_x_server, EnsureOutcome};
 pub use types::{
     XServerError, XServerPlatform, XServerProgress, XServerStatusReport, X_SERVER_PROGRESS_EVENT,
 };
+
+/// Whether `name` resolves to an executable on `PATH` (best-effort).
+///
+/// Shared by the orchestrator's dependency probe and the Linux gap detector.
+/// Uses the `which` crate so `PATH` parsing and platform executable rules
+/// (Windows `PATHEXT`, etc.) are handled by a maintained library rather than a
+/// hand-rolled split.
+pub(super) fn binary_on_path(name: &str) -> bool {
+    which::which(name).is_ok()
+}
 
 /// Resolve whether automatic X server provisioning is enabled.
 ///
