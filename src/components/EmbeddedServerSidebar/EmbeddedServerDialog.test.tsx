@@ -42,6 +42,16 @@ describe("EmbeddedServerDialog", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    // Radix Select (the migrated bind-address dropdown) probes pointer-capture
+    // and scroll APIs that jsdom omits.
+    if (!Element.prototype.hasPointerCapture) {
+      Element.prototype.hasPointerCapture = () => false;
+      Element.prototype.setPointerCapture = () => {};
+      Element.prototype.releasePointerCapture = () => {};
+    }
+    if (!Element.prototype.scrollIntoView) {
+      Element.prototype.scrollIntoView = () => {};
+    }
   });
 
   afterEach(() => {
@@ -55,14 +65,16 @@ describe("EmbeddedServerDialog", () => {
     expect(document.querySelector('[data-testid="server-dialog-name"]')).toBeNull();
   });
 
-  it("renders through the Modal primitive with a token'd name Input and native bind-host select", () => {
+  it("renders through the Modal primitive with a token'd name Input and Select bind-host", () => {
     render(<EmbeddedServerDialog {...baseProps} />);
     expect(document.querySelector(".ui-modal")).toBeTruthy();
     const name = document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement;
     expect(name.classList.contains("ui-input")).toBe(true);
-    // Bind host remains a native <select> so its .value stays readable.
+    // Bind host is the Select primitive (Radix skin): a trigger button carrying
+    // the base class, with its value mirrored to `data-value`.
     const bind = document.querySelector('[data-testid="server-dialog-bind-host"]');
-    expect(bind?.tagName).toBe("SELECT");
+    expect(bind?.classList.contains("ui-select__trigger")).toBe(true);
+    expect(bind?.getAttribute("data-value")).toBe("127.0.0.1");
   });
 
   it("Save is disabled until name + root are set, then fires onSave with the config", () => {
@@ -100,11 +112,32 @@ describe("EmbeddedServerDialog", () => {
     render(<EmbeddedServerDialog {...baseProps} />);
     const bind = document.querySelector(
       '[data-testid="server-dialog-bind-host"]'
-    ) as HTMLSelectElement;
-    act(() => {
-      bind.value = "0.0.0.0";
-      bind.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    ) as HTMLButtonElement;
+
+    // Open the Radix Select and pick the 0.0.0.0 option — the migrated
+    // `onChange` must still route through `handleBindHostChange` and intercept
+    // the all-interfaces address to raise the LAN warning (regression for #1074).
+    for (let i = 0; i < 3 && !document.querySelector('[data-testid="lan-warning-confirm"]'); i++) {
+      act(() => {
+        bind.focus();
+        bind.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
+        );
+      });
+      const option = document.querySelector(
+        '.ui-select__item[data-value="0.0.0.0"]'
+      ) as HTMLElement | null;
+      if (option) {
+        act(() => {
+          option.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+          option.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }));
+          option.click();
+        });
+      }
+    }
+
     expect(document.querySelector('[data-testid="lan-warning-confirm"]')).toBeTruthy();
+    // And the bind host must NOT have committed to 0.0.0.0 until confirmed.
+    expect(bind.getAttribute("data-value")).toBe("127.0.0.1");
   });
 });
