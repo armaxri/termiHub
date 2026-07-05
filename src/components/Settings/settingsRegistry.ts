@@ -268,6 +268,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "provideXServerAutomatically",
+    label: "Provide X Server Automatically",
+    description: "Start a local X server automatically for X11 forwarding",
+    category: "general",
+    keywords: ["x server", "x11", "xserver", "display", "vcxsrv", "forwarding", "gui"],
+  },
+  {
+    id: "stopXServerWhenIdle",
+    label: "Stop X Server When Idle",
+    description: "Shut down the auto-provided X server when no connection uses it",
+    category: "general",
+    keywords: ["x server", "x11", "idle", "stop", "shutdown", "display"],
+  },
+  {
     id: "portableMode",
     label: "Portable Mode",
     description: "Run termiHub from a USB drive or any directory without system installation",
