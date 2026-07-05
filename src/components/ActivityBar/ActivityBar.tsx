@@ -22,6 +22,7 @@ import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore, SidebarView } from "@/store/appStore";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
+import { Tooltip } from "@/components/ui";
 import { ActivityBarItem } from "./ActivityBarItem";
 import "./ActivityBar.css";
 
@@ -111,26 +112,28 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
             ))}
           </div>
           <div className="activity-bar__bottom">
-            <button
-              className="activity-bar__item"
-              title="Log Viewer"
-              aria-label="Log Viewer"
-              data-testid="activity-bar-logs"
-              onClick={openLogViewerTab}
-            >
-              <ScrollText size={24} strokeWidth={1.5} />
-            </button>
+            <Tooltip content="Log Viewer" side={horizontal ? "bottom" : "right"}>
+              <button
+                className="activity-bar__item"
+                aria-label="Log Viewer"
+                data-testid="activity-bar-logs"
+                onClick={openLogViewerTab}
+              >
+                <ScrollText size={24} strokeWidth={1.5} />
+              </button>
+            </Tooltip>
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="activity-bar__item"
-                  title="Settings"
-                  aria-label="Settings"
-                  data-testid="activity-bar-settings"
-                >
-                  <Settings size={24} strokeWidth={1.5} />
-                </button>
-              </DropdownMenu.Trigger>
+              <Tooltip content="Settings" side={horizontal ? "bottom" : "right"}>
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    className="activity-bar__item"
+                    aria-label="Settings"
+                    data-testid="activity-bar-settings"
+                  >
+                    <Settings size={24} strokeWidth={1.5} />
+                  </button>
+                </DropdownMenu.Trigger>
+              </Tooltip>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
                   className="settings-menu__content"

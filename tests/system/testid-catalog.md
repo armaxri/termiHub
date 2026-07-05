@@ -614,7 +614,7 @@ where the component is used, not at the `data-testid` site.
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
-| `{rest["data-testid"]}` | `src/components/ui/Modal.tsx` |
+| `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
