@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use tracing::{debug, info};
 
+use crate::utils::download::download_to_file;
+use crate::utils::fs::is_nonempty_file;
 use crate::utils::portable::AppMode;
 
 /// The executable name inside the extracted VcXsrv tree.
@@ -207,39 +209,9 @@ fn download_zip<F>(url: &str, dest: &Path, progress_cb: &F) -> Result<()>
 where
     F: Fn(AcquireProgress),
 {
-    info!("Downloading VcXsrv from {url}");
-    let response = reqwest::blocking::Client::new()
-        .get(url)
-        .send()
-        .context("Failed to start VcXsrv download")?;
-    if !response.status().is_success() {
-        bail!(
-            "VcXsrv download failed: HTTP {} for {url}",
-            response.status()
-        );
-    }
-
-    let total = response.content_length().unwrap_or(0);
-    let bytes = response
-        .bytes()
-        .context("Failed to read VcXsrv download body")?;
-    progress_cb(AcquireProgress::Downloading {
-        received: bytes.len() as u64,
-        total,
-    });
-
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create {}", parent.display()))?;
-    }
-    fs::write(dest, &bytes)
-        .with_context(|| format!("Failed to write VcXsrv download to {}", dest.display()))?;
-    info!(
-        "VcXsrv downloaded to {} ({} bytes)",
-        dest.display(),
-        bytes.len()
-    );
-    Ok(())
+    download_to_file(url, dest, |received, total| {
+        progress_cb(AcquireProgress::Downloading { received, total })
+    })
 }
 
 /// Verify a `.zip` against `expected_sha256`, then extract it into `install_dir`
@@ -340,13 +312,6 @@ where
     let result = install_from_zip(&tmp_zip, pinned.sha256, &dir, &progress_cb);
     let _ = fs::remove_file(&tmp_zip);
     result
-}
-
-/// Returns `true` if `path` is a regular file with a non-zero length.
-fn is_nonempty_file(path: &Path) -> bool {
-    fs::metadata(path)
-        .map(|m| m.is_file() && m.len() > 0)
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

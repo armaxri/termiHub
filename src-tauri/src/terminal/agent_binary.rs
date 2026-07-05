@@ -8,11 +8,13 @@
 //! 3. **GitHub Releases download** — fetched on demand and cached locally
 
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::Result;
 use tracing::{debug, info, warn};
+
+use crate::utils::download::download_to_file;
+use crate::utils::fs::is_nonempty_file;
 
 /// GitHub repository for release downloads.
 const GITHUB_REPO: &str = "armaxri/termiHub";
@@ -85,16 +87,12 @@ pub fn cached_binary_path(version: &str, arch_suffix: &str) -> PathBuf {
 /// Look for a cached binary. Returns `Some(path)` if it exists and is non-empty.
 pub fn find_cached_binary(version: &str, arch_suffix: &str) -> Option<PathBuf> {
     let path = cached_binary_path(version, arch_suffix);
-    if path.is_file() {
-        // Sanity check: non-empty
-        if let Ok(meta) = fs::metadata(&path) {
-            if meta.len() > 0 {
-                debug!("Found cached agent binary: {}", path.display());
-                return Some(path);
-            }
-        }
+    if is_nonempty_file(&path) {
+        debug!("Found cached agent binary: {}", path.display());
+        Some(path)
+    } else {
+        None
     }
-    None
 }
 
 /// Look for a bundled binary in the Tauri resource directory.
@@ -161,37 +159,10 @@ pub fn download_agent_binary_from_url<F>(
 where
     F: Fn(u64, u64),
 {
-    info!("Downloading agent binary from {}", url);
-
-    let response = reqwest::blocking::Client::new()
-        .get(url)
-        .send()
-        .context("Failed to start download")?;
-
-    if !response.status().is_success() {
-        bail!("Download failed: HTTP {} for {}", response.status(), url);
-    }
-
-    let total_size = response.content_length().unwrap_or(0);
-    let bytes = response.bytes().context("Failed to read response body")?;
-    progress_cb(bytes.len() as u64, total_size);
-
     let dest = cache_dir()
         .join(cache_key)
         .join(format!("termihub-agent-{arch_suffix}"));
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
-    }
-    let mut file = fs::File::create(&dest)
-        .with_context(|| format!("Failed to create cache file: {}", dest.display()))?;
-    file.write_all(&bytes)?;
-
-    info!(
-        "Agent binary cached at {} ({} bytes)",
-        dest.display(),
-        bytes.len()
-    );
+    download_to_file(url, &dest, progress_cb)?;
     Ok(dest)
 }
 
@@ -212,13 +183,9 @@ where
         .join(&cache_key)
         .join(format!("termihub-agent-{arch_suffix}"));
 
-    if cached.is_file() {
-        if let Ok(meta) = fs::metadata(&cached) {
-            if meta.len() > 0 {
-                debug!("Using cached branch build binary: {}", cached.display());
-                return Ok(cached);
-            }
-        }
+    if is_nonempty_file(&cached) {
+        debug!("Using cached branch build binary: {}", cached.display());
+        return Ok(cached);
     }
 
     let url = compute_branch_build_url(branch, arch_suffix);
@@ -296,39 +263,8 @@ where
     F: Fn(u64, u64),
 {
     let url = compute_download_url(version, arch_suffix);
-    info!("Downloading agent binary from {}", url);
-
-    let response = reqwest::blocking::Client::new()
-        .get(&url)
-        .send()
-        .context("Failed to start download")?;
-
-    if !response.status().is_success() {
-        bail!("Download failed: HTTP {} for {}", response.status(), url);
-    }
-
-    let total_size = response.content_length().unwrap_or(0);
-    let bytes = response.bytes().context("Failed to read response body")?;
-
-    progress_cb(bytes.len() as u64, total_size);
-
-    // Write to cache
     let dest = cached_binary_path(version, arch_suffix);
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
-    }
-
-    let mut file = fs::File::create(&dest)
-        .with_context(|| format!("Failed to create cache file: {}", dest.display()))?;
-    file.write_all(&bytes)?;
-
-    info!(
-        "Agent binary cached at {} ({} bytes)",
-        dest.display(),
-        bytes.len()
-    );
-
+    download_to_file(&url, &dest, progress_cb)?;
     Ok(dest)
 }
 
