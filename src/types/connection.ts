@@ -233,6 +233,10 @@ export interface AppSettings {
   askOpenSavedFileInTab?: boolean;
   defaultShellIntegration?: boolean;
   defaultX11Forwarding?: boolean;
+  /** Start/provide a local X server automatically for SSH X11 forwarding. Unset → platform default (on for Windows). */
+  provideXServerAutomatically?: boolean;
+  /** Stop the auto-provided X server once no connection is using it. */
+  stopXServerWhenIdle?: boolean;
   /**
    * When true (default), the open tab groups and layout are auto-saved on every
    * change and restored on the next startup. When false, the app always starts
