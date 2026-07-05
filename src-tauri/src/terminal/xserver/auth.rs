@@ -14,6 +14,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use rand::RngCore;
 
 /// MIT-MAGIC-COOKIE-1 length in bytes (→ 32 hex chars).
 pub const COOKIE_LEN: usize = 16;
@@ -27,13 +28,18 @@ const FAMILY_WILD: u16 = 0xFFFF;
 
 /// Generate a fresh random 16-byte MIT-MAGIC-COOKIE-1.
 pub fn generate_cookie() -> [u8; COOKIE_LEN] {
-    unimplemented!("generate_cookie")
+    let mut cookie = [0u8; COOKIE_LEN];
+    rand::rngs::OsRng.fill_bytes(&mut cookie);
+    cookie
 }
 
 /// Lowercase-hex encoding of a cookie (32 chars for a 16-byte cookie).
 pub fn cookie_to_hex(cookie: &[u8]) -> String {
-    let _ = cookie;
-    unimplemented!("cookie_to_hex")
+    use std::fmt::Write;
+    cookie.iter().fold(String::with_capacity(cookie.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Build the binary `.Xauthority` record for `display` and `cookie`.
@@ -41,8 +47,19 @@ pub fn cookie_to_hex(cookie: &[u8]) -> String {
 /// Layout (all lengths big-endian `u16`): family, address, number (display as
 /// ASCII), name (`MIT-MAGIC-COOKIE-1`), data (the raw cookie bytes).
 pub fn xauthority_record(display: u32, cookie: &[u8]) -> Vec<u8> {
-    let _ = (display, cookie);
-    unimplemented!("xauthority_record")
+    fn push_sized(out: &mut Vec<u8>, bytes: &[u8]) {
+        out.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
+        out.extend_from_slice(bytes);
+    }
+
+    let number = display.to_string();
+    let mut record = Vec::new();
+    record.extend_from_slice(&FAMILY_WILD.to_be_bytes());
+    push_sized(&mut record, &[]); // address (empty for FamilyWild)
+    push_sized(&mut record, number.as_bytes());
+    push_sized(&mut record, AUTH_PROTOCOL_NAME.as_bytes());
+    push_sized(&mut record, cookie);
+    record
 }
 
 /// A provisioned cookie plus the `.Xauthority` file that carries it.
@@ -77,8 +94,21 @@ impl FileXAuthProvider {
 
 impl XAuthProvider for FileXAuthProvider {
     fn provision(&self, display: u32) -> Result<XAuth> {
-        let _ = display;
-        unimplemented!("FileXAuthProvider::provision")
+        use anyhow::Context;
+
+        let cookie = generate_cookie();
+        let record = xauthority_record(display, &cookie);
+
+        std::fs::create_dir_all(&self.dir)
+            .with_context(|| format!("failed to create auth dir: {}", self.dir.display()))?;
+        let auth_file = self.dir.join(format!(".Xauthority-termihub-{display}"));
+        std::fs::write(&auth_file, &record)
+            .with_context(|| format!("failed to write .Xauthority: {}", auth_file.display()))?;
+
+        Ok(XAuth {
+            auth_file,
+            cookie_hex: cookie_to_hex(&cookie),
+        })
     }
 }
 
