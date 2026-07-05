@@ -79,6 +79,12 @@
   white-space: nowrap;
 }
 
+.oc-row__detail {
+  margin-left: var(--spacing-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
 .oc-row__badge {
   font-size: 10px;
   padding: 1px 6px;
@@ -101,4 +107,16 @@
 .oc-row__badge--connecting {
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
   color: var(--color-warning);
+}
+
+/* termiHub-managed X server: accent to signal termiHub ownership. */
+.oc-row__badge--managed {
+  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  color: var(--accent-color);
+}
+
+/* Adopted external X server: neutral, matches the section count chip. */
+.oc-row__badge--external {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
 }

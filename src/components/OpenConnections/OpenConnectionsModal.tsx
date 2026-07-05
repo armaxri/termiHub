@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Activity,
   MonitorStop,
+  MonitorCog,
   Loader2,
 } from "lucide-react";
 import { Modal, Button } from "@/components/ui";
@@ -17,10 +18,13 @@ import {
   closeTerminal,
   closeAgentSession,
   cancelConnecting,
+  xServerStatus,
+  xServerStop,
   LocalSessionInfo,
   AgentSessionInfo,
 } from "@/services/api";
 import { TunnelState } from "@/types/tunnel";
+import { XServerStatusReport } from "@/types/xserver";
 import "./OpenConnectionsModal.css";
 
 interface OpenConnectionsModalProps {
@@ -63,6 +67,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [proxySessions, setProxySessions] = useState<ProxySessionsState>({});
   const [agentSessions, setAgentSessions] = useState<AgentSessionsState>({});
   const [tunnelStates, setTunnelStates] = useState<TunnelState[]>([]);
+  const [xServer, setXServer] = useState<XServerStatusReport | null>(null);
   const [loading, setLoading] = useState(false);
 
   const connectedAgents = remoteAgents.filter((a) => a.connectionState === "connected");
@@ -70,12 +75,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [locals, ...agentSessionArrays] = await Promise.all([
+      const [locals, xServerReport, ...agentSessionArrays] = await Promise.all([
         listLocalSessions(),
+        xServerStatus().catch(() => null),
         ...connectedAgents.map((a) => listAgentSessions(a.id).catch(() => [])),
       ]);
 
       setLocalSessions(locals.filter((s) => !s.agentId));
+      setXServer(xServerReport as XServerStatusReport | null);
 
       const byProxy: ProxySessionsState = {};
       for (const s of locals) {
@@ -112,6 +119,12 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     return state && (state.status === "connected" || state.status === "connecting");
   });
 
+  // Only surface a live X server: a managed one that is running, or an adopted
+  // external one. Absent/failed servers have nothing to list or stop.
+  const showXServer =
+    xServer !== null && (xServer.state === "running" || xServer.state === "adopted");
+  const xServerManaged = xServer?.state === "running" && xServer.managed === true;
+
   const totalCount =
     connectingTabs.length +
     localSessions.length +
@@ -120,7 +133,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     Object.values(agentSessions).reduce((s, arr) => s + arr.length, 0) +
     activeTunnels.length +
     (sftpConnectedHost ? 1 : 0) +
-    (monitoringHost ? 1 : 0);
+    (monitoringHost ? 1 : 0) +
+    (showXServer ? 1 : 0);
 
   const handleCancelConnecting = async (tabId: string, panelId: string) => {
     await cancelConnecting(tabId).catch(() => {});
@@ -192,6 +206,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleKillAllTunnels = async () => {
     await Promise.all(activeTunnels.map((t) => stopTunnel(t.id)));
     setTunnelStates([]);
+  };
+
+  const handleStopXServer = async () => {
+    await xServerStop().catch(() => {});
+    setXServer(null);
   };
 
   return (
@@ -378,6 +397,33 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             />
           </Section>
         )}
+
+        {/* X Servers (the single shared X server, when live) */}
+        {showXServer && xServer && (
+          <Section
+            title="X Servers"
+            icon={<MonitorCog size={14} />}
+            count={1}
+            onKillAll={xServerManaged ? handleStopXServer : undefined}
+            killAllLabel="Stop"
+            data-testid="open-connections-x-servers-section"
+          >
+            <ConnectionRow
+              icon={<MonitorCog size={14} />}
+              title={xServerManaged ? "VcXsrv" : "External X server"}
+              detail={
+                xServer.displayNumber !== undefined
+                  ? `display :${xServer.displayNumber}`
+                  : undefined
+              }
+              badge={xServerManaged ? "managed" : "external"}
+              onKill={xServerManaged ? handleStopXServer : undefined}
+              killLabel="Stop"
+              data-testid="open-connections-x-server-row"
+              killTestId="open-connections-x-server-stop"
+            />
+          </Section>
+        )}
       </div>
     </Modal>
   );
@@ -389,51 +435,90 @@ interface SectionProps {
   title: string;
   icon: React.ReactNode;
   count: number;
-  onKillAll: () => void | Promise<void>;
+  /** When omitted, no bulk-action button is rendered (nothing to stop). */
+  onKillAll?: () => void | Promise<void>;
+  /** Label for the bulk-action button (defaults to "Kill All"). */
+  killAllLabel?: string;
+  "data-testid"?: string;
   children: React.ReactNode;
 }
 
-function Section({ title, count, onKillAll, children }: SectionProps) {
+function Section({
+  title,
+  count,
+  onKillAll,
+  killAllLabel = "Kill All",
+  "data-testid": testId,
+  children,
+}: SectionProps) {
   return (
-    <div>
+    <div data-testid={testId}>
       <div className="oc-section__header">
         <span className="oc-section__title">{title}</span>
         <span className="oc-section__count">{count}</span>
-        <Button
-          variant="danger"
-          size="sm"
-          className="oc-section__kill-all"
-          onClick={() => onKillAll()}
-          title={`Kill all ${title}`}
-        >
-          Kill All
-        </Button>
+        {onKillAll && (
+          <Button
+            variant="danger"
+            size="sm"
+            className="oc-section__kill-all"
+            onClick={() => onKillAll()}
+            title={`${killAllLabel} ${title}`}
+          >
+            {killAllLabel}
+          </Button>
+        )}
       </div>
       {children}
     </div>
   );
 }
 
-type BadgeVariant = "alive" | "dead" | "connected" | "connecting";
+type BadgeVariant = "alive" | "dead" | "connected" | "connecting" | "managed" | "external";
 
 interface ConnectionRowProps {
   icon: React.ReactNode;
   title: string;
+  /** Secondary line of context (e.g. the X display number). */
+  detail?: string;
   badge: BadgeVariant;
-  onKill: () => void | Promise<void>;
+  /** When omitted, no per-row kill button is rendered. */
+  onKill?: () => void | Promise<void>;
+  /** Label for the kill button (defaults to "Kill"). */
+  killLabel?: string;
+  "data-testid"?: string;
+  /** data-testid forwarded to the kill button. */
+  killTestId?: string;
 }
 
-function ConnectionRow({ icon, title, badge, onKill }: ConnectionRowProps) {
+function ConnectionRow({
+  icon,
+  title,
+  detail,
+  badge,
+  onKill,
+  killLabel = "Kill",
+  "data-testid": testId,
+  killTestId,
+}: ConnectionRowProps) {
   return (
-    <div className="oc-row">
+    <div className="oc-row" data-testid={testId}>
       <span className="oc-row__icon">{icon}</span>
       <span className="oc-row__title" title={title}>
         {title}
+        {detail && <span className="oc-row__detail">{detail}</span>}
       </span>
       <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
-      <Button variant="danger" size="sm" className="oc-row__kill" onClick={() => onKill()}>
-        Kill
-      </Button>
+      {onKill && (
+        <Button
+          variant="danger"
+          size="sm"
+          className="oc-row__kill"
+          onClick={() => onKill()}
+          data-testid={killTestId}
+        >
+          {killLabel}
+        </Button>
+      )}
     </div>
   );
 }
