@@ -67,6 +67,59 @@ impl LinuxXEnv {
     fn has_x_server_binary(&self) -> bool {
         self.xorg_on_path || self.xwayland_on_path
     }
+
+    /// Snapshot the real Linux environment. The only side-effecting entry point;
+    /// classification itself stays pure over the returned value.
+    pub fn detect() -> Self {
+        LinuxXEnv {
+            display: env_nonempty("DISPLAY"),
+            wayland_display: env_nonempty("WAYLAND_DISPLAY"),
+            xdg_session_type: env_nonempty("XDG_SESSION_TYPE"),
+            x11_socket_present: x11_socket_present(),
+            xwayland_on_path: binary_on_path("Xwayland"),
+            xorg_on_path: binary_on_path("Xorg"),
+            sandbox: detect_sandbox(),
+        }
+    }
+}
+
+/// Read an environment variable, treating empty as unset.
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.is_empty())
+}
+
+/// Whether `/tmp/.X11-unix` holds at least one `X<N>` server socket.
+fn x11_socket_present() -> bool {
+    let dir = std::path::Path::new("/tmp/.X11-unix");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_string_lossy()
+            .strip_prefix('X')
+            .is_some_and(|rest| rest.parse::<u32>().is_ok())
+    })
+}
+
+/// Whether `name` resolves to a file on `PATH` (best-effort).
+fn binary_on_path(name: &str) -> bool {
+    let Ok(path) = std::env::var("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join(name).exists())
+}
+
+/// Detect the sandbox termiHub is confined by, if any.
+fn detect_sandbox() -> SandboxKind {
+    if std::env::var_os("FLATPAK_ID").is_some() || std::path::Path::new("/.flatpak-info").exists() {
+        SandboxKind::Flatpak
+    } else if std::env::var_os("SNAP").is_some() {
+        SandboxKind::Snap
+    } else {
+        SandboxKind::None
+    }
 }
 
 /// A specific, actionable reason SSH X11 forwarding can't reach a local X server.
@@ -90,14 +143,58 @@ pub enum LinuxXGap {
 /// orchestrator's adopt/reuse/spawn and cross-platform detection have all come
 /// up empty — so a "normal desktop" never reaches here.
 pub fn classify(env: &LinuxXEnv) -> LinuxXGap {
-    let _ = env;
-    todo!("gap classification implemented in the follow-up commit (#1055)")
+    // 1. A sandbox is hiding the host socket: we're confined, no socket is
+    //    visible, yet a compositor/server clearly exists (graphical session or
+    //    an installed binary). Checked first — the real fix is a socket grant,
+    //    not installing anything.
+    if env.sandbox != SandboxKind::None
+        && !env.x11_socket_present
+        && (env.is_wayland() || env.is_x11_session() || env.has_x_server_binary())
+    {
+        return LinuxXGap::SandboxSocketHidden;
+    }
+
+    // 2. Wayland session with no XWayland and no X socket → the one case where
+    //    Linux genuinely needs a package installed to forward X11.
+    if env.is_wayland() && !env.xwayland_on_path && !env.x11_socket_present {
+        return LinuxXGap::WaylandWithoutXwayland;
+    }
+
+    // 3. A socket exists but earlier probes couldn't connect → present but
+    //    unreachable (misconfigured/permission), not missing.
+    if env.x11_socket_present {
+        return LinuxXGap::ServerUnreachable;
+    }
+
+    // 4. No display, no graphical session, and no server binary → headless box.
+    if env.display.is_none()
+        && !env.is_wayland()
+        && !env.is_x11_session()
+        && !env.has_x_server_binary()
+    {
+        return LinuxXGap::Headless;
+    }
+
+    // 5. A server binary (or a live graphical session) exists but nothing was
+    //    reachable → unreachable rather than missing.
+    if env.has_x_server_binary() || env.is_wayland() {
+        return LinuxXGap::ServerUnreachable;
+    }
+
+    // 6. A session/display is claimed but no server binary and no socket back it.
+    LinuxXGap::MissingXServer
 }
 
 impl LinuxXGap {
     /// Map the gap to a typed, actionable [`XServerError`] for the UI.
     pub fn to_error(self) -> XServerError {
-        todo!("gap-to-error mapping implemented in the follow-up commit (#1055)")
+        match self {
+            LinuxXGap::SandboxSocketHidden => XServerError::linux_sandbox_socket_hidden(),
+            LinuxXGap::WaylandWithoutXwayland => XServerError::linux_xwayland_missing(),
+            LinuxXGap::Headless => XServerError::linux_headless(),
+            LinuxXGap::MissingXServer => XServerError::linux_x_missing(),
+            LinuxXGap::ServerUnreachable => XServerError::linux_server_unreachable(),
+        }
     }
 }
 
