@@ -602,6 +602,43 @@ mod tests {
             .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
+    /// Release-verification (networked, `#[ignore]` by default): fetch the
+    /// published pinned `.zip`, confirm it matches `PINNED_VCXSRV.sha256`, and
+    /// that it extracts a runnable `vcxsrv.exe`. This is the automated half of
+    /// issue #1076's acceptance criteria — run it once the artifact is published
+    /// and the SHA-256 filled in:
+    ///
+    /// ```text
+    /// cargo test -p termihub -- --ignored pinned_artifact_downloads_verifies_and_contains_exe
+    /// ```
+    ///
+    /// It stays ignored so the normal offline test run never reaches the network
+    /// and never fails on the placeholder SHA before the artifact exists.
+    #[test]
+    #[ignore = "networked release-verification: requires the published VcXsrv artifact (#1076)"]
+    fn pinned_artifact_downloads_verifies_and_contains_exe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = tmp.path().join("vcxsrv-pinned.zip");
+
+        let bytes = reqwest::blocking::get(PINNED_VCXSRV.zip_url)
+            .expect("request pinned VcXsrv zip")
+            .error_for_status()
+            .expect("pinned VcXsrv URL must resolve to a published asset")
+            .bytes()
+            .expect("read pinned VcXsrv zip body");
+        fs::write(&zip, &bytes).unwrap();
+
+        verify_sha256(&zip, PINNED_VCXSRV.sha256)
+            .expect("published artifact must match PINNED_VCXSRV.sha256");
+
+        let out = tmp.path().join("tree");
+        extract_zip(&zip, &out).unwrap();
+        assert!(
+            is_nonempty_file(&out.join(VCXSRV_EXE)),
+            "published artifact must contain a non-empty {VCXSRV_EXE} at its root"
+        );
+    }
+
     // ----- licensing / compliance (GPL-3.0, #1056) --------------------------
 
     /// Path to a file at the repository root (parent of this crate's manifest
