@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { WifiOff, RefreshCw, X, AlertTriangle, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { Tooltip } from "@/components/ui";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
@@ -83,15 +84,16 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
         className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
         data-testid="terminal-disconnect-overlay"
       >
-        <button
-          className="terminal-disconnect-overlay__dismiss"
-          onClick={handleDismiss}
-          title="View scrollback"
-          aria-label="Dismiss and view scrollback"
-          data-testid="terminal-disconnect-dismiss-btn"
-        >
-          <X size={14} />
-        </button>
+        <Tooltip content="View scrollback" side="bottom">
+          <button
+            className="terminal-disconnect-overlay__dismiss"
+            onClick={handleDismiss}
+            aria-label="Dismiss and view scrollback"
+            data-testid="terminal-disconnect-dismiss-btn"
+          >
+            <X size={14} />
+          </button>
+        </Tooltip>
 
         <div className="terminal-disconnect-overlay__body">
           <AlertTriangle
@@ -135,15 +137,16 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
 
   return (
     <div className="terminal-disconnect-overlay" data-testid="terminal-disconnect-overlay">
-      <button
-        className="terminal-disconnect-overlay__dismiss"
-        onClick={handleDismiss}
-        title="View scrollback"
-        aria-label="Dismiss disconnect overlay and view scrollback"
-        data-testid="terminal-disconnect-dismiss-btn"
-      >
-        <X size={14} />
-      </button>
+      <Tooltip content="View scrollback" side="bottom">
+        <button
+          className="terminal-disconnect-overlay__dismiss"
+          onClick={handleDismiss}
+          aria-label="Dismiss disconnect overlay and view scrollback"
+          data-testid="terminal-disconnect-dismiss-btn"
+        >
+          <X size={14} />
+        </button>
+      </Tooltip>
 
       <div className="terminal-disconnect-overlay__body">
         <WifiOff size={32} className="terminal-disconnect-overlay__icon" />

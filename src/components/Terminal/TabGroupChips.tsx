@@ -7,6 +7,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useAppStore } from "@/store/appStore";
 import { TabGroup } from "@/types/terminal";
 import { RenameDialog } from "./RenameDialog";
+import { Tooltip } from "@/components/ui";
 import "./TabGroupChips.css";
 
 /**
@@ -72,15 +73,17 @@ export function TabGroupChips() {
           ))}
         </SortableContext>
       </DndContext>
-      <button
-        className={`tab-group-chips__add${draggingTabId ? " tab-group-chips__add--drop-target" : ""}`}
-        onClick={() => addTabGroup()}
-        title="New Tab Group (Ctrl+Shift+T)"
-        data-testid="tab-group-add"
-        data-new-group-btn="true"
-      >
-        <Plus size={14} />
-      </button>
+      <Tooltip content="New Tab Group (Ctrl+Shift+T)" side="bottom">
+        <button
+          className={`tab-group-chips__add${draggingTabId ? " tab-group-chips__add--drop-target" : ""}`}
+          onClick={() => addTabGroup()}
+          aria-label="New Tab Group (Ctrl+Shift+T)"
+          data-testid="tab-group-add"
+          data-new-group-btn="true"
+        >
+          <Plus size={14} />
+        </button>
+      </Tooltip>
       <RenameDialog
         open={renameGroupId !== null}
         onOpenChange={(open) => {

@@ -8,6 +8,7 @@ import {
 } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
+import { Tooltip } from "@/components/ui";
 
 interface WolHistoryEntry {
   mac: string;
@@ -152,20 +153,24 @@ export function WolPanel() {
         <div key={device.id} className="wol-device-row">
           <span className="wol-device-row__name">{device.name}</span>
           <span className="wol-device-row__mac">{device.mac}</span>
-          <button
-            className="network-panel__icon-btn"
-            onClick={() => handleWakeDevice(device)}
-            title="Wake"
-          >
-            <Zap size={13} />
-          </button>
-          <button
-            className="network-panel__icon-btn network-panel__icon-btn--danger"
-            onClick={() => handleDeleteDevice(device.id)}
-            title="Delete"
-          >
-            <Trash2 size={13} />
-          </button>
+          <Tooltip content="Wake" side="top">
+            <button
+              className="network-panel__icon-btn"
+              onClick={() => handleWakeDevice(device)}
+              aria-label={`Wake ${device.name}`}
+            >
+              <Zap size={13} />
+            </button>
+          </Tooltip>
+          <Tooltip content="Delete" side="top">
+            <button
+              className="network-panel__icon-btn network-panel__icon-btn--danger"
+              onClick={() => handleDeleteDevice(device.id)}
+              aria-label={`Delete ${device.name}`}
+            >
+              <Trash2 size={13} />
+            </button>
+          </Tooltip>
         </div>
       ))}
 

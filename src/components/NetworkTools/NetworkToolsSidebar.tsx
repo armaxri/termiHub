@@ -10,6 +10,7 @@ import {
 import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
+import { Tooltip } from "@/components/ui";
 
 interface QuickActionProps {
   label: string;
@@ -65,13 +66,15 @@ function MonitorRow({ monitor, onStop, onOpen }: MonitorRowProps) {
         )}
       </div>
       {running && (
-        <button
-          className="network-sidebar__monitor-stop"
-          title="Stop monitor"
-          onClick={() => onStop(config.id)}
-        >
-          <StopCircle size={12} />
-        </button>
+        <Tooltip content="Stop monitor" side="left">
+          <button
+            className="network-sidebar__monitor-stop"
+            aria-label="Stop monitor"
+            onClick={() => onStop(config.id)}
+          >
+            <StopCircle size={12} />
+          </button>
+        </Tooltip>
       )}
     </div>
   );
@@ -161,13 +164,15 @@ export function NetworkToolsSidebar() {
       <div className="network-sidebar__section" data-testid="network-monitors-section">
         <div className="network-sidebar__section-title">
           Monitors
-          <button
-            className="network-sidebar__refresh"
-            title="Refresh monitors"
-            onClick={refreshMonitors}
-          >
-            <RefreshCw size={11} />
-          </button>
+          <Tooltip content="Refresh monitors" side="bottom">
+            <button
+              className="network-sidebar__refresh"
+              aria-label="Refresh monitors"
+              onClick={refreshMonitors}
+            >
+              <RefreshCw size={11} />
+            </button>
+          </Tooltip>
         </div>
         {httpMonitors.length === 0 && (
           <span className="network-sidebar__empty">No monitors running</span>
