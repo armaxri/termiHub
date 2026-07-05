@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Shield, RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import { getAppInfo } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UpdateNotification.css";
@@ -45,10 +46,13 @@ export function UpdateNotification() {
   // skipped this exact version (the dot still appears).
   if (!isSecurity && skippedVersion === updateInfo.latestVersion) return null;
 
-  const handleOpenDownloads = () => {
-    openUrl(updateInfo.releaseUrl).catch((err) =>
-      frontendLog("update", `Failed to open release URL: ${err}`)
-    );
+  const handleOpenDownloads = async () => {
+    try {
+      await openUrl(updateInfo.releaseUrl);
+    } catch (err) {
+      frontendLog("update", `Failed to open release URL: ${err}`);
+      throw new Error("Could not open the downloads page in your browser.");
+    }
     dismissUpdateNotification();
   };
 
@@ -109,30 +113,33 @@ export function UpdateNotification() {
 
       <div className="update-notification__actions">
         {updateInfo.releaseNotes && (
-          <button
-            className="update-notification__btn update-notification__btn--ghost"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<RefreshCw size={12} />}
             onClick={() => setShowNotes((v) => !v)}
             data-testid="update-notification-whats-new"
           >
-            <RefreshCw size={12} />
             {showNotes ? "Hide" : "What's New"}
-          </button>
+          </Button>
         )}
-        <button
-          className="update-notification__btn update-notification__btn--primary"
+        <Button
+          variant="primary"
+          size="sm"
           onClick={handleOpenDownloads}
           data-testid="update-notification-open-downloads"
         >
           Open Downloads Page
-        </button>
+        </Button>
         {!isSecurity && (
-          <button
-            className="update-notification__btn update-notification__btn--ghost"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={handleSkip}
             data-testid="update-notification-skip"
           >
             Skip This Version
-          </button>
+          </Button>
         )}
       </div>
     </div>

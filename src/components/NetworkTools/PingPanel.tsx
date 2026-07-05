@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Play, StopCircle } from "lucide-react";
+import { Button } from "@/components/ui";
 import {
   networkPingStart,
   networkPingStop,
@@ -143,24 +144,26 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         <span className="network-panel__title">Ping</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <button
-              className="network-panel__btn network-panel__btn--stop"
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<StopCircle size={14} />}
               onClick={handleStop}
               data-testid="ping-stop"
             >
-              <StopCircle size={14} />
               Stop
-            </button>
+            </Button>
           ) : (
-            <button
-              className="network-panel__btn network-panel__btn--run"
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Play size={14} />}
               onClick={handleStart}
               disabled={!host.trim()}
               data-testid="ping-start"
             >
-              <Play size={14} />
               Start
-            </button>
+            </Button>
           )}
         </div>
       </div>

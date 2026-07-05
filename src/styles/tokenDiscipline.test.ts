@@ -74,38 +74,18 @@ const WHITE_ALLOWLIST: string[] = [];
  * primitive (tracked by follow-up issues), its entry is removed here. The guard's
  * value is the ratchet — a currently-clean file that reintroduces `__btn` FAILS.
  *
- * ConnectionEditor / TunnelEditor / WorkspaceEditor were migrated onto the
- * `Button` primitive in #1085 and #1094; their now-clean entries were removed
- * from this list. Do NOT assert this list has no stale entries — that would
- * cause cross-PR breakage.
+ * ConnectionEditor / TunnelEditor / WorkspaceEditor (migrated in #1085/#1094)
+ * and the Settings / NetworkTools panels / FileBrowser / TerminalSearchBar /
+ * UpdateNotification buttons (migrated in #1096) were all moved onto the `Button`
+ * primitive and removed from this list. The only remaining entry is
+ * NetworkTools/NetworkTools.css, which still carries `network-sidebar__btn` for
+ * the NetworkToolsSidebar (out of #1096's panel scope — tracked as a follow-up).
+ * Do NOT assert this list has no stale entries — that would cause cross-PR
+ * breakage.
  *
  * Paths are repo-relative suffixes (POSIX separators), matched with `endsWith`.
  */
-const BESPOKE_BTN_ALLOWLIST: string[] = [
-  "NetworkTools/DnsLookupPanel.tsx",
-  "NetworkTools/HttpMonitorPanel.tsx",
-  "NetworkTools/NetworkTools.css",
-  "NetworkTools/OpenPortsPanel.tsx",
-  "NetworkTools/PingPanel.tsx",
-  "NetworkTools/PortScannerPanel.tsx",
-  "NetworkTools/TraceroutePanel.tsx",
-  "NetworkTools/WolPanel.tsx",
-  "Settings/AboutSettings.tsx",
-  "Settings/CustomGrammarsSettings.tsx",
-  "Settings/ExternalFilesSettings.tsx",
-  "Settings/FileTypeSettings.tsx",
-  "Settings/PortableModeSettings.tsx",
-  "Settings/SecuritySettings.tsx",
-  "Settings/SerialPortSettings.tsx",
-  "Settings/SettingsPanel.css",
-  "Settings/UpdateSettings.tsx",
-  "Sidebar/FileBrowser.css",
-  "Sidebar/FileBrowser.tsx",
-  "Terminal/TerminalSearchBar.css",
-  "Terminal/TerminalSearchBar.tsx",
-  "UpdateNotification/UpdateNotification.css",
-  "UpdateNotification/UpdateNotification.tsx",
-];
+const BESPOKE_BTN_ALLOWLIST: string[] = ["NetworkTools/NetworkTools.css"];
 
 /**
  * Documented allowlist of component CSS files permitted to carry a standalone

@@ -29,6 +29,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
@@ -319,13 +320,15 @@ function FileRow({
           <div className="file-browser__row-menu">
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <button
-                  className="file-browser__btn file-browser__btn--menu"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="file-browser__menu-reveal"
+                  icon={<MoreHorizontal size={14} />}
                   title="Actions"
+                  aria-label="File actions"
                   data-testid={`file-row-menu-${entry.name}`}
-                >
-                  <MoreHorizontal size={14} />
-                </button>
+                />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="context-menu__content" align="end">
@@ -980,53 +983,60 @@ export function FileBrowser() {
           {currentPath}
         </span>
         <div className="file-browser__actions">
-          <button
-            className="file-browser__btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ArrowUp size={14} />}
             onClick={navigateUp}
             disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
             title="Go Up"
+            aria-label="Go up one directory"
             data-testid="file-browser-up"
-          >
-            <ArrowUp size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<FolderSync size={14} />}
             onClick={navigateToCwd}
             disabled={!hasCwd}
             title="Go to Terminal CWD"
+            aria-label="Go to terminal working directory"
             data-testid="file-browser-go-to-cwd"
-          >
-            <FolderSync size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Terminal size={14} />}
             onClick={cdToCurrentPath}
             disabled={!canCd}
             title={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
+            aria-label="Send cd for current path to terminal"
             data-testid="file-browser-cd-here"
-          >
-            <Terminal size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />}
             onClick={refresh}
             title="Refresh"
+            aria-label="Refresh file list"
             data-testid="file-browser-refresh"
-          >
-            <RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />
-          </button>
+          />
           {(mode === "sftp" || mode === "session") && (
-            <button
-              className="file-browser__btn"
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Upload size={14} />}
               onClick={uploadFile}
               title="Upload File"
+              aria-label="Upload file"
               data-testid="file-browser-upload"
-            >
-              <Upload size={14} />
-            </button>
+            />
           )}
-          <button
-            className="file-browser__btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ClipboardPaste size={14} />}
             onClick={handlePaste}
             disabled={!fileClipboard}
             title={
@@ -1036,35 +1046,37 @@ export function FileBrowser() {
                   : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
                 : "Paste"
             }
+            aria-label="Paste"
             data-testid="file-browser-paste"
-          >
-            <ClipboardPaste size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<FilePlus size={14} />}
             onClick={() => setNewFileName("")}
             title="New File"
+            aria-label="New file"
             data-testid="file-browser-new-file"
-          >
-            <FilePlus size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<FolderPlus size={14} />}
             onClick={() => setNewDirName("")}
             title="New Folder"
+            aria-label="New folder"
             data-testid="file-browser-new-folder"
-          >
-            <FolderPlus size={14} />
-          </button>
+          />
           {mode === "sftp" && (
-            <button
-              className="file-browser__btn"
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Unplug size={14} />}
               onClick={disconnectSftp}
               title="Disconnect"
+              aria-label="Disconnect SFTP"
               data-testid="file-browser-disconnect"
-            >
-              <Unplug size={14} />
-            </button>
+            />
           )}
         </div>
       </div>
@@ -1090,14 +1102,15 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-file-input"
           />
-          <button
-            className="file-browser__btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<FilePlus size={14} />}
             onClick={handleCreateFile}
             title="Create"
+            aria-label="Create file"
             data-testid="file-browser-new-file-confirm"
-          >
-            <FilePlus size={14} />
-          </button>
+          />
         </div>
       )}
 
@@ -1115,14 +1128,15 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-folder-input"
           />
-          <button
-            className="file-browser__btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<FolderPlus size={14} />}
             onClick={handleCreateDir}
             title="Create"
+            aria-label="Create folder"
             data-testid="file-browser-new-folder-confirm"
-          >
-            <FolderPlus size={14} />
-          </button>
+          />
         </div>
       )}
 

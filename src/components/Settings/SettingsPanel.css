@@ -173,49 +173,6 @@
   border-radius: var(--radius-md);
 }
 
-/* === Buttons === */
-.settings-panel__btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  background: transparent;
-  cursor: pointer;
-  transition:
-    color var(--transition-fast),
-    background-color var(--transition-fast),
-    border-color var(--transition-fast),
-    transform var(--transition-fast);
-}
-
-.settings-panel__btn:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-hover);
-}
-
-.settings-panel__btn:active {
-  transform: translateY(1px) scale(0.98);
-}
-
-.settings-panel__btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.settings-panel__btn--primary {
-  color: var(--accent-color);
-  border-color: var(--accent-color);
-}
-
-.settings-panel__btn--primary:hover {
-  background-color: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  box-shadow: 0 2px 8px rgba(61, 125, 232, 0.2);
-}
-
 /* === Create file prompt === */
 .settings-panel__create-prompt {
   display: flex;

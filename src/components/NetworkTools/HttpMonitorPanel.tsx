@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, StopCircle, RefreshCw } from "lucide-react";
+import { Button, Tooltip, toast } from "@/components/ui";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
@@ -9,7 +10,6 @@ import {
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
 import { frontendLog } from "@/utils/frontendLog";
-import { Tooltip } from "@/components/ui";
 
 const MAX_HISTORY = 120;
 
@@ -48,6 +48,7 @@ export function HttpMonitorPanel() {
       setMonitors(list);
     } catch (err) {
       frontendLog("http_monitor", `Failed to list monitors: ${err}`);
+      toast.error(`Failed to refresh monitors: ${err}`);
     }
   }, []);
 
@@ -149,33 +150,35 @@ export function HttpMonitorPanel() {
         <span className="network-panel__title">HTTP Monitor</span>
         <div className="network-panel__actions">
           <Tooltip content="Refresh monitor list" side="bottom">
-            <button
-              className="network-panel__btn network-panel__btn--run"
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<RefreshCw size={14} />}
               onClick={loadMonitors}
               aria-label="Refresh monitor list"
-            >
-              <RefreshCw size={14} />
-            </button>
+            />
           </Tooltip>
           {activeMonitorId ? (
-            <button
-              className="network-panel__btn network-panel__btn--stop"
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<StopCircle size={14} />}
               onClick={handleStop}
               data-testid="http-monitor-stop"
             >
-              <StopCircle size={14} />
               Stop
-            </button>
+            </Button>
           ) : (
-            <button
-              className="network-panel__btn network-panel__btn--run"
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Play size={14} />}
               onClick={handleStart}
               disabled={!url.trim() || url === "https://"}
               data-testid="http-monitor-start"
             >
-              <Play size={14} />
               Start
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -310,13 +313,13 @@ export function HttpMonitorPanel() {
                 {m.config.method} · every {m.config.intervalMs / 1000}s
               </span>
               <Tooltip content="Stop" side="left">
-                <button
-                  className="network-panel__icon-btn network-panel__icon-btn--danger"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<StopCircle size={13} />}
                   onClick={() => handleStopMonitor(m.config.id)}
                   aria-label={`Stop monitoring ${m.config.url}`}
-                >
-                  <StopCircle size={13} />
-                </button>
+                />
               </Tooltip>
             </div>
           ))}

@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { Play, StopCircle } from "lucide-react";
+import { Button } from "@/components/ui";
 import {
   networkTraceroute,
   networkTracerouteCancel,
@@ -77,20 +78,20 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
         <span className="network-panel__title">Traceroute</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <button className="network-panel__btn network-panel__btn--stop" onClick={stop}>
-              <StopCircle size={14} />
+            <Button variant="danger" size="sm" icon={<StopCircle size={14} />} onClick={stop}>
               Stop
-            </button>
+            </Button>
           ) : (
-            <button
-              className="network-panel__btn network-panel__btn--run"
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Play size={14} />}
               onClick={run}
               disabled={!host.trim()}
               data-testid="traceroute-run"
             >
-              <Play size={14} />
               Run
-            </button>
+            </Button>
           )}
         </div>
       </div>

@@ -34,75 +34,6 @@
   gap: var(--spacing-xs);
 }
 
-/* Buttons */
-.network-panel__btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 4px 10px;
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    transform var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.network-panel__btn--run {
-  background-color: var(--accent-color);
-  color: var(--text-on-accent);
-}
-
-.network-panel__btn--run:hover:not(:disabled) {
-  background-color: var(--accent-hover);
-  box-shadow: 0 2px 12px rgba(61, 125, 232, 0.35);
-}
-
-.network-panel__btn--run:active:not(:disabled) {
-  transform: translateY(1px) scale(0.98);
-  box-shadow: none;
-}
-
-.network-panel__btn--run:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.network-panel__btn--stop {
-  background-color: var(--color-error);
-  color: var(--text-on-accent);
-}
-
-.network-panel__btn--stop:hover {
-  filter: brightness(1.1);
-}
-
-.network-panel__icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background-color var(--transition-fast);
-}
-
-.network-panel__icon-btn:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.network-panel__icon-btn--danger:hover {
-  background-color: var(--color-error);
-  color: var(--text-on-accent);
-  border-color: var(--color-error);
-}
-
 /* Form layout */
 .network-panel__form {
   display: flex;
@@ -285,32 +216,6 @@
 
 .network-panel__fail {
   color: var(--color-error);
-}
-
-/* Save button (WoL) */
-.network-panel__save-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  align-self: flex-start;
-  padding: 4px 10px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: background-color var(--transition-fast);
-}
-
-.network-panel__save-btn:hover:not(:disabled) {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.network-panel__save-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* History rows */

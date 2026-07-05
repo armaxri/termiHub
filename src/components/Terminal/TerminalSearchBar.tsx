@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, ChevronUp, ChevronDown, CaseSensitive, Regex } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { Button, Tooltip } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
-import { Tooltip } from "@/components/ui";
 import "./TerminalSearchBar.css";
 
 interface TerminalSearchBarProps {
@@ -88,41 +88,51 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         spellCheck={false}
       />
       <Tooltip content="Match Case" side="bottom">
-        <button
-          className={`terminal-search-bar__btn${caseSensitive ? " terminal-search-bar__btn--active" : ""}`}
+        <Button
+          variant={caseSensitive ? "secondary" : "ghost"}
+          size="sm"
+          icon={<CaseSensitive size={14} />}
           onClick={() => setCaseSensitive(!caseSensitive)}
           aria-label="Match Case"
-        >
-          <CaseSensitive size={14} />
-        </button>
+          aria-pressed={caseSensitive}
+        />
       </Tooltip>
       <Tooltip content="Use Regular Expression" side="bottom">
-        <button
-          className={`terminal-search-bar__btn${useRegex ? " terminal-search-bar__btn--active" : ""}`}
+        <Button
+          variant={useRegex ? "secondary" : "ghost"}
+          size="sm"
+          icon={<Regex size={14} />}
           onClick={() => setUseRegex(!useRegex)}
           aria-label="Use Regular Expression"
-        >
-          <Regex size={14} />
-        </button>
+          aria-pressed={useRegex}
+        />
       </Tooltip>
       <Tooltip content="Previous" side="bottom">
-        <button
-          className="terminal-search-bar__btn"
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<ChevronUp size={14} />}
           onClick={handleFindPrevious}
-          aria-label="Previous"
-        >
-          <ChevronUp size={14} />
-        </button>
+          aria-label="Previous match"
+        />
       </Tooltip>
       <Tooltip content="Next" side="bottom">
-        <button className="terminal-search-bar__btn" onClick={handleFindNext} aria-label="Next">
-          <ChevronDown size={14} />
-        </button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<ChevronDown size={14} />}
+          onClick={handleFindNext}
+          aria-label="Next match"
+        />
       </Tooltip>
       <Tooltip content="Close" side="bottom">
-        <button className="terminal-search-bar__btn" onClick={handleClose} aria-label="Close">
-          <X size={14} />
-        </button>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<X size={14} />}
+          onClick={handleClose}
+          aria-label="Close search"
+        />
       </Tooltip>
     </div>
   );
