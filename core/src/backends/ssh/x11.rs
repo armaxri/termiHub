@@ -31,10 +31,25 @@ pub struct LocalXServerInfo {
     pub connection: LocalXConnection,
 }
 
+impl LocalXServerInfo {
+    /// Build info for a TCP-loopback X server on `display_number`
+    /// (`127.0.0.1:6000+n`) — how every termiHub-managed server, and an adopted
+    /// server on a reachable local TCP port, is reached.
+    pub fn tcp_loopback(display_number: u32) -> Self {
+        Self {
+            display_number,
+            connection: LocalXConnection::Tcp(
+                "127.0.0.1".to_string(),
+                6000 + display_number as u16,
+            ),
+        }
+    }
+}
+
 /// A termiHub-managed local X server (one that termiHub itself started).
 ///
-/// See epic #1047 / concept #1044 (X server provisioning). When present, this
-/// carries everything the forwarder needs, so detection can skip all
+/// See epic #1047 / concept #1044 (X server provisioning). It carries everything
+/// the forwarder needs, so the connect path can forward to it without any
 /// filesystem/`xauth` probing — which are no-ops on Windows anyway.
 #[derive(Debug, Clone)]
 pub struct ManagedXServer {
@@ -45,36 +60,31 @@ pub struct ManagedXServer {
     pub cookie: Option<String>,
 }
 
-/// A source of termiHub-managed X server information.
-///
-/// This is a thin seam so detection can be managed-server-aware without a
-/// global: the Windows [`XServerManager`] (issue #1049) will implement it, and
-/// [`detect_local_x_server`] / [`read_local_xauth_cookie`] consult it first.
-/// Until the manager lands, callers pass `None` and behavior is unchanged.
-///
-/// [`XServerManager`]: https://github.com/armaxri/termiHub/issues/1049
-pub trait ManagedXServerSource: Send + Sync {
-    /// Returns the currently managed local X server, if termiHub started one.
-    fn managed_server(&self) -> Option<ManagedXServer>;
-}
-
-/// A [`ManagedXServerSource`] that always reports a single, fixed managed server.
-///
-/// Lets the SSH connect path hand a just-ensured [`ManagedXServer`] to
-/// [`X11Forwarder::start`] without reaching for a global.
-pub struct SingleManagedServer(ManagedXServer);
-
-impl SingleManagedServer {
-    /// Wrap a managed server so it can be passed as a [`ManagedXServerSource`].
-    pub fn new(server: ManagedXServer) -> Self {
-        Self(server)
+impl ManagedXServer {
+    /// Resolve this managed server to a concrete [`ResolvedXServer`] (TCP
+    /// loopback with the known cookie) ready to hand to [`X11Forwarder::start`].
+    pub fn resolved(&self) -> ResolvedXServer {
+        ResolvedXServer {
+            info: LocalXServerInfo::tcp_loopback(self.display_number),
+            cookie: self.cookie.clone(),
+        }
     }
 }
 
-impl ManagedXServerSource for SingleManagedServer {
-    fn managed_server(&self) -> Option<ManagedXServer> {
-        Some(self.0.clone())
-    }
+/// A fully-resolved local X server for the connect path to forward to, plus its
+/// auth cookie.
+///
+/// Produced once by the desktop X server provisioner (for a managed *or* an
+/// adopted server) and handed to [`X11Forwarder::start`], which then performs no
+/// second socket/DISPLAY/TCP probe. When no provisioner is registered (core used
+/// standalone, or in tests) the forwarder falls back to [`detect_local_x_server`].
+#[derive(Debug, Clone)]
+pub struct ResolvedXServer {
+    /// Where to reach the server.
+    pub info: LocalXServerInfo,
+    /// MIT-MAGIC-COOKIE-1 (hex) to authorize the forwarded display, or `None`
+    /// for a cookieless (`-ac`) server.
+    pub cookie: Option<String>,
 }
 
 /// A hook the desktop app installs so the SSH connect path can ensure a usable
@@ -90,14 +100,15 @@ impl ManagedXServerSource for SingleManagedServer {
 /// user-run server.
 #[async_trait]
 pub trait XServerProvisioner: Send + Sync {
-    /// Ensure a usable local X server exists.
+    /// Ensure a usable local X server exists and resolve where to reach it.
     ///
-    /// - `Ok(Some(server))` — a termiHub-managed server is ready; forward to it.
-    /// - `Ok(None)` — no managed server is needed (a user-run server was adopted,
-    ///   or provisioning is disabled); fall back to detection.
+    /// - `Ok(Some(resolved))` — a server (managed or adopted) is ready; forward
+    ///   to `resolved.info` with `resolved.cookie`, no further detection.
+    /// - `Ok(None)` — provisioning is disabled or resolved nothing; fall back to
+    ///   [`detect_local_x_server`] for a user-run server.
     /// - `Err(message)` — provisioning failed; `message` is an actionable,
     ///   user-facing explanation surfaced to the UI (never a silent no-op).
-    async fn ensure(&self) -> Result<Option<ManagedXServer>, String>;
+    async fn ensure(&self) -> Result<Option<ResolvedXServer>, String>;
 }
 
 static PROVISIONER: OnceLock<Arc<dyn XServerProvisioner>> = OnceLock::new();
@@ -123,10 +134,10 @@ pub struct X11Forwarder {
 impl X11Forwarder {
     /// Start X11 forwarding using an existing SSH session.
     ///
-    /// `managed` is an optional source of termiHub-managed X server info (a
-    /// server termiHub started itself). When present it is consulted before any
-    /// filesystem/`xauth` probing; pass `None` to rely purely on detection of a
-    /// user-run server.
+    /// `resolved` is the server the desktop provisioner already resolved (managed
+    /// or adopted); when present it is used as-is with **no** second
+    /// socket/DISPLAY/TCP probe. Pass `None` (core standalone / tests) to detect
+    /// a user-run server here via [`detect_local_x_server`].
     ///
     /// Returns `(forwarder, remote_display_number, xauth_cookie)`.
     pub async fn start(
@@ -134,20 +145,29 @@ impl X11Forwarder {
         session: &mut SshSession,
         registry: ForwardedChannelRegistry,
         alive: Arc<AtomicBool>,
-        managed: Option<&dyn ManagedXServerSource>,
+        resolved: Option<ResolvedXServer>,
     ) -> Result<(Self, u32, Option<String>), SessionError> {
-        let local_x = detect_local_x_server(managed).ok_or_else(|| {
-            SessionError::SpawnFailed(
-                "No local X server detected. Start an X server (XQuartz on macOS).".to_string(),
-            )
-        })?;
+        let (local_x, xauth_cookie) = match resolved {
+            // Provisioner already resolved the server — forward to it directly.
+            Some(resolved) => (resolved.info, resolved.cookie),
+            // No provisioner: detect a user-run server and read its cookie.
+            None => {
+                let info = detect_local_x_server().ok_or_else(|| {
+                    SessionError::SpawnFailed(
+                        "No local X server detected. Start an X server (XQuartz on macOS)."
+                            .to_string(),
+                    )
+                })?;
+                let cookie = read_local_xauth_cookie(info.display_number);
+                (info, cookie)
+            }
+        };
 
         info!(
-            "X11 forwarding: detected local X server at display :{}",
+            "X11 forwarding: using local X server at display :{}",
             local_x.display_number
         );
 
-        let xauth_cookie = read_local_xauth_cookie(local_x.display_number, managed);
         if xauth_cookie.is_some() {
             info!("X11 forwarding: read local xauth cookie");
         } else {
@@ -353,24 +373,17 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
     }
 }
 
-/// Detect the local X server.
+/// Detect a user-run local X server.
 ///
-/// Resolution order (see the "Detection decision flow" diagram in concept
-/// #1044):
-/// 1. A termiHub-**managed** server (via `managed`) wins — returned as
-///    `Tcp("127.0.0.1", 6000+n)` with no filesystem/`xauth` probing.
-/// 2. The `DISPLAY` environment variable, when set.
-/// 3. Platform fallback for user-run servers: on Unix, scan `/tmp/.X11-unix/`
-///    for live sockets; on Windows, probe `127.0.0.1:6000`.
-pub fn detect_local_x_server(
-    managed: Option<&dyn ManagedXServerSource>,
-) -> Option<LocalXServerInfo> {
-    // 1. A termiHub-managed server takes precedence over everything.
-    if let Some(server) = managed.and_then(|src| src.managed_server()) {
-        return Some(managed_server_info(&server));
-    }
-
-    // 2. Honor an explicit DISPLAY.
+/// A termiHub-**managed** server is resolved upstream by the desktop provisioner
+/// (which hands the forwarder a [`ResolvedXServer`]); this covers only the
+/// no-provisioner fallback. Resolution order (see the "Detection decision flow"
+/// diagram in concept #1044):
+/// 1. The `DISPLAY` environment variable, when set.
+/// 2. Platform fallback: on Unix, scan `/tmp/.X11-unix/` for live sockets; on
+///    Windows, probe `127.0.0.1:6000`.
+pub fn detect_local_x_server() -> Option<LocalXServerInfo> {
+    // 1. Honor an explicit DISPLAY.
     if let Ok(display) = std::env::var("DISPLAY") {
         if !display.is_empty() {
             let (host, display_number, _screen) = parse_display(&display)?;
@@ -378,7 +391,7 @@ pub fn detect_local_x_server(
         }
     }
 
-    // 3. Platform fallback for user-installed servers.
+    // 2. Platform fallback for user-installed servers.
     #[cfg(unix)]
     {
         detect_from_sockets()
@@ -386,17 +399,6 @@ pub fn detect_local_x_server(
     #[cfg(not(unix))]
     {
         detect_from_tcp_probe()
-    }
-}
-
-/// Map a managed server to a `LocalXServerInfo` (always TCP loopback).
-fn managed_server_info(server: &ManagedXServer) -> LocalXServerInfo {
-    LocalXServerInfo {
-        display_number: server.display_number,
-        connection: LocalXConnection::Tcp(
-            "127.0.0.1".to_string(),
-            6000 + server.display_number as u16,
-        ),
     }
 }
 
@@ -456,23 +458,11 @@ pub fn probe_tcp_x_server_at(addr: std::net::SocketAddr, timeout: std::time::Dur
 
 /// Read the MIT-MAGIC-COOKIE-1 for the given local display number.
 ///
-/// Resolution order:
-/// 1. If `managed` reports a server on this display, return its known cookie
-///    directly — no `xauth` shell-out (which is a no-op on Windows). A `None`
-///    cookie means the managed server runs in `-ac` mode.
-/// 2. Otherwise run `xauth list :N` and parse the hex cookie. Returns `None` if
-///    `xauth` is not installed (e.g. Windows without a managed server, where a
-///    `-ac` server still works) or no cookie is found.
-pub fn read_local_xauth_cookie(
-    display_number: u32,
-    managed: Option<&dyn ManagedXServerSource>,
-) -> Option<String> {
-    if let Some(server) = managed.and_then(|src| src.managed_server()) {
-        if server.display_number == display_number {
-            return server.cookie;
-        }
-    }
-
+/// Runs `xauth list :N` and parses the hex cookie. Returns `None` if `xauth` is
+/// not installed (e.g. Windows, where a `-ac` server still works) or no cookie
+/// is found. A termiHub-managed server's cookie is known up front and threaded
+/// through [`ResolvedXServer`] instead, so this is only the user-run path.
+pub fn read_local_xauth_cookie(display_number: u32) -> Option<String> {
     let output = std::process::Command::new("xauth")
         .args(["list", &format!(":{display_number}")])
         .output()
@@ -563,16 +553,7 @@ mod tests {
         assert!(parse_display(":abc").is_none());
     }
 
-    // ── Managed-server-aware detection (issue #1051) ─────────────────────
-
-    /// A test double for a termiHub-managed X server source.
-    struct FakeManaged(Option<ManagedXServer>);
-
-    impl ManagedXServerSource for FakeManaged {
-        fn managed_server(&self) -> Option<ManagedXServer> {
-            self.0.clone()
-        }
-    }
+    // ── Resolved / managed server mapping (issue #1087) ──────────────────
 
     /// Assert a connection is TCP to the expected host/port (cross-platform).
     fn assert_tcp(conn: &LocalXConnection, host: &str, port: u16) {
@@ -589,75 +570,42 @@ mod tests {
     }
 
     #[test]
-    fn detect_prefers_managed_server_over_everything() {
-        // A managed server on display :0 must be returned as TCP 127.0.0.1:6000
-        // with no filesystem/xauth probing — even if DISPLAY happens to be set
-        // in the environment (managed is consulted first).
-        let src = FakeManaged(Some(ManagedXServer {
-            display_number: 0,
-            cookie: Some("deadbeef".to_string()),
-        }));
-        let info = detect_local_x_server(Some(&src)).expect("managed server should be detected");
-        assert_eq!(info.display_number, 0);
-        assert_tcp(&info.connection, "127.0.0.1", 6000);
+    fn tcp_loopback_maps_display_to_port() {
+        // Display :0 → 127.0.0.1:6000; display :3 → 127.0.0.1:6003.
+        let zero = LocalXServerInfo::tcp_loopback(0);
+        assert_eq!(zero.display_number, 0);
+        assert_tcp(&zero.connection, "127.0.0.1", 6000);
 
-        // The managed cookie is returned directly, without shelling to `xauth`.
-        assert_eq!(
-            read_local_xauth_cookie(0, Some(&src)),
-            Some("deadbeef".to_string())
-        );
+        let three = LocalXServerInfo::tcp_loopback(3);
+        assert_eq!(three.display_number, 3);
+        assert_tcp(&three.connection, "127.0.0.1", 6003);
     }
 
     #[test]
-    fn detect_managed_server_maps_display_to_port() {
-        // Display :3 → TCP port 6003.
-        let src = FakeManaged(Some(ManagedXServer {
-            display_number: 3,
-            cookie: None,
-        }));
-        let info = detect_local_x_server(Some(&src)).expect("managed server should be detected");
-        assert_eq!(info.display_number, 3);
-        assert_tcp(&info.connection, "127.0.0.1", 6003);
-    }
-
-    #[test]
-    fn managed_server_without_cookie_is_ac_mode() {
-        // A managed server started with `-ac` has no cookie; read must return
-        // None (and must not shell to `xauth`).
-        let src = FakeManaged(Some(ManagedXServer {
-            display_number: 0,
-            cookie: None,
-        }));
-        assert_eq!(read_local_xauth_cookie(0, Some(&src)), None);
-    }
-
-    #[test]
-    fn single_managed_server_adapter_reports_its_server() {
-        // The adapter used by the connect path to hand a just-ensured server to
-        // the forwarder must report exactly that server, and drive detection to
-        // the managed TCP loopback path.
-        let adapter = SingleManagedServer::new(ManagedXServer {
+    fn managed_server_resolves_to_tcp_loopback_with_cookie() {
+        // A managed server on :2 resolves to TCP 127.0.0.1:6002 carrying its
+        // known cookie — no filesystem/xauth probing needed at the forwarder.
+        let resolved = ManagedXServer {
             display_number: 2,
             cookie: Some("cafebabe".to_string()),
-        });
-        let server = adapter.managed_server().expect("adapter reports a server");
-        assert_eq!(server.display_number, 2);
-
-        let info = detect_local_x_server(Some(&adapter)).expect("managed server detected");
-        assert_eq!(info.display_number, 2);
-        assert_tcp(&info.connection, "127.0.0.1", 6002);
-        assert_eq!(
-            read_local_xauth_cookie(2, Some(&adapter)),
-            Some("cafebabe".to_string())
-        );
+        }
+        .resolved();
+        assert_eq!(resolved.info.display_number, 2);
+        assert_tcp(&resolved.info.connection, "127.0.0.1", 6002);
+        assert_eq!(resolved.cookie.as_deref(), Some("cafebabe"));
     }
 
     #[test]
-    fn no_managed_server_does_not_short_circuit() {
-        // An empty managed source must behave exactly like `None`: detection
-        // falls through to the platform path (no panic, returns an Option).
-        let src = FakeManaged(None);
-        let _ = detect_local_x_server(Some(&src));
+    fn managed_server_without_cookie_resolves_ac_mode() {
+        // A managed server started with `-ac` has no cookie; the resolved
+        // server carries `None` so no `xauth` add is emitted.
+        let resolved = ManagedXServer {
+            display_number: 0,
+            cookie: None,
+        }
+        .resolved();
+        assert_tcp(&resolved.info.connection, "127.0.0.1", 6000);
+        assert!(resolved.cookie.is_none());
     }
 
     #[test]
