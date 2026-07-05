@@ -25,6 +25,7 @@ import {
 } from "@/services/api";
 import { TunnelState } from "@/types/tunnel";
 import { XServerStatusReport } from "@/types/xserver";
+import { XServerSetupDialog } from "./XServerSetupDialog";
 import "./OpenConnectionsModal.css";
 
 interface OpenConnectionsModalProps {
@@ -68,6 +69,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [agentSessions, setAgentSessions] = useState<AgentSessionsState>({});
   const [tunnelStates, setTunnelStates] = useState<TunnelState[]>([]);
   const [xServer, setXServer] = useState<XServerStatusReport | null>(null);
+  const [xServerSetupOpen, setXServerSetupOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const connectedAgents = remoteAgents.filter((a) => a.connectionState === "connected");
@@ -124,6 +126,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const showXServer =
     xServer !== null && (xServer.state === "running" || xServer.state === "adopted");
   const xServerManaged = xServer?.state === "running" && xServer.managed === true;
+
+  // When no live server exists (absent/failed/unknown), offer a Set up affordance
+  // instead. Suppressed while loading so the row doesn't flash before status
+  // arrives. This affordance is not counted as an active connection.
+  const showXServerSetup = !loading && !showXServer;
 
   const totalCount =
     connectingTabs.length +
@@ -227,7 +234,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     >
       <div className="open-connections__body">
         {loading && totalCount === 0 && <div className="open-connections__empty">Loading…</div>}
-        {!loading && totalCount === 0 && (
+        {!loading && totalCount === 0 && !showXServerSetup && (
           <div className="open-connections__empty">No open connections.</div>
         )}
 
@@ -398,33 +405,56 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           </Section>
         )}
 
-        {/* X Servers (the single shared X server, when live) */}
-        {showXServer && xServer && (
+        {/* X Servers (the single shared X server, or a Set up affordance) */}
+        {(showXServer || showXServerSetup) && (
           <Section
             title="X Servers"
             icon={<MonitorCog size={14} />}
-            count={1}
-            onKillAll={xServerManaged ? handleStopXServer : undefined}
+            count={showXServer ? 1 : 0}
+            onKillAll={showXServer && xServerManaged ? handleStopXServer : undefined}
             killAllLabel="Stop"
             data-testid="open-connections-x-servers-section"
           >
-            <ConnectionRow
-              icon={<MonitorCog size={14} />}
-              title={xServerManaged ? "VcXsrv" : "External X server"}
-              detail={
-                xServer.displayNumber !== undefined
-                  ? `display :${xServer.displayNumber}`
-                  : undefined
-              }
-              badge={xServerManaged ? "managed" : "external"}
-              onKill={xServerManaged ? handleStopXServer : undefined}
-              killLabel="Stop"
-              data-testid="open-connections-x-server-row"
-              killTestId="open-connections-x-server-stop"
-            />
+            {showXServer && xServer ? (
+              <ConnectionRow
+                icon={<MonitorCog size={14} />}
+                title={xServerManaged ? "VcXsrv" : "External X server"}
+                detail={
+                  xServer.displayNumber !== undefined
+                    ? `display :${xServer.displayNumber}`
+                    : undefined
+                }
+                badge={xServerManaged ? "managed" : "external"}
+                onKill={xServerManaged ? handleStopXServer : undefined}
+                killLabel="Stop"
+                data-testid="open-connections-x-server-row"
+                killTestId="open-connections-x-server-stop"
+              />
+            ) : (
+              <div className="oc-row" data-testid="open-connections-x-server-empty">
+                <span className="oc-row__icon">
+                  <MonitorCog size={14} />
+                </span>
+                <span className="oc-row__title oc-row__title--muted">No X server</span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setXServerSetupOpen(true)}
+                  data-testid="open-connections-x-server-setup"
+                >
+                  Set up
+                </Button>
+              </div>
+            )}
           </Section>
         )}
       </div>
+
+      <XServerSetupDialog
+        open={xServerSetupOpen}
+        onOpenChange={setXServerSetupOpen}
+        onProvisioned={(report) => setXServer(report)}
+      />
     </Modal>
   );
 }
@@ -455,7 +485,7 @@ function Section({
     <div data-testid={testId}>
       <div className="oc-section__header">
         <span className="oc-section__title">{title}</span>
-        <span className="oc-section__count">{count}</span>
+        {count > 0 && <span className="oc-section__count">{count}</span>}
         {onKillAll && (
           <Button
             variant="danger"

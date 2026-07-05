@@ -79,6 +79,10 @@
   white-space: nowrap;
 }
 
+.oc-row__title--muted {
+  color: var(--text-muted);
+}
+
 .oc-row__detail {
   margin-left: var(--spacing-sm);
   color: var(--text-muted);

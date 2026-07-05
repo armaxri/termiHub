@@ -266,7 +266,9 @@ Fixed strings — match exactly.
 | `network-monitors-section` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-new-monitor` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-tools-sidebar` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `open-connections-x-server-empty` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-server-row` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-x-server-setup` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-servers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-ports-panel` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-ports-refresh` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
@@ -467,6 +469,15 @@ Fixed strings — match exactly.
 | `workspace-save-btn` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-save-current-btn` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
 | `workspace-sidebar` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
+| `x-server-setup-cancel` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-close` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-consent` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-dialog` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-enable` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-error` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-install-dep` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-progress` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
+| `x-server-setup-retry` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
 | `zoom-context-clear` | `src/components/SplitView/SplitView.tsx` |
 | `zoom-context-copy` | `src/components/SplitView/SplitView.tsx` |
 | `zoom-context-horizontal-scroll` | `src/components/SplitView/SplitView.tsx` |

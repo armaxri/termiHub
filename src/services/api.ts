@@ -273,6 +273,25 @@ export async function xServerStop(): Promise<void> {
   return await invoke<void>("x_server_stop");
 }
 
+/**
+ * Resolve or provision the shared X server (adopt an external one, or download
+ * and launch the managed one). Emits `x-server-progress` events while running
+ * and resolves with the final status. Rejects with a typed `XServerError` on
+ * failure.
+ */
+export async function xServerEnsure(): Promise<XServerStatusReport> {
+  return await invoke<XServerStatusReport>("x_server_ensure");
+}
+
+/**
+ * Install the platform X server dependency (e.g. VcXsrv) when provisioning
+ * reported it missing. Rejects with a typed `XServerError` carrying guidance
+ * when the install cannot proceed automatically.
+ */
+export async function xServerInstallDependency(): Promise<void> {
+  await invoke("x_server_install_dependency");
+}
+
 /** Check whether the SSH agent is running, stopped, or not installed. */
 export async function checkSshAgentStatus(): Promise<string> {
   return await invoke<string>("check_ssh_agent_status");
