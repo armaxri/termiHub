@@ -341,7 +341,11 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"{CATALOG_PATH.relative_to(REPO_ROOT).as_posix()} is up to date.")
         return 0
 
-    CATALOG_PATH.write_text(content, encoding="utf-8")
+    # Force LF newlines so regenerating on Windows (e.g. from the autoformat
+    # hook, #1084) does not rewrite the file with CRLF and create a spurious
+    # diff — the repo normalizes the catalog to LF via .gitattributes anyway.
+    with open(CATALOG_PATH, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
     print(f"Wrote {CATALOG_PATH.relative_to(REPO_ROOT).as_posix()}")
     return 0
 
