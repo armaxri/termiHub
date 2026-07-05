@@ -75,26 +75,11 @@ mod tests {
     ) -> (String, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        // Non-blocking accept with a bounded deadline so the server thread always
-        // terminates — `join()` can never deadlock even if the client never
-        // connects (e.g. a regression that stops `download_to_file` sending a
-        // request).
-        listener.set_nonblocking(true).unwrap();
         let handle = std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok((stream, _)) => break stream,
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        if std::time::Instant::now() >= deadline {
-                            return; // give up — no client connected
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    Err(e) => panic!("accept failed: {e}"),
-                }
-            };
-            stream.set_nonblocking(false).unwrap();
+            // Every test connects immediately (the client is `download_to_file`,
+            // invoked right after), so a blocking accept is safe; a hung test is
+            // caught by the test-runner timeout.
+            let (mut stream, _) = listener.accept().unwrap();
             drain_request(&mut stream);
             let mut header = format!("HTTP/1.1 {status_line}\r\nConnection: close\r\n");
             if send_content_length {
@@ -108,19 +93,11 @@ mod tests {
         (format!("http://{addr}/file"), handle)
     }
 
-    /// Read the request headers (up to the blank line) so the client's write side
-    /// completes before we respond.
+    /// Read the pending request so the client's write side completes before we
+    /// respond (avoids a connection reset on close). One read is enough for a
+    /// small GET over loopback.
     fn drain_request(stream: &mut TcpStream) {
-        let mut buf = [0u8; 1024];
-        loop {
-            let n = stream.read(&mut buf).unwrap_or(0);
-            if n == 0 {
-                break;
-            }
-            if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
-                break;
-            }
-        }
+        let _ = stream.read(&mut [0u8; 1024]);
     }
 
     #[test]
