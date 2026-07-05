@@ -99,10 +99,12 @@ wrap motion in `@media (prefers-reduced-motion: reduce)`; use the shared enter/e
   A design change ships with at least a unit test or documented manual test.
 - **`data-testid` catalog**: if you add, remove, or rename ANY `data-testid`
   (migrating a dialog to `Modal` adds `modal-close`; primitives forward the
-  hook), regenerate `tests/system/testid-catalog.md` with
-  `python scripts/build-testid-catalog.py` and commit it in the same change.
-  CI fails on a stale catalog (both the "Frontend Code Quality" catalog check
-  and the "System-Test machinery" job).
+  hook), `tests/system/testid-catalog.md` must stay in sync — CI fails on a
+  stale catalog (both the "Frontend Code Quality" catalog check and the
+  "System-Test machinery" job). The PostToolUse autoformat hook now regenerates
+  it automatically whenever you edit a `src/**` `.tsx` (#1084), so in a normal
+  Claude Code session it stays current on its own — just commit the resulting
+  change. If you edit outside the hook, run `python scripts/build-testid-catalog.py`.
 - Run `./scripts/check.sh` (lint/format/clippy mirror of CI) and `./scripts/test.sh`
   before declaring done. Formatting is auto-applied by the PostToolUse hook.
 

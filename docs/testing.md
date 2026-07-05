@@ -868,6 +868,19 @@ To verify SSH tunnels actually work on macOS, do this manually against the tunne
 4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
 5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
 
+### Development Tooling — testid-catalog auto-regeneration (#1084)
+
+The `tests/system/testid-catalog.md` catalog is regenerated automatically by the
+PostToolUse autoformat hook (`scripts/internal/autoformat.sh`) whenever a `src/**`
+`.tsx` is edited in a Claude Code session, so a stale catalog can't reach CI. The
+hook fires only inside Claude Code, so verify it manually after changing the hook
+or the generator:
+
+1. Edit any `src/**` component to **add** a new `data-testid` (e.g. `data-testid="tmp-probe"`).
+2. Confirm `git status` shows `tests/system/testid-catalog.md` modified **without** running the generator by hand, and that the new id appears in the catalog.
+3. **Remove** the `data-testid` again and edit the same `.tsx`; confirm the catalog drops the id automatically.
+4. Run `python scripts/build-testid-catalog.py --check` — it should report the catalog is up to date (exit 0), proving the hook kept CI's guard satisfied.
+
 ### Legacy Guided Manual Test Runner (YAML)
 
 The remaining manual test items are still defined as machine-readable YAML in [`tests/manual/*.yaml`](../tests/manual/). The standalone runner presents applicable tests one at a time, manages infrastructure, and generates a JSON report. It is being subsumed by the harness flow above:
