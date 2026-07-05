@@ -1,4 +1,5 @@
 pub mod docker_detect;
+pub mod download;
 pub mod errors;
 pub mod expand;
 pub mod log_capture;
