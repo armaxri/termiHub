@@ -20,6 +20,12 @@ vi.mock("@/services/api", () => ({
   cancelConnecting: vi.fn(() => Promise.resolve(true)),
   xServerStatus: () => xServerStatus(),
   xServerStop: () => xServerStop(),
+  xServerEnsure: vi.fn(() => Promise.resolve()),
+  xServerInstallDependency: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("@/services/events", () => ({
+  onXServerProgress: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
@@ -114,7 +120,7 @@ describe("OpenConnectionsModal — X Servers section", () => {
     expect(section?.querySelector(".oc-section__kill-all")).toBeNull();
   });
 
-  it("renders no X Servers section when the server is absent", async () => {
+  it("offers a Set up affordance when the server is absent and opens the setup dialog", async () => {
     xServerStatus.mockResolvedValue({
       state: "absent",
       platform: "windows",
@@ -122,6 +128,27 @@ describe("OpenConnectionsModal — X Servers section", () => {
     });
     await renderModal();
 
-    expect(document.querySelector('[data-testid="open-connections-x-servers-section"]')).toBeNull();
+    // The section still renders, now with a Set up affordance instead of a row.
+    const section = document.querySelector('[data-testid="open-connections-x-servers-section"]');
+    expect(section).not.toBeNull();
+    expect(document.querySelector('[data-testid="open-connections-x-server-row"]')).toBeNull();
+
+    const setupBtn = document.querySelector(
+      '[data-testid="open-connections-x-server-setup"]'
+    ) as HTMLButtonElement;
+    expect(setupBtn).not.toBeNull();
+
+    // The dialog is not open yet.
+    expect(document.querySelector('[data-testid="x-server-setup-dialog"]')).toBeNull();
+
+    await act(async () => {
+      setupBtn.click();
+      await Promise.resolve();
+    });
+    await flush();
+
+    // Clicking Set up opens the consent dialog.
+    expect(document.querySelector('[data-testid="x-server-setup-dialog"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="x-server-setup-consent"]')).not.toBeNull();
   });
 });
