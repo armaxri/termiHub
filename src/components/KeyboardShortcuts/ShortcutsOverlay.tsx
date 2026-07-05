@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
+import { Modal, Input } from "@/components/ui";
 import { ShortcutCategory, ShortcutScope } from "@/types/keybindings";
 import { getDefaultBindings, getEffectiveCombo, serializeBinding } from "@/services/keybindings";
 import { isMac } from "@/utils/platform";
@@ -58,92 +57,72 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
   })).filter((g) => g.bindings.length > 0);
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="shortcuts-overlay__backdrop" />
-        <Dialog.Content
-          className="shortcuts-overlay__content"
-          data-testid="shortcuts-overlay"
-          onOpenAutoFocus={(e) => e.preventDefault()}
-        >
-          <div className="shortcuts-overlay__header">
-            <Dialog.Title className="shortcuts-overlay__title">Keyboard Shortcuts</Dialog.Title>
-            <Dialog.Close asChild>
-              <button className="shortcuts-overlay__close" data-testid="shortcuts-overlay-close">
-                <X size={16} />
-              </button>
-            </Dialog.Close>
-          </div>
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Keyboard Shortcuts"
+      size="lg"
+      data-testid="shortcuts-overlay"
+    >
+      <div className="shortcuts-overlay__search">
+        <Input
+          placeholder="Search shortcuts..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          data-testid="shortcuts-overlay-search"
+          autoFocus
+        />
+      </div>
 
-          <div className="shortcuts-overlay__search">
-            <input
-              type="text"
-              placeholder="Search shortcuts..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="shortcuts-overlay__search-input"
-              data-testid="shortcuts-overlay-search"
-              autoFocus
-            />
-          </div>
+      <table className="shortcuts-overlay__table">
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th className={!currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}>
+              Win / Linux
+            </th>
+            <th className={currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}>macOS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groupedBindings.map((group) => (
+            <>
+              <tr key={`header-${group.category}`} className="shortcuts-overlay__group-row">
+                <td colSpan={3} className="shortcuts-overlay__group-label">
+                  {group.label}
+                </td>
+              </tr>
+              {group.bindings.map((binding) => {
+                const winLinux = serializeBinding(binding.winLinuxDefault);
+                const mac = serializeBinding(binding.macDefault);
+                const effective = getEffectiveCombo(binding.action);
+                const effectiveStr = effective ? serializeBinding(effective) : "";
 
-          <div className="shortcuts-overlay__body">
-            <table className="shortcuts-overlay__table">
-              <thead>
-                <tr>
-                  <th>Action</th>
-                  <th className={!currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}>
-                    Win / Linux
-                  </th>
-                  <th className={currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}>
-                    macOS
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {groupedBindings.map((group) => (
-                  <>
-                    <tr key={`header-${group.category}`} className="shortcuts-overlay__group-row">
-                      <td colSpan={3} className="shortcuts-overlay__group-label">
-                        {group.label}
-                      </td>
-                    </tr>
-                    {group.bindings.map((binding) => {
-                      const winLinux = serializeBinding(binding.winLinuxDefault);
-                      const mac = serializeBinding(binding.macDefault);
-                      const effective = getEffectiveCombo(binding.action);
-                      const effectiveStr = effective ? serializeBinding(effective) : "";
-
-                      return (
-                        <tr key={binding.action} data-testid={`shortcut-row-${binding.action}`}>
-                          <td className="shortcuts-overlay__action">
-                            {binding.label}
-                            <span className="shortcuts-overlay__scope">
-                              {SCOPE_HINTS[binding.scope ?? "global"]}
-                            </span>
-                          </td>
-                          <td
-                            className={`shortcuts-overlay__binding ${!currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}`}
-                          >
-                            <kbd>
-                              {!currentPlatformIsMac && effective ? effectiveStr : winLinux}
-                            </kbd>
-                          </td>
-                          <td
-                            className={`shortcuts-overlay__binding ${currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}`}
-                          >
-                            <kbd>{currentPlatformIsMac && effective ? effectiveStr : mac}</kbd>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+                return (
+                  <tr key={binding.action} data-testid={`shortcut-row-${binding.action}`}>
+                    <td className="shortcuts-overlay__action">
+                      {binding.label}
+                      <span className="shortcuts-overlay__scope">
+                        {SCOPE_HINTS[binding.scope ?? "global"]}
+                      </span>
+                    </td>
+                    <td
+                      className={`shortcuts-overlay__binding ${!currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}`}
+                    >
+                      <kbd>{!currentPlatformIsMac && effective ? effectiveStr : winLinux}</kbd>
+                    </td>
+                    <td
+                      className={`shortcuts-overlay__binding ${currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}`}
+                    >
+                      <kbd>{currentPlatformIsMac && effective ? effectiveStr : mac}</kbd>
+                    </td>
+                  </tr>
+                );
+              })}
+            </>
+          ))}
+        </tbody>
+      </table>
+    </Modal>
   );
 }
