@@ -108,9 +108,7 @@ pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerEr
             Err(XServerError::windows_provisioning_unavailable()),
             "",
         ),
-        XServerPlatform::Linux => {
-            finish(&app, Err(XServerError::linux_install_unsupported()), "")
-        }
+        XServerPlatform::Linux => finish(&app, Err(XServerError::linux_install_unsupported()), ""),
     }
 }
 
