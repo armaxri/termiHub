@@ -111,36 +111,3 @@
   border-top: 1px solid var(--border-color);
   flex-wrap: wrap;
 }
-
-.update-notification__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-
-.update-notification__btn--primary {
-  background: var(--accent-color, #0e7490);
-  color: var(--text-on-accent);
-  border-color: var(--accent-color, #0e7490);
-}
-
-.update-notification__btn--primary:hover {
-  opacity: 0.9;
-}
-
-.update-notification__btn--ghost {
-  background: transparent;
-  color: var(--text-secondary);
-  border-color: var(--border-color);
-}
-
-.update-notification__btn--ghost:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, ChevronUp, ChevronDown, CaseSensitive, Regex } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import "./TerminalSearchBar.css";
 
@@ -86,29 +87,48 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
         placeholder="Find..."
         spellCheck={false}
       />
-      <button
-        className={`terminal-search-bar__btn${caseSensitive ? " terminal-search-bar__btn--active" : ""}`}
+      <Button
+        variant={caseSensitive ? "secondary" : "ghost"}
+        size="sm"
+        icon={<CaseSensitive size={14} />}
         onClick={() => setCaseSensitive(!caseSensitive)}
         title="Match Case"
-      >
-        <CaseSensitive size={14} />
-      </button>
-      <button
-        className={`terminal-search-bar__btn${useRegex ? " terminal-search-bar__btn--active" : ""}`}
+        aria-label="Match Case"
+        aria-pressed={caseSensitive}
+      />
+      <Button
+        variant={useRegex ? "secondary" : "ghost"}
+        size="sm"
+        icon={<Regex size={14} />}
         onClick={() => setUseRegex(!useRegex)}
         title="Use Regular Expression"
-      >
-        <Regex size={14} />
-      </button>
-      <button className="terminal-search-bar__btn" onClick={handleFindPrevious} title="Previous">
-        <ChevronUp size={14} />
-      </button>
-      <button className="terminal-search-bar__btn" onClick={handleFindNext} title="Next">
-        <ChevronDown size={14} />
-      </button>
-      <button className="terminal-search-bar__btn" onClick={handleClose} title="Close">
-        <X size={14} />
-      </button>
+        aria-label="Use Regular Expression"
+        aria-pressed={useRegex}
+      />
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<ChevronUp size={14} />}
+        onClick={handleFindPrevious}
+        title="Previous"
+        aria-label="Previous match"
+      />
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<ChevronDown size={14} />}
+        onClick={handleFindNext}
+        title="Next"
+        aria-label="Next match"
+      />
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<X size={14} />}
+        onClick={handleClose}
+        title="Close"
+        aria-label="Close search"
+      />
     </div>
   );
 }
