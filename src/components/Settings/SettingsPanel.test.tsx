@@ -33,6 +33,8 @@ const FULL_SETTINGS: AppSettings = {
   ...SPARSE_SETTINGS,
   defaultShellIntegration: true,
   defaultX11Forwarding: true,
+  provideXServerAutomatically: true,
+  stopXServerWhenIdle: true,
   updates: { autoCheck: true },
 };
 
@@ -50,6 +52,18 @@ function render() {
 function findShellIntegrationCheckbox(): HTMLInputElement | null {
   return container.querySelector(
     "[data-testid='settings-default-shell-integration']"
+  ) as HTMLInputElement | null;
+}
+
+function findProvideXServerCheckbox(): HTMLInputElement | null {
+  return container.querySelector(
+    "[data-testid='settings-provide-x-server']"
+  ) as HTMLInputElement | null;
+}
+
+function findStopXServerIdleCheckbox(): HTMLInputElement | null {
+  return container.querySelector(
+    "[data-testid='settings-stop-x-server-idle']"
   ) as HTMLInputElement | null;
 }
 
@@ -158,5 +172,47 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     // Dirty flag must still be true — the external update must not have reset the baseline
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+  });
+
+  it("marks settings dirty when toggling Provide X Server Automatically", async () => {
+    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    render();
+
+    const checkbox = findProvideXServerCheckbox();
+    expect(checkbox).not.toBeNull();
+    expect(checkbox!.checked).toBe(true);
+
+    // User disables auto-provisioning → dirty
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(false);
+    expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(false);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+
+    // User reverts to original (enabled) value → clean
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(true);
+    expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(true);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+  });
+
+  it("marks settings dirty when toggling Stop X Server When Idle", async () => {
+    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    render();
+
+    const checkbox = findStopXServerIdleCheckbox();
+    expect(checkbox).not.toBeNull();
+    expect(checkbox!.checked).toBe(true);
+
+    // User disables idle shutdown → dirty
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(false);
+    expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(false);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+
+    // User reverts to original (enabled) value → clean
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(true);
+    expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(true);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 });
