@@ -43,6 +43,7 @@ from .manual import (
     manual_skip_reason,
     write_manual_report,
 )
+from .clipboard import read_os_clipboard
 from .display import ensure_local_display
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
@@ -155,4 +156,5 @@ __all__ = [
     "key_fingerprint",
     "sha256_fingerprints",
     "ensure_local_display",
+    "read_os_clipboard",
 ]

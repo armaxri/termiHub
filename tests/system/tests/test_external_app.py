@@ -65,6 +65,7 @@ from termihub_harness import (
     TabsUi,
     TerminalUi,
     agent_has_key,
+    read_os_clipboard,
     unique_name,
 )
 
@@ -331,9 +332,30 @@ class TestExternalApp(
         )
         self.driver.click("tab-context-copy")
 
+        # In-app verification (machine-checkable): the copy must actually land on
+        # the OS clipboard. Reading it back catches a silently-failing copy
+        # without depending on the operator's paste. The write is async, so poll
+        # briefly; the clipboard state is printed either way for diagnosis.
+        try:
+            self.wait(
+                lambda: (marker in (read_os_clipboard() or "")) or None,
+                timeout=5.0,
+                what=f"{marker!r} on the OS clipboard",
+            )
+            landed = True
+        except AssertionError:
+            landed = False
+        clip_head = (read_os_clipboard() or "")[:120]
+        print(f"[clipboard-check] marker landed on OS clipboard: {landed} · "
+              f"content head: {clip_head!r}")
+        assert landed, (
+            "'Copy to Clipboard' did not put the terminal buffer on the OS "
+            f"clipboard — read back: {clip_head!r}"
+        )
+
         self.manual_step(
-            "termiHub copied the terminal buffer to the clipboard (tab menu → "
-            "Copy to Clipboard). Paste into any external editor.",
+            "termiHub copied the terminal buffer to the clipboard (verified on the "
+            "OS clipboard). Paste into any external editor to confirm the round-trip.",
             f"The pasted text contains {marker!r}.",
         )
 
