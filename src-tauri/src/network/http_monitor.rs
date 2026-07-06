@@ -236,8 +236,13 @@ mod tests {
 
     #[test]
     fn interval_above_floor_is_preserved() {
-        let cfg =
-            HttpMonitorConfig::new("https://example.com".into(), 5_000, "GET".into(), 200, 5_000);
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            5_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
         assert_eq!(cfg.interval_ms, 5_000);
     }
 }
