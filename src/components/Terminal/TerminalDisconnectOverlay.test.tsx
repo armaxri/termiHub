@@ -34,6 +34,7 @@ vi.mock("lucide-react", () => ({
   X: () => null,
   AlertTriangle: () => null,
   Loader2: () => null,
+  CheckCircle2: () => null,
 }));
 
 describe("TerminalDisconnectOverlay — default (disconnected) state", () => {

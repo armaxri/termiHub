@@ -615,12 +615,25 @@ export function Terminal({
 
         // Subscribe to exit events via singleton dispatcher
         frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
-        const unsubExit = terminalDispatcher.subscribeExit(sessionId, () => {
-          frontendLog("disconnect", `terminal-exit fired session=${sessionId} tab=${tabId}`);
-          xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
+        const unsubExit = terminalDispatcher.subscribeExit(sessionId, (exitCode) => {
+          // Classify why the session ended so the disconnect overlay can tailor
+          // its wording (#1121). A user-initiated kill (e.g. from the Open
+          // Connections panel) was tagged beforehand; otherwise exit code 0 is a
+          // clean exit and anything else (or an unknown code) is a dropped/failed
+          // session.
+          const store = useAppStore.getState();
+          const wasKilled = store.consumeSessionKilled(sessionId);
+          const reason = wasKilled ? "killed" : exitCode === 0 ? "clean" : "dropped";
+          frontendLog(
+            "disconnect",
+            `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason}`
+          );
+          const exitLabel =
+            exitCode === null ? "[Process exited]" : `[Process exited with code ${exitCode}]`;
+          xterm.writeln(`\r\n\x1b[90m${exitLabel}\x1b[0m`);
           sessionIdRef.current = null;
           unregisterSession(tabId);
-          useAppStore.getState().setTerminalExited(tabId);
+          store.setTerminalExited(tabId, { code: exitCode, reason });
         });
 
         // Send user input to backend

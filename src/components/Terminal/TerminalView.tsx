@@ -43,7 +43,8 @@ export function TerminalView() {
         const tab = allTabs.find((t) => t.sessionId === session_id);
         if (tab) {
           frontendLog("disconnect", `remote-state-change: marking tab=${tab.id} as exited`);
-          store.setTerminalExited(tab.id);
+          // Remote peer dropped the connection — no exit code available (#1121).
+          store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
         } else {
           frontendLog("disconnect", `remote-state-change: no tab found for session=${session_id}`);
         }
@@ -126,7 +127,8 @@ export function TerminalView() {
                 "disconnect",
                 `agent connected after reconnect: marking tab=${tab.id} as exited (session not recovered)`
               );
-              store.setTerminalExited(tab.id);
+              // Agent lost the session across the reconnect — a dropped session (#1121).
+              store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
               markedExited++;
             }
           }
@@ -198,7 +200,8 @@ export function TerminalView() {
               // Auto-reconnect exhausted its retries — surface the reason.
               store.setTerminalDisconnectWithError(tab.id, error);
             } else {
-              store.setTerminalExited(tab.id);
+              // Agent connection dropped without a specific error — a dropped session (#1121).
+              store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
             }
             markedCount++;
           }

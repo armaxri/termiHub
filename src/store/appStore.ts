@@ -17,6 +17,7 @@ import {
   NetworkDiagnosticMeta,
   NetworkTool,
   TabGroup,
+  TerminalExitInfo,
 } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import {
@@ -520,6 +521,14 @@ interface AppState {
 
   // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
   terminalExitedTabs: Record<string, boolean>;
+  /** How each exited tab's session ended — drives the disconnect overlay wording (#1121). */
+  terminalExitInfo: Record<string, TerminalExitInfo>;
+  /**
+   * Session IDs the user explicitly killed (e.g. from the Open Connections panel).
+   * Consumed by the exit handler so a user kill is classified as `killed` rather
+   * than an unexpected disconnect (#1121).
+   */
+  intentionallyKilledSessions: Record<string, boolean>;
   /** Error message from a failed reconnect attempt (agent auto-reconnect exhausted). */
   terminalDisconnectErrors: Record<string, string>;
   /** True when the disconnect overlay was dismissed — session is dead but user is browsing scrollback. */
@@ -532,7 +541,16 @@ interface AppState {
   terminalReconnectPrompt: Record<string, boolean>;
   /** Error message that triggered the auto-reconnect, shown during the spinner overlay. */
   terminalReconnectTriggerErrors: Record<string, string>;
-  setTerminalExited: (tabId: string) => void;
+  /**
+   * Mark a tab's session as exited. Pass `info` to record the exit code and
+   * cause so the overlay can branch its wording; a `killed` reason additionally
+   * drops the tab straight into view mode so no disconnect overlay appears (#1121).
+   */
+  setTerminalExited: (tabId: string, info?: TerminalExitInfo) => void;
+  /** Tag a session as intentionally killed by the user (e.g. Open Connections) (#1121). */
+  markSessionKilled: (sessionId: string) => void;
+  /** Return whether a session was intentionally killed, clearing the flag (#1121). */
+  consumeSessionKilled: (sessionId: string) => boolean;
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
   setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
   setTerminalReattaching: (tabId: string, reattaching: boolean) => void;
@@ -1880,6 +1898,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
         const remainingConnecting = omitKey(state.terminalConnecting, tabId);
         const remainingExited = omitKey(state.terminalExitedTabs, tabId);
+        const remainingExitInfo = omitKey(state.terminalExitInfo, tabId);
         const remainingDiscErr = omitKey(state.terminalDisconnectErrors, tabId);
         const remainingView = omitKey(state.terminalViewMode, tabId);
         const remainingReconn = omitKey(state.terminalReconnectingTabs, tabId);
@@ -1930,6 +1949,7 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalRetryCounters: remainingRetryCounters,
             terminalConnecting: remainingConnecting,
             terminalExitedTabs: remainingExited,
+            terminalExitInfo: remainingExitInfo,
             terminalDisconnectErrors: remainingDiscErr,
             terminalViewMode: remainingView,
             terminalReconnectingTabs: remainingReconn,
@@ -1954,6 +1974,7 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalRetryCounters: remainingRetryCounters,
           terminalConnecting: remainingConnecting,
           terminalExitedTabs: remainingExited,
+          terminalExitInfo: remainingExitInfo,
           terminalDisconnectErrors: remainingDiscErr,
           terminalViewMode: remainingView,
           terminalReconnectingTabs: remainingReconn,
@@ -2832,15 +2853,28 @@ export const useAppStore = create<AppState>((set, get) => {
 
     // Per-tab terminal session disconnects (runtime-only)
     terminalExitedTabs: {},
+    terminalExitInfo: {},
+    intentionallyKilledSessions: {},
     terminalDisconnectErrors: {},
     terminalViewMode: {},
     terminalReconnectingTabs: {},
     terminalReattaching: {},
     terminalReconnectPrompt: {},
     terminalReconnectTriggerErrors: {},
-    setTerminalExited: (tabId) => {
+    setTerminalExited: (tabId, info) => {
       set((state) => ({
         terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+        // Record the exit cause/code so the overlay can branch its wording (#1121).
+        terminalExitInfo: info
+          ? { ...state.terminalExitInfo, [tabId]: info }
+          : state.terminalExitInfo,
+        // A user-initiated kill goes straight to view mode: the session is dead
+        // and scrollback is preserved, but no "unexpected disconnect" overlay is
+        // shown for something the user asked for (#1121).
+        terminalViewMode:
+          info?.reason === "killed"
+            ? { ...state.terminalViewMode, [tabId]: true }
+            : state.terminalViewMode,
         // Clear any stale reconnecting flag — session is definitively dead now
         terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
         terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
@@ -2850,6 +2884,22 @@ export const useAppStore = create<AppState>((set, get) => {
       if (get().monitoringSessionId) {
         get().disconnectMonitoring();
       }
+    },
+    markSessionKilled: (sessionId) =>
+      set((state) => ({
+        intentionallyKilledSessions: {
+          ...state.intentionallyKilledSessions,
+          [sessionId]: true,
+        },
+      })),
+    consumeSessionKilled: (sessionId) => {
+      const wasKilled = !!get().intentionallyKilledSessions[sessionId];
+      if (wasKilled) {
+        set((state) => ({
+          intentionallyKilledSessions: omitKey(state.intentionallyKilledSessions, sessionId),
+        }));
+      }
+      return wasKilled;
     },
     setTerminalDisconnectWithError: (tabId, error) => {
       set((state) => ({
@@ -2892,6 +2942,7 @@ export const useAppStore = create<AppState>((set, get) => {
     reconnectTerminal: (tabId) =>
       set((state) => ({
         terminalExitedTabs: omitKey(state.terminalExitedTabs, tabId),
+        terminalExitInfo: omitKey(state.terminalExitInfo, tabId),
         terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
         terminalViewMode: omitKey(state.terminalViewMode, tabId),
         terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),

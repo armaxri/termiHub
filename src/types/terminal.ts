@@ -100,6 +100,25 @@ export interface AgentErrorMeta {
  */
 export type LineEnding = "cr" | "lf" | "crlf";
 
+/**
+ * Why a terminal session ended, used to tailor the disconnect overlay (#1121).
+ *
+ * - `clean`   — the process exited normally (exit code 0 / graceful logout).
+ * - `dropped` — the process exited non-zero, or the peer/network connection
+ *               was lost (unexpected termination).
+ * - `killed`  — the user explicitly terminated the session (e.g. via the Open
+ *               Connections panel); no "unexpected disconnect" overlay is shown.
+ */
+export type TerminalExitReason = "clean" | "dropped" | "killed";
+
+/** Details about how a terminal session ended (#1121). */
+export interface TerminalExitInfo {
+  /** Process exit code, or `null` when unknown (e.g. a dropped connection). */
+  code: number | null;
+  /** Classified cause used to branch the disconnect overlay's wording. */
+  reason: TerminalExitReason;
+}
+
 export interface TerminalOptions {
   horizontalScrolling?: boolean;
   color?: string;
