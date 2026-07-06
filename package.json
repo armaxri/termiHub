@@ -62,7 +62,7 @@
     "overrides": {
       "dompurify": ">=3.4.11",
       "markdown-it": ">=14.2.0",
-      "js-yaml": ">=4.2.0",
+      "js-yaml": ">=4.2.0 <5",
       "serialize-javascript": ">=7.0.5",
       "flatted": ">=3.4.2",
       "fast-uri": ">=3.1.2",
