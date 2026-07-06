@@ -289,7 +289,15 @@ impl EmbeddedServerManager {
         for cfg in configs {
             if cfg.auto_start {
                 if let Err(e) = self.start_server(&cfg.id) {
-                    tracing::warn!(id = %cfg.id, "Failed to auto-start embedded server: {e}");
+                    // Surface the failure (e.g. port busy at boot) as an Error
+                    // state so the sidebar shows the server red with a reason,
+                    // instead of silently leaving it stopped (GAP G7, #1145).
+                    let msg = e.to_string();
+                    tracing::warn!(id = %cfg.id, "Failed to auto-start embedded server: {msg}");
+                    let state = auto_start_error_state(&cfg.id, &msg);
+                    let _ = self
+                        .app_handle
+                        .emit("embedded-server-status-changed", &state);
                 }
             }
         }
@@ -299,6 +307,14 @@ impl EmbeddedServerManager {
 
     /// Attempt a quick bind to check whether the port is available.
     fn check_port(&self, config: &EmbeddedServerConfig) -> Result<(), TerminalError> {
+        Self::check_port_config(config)
+    }
+
+    /// Attempt a quick bind to check whether a config's port is available.
+    ///
+    /// Static so the pre-flight check can be exercised without a live manager
+    /// (and its [`AppHandle`]).
+    fn check_port_config(config: &EmbeddedServerConfig) -> Result<(), TerminalError> {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
             ServerType::Tftp => {
@@ -334,6 +350,21 @@ impl EmbeddedServerManager {
         let _ = self
             .app_handle
             .emit("embedded-server-status-changed", &state);
+    }
+}
+
+/// Build the `Error` [`ServerState`] surfaced when a server marked `auto_start`
+/// fails to start at launch (e.g. its port is already in use).
+///
+/// Keeps the failure visible in the sidebar (red, with a reason) instead of
+/// silently leaving the server stopped (GAP G7, #1145).
+fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
+    ServerState {
+        server_id: server_id.to_string(),
+        status: ServerStatus::Error,
+        error: Some(error.to_string()),
+        stats: ServerStats::default(),
+        started_at: None,
     }
 }
 
