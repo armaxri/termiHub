@@ -38,6 +38,7 @@ const TUNNEL: TunnelConfig = {
   name: "My Tunnel",
   sshConnectionId: "ssh-1",
   autoStart: false,
+  reconnectOnDisconnect: false,
   tunnelType: {
     type: "local",
     config: {

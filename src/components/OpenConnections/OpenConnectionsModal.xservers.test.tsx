@@ -5,7 +5,7 @@
  * adopted external server exposes no Stop control.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
@@ -77,11 +77,9 @@ describe("OpenConnectionsModal — X Servers section", () => {
   async function renderModal() {
     await act(async () => {
       root.render(
-        React.createElement(
-          TooltipProvider,
-          { delayDuration: 0 },
-          React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
-        )
+        <TooltipProvider delayDuration={0}>
+          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+        </TooltipProvider>
       );
     });
     await flush();

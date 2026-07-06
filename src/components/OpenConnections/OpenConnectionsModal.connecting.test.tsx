@@ -4,7 +4,7 @@
  * which aborts the in-flight connect via cancel_connecting.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
@@ -82,11 +82,9 @@ describe("OpenConnectionsModal — Connecting section", () => {
     });
     act(() => {
       root.render(
-        React.createElement(
-          TooltipProvider,
-          { delayDuration: 0 },
-          React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
-        )
+        <TooltipProvider delayDuration={0}>
+          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+        </TooltipProvider>
       );
     });
   }
@@ -119,11 +117,9 @@ describe("OpenConnectionsModal — Connecting section", () => {
   it("shows no Connecting section when nothing is connecting", () => {
     act(() => {
       root.render(
-        React.createElement(
-          TooltipProvider,
-          { delayDuration: 0 },
-          React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
-        )
+        <TooltipProvider delayDuration={0}>
+          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+        </TooltipProvider>
       );
     });
     const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(
