@@ -17,6 +17,23 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(),
 }));
 
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+
+// Keep the real UI primitives (Modal/Button/Input) so the SaveWorkspaceDialog
+// still renders, but spy on the toast helper to assert save feedback.
+vi.mock("@/components/ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui")>();
+  return {
+    ...actual,
+    toast: {
+      ...actual.toast,
+      success: (...args: unknown[]) => toastSuccess(...args),
+      error: (...args: unknown[]) => toastError(...args),
+    },
+  };
+});
+
 import { useAppStore } from "@/store/appStore";
 
 let container: HTMLDivElement;
@@ -24,6 +41,25 @@ let root: Root;
 
 function query(testId: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testId}"]`);
+}
+
+/** Flush a microtask queue turn so awaited promises settle inside act(). */
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+/** Open the Save dialog, enter a name, and click the confirm button. */
+function openDialogAndConfirm(name: string) {
+  act(() => query("workspace-save-current-btn")!.click());
+  const nameInput = query("save-workspace-name") as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(nameInput, name);
+    nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  act(() => (query("save-workspace-confirm") as HTMLButtonElement).click());
 }
 
 const sampleWorkspaces: WorkspaceSummary[] = [
@@ -99,5 +135,40 @@ describe("WorkspaceSidebar", () => {
     expect(query("workspace-edit-ws-1")).not.toBeNull();
     expect(query("workspace-duplicate-ws-1")).not.toBeNull();
     expect(query("workspace-delete-ws-1")).not.toBeNull();
+  });
+
+  it("keeps the save dialog open and surfaces an error when the save rejects", async () => {
+    const saveCurrentAsWorkspace = vi.fn().mockRejectedValue(new Error("disk full"));
+    useAppStore.setState({ workspaces: [], saveCurrentAsWorkspace });
+
+    act(() => {
+      root.render(<WorkspaceSidebar />);
+    });
+
+    openDialogAndConfirm("My Layout");
+    await flush();
+
+    expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("My Layout", "all", undefined);
+    // Dialog must stay open so the user does not falsely believe the save succeeded.
+    expect(query("save-workspace-dialog")).not.toBeNull();
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("closes the save dialog and surfaces success when the save resolves", async () => {
+    const saveCurrentAsWorkspace = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [], saveCurrentAsWorkspace });
+
+    act(() => {
+      root.render(<WorkspaceSidebar />);
+    });
+
+    openDialogAndConfirm("My Layout");
+    await flush();
+
+    expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("My Layout", "all", undefined);
+    expect(query("save-workspace-dialog")).toBeNull();
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
   });
 });
