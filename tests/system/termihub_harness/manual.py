@@ -119,54 +119,29 @@ class ManualPrompter:
 
     # -- public verbs --------------------------------------------------------
     def step(
-        self,
-        instruction: str,
-        expected: str,
-        *,
-        screenshot: Optional[str] = None,
-        action: bool = True,
+        self, instruction: str, expected: str, *, screenshot: Optional[str] = None
     ) -> ManualResult:
-        """Show the instruction + expected result, wait, then ask pass/fail/skip.
+        """Show a short prompt and read a one-key pass/fail/skip verdict.
 
-        ``action`` frames the prompt: ``True`` (the default) for a step the
-        operator performs ("Perform the step…"), ``False`` for one where the
-        harness already acted and the operator only observes the result
-        ("Look at the result…"). Getting this right matters — telling an operator
-        to "perform" a step the harness already did reads as a broken prompt.
+        Deliberately minimal for the operator: the instruction, a one-line pass
+        condition, then a single keypress — no multi-line box and no separate
+        "press Enter to continue" stage.
         """
-        title = "MANUAL STEP" if action else "OBSERVE RESULT"
-        wait = (
-            "  Perform the step, then press Enter to record the result… "
-            if action
-            else "  Look at the result, then press Enter to record it… "
-        )
-        self._present(title, [instruction], expected, screenshot)
-        self._read_line(wait)
+        self._print("")
+        self._print(f"  ❓ {instruction}")
+        if expected:
+            self._print(f"     pass if: {expected}")
+        if screenshot:
+            self._print(f"     screenshot: {screenshot}")
         return self._verdict()
 
     def confirm(self, question: str) -> bool:
-        """Ask a yes/no question; ``True`` for yes (EOF / Ctrl-C answers no)."""
-        self._present("CONFIRM", [question], "Answer yes or no.", None)
-        return self._read_choice("  [y]es / [n]o: ", ("y", "n"), default="n") == "y"
+        """Ask a one-key yes/no question; ``True`` for yes (EOF / Ctrl-C = no)."""
+        self._print("")
+        self._print(f"  ❓ {question}")
+        return self._read_choice("  → [y]es / [n]o: ", ("y", "n"), default="n") == "y"
 
     # -- internals -----------------------------------------------------------
-    def _present(
-        self,
-        title: str,
-        lines: Sequence[str],
-        expected: str,
-        screenshot: Optional[str],
-    ) -> None:
-        self._print("")
-        self._print(f"  ┌─ {title} " + "─" * max(0, 48 - len(title)))
-        for line in lines:
-            self._print(f"  │ {line}")
-        self._print("  │")
-        self._print(f"  │ Expected: {expected}")
-        if screenshot:
-            self._print(f"  │ Screenshot: {screenshot}")
-        self._print("  └" + "─" * 50)
-
     def _read_line(self, prompt: str) -> Optional[str]:
         """Read one line; ``None`` signals EOF / Ctrl-C (operator gave up)."""
         try:
@@ -191,13 +166,13 @@ class ManualPrompter:
 
     def _verdict(self) -> ManualResult:
         choice = self._read_choice(
-            "  Result — [p]ass / [f]ail / [s]kip: ", ("p", "f", "s"), default="s"
+            "  → [y]es (pass) / [n]o (fail) / [s]kip: ", ("y", "n", "s"), default="s"
         )
-        if choice == "p":
+        if choice == "y":
             return ManualResult("pass")
         if choice == "s":
             return ManualResult("skip")
-        note = (self._read_line("  Failure note (optional): ") or "").strip() or None
+        note = (self._read_line("  what went wrong? (optional): ") or "").strip() or None
         return ManualResult("fail", note)
 
 

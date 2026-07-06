@@ -139,8 +139,8 @@ class TestExternalApp(
         self.driver.click(_VSCODE_ITEM)
 
         self.manual_observe(
-            f"termiHub just issued 'Open in VS Code' for the local file {fname!r}.",
-            "VS Code opens (or focuses) with that file.",
+            f"termiHub opened {fname} in VS Code.",
+            "VS Code shows that file.",
         )
 
     # ── Open in VS Code: menu hidden when unavailable (MT-FB-16) ──────────────
@@ -182,9 +182,8 @@ class TestExternalApp(
         self.driver.click(_VSCODE_ITEM)
 
         self.manual_observe(
-            f"termiHub issued 'Open in VS Code' for the remote (SFTP) file {fname!r}.",
-            "VS Code opens with the downloaded file and termiHub keeps running "
-            "(no crash — regression #828).",
+            f"termiHub opened the remote (SFTP) file {fname} in VS Code.",
+            "VS Code shows the file and termiHub is still running (no crash).",
         )
         # In-app side: the app is still responsive after the external hand-off.
         assert self.driver.get_state("vscodeAvailable") is not None
@@ -253,9 +252,8 @@ class TestExternalApp(
         )
 
         self.manual_observe(
-            "termiHub opened the 'Setup SSH Agent' helper tab.",
-            "The helper terminal runs the SSH-agent setup command (PowerShell "
-            "elevation on Windows; `ssh-agent` + `ssh-add` on macOS/Linux).",
+            "termiHub opened a 'Setup SSH Agent' tab.",
+            "The tab ran the ssh-agent setup command.",
         )
 
     # ── X11 forwarding (MT-SSH-14/15/16/18, MT-XPLAT-03) ─────────────────────
@@ -305,11 +303,8 @@ class TestExternalApp(
         )
 
         self.manual_step(
-            "X11 forwarding is confirmed working ($DISPLAY was auto-verified "
-            "above). In the SSH terminal, with a local X server running (XQuartz "
-            "on macOS), run an X11 app, e.g.:\n"
-            "      xeyes   (or: xclock)",
-            "An X11 window (xeyes/xclock) appears on your local display.",
+            "In the SSH terminal, type: xeyes   (or: xclock)",
+            "An X11 window appears on your screen.",
         )
 
     # ── Clipboard copy/paste (MT-KB-01..04) ──────────────────────────────────
@@ -354,21 +349,14 @@ class TestExternalApp(
         )
 
         self.manual_step(
-            "The whole terminal buffer was copied to the clipboard (already "
-            "auto-verified above). Paste into any external editor. You will get "
-            "the ENTIRE buffer — many lines, including prompts and shell-"
-            "integration noise — which is expected; you are NOT looking for just "
-            f"the marker on its own. Scan the pasted text for the line {marker}.",
-            f"The marker {marker} appears somewhere within the pasted buffer "
-            "(passes as long as it is present — the surrounding lines are fine).",
+            "Paste (Cmd+V) into any editor.",
+            f"You see the terminal text, with {marker} somewhere in it "
+            "(the whole buffer pastes — that's fine).",
         )
 
         self.manual_step(
-            "Now test the keyboard shortcuts directly in the terminal:\n"
-            "  1. Select some terminal text with the mouse.\n"
-            "  2. Copy it — macOS: Cmd+C   ·   Windows/Linux: Ctrl+Shift+C.\n"
-            "  3. Paste it back — macOS: Cmd+V   ·   Windows/Linux: Ctrl+Shift+V.\n"
-            "  4. Confirm plain Ctrl+C (no Shift) still sends SIGINT (cancels a "
-            "running command).",
-            "Copy/paste use the platform shortcut, and Ctrl+C still interrupts.",
+            "In the terminal: select some text, copy it (Cmd+C, or Ctrl+Shift+C "
+            "on Windows/Linux), paste it back (Cmd+V / Ctrl+Shift+V). Then run a "
+            "command and press plain Ctrl+C.",
+            "Copy and paste worked, and plain Ctrl+C cancelled the command.",
         )

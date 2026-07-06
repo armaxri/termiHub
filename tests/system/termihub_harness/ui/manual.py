@@ -90,9 +90,7 @@ class ManualUi(HarnessMixin):
         references its path (never the raw data URL).
         """
         shot = self._capture_screenshot(label) if screenshot else None
-        result = self._manual_prompter.step(
-            instruction, expected, screenshot=shot, action=False
-        )
+        result = self._manual_prompter.step(instruction, expected, screenshot=shot)
         self._record("observe", instruction, expected, result, screenshot=shot)
         self._enforce(result, instruction)
 
