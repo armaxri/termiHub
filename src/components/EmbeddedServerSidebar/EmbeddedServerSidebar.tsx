@@ -80,7 +80,6 @@ export function EmbeddedServerSidebar() {
         <button
           className="server-sidebar__add-btn"
           onClick={handleNew}
-          title="New Service"
           data-testid="server-new-btn"
         >
           <Plus size={14} />
