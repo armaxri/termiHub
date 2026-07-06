@@ -141,6 +141,17 @@
   color: var(--text-primary);
 }
 
+/* In-flight start/stop: mirror the shared button's disabled convention. */
+.server-item__action:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.server-item__action:disabled:hover {
+  background: none;
+  color: var(--text-secondary);
+}
+
 .server-item__action--danger:hover {
   color: var(--color-error);
 }
