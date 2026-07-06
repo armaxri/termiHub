@@ -32,7 +32,7 @@ echo.
 
 set "PYTHONUNBUFFERED=1"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "& '%~dp0test-system-py.cmd' --fixtures 'ssh-password ssh-keys ssh-x11' --manual -s %SELECT% 2>&1 | Tee-Object -FilePath '%LOGFILE%'"
+  "& '%~dp0test-system-py.cmd' --manual -s -rs %SELECT% 2>&1 | Tee-Object -FilePath '%LOGFILE%'"
 set "STATUS=%ERRORLEVEL%"
 
 echo.

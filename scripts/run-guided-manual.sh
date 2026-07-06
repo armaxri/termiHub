@@ -2,11 +2,15 @@
 # Starter for the guided-manual system-test suite (issue #957).
 #
 # One command to run the interactive operator suite with everything set up:
-#   1. Builds the app if stale and brings up the SSH Docker fixtures
-#      (ssh-password, ssh-keys, ssh-x11) via scripts/test-system-py.sh.
+#   1. Builds the app if stale via scripts/test-system-py.sh.
 #   2. Runs the suite in --manual mode and tees ALL output to a gitignored log
 #      (tests/reports/manual-run.log) so the run can be reviewed afterwards —
 #      the operator answers prompts live while the transcript is captured.
+#
+# The SSH Docker fixtures are brought up on demand by the harness's own session
+# fixtures (which skip cleanly when no container runtime is available), so this
+# script does NOT force them — a Docker-free selection (e.g. the clipboard test)
+# still runs even when Docker is not up.
 #
 # The local X11 display the X11-forwarding test needs is resolved by the harness
 # itself (termihub_harness.ensure_local_display, started from the app-launch
@@ -40,10 +44,10 @@ echo
 
 # ── Build-if-stale + fixtures + the manual suite, teed to the log ────────────
 # PYTHONUNBUFFERED so the interactive prompts flush promptly through the pipe.
-# -rs surfaces skip reasons in the transcript (e.g. an unloaded ssh-agent key),
-# so a skipped test is never silently mistaken for "ran".
+# -rs surfaces skip reasons in the transcript (e.g. an unloaded ssh-agent key
+# or an unavailable container runtime), so a skipped test is never silently
+# mistaken for "ran".
 PYTHONUNBUFFERED=1 ./scripts/test-system-py.sh \
-    --fixtures "ssh-password ssh-keys ssh-x11" \
     --manual -s -rs "${PYTEST_SELECT[@]}" 2>&1 | tee "$LOG_FILE"
 status=${PIPESTATUS[0]}
 
