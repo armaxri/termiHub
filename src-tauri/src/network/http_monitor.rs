@@ -11,6 +11,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use uuid::Uuid;
 
+/// Minimum poll interval, in milliseconds.
+///
+/// The frontend's `min={5}` on the interval field is only a soft HTML hint —
+/// an empty field yields `Number("")` → `NaN` → `0`, which would otherwise be
+/// forwarded verbatim and turn the poll loop into a tight busy-loop of
+/// requests. Clamping to this floor server-side guarantees a sane cadence
+/// regardless of what the UI (or any future caller) sends.
+pub const MIN_INTERVAL_MS: u64 = 1_000;
+
 /// Configuration for a single HTTP monitor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +62,9 @@ pub struct HttpMonitorHandle {
 
 impl HttpMonitorConfig {
     /// Create a new config with a generated ID.
+    ///
+    /// `interval_ms` is clamped to at least [`MIN_INTERVAL_MS`] so a `0` or
+    /// tiny value can never turn the poll loop into a request busy-loop.
     pub fn new(
         url: String,
         interval_ms: u64,
@@ -63,7 +75,7 @@ impl HttpMonitorConfig {
         Self {
             id: Uuid::new_v4().to_string(),
             url,
-            interval_ms,
+            interval_ms: interval_ms.max(MIN_INTERVAL_MS),
             method,
             expected_status,
             timeout_ms,
