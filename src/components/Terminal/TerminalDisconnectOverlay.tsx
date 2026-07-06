@@ -1,11 +1,50 @@
 import { useCallback } from "react";
-import { WifiOff, RefreshCw, X, AlertTriangle, Loader2 } from "lucide-react";
+import { WifiOff, RefreshCw, X, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Tooltip } from "@/components/ui";
+import type { TerminalExitInfo } from "@/types/terminal";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
   tabId: string;
+}
+
+/** Heading + subheading shown in the default (disconnected) overlay variant. */
+interface DisconnectCopy {
+  heading: string;
+  subheading: string;
+  /** When true, render the calmer clean-exit icon instead of the WifiOff icon. */
+  clean: boolean;
+}
+
+/**
+ * Derive the overlay's heading/subheading from how the session ended (#1121).
+ * Without exit info we fall back to the legacy generic wording.
+ */
+function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
+  if (info?.reason === "clean") {
+    const codeSuffix = info.code === null ? "" : ` (exit code ${info.code})`;
+    return {
+      heading: "Session ended",
+      subheading: `The session ended normally${codeSuffix}. Scrollback is preserved below.`,
+      clean: true,
+    };
+  }
+
+  if (info?.reason === "dropped") {
+    const subheading =
+      info.code === null
+        ? "The connection was lost. Scrollback is preserved below."
+        : `The remote process exited unexpectedly (exit code ${info.code}). Scrollback is preserved below.`;
+    return { heading: "Session disconnected", subheading, clean: false };
+  }
+
+  // Legacy fallback: no exit info was recorded.
+  return {
+    heading: "Session disconnected",
+    subheading: "The remote process has exited. Scrollback is preserved below.",
+    clean: false,
+  };
 }
 
 /**
@@ -26,6 +65,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const disconnectError = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
   const isReconnecting = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
   const reconnectTriggerError = useAppStore((s) => s.terminalReconnectTriggerErrors[tabId]);
+  const exitInfo = useAppStore((s) => s.terminalExitInfo[tabId]);
 
   const handleReconnect = useCallback(() => {
     reconnectTerminal(tabId);
@@ -135,6 +175,8 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
     );
   }
 
+  const copy = disconnectCopyFor(exitInfo);
+
   return (
     <div className="terminal-disconnect-overlay" data-testid="terminal-disconnect-overlay">
       <Tooltip content="View scrollback" side="bottom">
@@ -149,12 +191,14 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
       </Tooltip>
 
       <div className="terminal-disconnect-overlay__body">
-        <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
+        {copy.clean ? (
+          <CheckCircle2 size={32} className="terminal-disconnect-overlay__icon" />
+        ) : (
+          <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
+        )}
 
-        <p className="terminal-disconnect-overlay__heading">Session disconnected</p>
-        <p className="terminal-disconnect-overlay__subheading">
-          The remote process has exited. Scrollback is preserved below.
-        </p>
+        <p className="terminal-disconnect-overlay__heading">{copy.heading}</p>
+        <p className="terminal-disconnect-overlay__subheading">{copy.subheading}</p>
 
         <div className="terminal-disconnect-overlay__actions">
           <button
