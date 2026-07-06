@@ -132,6 +132,13 @@
   background-color: var(--state-disconnected);
 }
 
+/* A failed connect/reconnect uses the same alert color as a plain disconnect,
+   but pulses to draw the eye to the actionable error state. */
+.tab__state-dot--failed {
+  background-color: var(--state-disconnected);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
 @keyframes pulse-dot {
   0%,
   100% {
