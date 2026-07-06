@@ -120,6 +120,17 @@ class TestManualPrompter:
         assert prompter.step("Do it", "Works").status == "pass"
         assert any("Please enter one of" in line for line in captured)
 
+    def test_invalid_entry_drains_buffered_input(self, monkeypatch):
+        # A stray multi-line paste into the prompt must not cascade one rejection
+        # per line: the buffer is drained on the first invalid entry (#957).
+        drained = []
+        monkeypatch.setattr(
+            ManualPrompter, "_drain_input", staticmethod(lambda: drained.append(True))
+        )
+        prompter, _ = _scripted(["garbage", "y"])
+        assert prompter.step("Do it", "Works").status == "pass"
+        assert drained  # drained after the invalid "garbage" line
+
     def test_step_presents_instruction_and_expected(self):
         prompter, captured = _scripted(["y"])
         prompter.step("Click export", "A save dialog opens")

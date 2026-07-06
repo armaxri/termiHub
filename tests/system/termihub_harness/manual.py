@@ -21,6 +21,7 @@ import datetime
 import json
 import os
 import platform as _platform
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -153,7 +154,10 @@ class ManualPrompter:
         """Read until a valid single-letter choice; ``default`` on EOF / Ctrl-C.
 
         The ``default`` floor guarantees termination — a closed or non-interactive
-        stream resolves to a safe answer instead of looping forever.
+        stream resolves to a safe answer instead of looping forever. On an invalid
+        entry the terminal input buffer is drained first, so a stray multi-line
+        paste (e.g. pasting the clipboard into this prompt by mistake) collapses to
+        a single re-prompt instead of one rejection per pasted line.
         """
         while True:
             line = self._read_line(prompt)
@@ -162,7 +166,30 @@ class ManualPrompter:
             choice = line.strip().lower()[:1]
             if choice in valid:
                 return choice
+            self._drain_input()
             self._print(f"  Please enter one of: {', '.join(valid)}")
+
+    @staticmethod
+    def _drain_input() -> None:
+        """Discard buffered terminal input (best-effort, interactive tty only).
+
+        A no-op when stdin is not an interactive tty (scripted tests, pipes), so
+        it never disturbs the injected ``input_fn`` used in unit tests.
+        """
+        try:
+            if not sys.stdin.isatty():
+                return
+            try:
+                import termios
+
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            except ImportError:  # Windows
+                import msvcrt
+
+                while msvcrt.kbhit():
+                    msvcrt.getch()
+        except Exception:  # noqa: BLE001 — draining is best-effort
+            pass
 
     def _verdict(self) -> ManualResult:
         choice = self._read_choice(
