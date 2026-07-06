@@ -757,9 +757,8 @@ export function FileBrowser() {
           // session mode: file editing via editor not yet supported for agent sessions
           break;
         case "download":
-          downloadFile(entry.path, entry.name).catch((err: unknown) =>
-            console.error("Download failed:", err)
-          );
+          // downloadFile surfaces its own success/error toast (see useFileSystem).
+          void downloadFile(entry.path, entry.name);
           break;
         case "vscode":
           openInVscode(entry.path).catch((err: unknown) =>
@@ -812,7 +811,8 @@ export function FileBrowser() {
   );
 
   const handlePaste = useCallback(() => {
-    pasteEntry().catch((err: unknown) => console.error("Paste failed:", err));
+    // pasteEntry surfaces its own per-item success/error toast (see useFileSystem).
+    void pasteEntry();
   }, [pasteEntry]);
 
   const handleRowClick = useCallback(
