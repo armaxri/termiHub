@@ -309,8 +309,9 @@ class TestExternalApp(
 
     # ── Clipboard copy/paste (MT-KB-01..04) ──────────────────────────────────
     def test_terminal_clipboard_copy_paste(self):
-        """Harness copies the terminal buffer via the tab menu; operator pastes it
-        out, then exercises the platform copy/paste shortcuts on a selection."""
+        """Harness copies the terminal buffer via the tab menu and verifies it
+        landed on the OS clipboard (machine-checkable); the operator only
+        exercises the keyboard copy/paste shortcuts and Ctrl+C interrupt."""
         self.close_all_tabs()
         self.ensure_terminal()
         marker = "CLIPBOARD_MARKER_7731"
@@ -348,12 +349,9 @@ class TestExternalApp(
             f"clipboard — read back: {clip_head!r}"
         )
 
-        self.manual_step(
-            "Paste (Cmd+V) into any editor.",
-            f"You see the terminal text, with {marker} somewhere in it "
-            "(the whole buffer pastes — that's fine).",
-        )
-
+        # The copy is now machine-verified above, so the operator is asked only
+        # for the irreducibly-manual part: the keyboard copy/paste shortcuts and
+        # that plain Ctrl+C still interrupts (xterm key handling + SIGINT).
         self.manual_step(
             "In the terminal: select some text, copy it (Cmd+C, or Ctrl+Shift+C "
             "on Windows/Linux), paste it back (Cmd+V / Ctrl+Shift+V). Then run a "
