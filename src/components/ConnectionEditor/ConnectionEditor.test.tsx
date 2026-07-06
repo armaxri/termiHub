@@ -1297,3 +1297,69 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Storage-file picker — Radix Select forbids empty-string item values (#1105).
+// The "Default (connections.json)" option must use a non-empty sentinel value
+// that maps back to `null` (the default storage file) at the call site.
+// ---------------------------------------------------------------------------
+
+describe("ConnectionEditor — storage-file picker (#1105)", () => {
+  function renderFor(connId: string) {
+    act(() => {
+      root.render(
+        <ConnectionEditor
+          tabId="tab-sf-1"
+          meta={{ connectionId: connId, folderId: null }}
+          isVisible={true}
+        />
+      );
+    });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [EXISTING_CONN],
+      connectionTypes: [SSH_TYPE],
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      // At least one enabled external file makes the storage-file picker render.
+      settings: {
+        ...useAppStore.getInitialState().settings,
+        externalConnectionFiles: [{ path: "/tmp/team.json", enabled: true }],
+      },
+    });
+    mockedInvoke.mockImplementation(() => Promise.resolve(false));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("renders the storage-file picker when an external file is enabled", () => {
+    renderFor(CONN_ID);
+    const select = container.querySelector('[data-testid="connection-editor-source-file"]');
+    expect(select).not.toBeNull();
+  });
+
+  it("uses a non-empty sentinel value for the default option (Radix rejects empty string)", () => {
+    // Regression: the default option previously used value="" and the select's
+    // value fell back to "" when no source file was chosen. Radix Select forbids
+    // empty-string item values, so the default must resolve to a non-empty
+    // sentinel. EXISTING_CONN has no sourceFile, so this is the default case.
+    renderFor(CONN_ID);
+    const trigger = container.querySelector(
+      '[data-testid="connection-editor-source-file"]'
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    // The trigger mirrors the controlled Select value via data-value.
+    expect(trigger?.getAttribute("data-value")).not.toBe("");
+    expect(trigger?.getAttribute("data-value")).toBeTruthy();
+  });
+});
