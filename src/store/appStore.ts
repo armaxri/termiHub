@@ -3474,6 +3474,15 @@ export const useAppStore = create<AppState>((set, get) => {
           monitoringStatsCache: { ...state.monitoringStatsCache, [hostKey]: stats },
         }));
       } catch (err) {
+        // The session-based branch attaches the stats listener before the open
+        // that may throw here. Detach it so a failed open never leaks a dangling
+        // Tauri listener (monitoringSessionId stays null, so disconnectMonitoring
+        // would not clean it up either). See audit gap G5.
+        if (_monitoringUnlisten) {
+          frontendLog("monitoring", "detaching stats listener after failed monitoring open");
+          _monitoringUnlisten();
+          _monitoringUnlisten = null;
+        }
         set({
           monitoringLoading: false,
           monitoringError: err instanceof Error ? err.message : String(err),
