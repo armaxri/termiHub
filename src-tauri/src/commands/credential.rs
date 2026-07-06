@@ -43,6 +43,24 @@ pub fn get_credential_store_status(
     Ok(build_status_info(&manager))
 }
 
+/// Unlock a master-password store, treating an already-unlocked store as a
+/// benign no-op.
+///
+/// This makes unlock idempotent (G6, #1144): when two connect flows race to
+/// unlock the same store, the second call returns `Ok(())` instead of a
+/// spurious "already unlocked" error that would surface as an
+/// "Incorrect master password"-style failure. A wrong password on a locked
+/// store still errors, preserving the existing wrong-password behavior.
+fn unlock_store_idempotent(
+    store: &crate::credential::MasterPasswordStore,
+    password: &str,
+) -> Result<(), String> {
+    if store.is_unlocked() {
+        return Ok(());
+    }
+    store.unlock(password).map_err(|e| e.to_string())
+}
+
 /// Unlock the master password credential store.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -55,12 +73,7 @@ pub async fn unlock_credential_store(
     info!("Unlocking credential store");
 
     let result = manager
-        .with_master_password_store(|store| {
-            if store.is_unlocked() {
-                return Err("Store is already unlocked".to_string());
-            }
-            store.unlock(&password).map_err(|e| e.to_string())
-        })
+        .with_master_password_store(|store| unlock_store_idempotent(store, &password))
         .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
 
     result?;
@@ -358,6 +371,7 @@ pub fn remove_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credential::MasterPasswordStore;
 
     #[test]
     fn parse_credential_type_password() {
@@ -379,5 +393,52 @@ mod tests {
     fn parse_credential_type_unknown() {
         let err = parse_credential_type("invalid").unwrap_err();
         assert!(err.contains("Unknown credential type"));
+    }
+
+    /// Regression test for #1144 (G6): unlocking an already-unlocked store
+    /// must be a benign no-op (`Ok`), not an error, so racing connect flows
+    /// don't surface a spurious "already unlocked" failure.
+    #[test]
+    fn unlock_store_idempotent_when_already_unlocked_returns_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("test-password").unwrap();
+        assert!(store.is_unlocked());
+
+        // Second unlock on the already-unlocked store must succeed idempotently.
+        let result = unlock_store_idempotent(&store, "test-password");
+        assert!(
+            result.is_ok(),
+            "unlocking an already-unlocked store should be Ok, got {result:?}"
+        );
+        assert!(store.is_unlocked());
+    }
+
+    /// A wrong password on a locked store must still fail (behavior unchanged).
+    #[test]
+    fn unlock_store_idempotent_wrong_password_still_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("correct").unwrap();
+        store.lock();
+        assert!(!store.is_unlocked());
+
+        let result = unlock_store_idempotent(&store, "wrong");
+        assert!(result.is_err());
+        assert!(!store.is_unlocked());
+    }
+
+    /// A locked store with the correct password unlocks (benign happy path).
+    #[test]
+    fn unlock_store_idempotent_correct_password_unlocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("correct").unwrap();
+        store.lock();
+        assert!(!store.is_unlocked());
+
+        let result = unlock_store_idempotent(&store, "correct");
+        assert!(result.is_ok());
+        assert!(store.is_unlocked());
     }
 }
