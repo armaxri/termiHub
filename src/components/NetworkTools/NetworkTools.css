@@ -303,90 +303,19 @@
   padding: var(--spacing-sm) var(--spacing-md) 4px;
 }
 
-.network-sidebar__btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  width: 100%;
-  padding: 5px var(--spacing-md);
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: background-color var(--transition-fast);
-}
-
-.network-sidebar__btn:hover {
-  background-color: var(--bg-hover);
-}
-
-.network-sidebar__monitor-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 3px var(--spacing-md);
-}
-
-.network-sidebar__monitor-url {
-  font-size: var(--font-size-sm);
-  font-family: var(--font-mono);
-  color: var(--text-primary);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.network-sidebar__monitor-actions {
-  display: flex;
-  gap: var(--spacing-xs);
-}
-
-.network-sidebar__icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-}
-
-.network-sidebar__icon-btn:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .network-sidebar__empty {
   padding: var(--spacing-xs) var(--spacing-md);
   font-size: var(--font-size-sm);
   color: var(--text-disabled);
 }
 
-/* Quick-action launcher buttons in sidebar */
-.network-sidebar__action {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  width: 100%;
-  padding: 5px var(--spacing-md);
-  border: none;
-  background: transparent;
+/* Layout-only modifier composed onto the ghost `Button` primitive so the
+   sidebar quick-action and New Monitor rows read as full-width, left-aligned
+   list rows (the primitive centers content and ghost text is secondary). Shape,
+   radius, focus ring, sizing, and hover background all come from the primitive. */
+.network-sidebar__list-btn {
+  justify-content: flex-start;
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: background-color var(--transition-fast);
-}
-
-.network-sidebar__action:hover {
-  background-color: var(--bg-hover);
 }
 
 /* Monitor rows in sidebar */
@@ -426,61 +355,10 @@
   white-space: nowrap;
 }
 
-.network-sidebar__monitor-stop {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-}
-
-.network-sidebar__monitor-stop:hover {
-  background-color: var(--bg-hover);
-  color: var(--color-error);
-}
-
-/* Sidebar header action buttons */
-.network-sidebar__refresh {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
+/* The Monitors-header refresh button needs a little breathing room from the
+   section title (the ghost icon `Button` primitive supplies the rest). */
+.network-sidebar__section-title .ui-btn {
   margin-left: var(--spacing-xs);
-}
-
-.network-sidebar__refresh:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.network-sidebar__add {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  width: 100%;
-  padding: 4px var(--spacing-md);
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: background-color var(--transition-fast);
-}
-
-.network-sidebar__add:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
 }
 
 /* Port scan warning */
