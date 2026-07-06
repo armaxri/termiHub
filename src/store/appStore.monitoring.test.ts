@@ -26,6 +26,8 @@ vi.mock("@/services/storage", () => ({
 const mockMonitoringOpen = vi.fn();
 const mockMonitoringClose = vi.fn();
 const mockMonitoringFetchStats = vi.fn();
+const mockSessionMonitoringOpen = vi.fn();
+const mockSessionMonitoringClose = vi.fn();
 
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
@@ -36,6 +38,18 @@ vi.mock("@/services/api", () => ({
   monitoringOpen: (...args: unknown[]) => mockMonitoringOpen(...args),
   monitoringClose: (...args: unknown[]) => mockMonitoringClose(...args),
   monitoringFetchStats: (...args: unknown[]) => mockMonitoringFetchStats(...args),
+  sessionMonitoringOpen: (...args: unknown[]) => mockSessionMonitoringOpen(...args),
+  sessionMonitoringClose: (...args: unknown[]) => mockSessionMonitoringClose(...args),
+}));
+
+// Session-based monitoring subscribes to a Tauri event and stores the returned
+// unlisten fn; the tests below assert that listener is not leaked on a failed open.
+const mockUnlisten = vi.fn();
+const mockOnSessionMonitoringStats = vi.fn((..._args: unknown[]) => Promise.resolve(mockUnlisten));
+
+vi.mock("@/services/events", () => ({
+  onSessionMonitoringStats: (...args: unknown[]) => mockOnSessionMonitoringStats(...args),
+  onPersistentSessionStateChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 import { useAppStore } from "./appStore";
@@ -122,6 +136,51 @@ describe("appStore — monitoring", () => {
       resolveOpen!("session-123");
       await promise;
       expect(useAppStore.getState().monitoringLoading).toBe(false);
+    });
+  });
+
+  describe("connectMonitoring — session-based (push)", () => {
+    const SESSION_CONFIG = { _sessionBased: true, _sessionId: "sess-abc" };
+
+    it("sets session and clears loading on successful open", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+
+      await useAppStore.getState().connectMonitoring(SESSION_CONFIG);
+
+      const state = useAppStore.getState();
+      expect(state.monitoringSessionId).toBe("sess-abc");
+      expect(state.monitoringHost).toBe("sess-abc");
+      expect(state.monitoringLoading).toBe(false);
+      expect(mockOnSessionMonitoringStats).toHaveBeenCalledTimes(1);
+    });
+
+    it("unlistens the stats listener when session_monitoring_open fails (no leak)", async () => {
+      mockSessionMonitoringOpen.mockRejectedValue(new Error("open refused"));
+
+      await useAppStore.getState().connectMonitoring(SESSION_CONFIG);
+
+      // The event listener was attached before the failing open, so it must be
+      // detached in the catch — otherwise a dangling listener could later update
+      // the wrong host (audit G5).
+      expect(mockOnSessionMonitoringStats).toHaveBeenCalledTimes(1);
+      expect(mockUnlisten).toHaveBeenCalledTimes(1);
+
+      const state = useAppStore.getState();
+      expect(state.monitoringSessionId).toBeNull();
+      expect(state.monitoringLoading).toBe(false);
+      expect(state.monitoringError).toBe("open refused");
+    });
+
+    it("does not re-invoke the leaked listener on a later disconnect", async () => {
+      mockSessionMonitoringOpen.mockRejectedValue(new Error("open refused"));
+
+      await useAppStore.getState().connectMonitoring(SESSION_CONFIG);
+      expect(mockUnlisten).toHaveBeenCalledTimes(1);
+
+      // A subsequent disconnect must not call the (already-detached) listener again,
+      // proving _monitoringUnlisten was nulled in the catch.
+      await useAppStore.getState().disconnectMonitoring();
+      expect(mockUnlisten).toHaveBeenCalledTimes(1);
     });
   });
 
