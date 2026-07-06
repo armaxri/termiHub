@@ -40,9 +40,11 @@ echo
 
 # ── Build-if-stale + fixtures + the manual suite, teed to the log ────────────
 # PYTHONUNBUFFERED so the interactive prompts flush promptly through the pipe.
+# -rs surfaces skip reasons in the transcript (e.g. an unloaded ssh-agent key),
+# so a skipped test is never silently mistaken for "ran".
 PYTHONUNBUFFERED=1 ./scripts/test-system-py.sh \
     --fixtures "ssh-password ssh-keys ssh-x11" \
-    --manual -s "${PYTEST_SELECT[@]}" 2>&1 | tee "$LOG_FILE"
+    --manual -s -rs "${PYTEST_SELECT[@]}" 2>&1 | tee "$LOG_FILE"
 status=${PIPESTATUS[0]}
 
 echo
