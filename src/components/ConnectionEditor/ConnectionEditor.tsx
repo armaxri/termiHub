@@ -150,6 +150,14 @@ function buildTypeDefaults(
   return defaults;
 }
 
+/**
+ * Sentinel for the "Default (connections.json)" storage-file option. Radix
+ * Select reserves the empty string to clear the selection, so an explicit
+ * non-empty value is required and mapped back to `null` (the default storage
+ * file) at the call site.
+ */
+const DEFAULT_STORAGE_FILE = "__default__";
+
 interface ConnectionEditorProps {
   tabId: string;
   meta: ConnectionEditorMeta;
@@ -953,10 +961,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <label className="settings-form__field">
             <span className="settings-form__label">Storage File</span>
             <Select
-              value={sourceFile ?? ""}
-              onChange={(v) => setSourceFile(v || null)}
+              value={sourceFile ?? DEFAULT_STORAGE_FILE}
+              onChange={(v) => setSourceFile(v === DEFAULT_STORAGE_FILE ? null : v)}
               options={[
-                { value: "", label: "Default (connections.json)" },
+                { value: DEFAULT_STORAGE_FILE, label: "Default (connections.json)" },
                 ...enabledExternalFiles.map((f) => ({ value: f.path, label: f.path })),
               ]}
               aria-label="Storage File"
