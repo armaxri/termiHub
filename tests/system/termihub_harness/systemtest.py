@@ -78,11 +78,21 @@ class SystemTest:
         the attributes it sets are visible to every test in the suite; assigned
         to ``request.cls`` so each subclass gets its own, not the base. Skips the
         suite if the app is not built.
+
+        In guided-manual runs the app's live log echo is suppressed by default so
+        it does not interleave with the operator prompts (``--app-log-echo``
+        forces it back on); the log is always captured to ``app.log`` (#957).
         """
+        manual = bool(request.config.getoption("manual"))
+        force_echo = bool(request.config.getoption("app_log_echo"))
+        echo_logs = force_echo or not manual
         try:
-            app = AppInstance()  # fresh isolated config dir per suite
+            # fresh isolated config dir per suite
+            app = AppInstance(echo_logs=echo_logs)
         except FileNotFoundError as exc:
             pytest.skip(str(exc))
+        if manual and not echo_logs:
+            print(f"\n[manual] app logs captured (not echoed) at: {app.log_path}")
 
         bridge = Bridge().start()
         try:
