@@ -596,6 +596,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `tab-*` | `tab-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `tab-close-*` | `tab-close-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `tab-group-chip-*` | `tab-group-chip-${group.id}` | `src/components/Terminal/TabGroupChips.tsx` |
+| `tab-state-dot-*` | `tab-state-dot-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `terminal-context-trigger-*` | `terminal-context-trigger-${tab.id}` | `src/components/SplitView/SplitView.tsx` |
 | `tunnel-delete-*` | `tunnel-delete-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-duplicate-*` | `tunnel-duplicate-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |

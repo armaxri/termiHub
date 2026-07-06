@@ -26,7 +26,9 @@ export function TerminalView() {
     terminalDispatcher.init();
   }, []);
 
-  // Update global remote-connection state in the store (drives tab state dots).
+  // Handle backend-reported remote-connection state changes: a "disconnected"
+  // state marks the owning tab exited (which drives the per-tab status dot via
+  // the tab-id-keyed lifecycle maps — see deriveTabStatus).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("remote-state-change", (event) => {

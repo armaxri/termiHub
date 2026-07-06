@@ -18,8 +18,17 @@ import {
   FileSearch,
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
+import { TabStatus } from "@/utils/tabStatus";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Tooltip } from "@/components/ui";
+
+/** Human-readable label for each connection status, used as the dot's tooltip. */
+const STATUS_LABELS: Record<TabStatus, string> = {
+  connecting: "Connecting",
+  connected: "Connected",
+  failed: "Connection failed",
+  disconnected: "Disconnected",
+};
 
 interface TabProps {
   tab: TerminalTab;
@@ -35,7 +44,8 @@ interface TabProps {
   tabColor?: string;
   onRename?: () => void;
   onSetColor?: () => void;
-  remoteState?: string;
+  /** Per-tab connection status; drives the status dot. `undefined` hides the dot. */
+  status?: TabStatus;
 }
 
 export function Tab({
@@ -52,7 +62,7 @@ export function Tab({
   tabColor,
   onRename,
   onSetColor,
-  remoteState,
+  status,
 }: TabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
@@ -96,8 +106,12 @@ export function Tab({
       ) : (
         <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
       )}
-      {remoteState && (
-        <span className={`tab__state-dot tab__state-dot--${remoteState}`} title={remoteState} />
+      {status && (
+        <span
+          className={`tab__state-dot tab__state-dot--${status}`}
+          title={STATUS_LABELS[status]}
+          data-testid={`tab-state-dot-${tab.id}`}
+        />
       )}
       <span className="tab__title">
         {isDirty && <span className="tab__dirty-dot" />}
