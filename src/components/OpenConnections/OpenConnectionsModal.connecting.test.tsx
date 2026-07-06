@@ -4,10 +4,28 @@
  * which aborts the in-flight connect via cancel_connecting.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab } from "@/types/terminal";
+
+// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
+// mounts its trigger; shim them so tooltip-wrapped controls render.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
 
 const cancelConnecting = vi.fn((_id: string) => Promise.resolve(true));
 vi.mock("@/services/api", () => ({
@@ -64,7 +82,9 @@ describe("OpenConnectionsModal — Connecting section", () => {
     });
     act(() => {
       root.render(
-        React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
+        <TooltipProvider delayDuration={0}>
+          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+        </TooltipProvider>
       );
     });
   }
@@ -97,7 +117,9 @@ describe("OpenConnectionsModal — Connecting section", () => {
   it("shows no Connecting section when nothing is connecting", () => {
     act(() => {
       root.render(
-        React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
+        <TooltipProvider delayDuration={0}>
+          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+        </TooltipProvider>
       );
     });
     const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(
