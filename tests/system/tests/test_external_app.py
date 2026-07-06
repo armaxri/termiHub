@@ -354,9 +354,13 @@ class TestExternalApp(
         )
 
         self.manual_step(
-            "termiHub copied the terminal buffer to the clipboard (verified on the "
-            "OS clipboard). Paste into any external editor to confirm the round-trip.",
-            f"The pasted text contains {marker!r}.",
+            "The whole terminal buffer was copied to the clipboard (already "
+            "auto-verified above). Paste into any external editor. You will get "
+            "the ENTIRE buffer — many lines, including prompts and shell-"
+            "integration noise — which is expected; you are NOT looking for just "
+            f"the marker on its own. Scan the pasted text for the line {marker}.",
+            f"The marker {marker} appears somewhere within the pasted buffer "
+            "(passes as long as it is present — the surrounding lines are fine).",
         )
 
         self.manual_step(
