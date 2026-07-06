@@ -29,7 +29,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { Button } from "@/components/ui";
+import { Button, Tooltip } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
@@ -319,17 +319,18 @@ function FileRow({
           </button>
           <div className="file-browser__row-menu">
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="file-browser__menu-reveal"
-                  icon={<MoreHorizontal size={14} />}
-                  title="Actions"
-                  aria-label="File actions"
-                  data-testid={`file-row-menu-${entry.name}`}
-                />
-              </DropdownMenu.Trigger>
+              <Tooltip content="Actions" side="top">
+                <DropdownMenu.Trigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="file-browser__menu-reveal"
+                    icon={<MoreHorizontal size={14} />}
+                    aria-label="File actions"
+                    data-testid={`file-row-menu-${entry.name}`}
+                  />
+                </DropdownMenu.Trigger>
+              </Tooltip>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="context-menu__content" align="end">
                   <FileMenuItems
@@ -983,100 +984,115 @@ export function FileBrowser() {
           {currentPath}
         </span>
         <div className="file-browser__actions">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<ArrowUp size={14} />}
-            onClick={navigateUp}
-            disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
-            title="Go Up"
-            aria-label="Go up one directory"
-            data-testid="file-browser-up"
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<FolderSync size={14} />}
-            onClick={navigateToCwd}
-            disabled={!hasCwd}
-            title="Go to Terminal CWD"
-            aria-label="Go to terminal working directory"
-            data-testid="file-browser-go-to-cwd"
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Terminal size={14} />}
-            onClick={cdToCurrentPath}
-            disabled={!canCd}
-            title={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
-            aria-label="Send cd for current path to terminal"
-            data-testid="file-browser-cd-here"
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />}
-            onClick={refresh}
-            title="Refresh"
-            aria-label="Refresh file list"
-            data-testid="file-browser-refresh"
-          />
-          {(mode === "sftp" || mode === "session") && (
+          <Tooltip content="Go Up" side="top">
             <Button
               variant="ghost"
               size="sm"
-              icon={<Upload size={14} />}
-              onClick={uploadFile}
-              title="Upload File"
-              aria-label="Upload file"
-              data-testid="file-browser-upload"
+              icon={<ArrowUp size={14} />}
+              onClick={navigateUp}
+              disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
+              aria-label="Go up one directory"
+              data-testid="file-browser-up"
             />
+          </Tooltip>
+          <Tooltip content="Go to Terminal CWD" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FolderSync size={14} />}
+              onClick={navigateToCwd}
+              disabled={!hasCwd}
+              aria-label="Go to terminal working directory"
+              data-testid="file-browser-go-to-cwd"
+            />
+          </Tooltip>
+          <Tooltip
+            content={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
+            side="top"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Terminal size={14} />}
+              onClick={cdToCurrentPath}
+              disabled={!canCd}
+              aria-label="Send cd for current path to terminal"
+              data-testid="file-browser-cd-here"
+            />
+          </Tooltip>
+          <Tooltip content="Refresh" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />}
+              onClick={refresh}
+              aria-label="Refresh file list"
+              data-testid="file-browser-refresh"
+            />
+          </Tooltip>
+          {(mode === "sftp" || mode === "session") && (
+            <Tooltip content="Upload File" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Upload size={14} />}
+                onClick={uploadFile}
+                aria-label="Upload file"
+                data-testid="file-browser-upload"
+              />
+            </Tooltip>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<ClipboardPaste size={14} />}
-            onClick={handlePaste}
-            disabled={!fileClipboard}
-            title={
+          <Tooltip
+            content={
               fileClipboard
                 ? fileClipboard.entries.length === 1
                   ? `Paste "${fileClipboard.entries[0].name}" (${fileClipboard.operation})`
                   : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
                 : "Paste"
             }
-            aria-label="Paste"
-            data-testid="file-browser-paste"
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<FilePlus size={14} />}
-            onClick={() => setNewFileName("")}
-            title="New File"
-            aria-label="New file"
-            data-testid="file-browser-new-file"
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<FolderPlus size={14} />}
-            onClick={() => setNewDirName("")}
-            title="New Folder"
-            aria-label="New folder"
-            data-testid="file-browser-new-folder"
-          />
-          {mode === "sftp" && (
+            side="top"
+          >
             <Button
               variant="ghost"
               size="sm"
-              icon={<Unplug size={14} />}
-              onClick={disconnectSftp}
-              title="Disconnect"
-              aria-label="Disconnect SFTP"
-              data-testid="file-browser-disconnect"
+              icon={<ClipboardPaste size={14} />}
+              onClick={handlePaste}
+              disabled={!fileClipboard}
+              aria-label="Paste"
+              data-testid="file-browser-paste"
             />
+          </Tooltip>
+          <Tooltip content="New File" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FilePlus size={14} />}
+              onClick={() => setNewFileName("")}
+              aria-label="New file"
+              data-testid="file-browser-new-file"
+            />
+          </Tooltip>
+          <Tooltip content="New Folder" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FolderPlus size={14} />}
+              onClick={() => setNewDirName("")}
+              aria-label="New folder"
+              data-testid="file-browser-new-folder"
+            />
+          </Tooltip>
+          {mode === "sftp" && (
+            <Tooltip content="Disconnect" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Unplug size={14} />}
+                onClick={disconnectSftp}
+                aria-label="Disconnect SFTP"
+                data-testid="file-browser-disconnect"
+              />
+            </Tooltip>
           )}
         </div>
       </div>
@@ -1102,15 +1118,16 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-file-input"
           />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<FilePlus size={14} />}
-            onClick={handleCreateFile}
-            title="Create"
-            aria-label="Create file"
-            data-testid="file-browser-new-file-confirm"
-          />
+          <Tooltip content="Create" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FilePlus size={14} />}
+              onClick={handleCreateFile}
+              aria-label="Create file"
+              data-testid="file-browser-new-file-confirm"
+            />
+          </Tooltip>
         </div>
       )}
 
@@ -1128,15 +1145,16 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-folder-input"
           />
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<FolderPlus size={14} />}
-            onClick={handleCreateDir}
-            title="Create"
-            aria-label="Create folder"
-            data-testid="file-browser-new-folder-confirm"
-          />
+          <Tooltip content="Create" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FolderPlus size={14} />}
+              onClick={handleCreateDir}
+              aria-label="Create folder"
+              data-testid="file-browser-new-folder-confirm"
+            />
+          </Tooltip>
         </div>
       )}
 

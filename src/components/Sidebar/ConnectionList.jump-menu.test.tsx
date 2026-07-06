@@ -10,8 +10,26 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, JumpHostConfig } from "@/types/connection";
 import { resolveCredential } from "@/services/api";
+
+// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
+// mounts its trigger; shim them so the tooltip-wrapped controls render.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -78,7 +96,11 @@ describe("ConnectionList — jump-host context menu", () => {
 
   function openMenu(connection: SavedConnection) {
     useAppStore.setState({ connections: [connection] });
-    act(() => root.render(React.createElement(ConnectionList)));
+    act(() =>
+      root.render(
+        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+      )
+    );
     const trigger = container.querySelector(`[data-testid="connection-item-${connection.id}"]`);
     expect(trigger).not.toBeNull();
     act(() => {

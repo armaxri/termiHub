@@ -425,6 +425,9 @@
   justify-content: center;
   width: 18px;
   height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;

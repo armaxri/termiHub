@@ -42,6 +42,7 @@ import {
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import { Tooltip } from "@/components/ui";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
@@ -911,25 +912,29 @@ export function ConnectionList() {
               <span className="connection-list__group-title">Connections</span>
             </button>
             <div className="connection-list__group-actions">
-              <button
-                className="connection-list__add-btn"
-                onClick={() => {
-                  setLocalCollapsed(false);
-                  setCreatingFolder(true);
-                }}
-                title="New Folder"
-                data-testid="connection-list-new-folder"
-              >
-                <FolderPlus size={16} />
-              </button>
-              <button
-                className="connection-list__add-btn"
-                onClick={handleNewConnection}
-                title="New Connection"
-                data-testid="connection-list-new-connection"
-              >
-                <Plus size={16} />
-              </button>
+              <Tooltip content="New Folder" side="top">
+                <button
+                  className="connection-list__add-btn"
+                  onClick={() => {
+                    setLocalCollapsed(false);
+                    setCreatingFolder(true);
+                  }}
+                  aria-label="New Folder"
+                  data-testid="connection-list-new-folder"
+                >
+                  <FolderPlus size={16} />
+                </button>
+              </Tooltip>
+              <Tooltip content="New Connection" side="top">
+                <button
+                  className="connection-list__add-btn"
+                  onClick={handleNewConnection}
+                  aria-label="New Connection"
+                  data-testid="connection-list-new-connection"
+                >
+                  <Plus size={16} />
+                </button>
+              </Tooltip>
             </div>
           </div>
           {!localCollapsed && (
@@ -988,14 +993,16 @@ export function ConnectionList() {
                   <span className="connection-list__group-title">Remote Agents</span>
                 </button>
                 <div className="connection-list__group-actions">
-                  <button
-                    className="connection-list__add-btn"
-                    onClick={handleNewAgent}
-                    title="New Remote Agent"
-                    data-testid="connection-list-new-agent"
-                  >
-                    <Plus size={16} />
-                  </button>
+                  <Tooltip content="New Remote Agent" side="top">
+                    <button
+                      className="connection-list__add-btn"
+                      onClick={handleNewAgent}
+                      aria-label="New Remote Agent"
+                      data-testid="connection-list-new-agent"
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
               {!remoteAgentsCollapsed && (
