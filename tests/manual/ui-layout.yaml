@@ -451,3 +451,23 @@ tests:
       - "With the setting back ON, the tabs open before the final relaunch are restored again"
     verification: manual
     tags: [session-restore, startup, settings]
+
+  - id: MT-UI-39
+    name: "Disconnect overlay explains the exit cause and suppresses for user kills"
+    pr: 1151
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell and type `exit` (or log out cleanly)"
+      - "Open a local shell and run a command that exits non-zero, e.g. `sh -c 'exit 3'`"
+      - "Open an SSH or remote-agent session, then drop the connection (stop the server / disconnect the agent)"
+      - "Open a local shell, open the Open Connections panel (Settings wheel → Open Connections), and use Kill on that session"
+    expected:
+      - "After a clean `exit`, the overlay heading reads 'Session ended' (not 'Session disconnected')"
+      - "After the non-zero exit, the overlay reads 'Session disconnected' and surfaces the exit code (e.g. 3)"
+      - "After the dropped connection, the overlay reads 'Session disconnected' with 'The connection was lost'"
+      - "Killing a session from the Open Connections panel shows scrollback with NO 'unexpected disconnect' overlay"
+      - "In every case the scrollback buffer remains visible below"
+    verification: manual
+    tags: [disconnect-overlay, terminal, feedback]
