@@ -193,4 +193,39 @@ mod tests {
         assert_eq!(cfg.expected_status, 200);
         assert_eq!(cfg.interval_ms, 30_000);
     }
+
+    #[test]
+    fn zero_interval_clamps_to_floor() {
+        // A `0` interval from the UI (e.g. `Number("")` → NaN → 0 in JS) must not
+        // be honored verbatim, or the poll loop busy-loops requests.
+        let cfg = HttpMonitorConfig::new("https://example.com".into(), 0, "GET".into(), 200, 5_000);
+        assert_eq!(cfg.interval_ms, MIN_INTERVAL_MS);
+    }
+
+    #[test]
+    fn tiny_interval_clamps_to_floor() {
+        // Any value below the floor is raised to the floor.
+        let cfg =
+            HttpMonitorConfig::new("https://example.com".into(), 50, "GET".into(), 200, 5_000);
+        assert_eq!(cfg.interval_ms, MIN_INTERVAL_MS);
+    }
+
+    #[test]
+    fn interval_at_floor_is_preserved() {
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            MIN_INTERVAL_MS,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        assert_eq!(cfg.interval_ms, MIN_INTERVAL_MS);
+    }
+
+    #[test]
+    fn interval_above_floor_is_preserved() {
+        let cfg =
+            HttpMonitorConfig::new("https://example.com".into(), 5_000, "GET".into(), 200, 5_000);
+        assert_eq!(cfg.interval_ms, 5_000);
+    }
 }
