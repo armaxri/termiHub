@@ -74,18 +74,16 @@ const WHITE_ALLOWLIST: string[] = [];
  * primitive (tracked by follow-up issues), its entry is removed here. The guard's
  * value is the ratchet — a currently-clean file that reintroduces `__btn` FAILS.
  *
- * ConnectionEditor / TunnelEditor / WorkspaceEditor (migrated in #1085/#1094)
- * and the Settings / NetworkTools panels / FileBrowser / TerminalSearchBar /
- * UpdateNotification buttons (migrated in #1096) were all moved onto the `Button`
- * primitive and removed from this list. The only remaining entry is
- * NetworkTools/NetworkTools.css, which still carries `network-sidebar__btn` for
- * the NetworkToolsSidebar (out of #1096's panel scope — tracked as a follow-up).
- * Do NOT assert this list has no stale entries — that would cause cross-PR
- * breakage.
+ * ConnectionEditor / TunnelEditor / WorkspaceEditor (migrated in #1085/#1094),
+ * the Settings / NetworkTools panels / FileBrowser / TerminalSearchBar /
+ * UpdateNotification buttons (migrated in #1096), and the NetworkToolsSidebar
+ * (migrated in #1109) were all moved onto the `Button` primitive and removed
+ * from this list, which is now empty. Do NOT assert this list has no stale
+ * entries — that would cause cross-PR breakage.
  *
  * Paths are repo-relative suffixes (POSIX separators), matched with `endsWith`.
  */
-const BESPOKE_BTN_ALLOWLIST: string[] = ["NetworkTools/NetworkTools.css"];
+const BESPOKE_BTN_ALLOWLIST: string[] = [];
 
 /**
  * Documented allowlist of component CSS files permitted to carry a standalone

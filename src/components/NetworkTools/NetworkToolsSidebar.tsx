@@ -10,7 +10,7 @@ import {
 import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
-import { Tooltip } from "@/components/ui";
+import { Button, Tooltip } from "@/components/ui";
 
 interface QuickActionProps {
   label: string;
@@ -20,14 +20,17 @@ interface QuickActionProps {
 function QuickAction({ label, tool }: QuickActionProps) {
   const openNetworkDiagnosticTab = useAppStore((s) => s.openNetworkDiagnosticTab);
   return (
-    <button
-      className="network-sidebar__action"
+    <Button
+      variant="ghost"
+      size="sm"
+      fullWidth
+      className="network-sidebar__list-btn"
+      icon={<Play size={12} />}
       onClick={() => openNetworkDiagnosticTab(tool)}
       data-testid={`network-quick-action-${tool}`}
     >
-      <Play size={12} />
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -67,13 +70,13 @@ function MonitorRow({ monitor, onStop, onOpen }: MonitorRowProps) {
       </div>
       {running && (
         <Tooltip content="Stop monitor" side="left">
-          <button
-            className="network-sidebar__monitor-stop"
+          <Button
+            variant="ghost"
+            size="sm"
             aria-label="Stop monitor"
+            icon={<StopCircle size={12} />}
             onClick={() => onStop(config.id)}
-          >
-            <StopCircle size={12} />
-          </button>
+          />
         </Tooltip>
       )}
     </div>
@@ -165,13 +168,13 @@ export function NetworkToolsSidebar() {
         <div className="network-sidebar__section-title">
           Monitors
           <Tooltip content="Refresh monitors" side="bottom">
-            <button
-              className="network-sidebar__refresh"
+            <Button
+              variant="ghost"
+              size="sm"
               aria-label="Refresh monitors"
+              icon={<RefreshCw size={11} />}
               onClick={refreshMonitors}
-            >
-              <RefreshCw size={11} />
-            </button>
+            />
           </Tooltip>
         </div>
         {httpMonitors.length === 0 && (
@@ -185,14 +188,17 @@ export function NetworkToolsSidebar() {
             onOpen={handleOpenMonitor}
           />
         ))}
-        <button
-          className="network-sidebar__add"
+        <Button
+          variant="ghost"
+          size="sm"
+          fullWidth
+          className="network-sidebar__list-btn"
+          icon={<Plus size={12} />}
           onClick={() => openNetworkDiagnosticTab("http-monitor")}
           data-testid="network-new-monitor"
         >
-          <Plus size={12} />
           New Monitor
-        </button>
+        </Button>
       </div>
 
       {/* Local Utilities */}
