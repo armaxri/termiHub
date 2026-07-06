@@ -8,7 +8,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import type { XServerStatusReport } from "@/types/xserver";
+
+// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
+// mounts its trigger; shim them so tooltip-wrapped controls render.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
 
 const xServerStatus = vi.fn<() => Promise<XServerStatusReport>>();
 const xServerStop = vi.fn(() => Promise.resolve());
@@ -59,7 +77,11 @@ describe("OpenConnectionsModal — X Servers section", () => {
   async function renderModal() {
     await act(async () => {
       root.render(
-        React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
+        React.createElement(
+          TooltipProvider,
+          { delayDuration: 0 },
+          React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
+        )
       );
     });
     await flush();
