@@ -16,6 +16,7 @@ dev.local.json
 coverage
 test-results
 tests/reports/*.json
+tests/reports/*.log
 
 # Editor directories and files
 .vscode/*
