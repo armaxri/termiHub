@@ -43,6 +43,24 @@ pub fn get_credential_store_status(
     Ok(build_status_info(&manager))
 }
 
+/// Unlock a master-password store, treating an already-unlocked store as a
+/// benign no-op.
+///
+/// This makes unlock idempotent (G6, #1144): when two connect flows race to
+/// unlock the same store, the second call returns `Ok(())` instead of a
+/// spurious "already unlocked" error that would surface as an
+/// "Incorrect master password"-style failure. A wrong password on a locked
+/// store still errors, preserving the existing wrong-password behavior.
+fn unlock_store_idempotent(
+    store: &crate::credential::MasterPasswordStore,
+    password: &str,
+) -> Result<(), String> {
+    if store.is_unlocked() {
+        return Ok(());
+    }
+    store.unlock(password).map_err(|e| e.to_string())
+}
+
 /// Unlock the master password credential store.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -55,12 +73,7 @@ pub async fn unlock_credential_store(
     info!("Unlocking credential store");
 
     let result = manager
-        .with_master_password_store(|store| {
-            if store.is_unlocked() {
-                return Err("Store is already unlocked".to_string());
-            }
-            store.unlock(&password).map_err(|e| e.to_string())
-        })
+        .with_master_password_store(|store| unlock_store_idempotent(store, &password))
         .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
 
     result?;
