@@ -12,11 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import {
-  networkHttpMonitorList,
-  networkHttpMonitorStop,
-  onHttpMonitorCheck,
-} from "@/services/networkApi";
+import { networkHttpMonitorList, networkHttpMonitorStop } from "@/services/networkApi";
 import type { HttpMonitorState } from "@/types/network";
 import { useAppStore } from "@/store/appStore";
 import { NetworkToolsSidebar } from "./NetworkToolsSidebar";
