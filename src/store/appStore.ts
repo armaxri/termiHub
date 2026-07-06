@@ -3715,7 +3715,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiStartEmbeddedServer(serverId);
       } catch (err) {
-        console.error("Failed to start embedded server:", err);
+        frontendLog("embedded_server", `Failed to start embedded server ${serverId}: ${err}`);
         throw err;
       }
     },
@@ -3724,7 +3724,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiStopEmbeddedServer(serverId);
       } catch (err) {
-        console.error("Failed to stop embedded server:", err);
+        frontendLog("embedded_server", `Failed to stop embedded server ${serverId}: ${err}`);
         throw err;
       }
     },
