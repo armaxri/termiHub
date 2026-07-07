@@ -3,8 +3,8 @@ import { ServerCrash, RefreshCw, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
 import {
-  CONNECTING_TIMEOUT_MS,
-  WAITING_FOR_AGENT_TIMEOUT_MS,
+  connectTimeoutMs,
+  connectTimeoutSeconds,
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
 import "./TerminalConnectionOverlay.css";
@@ -86,19 +86,26 @@ export function TerminalConnectionOverlay({
     : isConnecting
       ? "connecting"
       : null;
-  const timeoutMs =
-    timeoutKind === "waiting-for-agent" ? WAITING_FOR_AGENT_TIMEOUT_MS : CONNECTING_TIMEOUT_MS;
 
+  // The timer is armed once per state transition (deps exclude the per-second
+  // elapsed tick), so it is not re-armed every second. Note: because it is tied
+  // to this component's lifetime, unmounting and remounting the overlay while
+  // still connecting (e.g. dragging the tab to another panel) restarts the
+  // countdown — a wall-clock deadline in the store would make it survive
+  // remounts (tracked as a follow-up).
   useEffect(() => {
     if (!timeoutKind) return;
-    const id = setTimeout(() => failTerminalConnectTimeout(tabId, timeoutKind), timeoutMs);
+    const id = setTimeout(
+      () => failTerminalConnectTimeout(tabId, timeoutKind),
+      connectTimeoutMs(timeoutKind)
+    );
     return () => clearTimeout(id);
-  }, [tabId, timeoutKind, timeoutMs, failTerminalConnectTimeout]);
+  }, [tabId, timeoutKind, failTerminalConnectTimeout]);
 
   // Whole seconds remaining before the client-side timeout fires (>= 0), for the
   // visible countdown. Derived from the per-second elapsed tick.
   const remainingSeconds = timeoutKind
-    ? Math.max(0, Math.round(timeoutMs / 1000) - elapsedSeconds)
+    ? Math.max(0, connectTimeoutSeconds(timeoutKind) - elapsedSeconds)
     : 0;
 
   const handleCancel = useCallback(() => {

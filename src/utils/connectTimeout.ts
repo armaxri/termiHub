@@ -26,10 +26,14 @@ export const CONNECTING_TIMEOUT_MS = 90_000;
  */
 export const WAITING_FOR_AGENT_TIMEOUT_MS = 60_000;
 
+/** The timeout duration in milliseconds for a given pre-connect kind. */
+export function connectTimeoutMs(kind: ConnectTimeoutKind): number {
+  return kind === "connecting" ? CONNECTING_TIMEOUT_MS : WAITING_FOR_AGENT_TIMEOUT_MS;
+}
+
 /** Whole-second duration used in the user-facing message for a given kind. */
 export function connectTimeoutSeconds(kind: ConnectTimeoutKind): number {
-  const ms = kind === "connecting" ? CONNECTING_TIMEOUT_MS : WAITING_FOR_AGENT_TIMEOUT_MS;
-  return Math.round(ms / 1000);
+  return Math.round(connectTimeoutMs(kind) / 1000);
 }
 
 /**

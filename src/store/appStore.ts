@@ -3179,9 +3179,11 @@ export const useAppStore = create<AppState>((set, get) => {
         // state the timeout was armed for. A connect that succeeded, an agent
         // that came online, or a cancelled tab all clear the relevant flag
         // first, making this a no-op.
-        const stillWaiting = state.terminalWaitingForAgent[tabId] !== undefined;
-        const stillConnecting = state.terminalConnecting[tabId] === true;
-        if (kind === "waiting-for-agent" ? !stillWaiting : !stillConnecting) {
+        const stillArmed =
+          kind === "waiting-for-agent"
+            ? state.terminalWaitingForAgent[tabId] !== undefined
+            : state.terminalConnecting[tabId] === true;
+        if (!stillArmed) {
           return {};
         }
         frontendLog(
