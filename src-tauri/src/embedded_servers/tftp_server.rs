@@ -200,9 +200,12 @@ fn wait_for_ack(
     max_retries: u32,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<AckOutcome> {
-    let _ = shutdown; // RED placeholder: shutdown not yet honored
     let mut attempts = 0;
     loop {
+        if shutdown.load(Ordering::Relaxed) {
+            return Ok(AckOutcome::Aborted);
+        }
+
         socket.send_to(packet, peer).context("Send DATA failed")?;
 
         // Wait for ACK.
@@ -259,8 +262,12 @@ fn handle_wrq(
     let mut buf = [0u8; 516];
     let mut expected_block: u16 = 1;
 
-    let _ = shutdown; // RED placeholder: shutdown not yet honored
     loop {
+        // Abort promptly if the server was stopped mid-transfer. (#1145 / G1)
+        if shutdown.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         let (len, _) = match socket.recv_from(&mut buf) {
             Ok(r) => r,
             // The read timeout lets us re-check the shutdown flag instead of
