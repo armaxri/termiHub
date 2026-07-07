@@ -55,6 +55,7 @@ import {
   sftpOpen,
   sftpClose,
   sftpListDir,
+  sftpRealpath,
   sessionListFiles,
   localListDir,
   vscodeAvailable as checkVscode,
@@ -2774,14 +2775,23 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ sftpLoading: true, sftpError: null, sftpLastConfig: config });
       try {
         const sessionId = await sftpOpen(config);
-        const homePath = `/home/${config.username as string}`;
+        // Resolve the real remote home via SFTP realpath(".") instead of the
+        // fragile /home/<user> guess, which is wrong for non-Linux layouts and
+        // custom home paths (audit GAP C2, issue #1143). Fall back to root if
+        // realpath is unsupported or the resolved home cannot be listed.
         let entries: FileEntry[];
-        let activePath = homePath;
+        let activePath = "/";
         try {
+          const homePath = await sftpRealpath(sessionId, ".");
           entries = await sftpListDir(sessionId, homePath);
-        } catch {
-          // Fall back to root if home dir doesn't exist
-          activePath = "/";
+          activePath = homePath;
+        } catch (homeErr) {
+          frontendLog(
+            "sftp",
+            `connectSftp: home resolution failed, falling back to root: ${
+              homeErr instanceof Error ? homeErr.message : String(homeErr)
+            }`
+          );
           entries = await sftpListDir(sessionId, "/");
         }
         set({
