@@ -4127,7 +4127,23 @@ export const useAppStore = create<AppState>((set, get) => {
           state.defaultShell,
           agentContext
         );
-        if (builtGroups.length === 0) return;
+        // GAP G3 (#1146): a workspace that builds no launchable tabs (e.g. its
+        // referenced connections were all deleted, or it was saved empty) used
+        // to return silently, leaving the user with an unchanged window and no
+        // explanation. `buildTabGroupsFromWorkspace` maps one group per def, so
+        // "empty" means either zero groups or zero tabs across every group.
+        const builtTabCount = builtGroups.reduce(
+          (n, g) => n + getAllLeaves(g.rootPanel).reduce((m, leaf) => m + leaf.tabs.length, 0),
+          0
+        );
+        if (builtGroups.length === 0 || builtTabCount === 0) {
+          frontendLog(
+            "workspace",
+            `launchWorkspace(${workspaceId}): "${definition.name}" produced no launchable tabs`
+          );
+          toast.info(`Workspace "${definition.name}" had no launchable tabs`);
+          return;
+        }
         const firstGroup = builtGroups[0];
         set({
           tabGroups: builtGroups,
@@ -4137,7 +4153,10 @@ export const useAppStore = create<AppState>((set, get) => {
           activeWorkspaceName: definition.name,
         });
       } catch (err) {
+        // GAP G3 (#1146): a failed load used to be a silent console.error, so a
+        // launch that could not open anything looked like nothing happened.
         frontendLog("workspace", `Failed to launch workspace ${workspaceId}: ${String(err)}`);
+        toast.error("Could not launch workspace");
       } finally {
         set({ launchingWorkspaceId: null });
       }
@@ -4231,7 +4250,23 @@ export const useAppStore = create<AppState>((set, get) => {
           state.defaultShell,
           agentContext
         );
-        if (builtGroups.length === 0) return false;
+        // GAP G3 (#1146): a stored session whose tabs all fail to build (e.g.
+        // every referenced connection was deleted) used to return silently,
+        // leaving the user at an empty window indistinguishable from "nothing
+        // was saved". `buildTabGroupsFromWorkspace` maps one group per def, so
+        // "empty" means either zero groups or zero tabs across every group.
+        const builtTabCount = builtGroups.reduce(
+          (n, g) => n + getAllLeaves(g.rootPanel).reduce((m, leaf) => m + leaf.tabs.length, 0),
+          0
+        );
+        if (builtGroups.length === 0 || builtTabCount === 0) {
+          frontendLog(
+            "workspace",
+            "restoreLastSession: stored session produced no launchable tabs"
+          );
+          toast.info("Previous session had no launchable tabs");
+          return false;
+        }
         const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
         const activeGroup = builtGroups[idx];
         set({
@@ -4242,7 +4277,11 @@ export const useAppStore = create<AppState>((set, get) => {
         });
         return true;
       } catch (err) {
-        console.error("Failed to restore last session:", err);
+        // GAP G3 (#1146): a corrupt/failed last-session load used to be a silent
+        // console.error, so a user who had a populated session opened to a blank
+        // window with no explanation. Surface a recoverable error toast.
+        frontendLog("workspace", `Failed to restore last session: ${String(err)}`);
+        toast.error("Could not restore last session");
         return false;
       }
     },
