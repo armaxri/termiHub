@@ -120,7 +120,10 @@ export interface HttpCheckResult {
 
 export interface HttpMonitorState {
   config: HttpMonitorConfig;
+  /** The poll loop is alive (`false` = stopped-but-listed). */
   running: boolean;
+  /** The loop is alive but its poll body is suspended (implies `running`). */
+  paused: boolean;
   lastResult?: HttpCheckResult;
 }
 

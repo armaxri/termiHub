@@ -64,6 +64,7 @@ function monitorState(id: string, url: string, ok: boolean): HttpMonitorState {
       timeoutMs: 10000,
     },
     running: true,
+    paused: false,
     lastResult: {
       monitorId: id,
       ok,

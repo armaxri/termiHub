@@ -10,6 +10,7 @@ pub mod wol_storage;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use tauri::AppHandle;
@@ -148,8 +149,36 @@ impl NetworkManager {
         Ok(id)
     }
 
-    /// Stop a running HTTP monitor and drop its persisted config.
+    /// Stop a running HTTP monitor, keeping it **listed** (as `running: false`).
+    ///
+    /// Audit Gap #6: Stop must suspend polling without destroying the monitor —
+    /// its handle stays in the map (with a cancelled token, so it lists as not
+    /// running) and its persisted config is kept, so [`resume_http_monitor`]
+    /// (or the next launch) can bring it back. Use [`remove_http_monitor`] to
+    /// truly delete it.
     pub fn stop_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        let monitors = self
+            .http_monitors
+            .lock()
+            .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
+        match monitors.get(monitor_id) {
+            Some(handle) => {
+                // Cancel the poll loop but leave the handle in the map so the
+                // monitor stays listed as `running: false`. `paused` is cleared
+                // so a later Resume starts clean.
+                handle.cancel.cancel();
+                handle.paused.store(false, Ordering::SeqCst);
+                Ok(())
+            }
+            None => Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
+        }
+    }
+
+    /// Remove an HTTP monitor entirely: cancel its poll loop, drop its handle
+    /// from the map, and delete its persisted config.
+    ///
+    /// Audit Gap #6: this is the destructive counterpart to [`stop_http_monitor`].
+    pub fn remove_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
         let mut monitors = self
             .http_monitors
             .lock()
@@ -157,10 +186,9 @@ impl NetworkManager {
         match monitors.remove(monitor_id) {
             Some(handle) => {
                 handle.cancel.cancel();
-                // Drop the config from disk too — stopping a monitor removes it
-                // (see audit Gap #6: Stop currently means delete). A best-effort
-                // remove; a persistence error must not leave the loop running.
                 drop(monitors);
+                // Best-effort disk cleanup; a persistence error must not leave
+                // the handle re-inserted.
                 if let Err(e) = self.remove_persisted_monitor_config(monitor_id) {
                     error!(monitor_id, "Failed to remove persisted HTTP monitor: {e}");
                 }
@@ -168,6 +196,59 @@ impl NetworkManager {
             }
             None => Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
         }
+    }
+
+    /// Pause a running HTTP monitor: the poll loop stays alive but its poll body
+    /// is suspended (audit Gap #5). Lists as `running: true, paused: true`.
+    pub fn pause_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        let monitors = self
+            .http_monitors
+            .lock()
+            .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
+        match monitors.get(monitor_id) {
+            Some(handle) => {
+                handle.paused.store(true, Ordering::SeqCst);
+                debug!(monitor_id, "Paused HTTP monitor");
+                Ok(())
+            }
+            None => Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
+        }
+    }
+
+    /// Resume a paused or stopped HTTP monitor with the same config.
+    ///
+    /// - A **paused** monitor (loop still alive) simply clears its `paused` flag.
+    /// - A **stopped** monitor (loop cancelled, but still listed) is re-spawned
+    ///   with a fresh cancellation token, reusing the same config/id.
+    pub fn resume_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        // Take the current handle so we can decide whether to un-pause in place
+        // or re-spawn a stopped loop. Clone the config first; drop the lock
+        // before re-spawning (spawn re-locks the map).
+        let stopped_config = {
+            let mut monitors = self
+                .http_monitors
+                .lock()
+                .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
+            match monitors.get(monitor_id) {
+                Some(handle) if !handle.cancel.is_cancelled() => {
+                    // Alive (running or paused): clear the pause flag in place.
+                    handle.paused.store(false, Ordering::SeqCst);
+                    debug!(monitor_id, "Resumed paused HTTP monitor");
+                    None
+                }
+                Some(_) => {
+                    // Stopped: remove the dead handle and re-spawn below.
+                    monitors.remove(monitor_id).map(|h| h.config)
+                }
+                None => return Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
+            }
+        };
+
+        if let Some(config) = stopped_config {
+            self.spawn_http_monitor(config)?;
+            debug!(monitor_id, "Restarted stopped HTTP monitor");
+        }
+        Ok(())
     }
 
     // ── HTTP Monitor persistence ────────────────────────────────────────────
@@ -238,9 +319,12 @@ impl NetworkManager {
             .values()
             .map(|h| {
                 let last_result = h.last_result.lock().ok().and_then(|g| g.clone());
+                let running = !h.cancel.is_cancelled();
                 HttpMonitorState {
                     config: h.config.clone(),
-                    running: !h.cancel.is_cancelled(),
+                    running,
+                    // A stopped loop can't be paused; only report paused while alive.
+                    paused: running && h.paused.load(Ordering::SeqCst),
                     last_result,
                 }
             })
@@ -297,14 +381,12 @@ mod tests {
     use super::*;
     use http_monitor::HttpCheckResult;
 
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
 
     /// Insert a bare monitor handle (no spawned task) so `stop_all_http_monitors`
     /// can be exercised without a live Tauri `AppHandle`. Returns the id plus the
     /// handle's cancellation token and `paused` flag so tests can assert on them.
-    fn insert_dummy_monitor(
-        mgr: &NetworkManager,
-    ) -> (String, CancellationToken, Arc<AtomicBool>) {
+    fn insert_dummy_monitor(mgr: &NetworkManager) -> (String, CancellationToken, Arc<AtomicBool>) {
         let config = HttpMonitorConfig::new(
             "https://example.com".into(),
             30_000,
