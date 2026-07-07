@@ -659,6 +659,11 @@ pub fn run() {
                     if let Some(mgr) = handle.try_state::<NetworkManager>() {
                         mgr.stop_all_http_monitors();
                     }
+                    // Close every open SFTP session so no SSH+SFTP connection is
+                    // left dangling on the server until it times out (#1244).
+                    if let Some(mgr) = handle.try_state::<SftpManager>() {
+                        mgr.close_all();
+                    }
                 });
             }
         });
