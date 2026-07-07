@@ -201,6 +201,11 @@
   color: var(--color-error);
 }
 
+/* First-sample CPU placeholder: muted so it reads as "not a real value yet". */
+.monitoring-status__stat--priming {
+  color: var(--text-secondary);
+}
+
 .monitoring-status__loading {
   display: flex;
   align-items: center;

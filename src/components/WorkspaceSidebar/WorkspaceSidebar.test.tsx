@@ -26,6 +26,28 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(vi.fn()),
 }));
 
+// Stub the native file dialogs and fs so import/export can be driven from tests.
+const dialogSave = vi.fn();
+const dialogOpen = vi.fn();
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: (...args: unknown[]) => dialogSave(...args),
+  open: (...args: unknown[]) => dialogOpen(...args),
+}));
+
+const fsWriteTextFile = vi.fn();
+const fsReadTextFile = vi.fn();
+vi.mock("@tauri-apps/plugin-fs", () => ({
+  writeTextFile: (...args: unknown[]) => fsWriteTextFile(...args),
+  readTextFile: (...args: unknown[]) => fsReadTextFile(...args),
+}));
+
+const apiExportWorkspaces = vi.fn();
+const apiImportWorkspaces = vi.fn();
+vi.mock("@/services/workspaceApi", () => ({
+  exportWorkspaces: (...args: unknown[]) => apiExportWorkspaces(...args),
+  importWorkspaces: (...args: unknown[]) => apiImportWorkspaces(...args),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(),
@@ -191,7 +213,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     // No confirm dialog before the delete button is pressed.
@@ -209,7 +231,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     act(() => (query("workspace-delete-ws-1") as HTMLButtonElement).click());
@@ -227,7 +249,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     act(() => (query("workspace-delete-ws-1") as HTMLButtonElement).click());
@@ -239,5 +261,131 @@ describe("WorkspaceSidebar", () => {
     expect(query("workspace-item-ws-1")).not.toBeNull();
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a success toast with the imported count when import succeeds", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [], loadWorkspaces });
+    dialogOpen.mockResolvedValue("/tmp/workspaces.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    apiImportWorkspaces.mockResolvedValue(3);
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(apiImportWorkspaces).toHaveBeenCalledWith("{}");
+    expect(loadWorkspaces).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith("Imported 3 workspaces");
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("uses singular wording when a single workspace is imported", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [], loadWorkspaces });
+    dialogOpen.mockResolvedValue("/tmp/workspaces.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    apiImportWorkspaces.mockResolvedValue(1);
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastSuccess).toHaveBeenCalledWith("Imported 1 workspace");
+  });
+
+  it("surfaces an error toast when import fails", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [], loadWorkspaces });
+    dialogOpen.mockResolvedValue("/tmp/workspaces.json");
+    fsReadTextFile.mockResolvedValue("not json");
+    apiImportWorkspaces.mockRejectedValue(new Error("invalid JSON"));
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("shows no toast when the import file dialog is cancelled", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [], loadWorkspaces });
+    dialogOpen.mockResolvedValue(null);
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(apiImportWorkspaces).not.toHaveBeenCalled();
+    expect(loadWorkspaces).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a success toast when export succeeds", async () => {
+    useAppStore.setState({ workspaces: [] });
+    apiExportWorkspaces.mockResolvedValue("{}");
+    dialogSave.mockResolvedValue("/tmp/out.json");
+    fsWriteTextFile.mockResolvedValue(undefined);
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-export-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(fsWriteTextFile).toHaveBeenCalledWith("/tmp/out.json", "{}");
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error toast when export fails", async () => {
+    useAppStore.setState({ workspaces: [] });
+    apiExportWorkspaces.mockResolvedValue("{}");
+    dialogSave.mockResolvedValue("/tmp/out.json");
+    fsWriteTextFile.mockRejectedValue(new Error("permission denied"));
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-export-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("shows no toast when the export file dialog is cancelled", async () => {
+    useAppStore.setState({ workspaces: [] });
+    apiExportWorkspaces.mockResolvedValue("{}");
+    dialogSave.mockResolvedValue(null);
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-export-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(fsWriteTextFile).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
   });
 });
