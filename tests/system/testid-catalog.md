@@ -377,10 +377,12 @@ Fixed strings — match exactly.
 | `tab-group-chip-close` | `src/components/Terminal/TabGroupChips.tsx` |
 | `tab-group-ctx-close` | `src/components/Terminal/TabGroupChips.tsx` |
 | `tab-group-ctx-rename` | `src/components/Terminal/TabGroupChips.tsx` |
+| `terminal-connection-abort-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-cancel-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-elapsed` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-overlay` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-retry-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
+| `terminal-connection-retry-now-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-timeout` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-context-copy-all` | `src/components/SplitView/SplitView.tsx` |
 | `terminal-context-copy-selection` | `src/components/SplitView/SplitView.tsx` |
@@ -519,6 +521,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `agent-cancel-connect-*` | `agent-cancel-connect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-header-*` | `agent-header-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-node-*` | `agent-node-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-reconnect-*` | `agent-reconnect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |

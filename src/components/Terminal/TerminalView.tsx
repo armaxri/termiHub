@@ -79,7 +79,8 @@ export function TerminalView() {
         const store = useAppStore.getState();
         store.setAgentConnectionState(
           session_id,
-          state as "disconnected" | "connecting" | "connected" | "reconnecting"
+          state as "disconnected" | "connecting" | "connected" | "reconnecting",
+          error
         );
 
         // Build the full tab list once and reuse across all branches.
@@ -97,6 +98,14 @@ export function TerminalView() {
           const cfg = tab.config.config as { agentId?: string };
           return cfg.agentId === session_id;
         });
+
+        // G5 (#1236): mirror the agent state into the session-id-keyed
+        // `remoteStates` map for every active-session tab so the compact
+        // tab-strip dot agrees with the terminal overlay. The agent path used
+        // to skip this, leaving the dot stale-green through a drop/reconnect.
+        for (const tab of agentTerminalTabs) {
+          if (tab.sessionId) store.setRemoteState(tab.sessionId, state);
+        }
 
         if (state === "connected") {
           // Query the agent for sessions it actually recovered. Daemons that

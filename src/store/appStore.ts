@@ -187,6 +187,13 @@ function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
 }
 
 /**
+ * Failed-state message shown when the user aborts an in-flight connect from the
+ * connecting / waiting / auto-retry overlay. The tab stays open on a retryable
+ * Failed state rather than closing (#1128).
+ */
+export const ABORTED_CONNECT_MESSAGE = "Connection aborted.";
+
+/**
  * Strip password from connection configs so it is never persisted,
  * unless `savePassword` is true (password will be routed to the backend
  * credential store).
@@ -563,6 +570,12 @@ interface AppState {
    * stale timer that fires after the tab connected or was woken is a no-op.
    */
   failTerminalConnectTimeout: (tabId: string, kind: ConnectTimeoutKind) => void;
+  /**
+   * User-initiated abort of an in-flight connect (from the connecting, waiting,
+   * or auto-retry overlay). Transitions the tab to a retryable Failed state and
+   * keeps the tab open — distinct from Cancel, which closes the tab (#1128).
+   */
+  abortTerminalConnect: (tabId: string) => void;
 
   // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
   terminalExitedTabs: Record<string, boolean>;
@@ -679,7 +692,8 @@ interface AppState {
   disconnectRemoteAgent: (agentId: string) => Promise<void>;
   setAgentConnectionState: (
     agentId: string,
-    state: RemoteAgentDefinition["connectionState"]
+    state: RemoteAgentDefinition["connectionState"],
+    error?: string
   ) => void;
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
   clearAgentSessions: (agentId: string) => void;
@@ -3334,6 +3348,25 @@ export const useAppStore = create<AppState>((set, get) => {
           },
         };
       }),
+    abortTerminalConnect: (tabId) =>
+      set((state) => {
+        frontendLog(
+          "disconnect",
+          `connect aborted by user for tab=${tabId} — transitioning to Failed`
+        );
+        // Clear every in-flight pre-connect flag and land on a retryable Failed
+        // state (spawn error set) so the overlay shows Retry and the tab stays
+        // open. Distinct from closeTab, which tears the tab down entirely.
+        return {
+          terminalConnecting: omitKey(state.terminalConnecting, tabId),
+          terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+          terminalSpawnErrors: {
+            ...state.terminalSpawnErrors,
+            [tabId]: ABORTED_CONNECT_MESSAGE,
+          },
+        };
+      }),
 
     // Per-tab terminal session disconnects (runtime-only)
     terminalExitedTabs: {},
@@ -3681,13 +3714,22 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
     },
 
-    setAgentConnectionState: (agentId, connectionState) => {
+    setAgentConnectionState: (agentId, connectionState, error) => {
       // Single writer for `connectionState` (G4/#1234): only the backend
       // `agent-state-change` event reaches this setter.
       const previous = get().remoteAgents.find((a) => a.id === agentId)?.connectionState;
+      // Track the terminal error across auto-reconnect exhaustion (G3/#1236):
+      // record it on `disconnected` so the header's Reconnect button can surface
+      // it, and clear it once a fresh attempt starts (`connecting`) or succeeds
+      // (`connected`). Other transitions leave the stored value untouched.
+      const nextLastError = (agent: RemoteAgentDefinition): string | undefined => {
+        if (connectionState === "disconnected") return error ?? agent.lastError;
+        if (connectionState === "connecting" || connectionState === "connected") return undefined;
+        return agent.lastError;
+      };
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState } : a
+          a.id === agentId ? { ...a, connectionState, lastError: nextLastError(a) } : a
         ),
       }));
 

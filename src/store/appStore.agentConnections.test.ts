@@ -491,6 +491,71 @@ describe("appStore — agent connection management", () => {
     });
   });
 
+  describe("setAgentConnectionState — lastError (G3, #1236)", () => {
+    function makeAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentDefinition {
+      return {
+        id: AGENT_ID,
+        name: "Test Agent",
+        config: {
+          host: "test.local",
+          port: 22,
+          username: "user",
+          authMethod: "password",
+        },
+        isExpanded: false,
+        connectionState: "connected",
+        agentSettings: DEFAULT_AGENT_SETTINGS,
+        ...overrides,
+      };
+    }
+
+    it("stores lastError when transitioning to 'disconnected' with an error", () => {
+      useAppStore.setState({ remoteAgents: [makeAgent({ connectionState: "reconnecting" })] });
+
+      useAppStore
+        .getState()
+        .setAgentConnectionState(AGENT_ID, "disconnected", "Failed to reconnect after 10 attempts");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("disconnected");
+      expect(agent.lastError).toBe("Failed to reconnect after 10 attempts");
+    });
+
+    it("leaves lastError unset when 'disconnected' arrives without an error", () => {
+      useAppStore.setState({ remoteAgents: [makeAgent({ connectionState: "connected" })] });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "disconnected");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("disconnected");
+      expect(agent.lastError).toBeUndefined();
+    });
+
+    it("clears a stored lastError on the next 'connecting' attempt", () => {
+      useAppStore.setState({
+        remoteAgents: [makeAgent({ connectionState: "disconnected", lastError: "old failure" })],
+      });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "connecting");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("connecting");
+      expect(agent.lastError).toBeUndefined();
+    });
+
+    it("clears a stored lastError once the agent reaches 'connected'", () => {
+      useAppStore.setState({
+        remoteAgents: [makeAgent({ connectionState: "reconnecting", lastError: "old failure" })],
+      });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("connected");
+      expect(agent.lastError).toBeUndefined();
+    });
+  });
+
   describe("clearAgentSessions", () => {
     it("empties agentSessions for the given agent", () => {
       useAppStore.setState({

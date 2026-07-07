@@ -153,6 +153,13 @@ export interface RemoteAgentDefinition {
   isExpanded: boolean;
   connectionState: "disconnected" | "connecting" | "connected" | "reconnecting";
   capabilities?: AgentCapabilities;
+  /**
+   * The last error reported when the agent transitioned to `disconnected` after
+   * auto-reconnect exhausted its retries (G3, #1236). Surfaced as the tooltip on
+   * the disconnected header's Reconnect button. Cleared on the next connect
+   * attempt (`connecting`) or a successful `connected` transition.
+   */
+  lastError?: string;
 }
 
 // ── Persistent connection session state ──────────────────────────────────
