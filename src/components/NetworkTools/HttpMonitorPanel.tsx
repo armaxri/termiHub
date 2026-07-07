@@ -388,18 +388,7 @@ export function HttpMonitorPanel() {
                   />
                 </Tooltip>
               )}
-              {m.running && m.paused && (
-                <Tooltip content="Resume" side="left">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Play size={13} />}
-                    onClick={() => handleResumeMonitor(m.config.id)}
-                    aria-label={`Resume monitoring ${m.config.url}`}
-                  />
-                </Tooltip>
-              )}
-              {!m.running && (
+              {(m.paused || !m.running) && (
                 <Tooltip content="Resume" side="left">
                   <Button
                     variant="ghost"
