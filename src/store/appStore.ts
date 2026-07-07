@@ -71,6 +71,7 @@ import {
   getDefaultShell,
   connectAgent as apiConnectAgent,
   disconnectAgent as apiDisconnectAgent,
+  shutdownAgent as apiShutdownAgent,
   applyAgentSettings as apiApplyAgentSettings,
   listAgentSessions,
   listAgentConnections,
@@ -690,6 +691,11 @@ interface AppState {
   toggleRemoteAgent: (agentId: string) => void;
   connectRemoteAgent: (agentId: string, password?: string) => Promise<void>;
   disconnectRemoteAgent: (agentId: string) => Promise<void>;
+  /**
+   * Gracefully shut down a remote agent (stop remote sessions) and disconnect.
+   * Resolves to the number of sessions the agent reported as detached/killed.
+   */
+  shutdownRemoteAgent: (agentId: string) => Promise<number>;
   setAgentConnectionState: (
     agentId: string,
     state: RemoteAgentDefinition["connectionState"],
@@ -3712,6 +3718,21 @@ export const useAppStore = create<AppState>((set, get) => {
         agentSessions: { ...s.agentSessions, [agentId]: [] },
         agentFolders: { ...s.agentFolders, [agentId]: [] },
       }));
+    },
+
+    shutdownRemoteAgent: async (agentId) => {
+      // Unlike disconnect (detach), shutdown stops the remote sessions and then
+      // drops the transport. The backend returns how many sessions were
+      // detached/killed so the UI can report the impact.
+      const detached = await apiShutdownAgent(agentId);
+      set((s) => ({
+        remoteAgents: s.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
+        ),
+        agentSessions: { ...s.agentSessions, [agentId]: [] },
+        agentFolders: { ...s.agentFolders, [agentId]: [] },
+      }));
+      return detached;
     },
 
     setAgentConnectionState: (agentId, connectionState, error) => {
