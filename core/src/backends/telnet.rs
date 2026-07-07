@@ -223,6 +223,13 @@ impl ConnectionType for Telnet {
         let stream = TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT)
             .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))?;
 
+        // Enable TCP keepalive so a half-open connection (peer vanishes with no
+        // FIN/RST — cable pull, NAT timeout, crashed host) is eventually torn
+        // down by the OS instead of hanging in "Connected" forever. The dead
+        // socket surfaces as a read error, the reader thread breaks, and the
+        // session emits `terminal-exit` (#1123).
+        crate::net::enable_tcp_keepalive(&stream);
+
         stream
             .set_read_timeout(Some(READ_TIMEOUT))
             .map_err(|e| SessionError::SpawnFailed(format!("Failed to set read timeout: {e}")))?;
