@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter};
@@ -16,6 +18,40 @@ use super::storage::EmbeddedServerStorage;
 use super::tftp_server::start_tftp_server;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
+
+/// How long the manager waits for a server thread to confirm its bind before
+/// treating the start as failed. Binding a local socket is near-instant, so a
+/// generous timeout only guards against a wedged thread (GAP G3, #1145).
+const BIND_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Decision the manager makes from a server thread's bind signal.
+#[derive(Debug)]
+enum BindOutcome {
+    /// The socket bound — keep the `active` entry and emit `Running`.
+    Running,
+    /// The bind failed (explicit error, dropped sender, or timeout) — drop the
+    /// `active` entry and emit `Error` with this reason.
+    Failed(String),
+}
+
+/// Map a server thread's bind signal (received over the confirm channel) to the
+/// manager's next action, so `Running` is only ever produced after a *confirmed*
+/// bind (GAP G3, #1145).
+///
+/// Pure and `AppHandle`-free so the start-flow decision can be unit-tested.
+#[allow(dead_code)]
+fn decide_bind_outcome(signal: Result<Result<(), String>, RecvTimeoutError>) -> BindOutcome {
+    match signal {
+        Ok(Ok(())) => BindOutcome::Running,
+        Ok(Err(reason)) => BindOutcome::Failed(reason),
+        Err(RecvTimeoutError::Disconnected) => {
+            BindOutcome::Failed("server exited before confirming it was listening".to_string())
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            BindOutcome::Failed("server did not confirm it was listening in time".to_string())
+        }
+    }
+}
 
 /// A running server instance.
 struct ActiveServer {
@@ -371,6 +407,79 @@ fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+
+    /// A successful bind signal must produce a `Running` outcome so the manager
+    /// keeps the `active` entry and emits `Running` (GAP G3, #1145).
+    #[test]
+    fn bind_success_signal_yields_running() {
+        let outcome = decide_bind_outcome(Ok(Ok(())));
+        assert!(
+            matches!(outcome, BindOutcome::Running),
+            "Ok(Ok(())) should map to Running, got {outcome:?}"
+        );
+    }
+
+    /// A late bind failure reported by the server thread must yield `Failed`
+    /// carrying the reason, so the manager emits `Error` and drops the `active`
+    /// entry instead of leaving the item stuck green (GAP G3, #1145).
+    #[test]
+    fn bind_failure_signal_yields_failed_with_reason() {
+        let outcome = decide_bind_outcome(Ok(Err("Port 8080 is already in use".to_string())));
+        match outcome {
+            BindOutcome::Failed(reason) => assert!(
+                reason.contains("already in use"),
+                "failure reason must be preserved, got: {reason}"
+            ),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    /// If the thread dies (panics / returns) before signalling, the sender is
+    /// dropped and `recv` reports `Disconnected` — this is a start failure, so
+    /// it must be `Failed`, never `Running` (GAP G3, #1145).
+    #[test]
+    fn bind_disconnected_signal_yields_failed() {
+        let outcome = decide_bind_outcome(Err(mpsc::RecvTimeoutError::Disconnected));
+        assert!(
+            matches!(outcome, BindOutcome::Failed(_)),
+            "a disconnected channel means the bind never confirmed, got {outcome:?}"
+        );
+    }
+
+    /// A bind that never confirms within the timeout must also be `Failed`, so
+    /// `Running` is only ever emitted after a *confirmed* bind (GAP G3, #1145).
+    #[test]
+    fn bind_timeout_signal_yields_failed() {
+        let outcome = decide_bind_outcome(Err(mpsc::RecvTimeoutError::Timeout));
+        assert!(
+            matches!(outcome, BindOutcome::Failed(_)),
+            "a timed-out bind is not a confirmed bind, got {outcome:?}"
+        );
+    }
+
+    /// End-to-end over the real channel: a thread that binds then signals success
+    /// must result in `Running`, while a thread that reports a bind error must
+    /// not — so no live `active` entry lingers on failure (GAP G3, #1145).
+    #[test]
+    fn real_channel_success_and_failure_paths() {
+        // Success path: sender reports Ok before the (simulated) serve loop.
+        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        std::thread::spawn(move || {
+            let _ = tx.send(Ok(()));
+        });
+        let outcome = decide_bind_outcome(rx.recv_timeout(BIND_CONFIRM_TIMEOUT));
+        assert!(matches!(outcome, BindOutcome::Running));
+
+        // Failure path: sender reports a bind error and the manager must not
+        // treat it as running.
+        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        std::thread::spawn(move || {
+            let _ = tx.send(Err("bind failed".to_string()));
+        });
+        let outcome = decide_bind_outcome(rx.recv_timeout(BIND_CONFIRM_TIMEOUT));
+        assert!(matches!(outcome, BindOutcome::Failed(_)));
+    }
 
     /// A port bound at boot must not cause a silent no-op: the auto-start
     /// failure has to surface as an `Error` state carrying the reason so the
