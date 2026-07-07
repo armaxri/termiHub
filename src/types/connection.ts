@@ -17,6 +17,21 @@ import { KeybindingOverrideEntry } from "./keybindings";
  */
 export type SftpStatus = "idle" | "connecting" | "connected" | "listing" | "error";
 
+/**
+ * A live backend SFTP session tracked in the keyed session map (issue #1241).
+ *
+ * Sessions are keyed by their session-id / UUID; this record holds only the
+ * display metadata and the binding needed for lifecycle cleanup.
+ *
+ * - `hostLabel`   — `user@host:port`, shown in the Open Connections panel
+ * - `owningTabId` — the tab that opened the session; when that tab closes the
+ *   session is closed (`sftp_close`) and removed (the L1 leak fix)
+ */
+export interface SftpSessionEntry {
+  hostLabel: string;
+  owningTabId: string;
+}
+
 export interface SavedConnection {
   id: string;
   name: string;

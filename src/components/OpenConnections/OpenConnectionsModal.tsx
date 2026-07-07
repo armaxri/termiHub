@@ -60,8 +60,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // Live single source of truth for tunnel status (kept in sync by tunnel
   // events); the panel reads it directly so it never drifts from the sidebar.
   const tunnelStates = useAppStore((s) => s.tunnelStates);
-  const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
-  const disconnectSftp = useAppStore((s) => s.disconnectSftp);
+  const sftpSessions = useAppStore((s) => s.sftpSessions);
+  const closeSftpSession = useAppStore((s) => s.closeSftpSession);
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
   // Live source of truth for HTTP monitors (kept current by the Network Tools
@@ -79,6 +81,23 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const connectingTabs = getAllLeaves(rootPanel)
     .flatMap((leaf) => leaf.tabs)
     .filter((tab) => terminalConnecting[tab.id]);
+
+  // Every live tab id across all tab groups (the active group is the live
+  // rootPanel, the others their stored trees) — used to flag orphaned SFTP
+  // sessions whose owning tab no longer exists (#1241, orphan safety net).
+  const liveTabIds = new Set(
+    tabGroups
+      .flatMap((g) => getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel))
+      .flatMap((leaf) => leaf.tabs.map((t) => t.id))
+  );
+
+  // One entry per live backend SFTP session, keyed by its UUID. Orphaned
+  // sessions (owning tab gone) still surface here so they stay killable.
+  const sftpSessionEntries = Object.entries(sftpSessions).map(([id, entry]) => ({
+    id,
+    hostLabel: entry.hostLabel,
+    orphaned: !liveTabIds.has(entry.owningTabId),
+  }));
 
   const [localSessions, setLocalSessions] = useState<LocalSessionInfo[]>([]);
   const [proxySessions, setProxySessions] = useState<ProxySessionsState>({});
@@ -179,7 +198,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     Object.values(proxySessions).reduce((s, arr) => s + arr.length, 0) +
     Object.values(agentSessions).reduce((s, arr) => s + arr.length, 0) +
     activeTunnels.length +
-    (sftpConnectedHost ? 1 : 0) +
+    sftpSessionEntries.length +
     (monitoringHost ? 1 : 0) +
     httpMonitors.length +
     (showXServer ? 1 : 0);
@@ -291,6 +310,26 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   const handleKillAllTunnels = async () => {
     await Promise.all(activeTunnels.map((t) => stopTunnel(t.id)));
+  };
+
+  const handleKillSftp = async (sessionId: string) => {
+    try {
+      await closeSftpSession(sessionId);
+      toast.success("SFTP session closed");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to close SFTP session: ${err}`);
+      toast.error(`Failed to close SFTP session: ${err}`);
+    }
+  };
+
+  const handleKillAllSftp = async () => {
+    try {
+      await Promise.all(sftpSessionEntries.map((s) => closeSftpSession(s.id)));
+      toast.success("All SFTP sessions closed");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to close SFTP sessions: ${err}`);
+      toast.error(`Failed to close SFTP sessions: ${err}`);
+    }
   };
 
   const handleStopXServer = async () => {
@@ -522,20 +561,27 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           </Section>
         )}
 
-        {/* SFTP */}
-        {sftpConnectedHost && (
+        {/* SFTP — one row per live backend session (#1241). Orphaned sessions
+            (owning tab gone) surface with a warning badge so nothing is ever
+            invisible/unkillable. */}
+        {sftpSessionEntries.length > 0 && (
           <Section
             title="SFTP"
             icon={<FolderOpen size={14} />}
-            count={1}
-            onKillAll={disconnectSftp}
+            count={sftpSessionEntries.length}
+            onKillAll={handleKillAllSftp}
+            data-testid="open-connections-sftp-section"
           >
-            <ConnectionRow
-              icon={<FolderOpen size={14} />}
-              title={sftpConnectedHost}
-              badge="connected"
-              onKill={disconnectSftp}
-            />
+            {sftpSessionEntries.map((s) => (
+              <ConnectionRow
+                key={s.id}
+                icon={<FolderOpen size={14} />}
+                title={s.hostLabel}
+                detail={s.orphaned ? "orphaned — owning tab closed" : undefined}
+                badge={s.orphaned ? "orphaned" : "connected"}
+                onKill={() => handleKillSftp(s.id)}
+              />
+            ))}
           </Section>
         )}
 
@@ -697,6 +743,7 @@ type BadgeVariant =
   | "down"
   | "paused"
   | "stopped"
+  | "orphaned"
   | "error";
 
 interface ConnectionRowProps {

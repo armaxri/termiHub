@@ -383,7 +383,6 @@ function useFileBrowserSync() {
   const navigateSession = useAppStore((s) => s.navigateSession);
   const setSessionFileBrowserId = useAppStore((s) => s.setSessionFileBrowserId);
   const connectSftp = useAppStore((s) => s.connectSftp);
-  const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
   const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
@@ -580,12 +579,13 @@ function useFileBrowserSync() {
     // Already connected to the right host
     if (sftpSessionId && sftpConnectedHost === hostKey) return;
 
-    // Need to connect (or reconnect to different host)
-    const doConnect = async () => {
-      if (sftpSessionId && sftpConnectedHost !== hostKey) {
-        await disconnectSftp();
-      }
+    const owningTabId = activeTabId ?? undefined;
 
+    // Need to connect (or switch to a different host). We no longer close the
+    // previous session here: each tab owns its own SFTP session, so the store's
+    // connectSftp leaves a still-owned previous session registered (and closes
+    // it only if its owning tab is gone). Sessions are closed on tab close (#1241).
+    const doConnect = async () => {
       let configToUse = cfg;
       const authMethod = cfg.authMethod as string | undefined;
       if (authMethod === "password" && !cfg.password) {
@@ -601,7 +601,7 @@ function useFileBrowserSync() {
         configToUse = { ...baseConfig, password };
       }
 
-      connectSftp(configToUse);
+      connectSftp(configToUse, owningTabId);
     };
 
     doConnect();
@@ -614,7 +614,6 @@ function useFileBrowserSync() {
     sftpConnectedHost,
     connections,
     connectSftp,
-    disconnectSftp,
     requestPassword,
   ]);
 
