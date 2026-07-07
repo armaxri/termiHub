@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSshKeyFiles, SshKeyFile } from "@/hooks/useSshKeyFiles";
 import { validateSshKey, SshKeyValidation } from "@/services/api";
+import { Tooltip } from "@/components/ui";
 import "./KeyPathInput.css";
 
 /** Debounce (ms) before validating a typed key path against the backend. */
@@ -158,15 +159,17 @@ export function KeyPathInput({ value, onChange, placeholder, testIdPrefix }: Key
           aria-autocomplete="list"
           data-testid={`${prefix}key-path-input`}
         />
-        <button
-          type="button"
-          className="settings-form__list-browse"
-          onClick={handleBrowse}
-          title="Browse"
-          data-testid={`${prefix}key-path-browse`}
-        >
-          ...
-        </button>
+        <Tooltip content="Browse">
+          <button
+            type="button"
+            className="settings-form__list-browse"
+            onClick={handleBrowse}
+            aria-label="Browse"
+            data-testid={`${prefix}key-path-browse`}
+          >
+            ...
+          </button>
+        </Tooltip>
         {isOpen && filtered.length > 0 && (
           <ul
             className="key-path-input__dropdown"

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { TooltipProvider } from "@/components/ui";
 import { KeyPathInput } from "./KeyPathInput";
 
 // Mock Tauri dialog (Browse button)
@@ -29,7 +30,11 @@ const HINT = "field-keyPath-key-path-validation";
 
 function renderInput(value: string) {
   act(() => {
-    root.render(<KeyPathInput value={value} onChange={() => {}} testIdPrefix="field-keyPath" />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <KeyPathInput value={value} onChange={() => {}} testIdPrefix="field-keyPath" />
+      </TooltipProvider>
+    );
   });
 }
 

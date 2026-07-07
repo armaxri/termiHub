@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { TooltipProvider } from "@/components/ui";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { clearOverrides } from "@/services/keybindings";
 import { useAppStore } from "@/store/appStore";
@@ -19,7 +20,11 @@ let root: Root;
 
 function renderComponent(visibleFields?: Set<string>) {
   act(() => {
-    root.render(<KeyboardSettings visibleFields={visibleFields} />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <KeyboardSettings visibleFields={visibleFields} />
+      </TooltipProvider>
+    );
   });
 }
 
