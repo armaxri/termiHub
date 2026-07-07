@@ -378,6 +378,7 @@ Fixed strings — match exactly.
 | `terminal-connection-elapsed` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-overlay` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-retry-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
+| `terminal-connection-timeout-remaining` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-context-copy-all` | `src/components/SplitView/SplitView.tsx` |
 | `terminal-context-copy-selection` | `src/components/SplitView/SplitView.tsx` |
 | `terminal-context-paste` | `src/components/SplitView/SplitView.tsx` |
