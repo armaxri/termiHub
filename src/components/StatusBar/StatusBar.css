@@ -207,10 +207,10 @@
 }
 
 /*
-  Stale (#1229, audit gap G1): the transport dropped mid-stream, so the numbers
-  are frozen at their last-known values. Mute them (like the priming placeholder)
-  so they never read as live, overriding the severity colour. `!important` beats
-  the more specific severity classes on the same element.
+  Stale (issue 1229, audit gap G1): the transport dropped mid-stream, so the
+  numbers are frozen at their last-known values. Mute them (like the priming
+  placeholder) so they never read as live, overriding the severity colour.
+  `!important` beats the more specific severity classes on the same element.
 */
 .monitoring-status__stat--stale {
   color: var(--text-secondary) !important;
