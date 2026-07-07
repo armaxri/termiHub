@@ -1,6 +1,6 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "./NetworkTools.css";
-import { Play, RefreshCw, Plus, Circle, StopCircle } from "lucide-react";
+import { Play, RefreshCw, Plus, Circle, StopCircle, AlertTriangle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   networkHttpMonitorList,
@@ -11,6 +11,15 @@ import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
 import { Button, Tooltip, toast } from "@/components/ui";
+import { isMonitorStale, formatCheckedAgo } from "./monitorStaleness";
+
+/**
+ * How often the sidebar re-evaluates monitor ages/staleness. The backend poller
+ * only emits on each check, so without this tick a long-interval monitor's
+ * "checked N ago" label would freeze and it would never flip to overdue between
+ * polls (audit gap #11).
+ */
+const STALENESS_TICK_MS = 5_000;
 
 interface QuickActionProps {
   label: string;
@@ -36,13 +45,15 @@ function QuickAction({ label, tool }: QuickActionProps) {
 
 interface MonitorRowProps {
   monitor: HttpMonitorState;
+  now: number;
   onStop: (id: string) => void;
   onOpen: (id: string) => void;
 }
 
-function MonitorRow({ monitor, onStop, onOpen }: MonitorRowProps) {
+function MonitorRow({ monitor, now, onStop, onOpen }: MonitorRowProps) {
   const { config, running, lastResult } = monitor;
   const shortUrl = config.url.replace(/^https?:\/\//, "").slice(0, 24);
+  const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
 
   return (
     <div className="network-sidebar__monitor" data-testid={`monitor-row-${config.id}`}>
@@ -51,9 +62,11 @@ function MonitorRow({ monitor, onStop, onOpen }: MonitorRowProps) {
           size={8}
           fill={
             running
-              ? lastResult?.ok
-                ? "var(--vscode-charts-green)"
-                : "var(--vscode-charts-red)"
+              ? stale
+                ? "var(--color-warning)"
+                : lastResult?.ok
+                  ? "var(--vscode-charts-green)"
+                  : "var(--vscode-charts-red)"
               : "var(--vscode-disabledForeground)"
           }
           color="transparent"
@@ -66,6 +79,31 @@ function MonitorRow({ monitor, onStop, onOpen }: MonitorRowProps) {
         )}
         {!lastResult && running && (
           <span className="network-sidebar__monitor-status">checking…</span>
+        )}
+        {lastResult && (
+          <span
+            className={`network-sidebar__monitor-age${
+              stale ? " network-sidebar__monitor-age--stale" : ""
+            }`}
+          >
+            {stale && (
+              <Tooltip
+                content={`Overdue: last check was more than 2× the ${Math.round(
+                  config.intervalMs / 1000
+                )}s interval ago; this reading may be out of date`}
+                side="left"
+              >
+                <span
+                  className="network-sidebar__monitor-stale"
+                  data-testid={`monitor-stale-${config.id}`}
+                >
+                  <AlertTriangle size={10} aria-hidden="true" />
+                  overdue
+                </span>
+              </Tooltip>
+            )}
+            {formatCheckedAgo(lastResult.timestampMs, now)}
+          </span>
         )}
       </div>
       {running && (
@@ -92,6 +130,11 @@ export function NetworkToolsSidebar() {
   const httpMonitors = useAppStore((s) => s.httpMonitors);
   const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
   const openNetworkDiagnosticTab = useAppStore((s) => s.openNetworkDiagnosticTab);
+
+  // A ticking "now" so relative ages and the overdue flag refresh on their own
+  // between check events — otherwise a long-interval monitor's dot would stay a
+  // stale "up" until the next poll (audit gap #11).
+  const [now, setNow] = useState(() => Date.now());
 
   // Load monitors on mount.
   const refreshMonitors = useCallback(async () => {
@@ -132,6 +175,13 @@ export function NetworkToolsSidebar() {
       unlisten?.();
     };
   }, [refreshMonitors]);
+
+  // Advance "now" on a fixed cadence so ages age and overdue monitors surface
+  // without needing a check event to arrive.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), STALENESS_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
 
   const handleStopMonitor = useCallback(
     async (id: string) => {
@@ -186,6 +236,7 @@ export function NetworkToolsSidebar() {
           <MonitorRow
             key={m.config.id}
             monitor={m}
+            now={now}
             onStop={handleStopMonitor}
             onOpen={handleOpenMonitor}
           />
