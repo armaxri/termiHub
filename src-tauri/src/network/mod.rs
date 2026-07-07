@@ -138,6 +138,26 @@ impl NetworkManager {
         }
     }
 
+    /// Stop and remove **all** running HTTP monitors.
+    ///
+    /// Used during app shutdown (mirrors [`TunnelManager::stop_all`] /
+    /// [`EmbeddedServerManager::stop_all`]): cancels every monitor's
+    /// [`CancellationToken`] so its poll loop breaks and any in-flight `reqwest`
+    /// request is aborted, then clears the map so nothing lingers. Without this,
+    /// the poll tasks would only die when the process exits, abandoning
+    /// in-flight requests — inconsistent with every sibling subsystem's clean
+    /// teardown.
+    pub fn stop_all_http_monitors(&self) {
+        let Ok(mut monitors) = self.http_monitors.lock() else {
+            error!("http monitor lock poisoned during stop_all");
+            return;
+        };
+        for (id, handle) in monitors.drain() {
+            handle.cancel.cancel();
+            debug!(monitor_id = %id, "Stopped HTTP monitor during teardown");
+        }
+    }
+
     /// List all HTTP monitors (running and stopped).
     pub fn list_http_monitors(&self) -> Vec<HttpMonitorState> {
         let Ok(monitors) = self.http_monitors.lock() else {
