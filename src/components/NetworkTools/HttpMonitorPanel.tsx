@@ -111,8 +111,10 @@ export function HttpMonitorPanel() {
       await networkHttpMonitorStop(activeMonitorIdRef.current);
       clearActiveMonitor();
       await loadMonitors();
+      toast.success("Monitor stopped");
     } catch (err) {
       setError(String(err));
+      toast.error(`Failed to stop monitor: ${err}`);
     }
   }, [loadMonitors, clearActiveMonitor]);
 
@@ -122,8 +124,10 @@ export function HttpMonitorPanel() {
         await networkHttpMonitorStop(id);
         if (id === activeMonitorIdRef.current) clearActiveMonitor();
         await loadMonitors();
+        toast.success("Monitor stopped");
       } catch (err) {
         setError(String(err));
+        toast.error(`Failed to stop monitor: ${err}`);
       }
     },
     [loadMonitors, clearActiveMonitor]

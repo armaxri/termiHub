@@ -10,7 +10,7 @@ import {
 import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Tooltip, toast } from "@/components/ui";
 
 interface QuickActionProps {
   label: string;
@@ -138,8 +138,10 @@ export function NetworkToolsSidebar() {
       try {
         await networkHttpMonitorStop(id);
         await refreshMonitors();
+        toast.success("Monitor stopped");
       } catch (err) {
         frontendLog("network_sidebar", `Failed to stop monitor: ${err}`);
+        toast.error(`Failed to stop monitor: ${err}`);
       }
     },
     [refreshMonitors]
