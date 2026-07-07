@@ -347,7 +347,9 @@ pub fn network_http_monitor_stop(
 /// Backs the "Kill All" action of the Open Connections panel's HTTP Monitors
 /// group (#1147). Reuses the same teardown as app shutdown.
 #[tauri::command]
-pub fn network_http_monitor_stop_all(manager: State<'_, NetworkManager>) -> Result<(), TerminalError> {
+pub fn network_http_monitor_stop_all(
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
     manager.stop_all_http_monitors();
     Ok(())
 }
