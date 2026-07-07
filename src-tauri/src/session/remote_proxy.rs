@@ -1479,4 +1479,261 @@ mod tests {
             .unwrap()
             .expect("connect should succeed against the blocking-recv mock");
     }
+
+    // ── Regression #1122: cancel must abort the remote-proxy handshake ─
+
+    /// Mock whose `attach_session` blocks until the test releases it, so a
+    /// cancellation can fire *during* the handshake. `create_session` returns a
+    /// session immediately (recording the assigned remote session ID), and every
+    /// `close_session` call is recorded so the test can assert the partially
+    /// established session was torn down (no orphan).
+    struct HangingAttachMockAgentRpcClient {
+        /// Held by the mock so a (never-reached-on-cancel) attach can block on it.
+        attach_gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        /// Remote session IDs passed to `close_session`, in order.
+        closed_sessions: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl HangingAttachMockAgentRpcClient {
+        fn new(attach_gate: std::sync::mpsc::Receiver<()>) -> Self {
+            Self {
+                attach_gate: std::sync::Mutex::new(Some(attach_gate)),
+                closed_sessions: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AgentRpcClient for HangingAttachMockAgentRpcClient {
+        fn connect_agent(
+            &self,
+            _agent_id: &str,
+            _config: &RemoteAgentConfig,
+            _agent_settings: Option<&AgentSettings>,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            unimplemented!()
+        }
+        fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn is_connected(&self, _agent_id: &str) -> bool {
+            true
+        }
+        fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
+            None
+        }
+        fn shutdown_agent(
+            &self,
+            _agent_id: &str,
+            _reason: Option<&str>,
+        ) -> Result<u32, TerminalError> {
+            Ok(0)
+        }
+        fn send_request(
+            &self,
+            _agent_id: &str,
+            _method: &str,
+            _params: serde_json::Value,
+        ) -> Result<serde_json::Value, TerminalError> {
+            Ok(serde_json::Value::Null)
+        }
+        fn create_session(
+            &self,
+            _agent_id: &str,
+            session_type: &str,
+            _config: serde_json::Value,
+            _title: Option<&str>,
+            _definition_id: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            Ok(AgentSessionInfo {
+                session_id: "mock-session-1".to_string(),
+                title: "Mock Session".to_string(),
+                session_type: session_type.to_string(),
+                status: "running".to_string(),
+                attached: false,
+                definition_id: None,
+            })
+        }
+        fn attach_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            // Block until the test releases the gate. On cancellation the caller
+            // aborts the wrapping future, so this blocking call never returns a
+            // successful attach and the gate is simply dropped.
+            if let Some(gate) = self.attach_gate.lock().unwrap().take() {
+                let _ = gate.recv();
+            }
+            Ok(())
+        }
+        fn close_session(
+            &self,
+            _agent_id: &str,
+            remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            self.closed_sessions
+                .lock()
+                .unwrap()
+                .push(remote_session_id.to_string());
+            Ok(())
+        }
+        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn list_connections_and_folders(
+            &self,
+            _agent_id: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            Ok(AgentConnectionsData {
+                connections: vec![],
+                folders: vec![],
+            })
+        }
+        fn list_definitions(
+            &self,
+            _agent_id: &str,
+        ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn save_definition(
+            &self,
+            _agent_id: &str,
+            _definition: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_definition(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn create_folder(
+            &self,
+            _agent_id: &str,
+            _name: &str,
+            _parent_id: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_folder(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _output_tx: OutputSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _monitoring_tx: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn send_session_input(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _data: &[u8],
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn resize_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _cols: u16,
+            _rows: u16,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn apply_agent_settings(
+            &self,
+            _agent_id: &str,
+            _settings: &AgentSettings,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+    }
+
+    /// Regression for #1122: cancelling the token mid-handshake aborts the
+    /// remote-proxy connect. The proxy must return an error, must NOT report
+    /// itself connected, and must tear down the session it created on the agent
+    /// so no orphan is left behind.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn connect_cancellable_aborts_handshake_and_cleans_up() {
+        use tokio_util::sync::CancellationToken;
+
+        // The gate is never released, so `attach_session` hangs until cancel.
+        let (_gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
+        let mock = Arc::new(HangingAttachMockAgentRpcClient::new(gate_rx));
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        let token = CancellationToken::new();
+
+        // Fire the cancel shortly after connect begins, while attach is blocked.
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_token.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            proxy.connect_cancellable(json!({ "type": "local", "config": {} }), Some(token)),
+        )
+        .await
+        .expect("connect_cancellable must not hang after cancellation");
+
+        assert!(
+            result.is_err(),
+            "a cancelled remote connect must return an error"
+        );
+        assert!(
+            !proxy.is_connected(),
+            "a cancelled remote connect must not leave the proxy connected"
+        );
+        assert!(
+            proxy.remote_session_id().is_none(),
+            "a cancelled remote connect must not retain a remote session ID"
+        );
+
+        // The session created on the agent must be torn down (no orphan). The
+        // proxy created "mock-session-1" and must close it on cancel.
+        let closed = mock.closed_sessions.lock().unwrap();
+        assert!(
+            closed.iter().any(|s| s == "mock-session-1"),
+            "the partially established remote session must be closed on cancel, got: {closed:?}"
+        );
+    }
 }
