@@ -8,7 +8,6 @@ import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
-import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
 import { OverlayViewPanel } from "@/components/Settings/OverlayViewPanel";
@@ -110,9 +109,6 @@ function App() {
   const { sidebarWidth, handleProps, isResizing } = useSidebarResize(layoutConfig.sidebarPosition);
   const unlockDialogOpen = useAppStore((s) => s.unlockDialogOpen);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
-  const masterPasswordSetupOpen = useAppStore((s) => s.masterPasswordSetupOpen);
-  const masterPasswordSetupMode = useAppStore((s) => s.masterPasswordSetupMode);
-  const closeMasterPasswordSetup = useAppStore((s) => s.closeMasterPasswordSetup);
   const recoveryWarnings = useAppStore((s) => s.recoveryWarnings);
   const recoveryDialogOpen = useAppStore((s) => s.recoveryDialogOpen);
   const setRecoveryDialogOpen = useAppStore((s) => s.setRecoveryDialogOpen);
@@ -273,13 +269,6 @@ function App() {
           <ExportDialog />
           <ImportDialog />
           <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
-          <MasterPasswordSetup
-            open={masterPasswordSetupOpen}
-            onOpenChange={(open) => {
-              if (!open) closeMasterPasswordSetup();
-            }}
-            mode={masterPasswordSetupMode}
-          />
           <RecoveryDialog
             open={recoveryDialogOpen}
             onOpenChange={setRecoveryDialogOpen}

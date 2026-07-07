@@ -371,10 +371,18 @@ export async function onTunnelStatsUpdated(
 
 // --- Credential store events ---
 
-/** Subscribe to credential store locked events. */
-export async function onCredentialStoreLocked(callback: () => void): Promise<UnlistenFn> {
-  return await listen("credential-store-locked", () => {
-    callback();
+/**
+ * Subscribe to credential store locked events.
+ *
+ * The callback receives `auto`: `true` when the store auto-locked after
+ * inactivity, `false` for a manual/mode-switch lock. This lets callers toast
+ * only on auto-lock (G7, #1144) without double-toasting the manual lock.
+ */
+export async function onCredentialStoreLocked(
+  callback: (auto: boolean) => void
+): Promise<UnlistenFn> {
+  return await listen<{ auto?: boolean } | null>("credential-store-locked", (event) => {
+    callback(event.payload?.auto ?? false);
   });
 }
 

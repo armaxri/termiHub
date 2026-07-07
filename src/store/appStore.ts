@@ -570,6 +570,29 @@ interface AppState {
   /** Return whether a session was intentionally killed, clearing the flag (#1121). */
   consumeSessionKilled: (sessionId: string) => boolean;
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
+
+  /**
+   * Aggregate feedback for a fan-out restore/launch (#1146, audit G4). When a
+   * restore or workspace launch places N tabs, each reconnects independently
+   * inside its own Terminal.tsx mount, so failures are otherwise only visible
+   * per-tab. This cohort tracks the set of tab ids placed by one restore/launch
+   * and settles them as each connects ({@link setTabSessionId}) or fails
+   * ({@link setTerminalDisconnectWithError}); when the last one settles a single
+   * summary toast is raised. `null` when no restore/launch is in flight.
+   */
+  restoreCohort: { pending: Set<string>; total: number; failed: number } | null;
+  /**
+   * Register the cohort of tabs placed by a restore/launch. `pendingTabIds` are
+   * the live terminal tabs that will attempt to connect; `preFailedCount` counts
+   * tabs already known to have failed at build time (e.g. agent-error tabs that
+   * never emit a connect/fail signal). If nothing is pending, the summary is
+   * raised immediately.
+   */
+  beginRestoreCohort: (pendingTabIds: string[], preFailedCount: number) => void;
+  /** Settle one tab of the active restore cohort; raises the summary once the cohort empties. */
+  settleRestoreTab: (tabId: string, outcome: "connected" | "failed") => void;
+  /** Raise the single aggregate summary toast for the settled cohort and clear it. Internal. */
+  settleRestoreCohort: () => void;
   setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
   setTerminalReattaching: (tabId: string, reattaching: boolean) => void;
   setTerminalReconnectTriggerError: (tabId: string, error: string | null) => void;
@@ -779,10 +802,6 @@ interface AppState {
   requestUnlock: () => Promise<boolean>;
   /** Settles (and clears) every pending requestUnlock() promise. Idempotent. */
   resolveUnlock: (unlocked: boolean) => void;
-  masterPasswordSetupOpen: boolean;
-  masterPasswordSetupMode: "setup" | "change";
-  openMasterPasswordSetup: (mode: "setup" | "change") => void;
-  closeMasterPasswordSetup: () => void;
 
   // Portable mode
   isPortableMode: boolean;
@@ -868,6 +887,25 @@ function teardownAllSessions(state: {
   if (closed > 0) {
     frontendLog("workspace", `tore down ${closed} live session(s) before restore/launch`);
   }
+}
+
+/**
+ * Partition the tabs of freshly-built restore/launch groups into the cohort that
+ * feeds the aggregate partial-restore summary (GAP G4, #1146). Only `terminal`
+ * tabs will attempt a live connect (settling via {@link setTabSessionId} /
+ * {@link setTerminalDisconnectWithError}); `agent-error` tabs are resolved as
+ * failed at build time and never emit a settle signal, so they are pre-counted
+ * as failed. All other content types (editors, settings, …) are not connections
+ * and are ignored.
+ */
+function collectRestoreCohort(groups: TabGroup[]): {
+  pendingTabIds: string[];
+  preFailedCount: number;
+} {
+  const tabs = groups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs));
+  const pendingTabIds = tabs.filter((t) => t.contentType === "terminal").map((t) => t.id);
+  const preFailedCount = tabs.filter((t) => t.contentType === "agent-error").length;
+  return { pendingTabIds, preFailedCount };
 }
 
 /** Unlisten function for the active session-based monitoring event subscription. */
@@ -1708,6 +1746,9 @@ export const useAppStore = create<AppState>((set, get) => {
           })),
         };
       });
+      // A non-null session id means this tab has connected — settle it in any
+      // in-flight restore/launch cohort so the aggregate summary can fire (#1146).
+      if (sessionId) get().settleRestoreTab(tabId, "connected");
     },
 
     addTab: (
@@ -3133,8 +3174,53 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalDisconnectErrors: { ...state.terminalDisconnectErrors, [tabId]: error },
         terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
       }));
+      // A failed (re)connect settles this tab as failed in any in-flight
+      // restore/launch cohort so the aggregate summary reflects it (#1146).
+      get().settleRestoreTab(tabId, "failed");
       if (get().monitoringSessionId) {
         get().disconnectMonitoring();
+      }
+    },
+
+    // Aggregate partial-restore feedback (#1146, audit G4).
+    restoreCohort: null,
+    beginRestoreCohort: (pendingTabIds, preFailedCount) => {
+      const pending = new Set(pendingTabIds);
+      const total = pending.size + preFailedCount;
+      if (total === 0) return;
+      frontendLog(
+        "workspace_restore",
+        `restore cohort started: ${total} tab(s), ${pending.size} pending, ${preFailedCount} pre-failed`
+      );
+      set({ restoreCohort: { pending, total, failed: preFailedCount } });
+      // A cohort with no live tabs to wait on (e.g. all agent-error) settles now.
+      if (pending.size === 0) get().settleRestoreCohort();
+    },
+    settleRestoreTab: (tabId, outcome) => {
+      const cohort = get().restoreCohort;
+      if (!cohort || !cohort.pending.has(tabId)) return;
+      const pending = new Set(cohort.pending);
+      pending.delete(tabId);
+      const failed = cohort.failed + (outcome === "failed" ? 1 : 0);
+      set({ restoreCohort: { ...cohort, pending, failed } });
+      if (pending.size === 0) get().settleRestoreCohort();
+    },
+    settleRestoreCohort: () => {
+      const cohort = get().restoreCohort;
+      if (!cohort) return;
+      // Clear first so this fires exactly once even if a stray settle races in.
+      set({ restoreCohort: null });
+      const { total, failed } = cohort;
+      const restored = total - failed;
+      frontendLog(
+        "workspace_restore",
+        `restore cohort settled: ${restored}/${total} connected, ${failed} failed`
+      );
+      if (failed === 0) {
+        toast.success(`Restored ${total} ${total === 1 ? "tab" : "tabs"}`);
+      } else {
+        // No toast.warning primitive — use info for the partial-failure case.
+        toast.info(`Restored ${restored} of ${total} tabs — ${failed} could not reconnect`);
       }
     },
     setTerminalReconnecting: (tabId, reconnecting) =>
@@ -4340,6 +4426,10 @@ export const useAppStore = create<AppState>((set, get) => {
           activePanelId: firstGroup.activePanelId,
           activeWorkspaceName: definition.name,
         });
+        // GAP G4 (#1146): register the placed tabs as a cohort so a single
+        // summary toast fires once every tab has connected or failed.
+        const { pendingTabIds, preFailedCount } = collectRestoreCohort(builtGroups);
+        get().beginRestoreCohort(pendingTabIds, preFailedCount);
       } catch (err) {
         // GAP G3 (#1146): a failed load used to be a silent console.error, so a
         // launch that could not open anything looked like nothing happened.
@@ -4479,6 +4569,10 @@ export const useAppStore = create<AppState>((set, get) => {
           rootPanel: activeGroup.rootPanel,
           activePanelId: activeGroup.activePanelId,
         });
+        // GAP G4 (#1146): register the placed tabs as a cohort so a single
+        // summary toast fires once every tab has connected or failed.
+        const { pendingTabIds, preFailedCount } = collectRestoreCohort(builtGroups);
+        get().beginRestoreCohort(pendingTabIds, preFailedCount);
         return true;
       } catch (err) {
         // GAP G3 (#1146): a corrupt/failed last-session load used to be a silent
@@ -4545,11 +4639,6 @@ export const useAppStore = create<AppState>((set, get) => {
         resolve(unlocked);
       }
     },
-    masterPasswordSetupOpen: false,
-    masterPasswordSetupMode: "setup",
-    openMasterPasswordSetup: (mode) =>
-      set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
-    closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
 
     // Portable mode
     isPortableMode: false,
