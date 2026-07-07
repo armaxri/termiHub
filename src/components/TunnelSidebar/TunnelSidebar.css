@@ -158,7 +158,7 @@
 }
 
 /*
- * Errored resting row (#1240): the persisted error message plus its recovery
+ * Errored resting row (issue 1240): the persisted error message plus its recovery
  * controls (Retry / View last error) stay visible without a hover, so the user
  * always sees why the tunnel failed and how to recover it.
  */
