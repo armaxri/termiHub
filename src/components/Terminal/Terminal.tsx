@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
@@ -242,6 +243,12 @@ export function Terminal({
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  // Serialized scrollback of the previous xterm instance, captured just before
+  // it is disposed on a reconnect (retryCount bump re-runs the creation effect
+  // and tears the instance down). Replayed into the fresh xterm so the
+  // scrollback the disconnect overlay promises survives — and, if the reconnect
+  // itself fails, is still visible under the "Reconnect failed" overlay (#1126).
+  const scrollbackSnapshotRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   // The set of connect ids (`${tabId}:${retryCount}`) whose backend handshake is
   // currently in flight, so teardown can abort them (#952). Tracked PER attempt
@@ -834,7 +841,25 @@ export function Terminal({
     xterm.loadAddon(searchAddon);
     registerSearchAddon(tabId, searchAddon);
 
+    const serializeAddon = new SerializeAddon();
+    xterm.loadAddon(serializeAddon);
+
     xterm.open(scrollViewport);
+
+    // Replay the previous instance's scrollback captured on the last teardown
+    // (a reconnect disposes the old xterm — see cleanup below). Writing it here,
+    // before the new session connects, means a failed reconnect still shows the
+    // prior scrollback under the disconnect overlay instead of a blank pane
+    // (#1126). Persistent/agent tabs re-fetch an authoritative buffer from the
+    // server during reattach, so replaying the local snapshot too would double
+    // the scrollback — skip it for those and rely on the server buffer.
+    // Always clear the ref so an unrelated re-run starts empty.
+    if (scrollbackSnapshotRef.current) {
+      if (!persistentConnectionId) {
+        xterm.write(scrollbackSnapshotRef.current);
+      }
+      scrollbackSnapshotRef.current = null;
+    }
 
     // The terminal's vertical scrollbar lives in the gutter in every mode (xterm's
     // own overlay scrollbar is hidden via CSS), so it looks and behaves the same
@@ -1068,6 +1093,18 @@ export function Terminal({
       }
       scrollbar.dispose();
       scrollbarRef.current = null;
+      // Snapshot the scrollback so the next effect run (a reconnect re-runs this
+      // effect via the retryCount dep) can replay it into the fresh xterm. This
+      // is what makes the disconnect overlay's "Scrollback is preserved below"
+      // hold true even when the reconnect fails (#1126). Serialize before
+      // dispose; guard so a serialize failure never blocks teardown.
+      try {
+        const snapshot = serializeAddon.serialize();
+        scrollbackSnapshotRef.current = snapshot.length > 0 ? snapshot : null;
+      } catch (err) {
+        frontendLog("terminal", `Failed to snapshot scrollback tab=${tabId}: ${String(err)}`);
+        scrollbackSnapshotRef.current = null;
+      }
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;
