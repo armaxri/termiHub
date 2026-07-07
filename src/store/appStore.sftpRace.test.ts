@@ -30,7 +30,7 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-import { useAppStore } from "./appStore";
+import { useAppStore, _resetSftpListSeq } from "./appStore";
 import { sftpListDir } from "@/services/api";
 import type { FileEntry } from "@/types/connection";
 
@@ -58,6 +58,7 @@ describe("appStore — SFTP overlapping-list race guard (R1)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     useAppStore.setState({ sftpSessionId: "session-1" });
+    _resetSftpListSeq();
     vi.clearAllMocks();
   });
 
