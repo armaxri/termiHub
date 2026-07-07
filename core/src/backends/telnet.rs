@@ -583,7 +583,10 @@ mod tests {
             "host": addr.ip().to_string(),
             "port": addr.port(),
         });
-        telnet.connect(settings).await.expect("connect should succeed");
+        telnet
+            .connect(settings)
+            .await
+            .expect("connect should succeed");
         let _peer = accept.join().expect("accept thread").expect("accept");
 
         let state = telnet.state.as_ref().expect("connected state");
