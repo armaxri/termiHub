@@ -158,169 +158,65 @@ impl ConnectionType for RemoteProxy {
     }
 
     async fn connect(&mut self, settings: Value) -> Result<(), SessionError> {
-        if self.connected.load(Ordering::SeqCst) {
-            return Err(SessionError::AlreadyExists(
-                "Already connected to remote session".to_string(),
+        self.connect_cancellable(settings, None).await
+    }
+
+    /// Connect to the remote session, abortable via an optional cancellation
+    /// token.
+    ///
+    /// Cancelling the token aborts the in-flight agent handshake (create /
+    /// attach / capability query) promptly instead of running it to completion,
+    /// and tears down any session already created on the agent so no orphan is
+    /// left behind (#1122). Without a token this behaves exactly like
+    /// [`connect`](Self::connect).
+    async fn connect_cancellable(
+        &mut self,
+        settings: Value,
+        cancel: Option<tokio_util::sync::CancellationToken>,
+    ) -> Result<(), SessionError> {
+        // Fast path: no token → run the handshake directly.
+        let Some(cancel) = cancel else {
+            return self.run_connect_handshake(settings, None).await;
+        };
+
+        // Already cancelled before we even start: nothing was created, so just
+        // report the cancellation without touching the agent.
+        if cancel.is_cancelled() {
+            return Err(SessionError::SpawnFailed(
+                "remote connect cancelled".to_string(),
             ));
         }
 
-        // Extract the remote connection type and config from settings.
-        // Normalise frontend aliases: "shell" is the user-facing name but the
-        // agent registry uses "local".  Apply the same mapping here so that
-        // capability lookups and the monitoring-host check ("local" → "self")
-        // work correctly when the frontend sends type = "shell".
-        let raw_type = settings
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("local");
-        let session_type = match raw_type {
-            "shell" => "local".to_string(),
-            other => other.to_string(),
-        };
+        // Tracks the session ID created on the agent so a mid-handshake cancel
+        // can close it (no orphan). Populated by the handshake immediately after
+        // `create_session` succeeds.
+        let created_sid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-        let config = settings
-            .get("config")
-            .cloned()
-            .unwrap_or_else(|| settings.clone());
+        let agent_id = self.agent_id.clone();
+        let agent_manager = self.agent_manager.clone();
 
-        let title = settings
-            .get("title")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        // Optional: link this session to a saved connection definition so it
-        // can be re-attached after tab close, agent restart, or desktop restart.
-        // The frontend places `definitionId` inside the connection settings
-        // (which the desktop's `SessionManager::create_connection` wraps under
-        // a `config` key before reaching us), so look there first; fall back
-        // to the top level for callers that pass it alongside `type`.
-        let definition_id = config
-            .get("definitionId")
-            .or_else(|| config.get("definition_id"))
-            .or_else(|| settings.get("definitionId"))
-            .or_else(|| settings.get("definition_id"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        // Store the remote type for metadata.
-        if let Ok(mut t) = self.remote_type_id.lock() {
-            *t = session_type.clone();
-        }
-
-        // Create the session on the agent.
-        //
-        // The agent_manager helpers internally call `oneshot::Receiver::blocking_recv`,
-        // which parks the calling thread until the io task delivers the response.
-        // When called directly from an async task (Tauri's `create_connection` command),
-        // the parked tokio worker never wakes from the cross-task `tx.send`, so we run
-        // the blocking calls on the dedicated blocking thread pool via `spawn_blocking`.
-        let mgr = self.agent_manager.clone();
-        let agent_id_owned = self.agent_id.clone();
-        let session_type_owned = session_type.clone();
-        let title_owned = title.clone();
-        let config_owned = config.clone();
-        let definition_id_owned = definition_id.clone();
-        let session_info = tokio::task::spawn_blocking(move || {
-            mgr.create_session(
-                &agent_id_owned,
-                &session_type_owned,
-                config_owned,
-                title_owned.as_deref(),
-                definition_id_owned.as_deref(),
-            )
-        })
-        .await
-        .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
-        .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
-
-        let remote_sid = session_info.session_id.clone();
-
-        // Set up output channel: std sync channel for agent_manager,
-        // which we'll bridge to tokio in subscribe_output().
-        let (std_tx, std_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
-
-        // Register the output sender with the agent manager.
-        // `register_session_output` does not block on a response — just pushes a
-        // command into the io task's channel — so it's safe to call directly here.
-        self.agent_manager
-            .register_session_output(self.agent_id(), &remote_sid, std_tx)
-            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
-
-        // Attach to the session to start receiving output. Same reasoning as
-        // `create_session` above: must run on the blocking thread pool.
-        let mgr = self.agent_manager.clone();
-        let agent_id_owned = self.agent_id.clone();
-        let remote_sid_owned = remote_sid.clone();
-        tokio::task::spawn_blocking(move || mgr.attach_session(&agent_id_owned, &remote_sid_owned))
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
-            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
-
-        // Store state.
-        if let Ok(mut sid) = self.remote_session_id.lock() {
-            *sid = Some(remote_sid.clone());
-        }
-        if let Ok(mut rx) = self.std_output_rx.lock() {
-            *rx = Some(std_rx);
-        }
-
-        // Query capabilities from the agent for this session type.
-        let mgr = self.agent_manager.clone();
-        let agent_id_owned = self.agent_id.clone();
-        let caps_result = tokio::task::spawn_blocking(move || {
-            mgr.send_request(&agent_id_owned, "connection.types", serde_json::json!({}))
-        })
-        .await
-        .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?;
-        if let Ok(caps_result) = caps_result {
-            if let Some(types) = caps_result.get("types").and_then(|v| v.as_array()) {
-                for type_info in types {
-                    if type_info.get("typeId").and_then(|v| v.as_str()) == Some(&session_type) {
-                        if let Some(caps) = type_info.get("capabilities") {
-                            if let Ok(parsed) = serde_json::from_value::<Capabilities>(caps.clone())
-                            {
-                                if let Ok(mut c) = self.remote_capabilities.lock() {
-                                    *c = parsed.clone();
-                                }
-                                // Set up file browser proxy if supported.
-                                if parsed.file_browser {
-                                    self.file_browser_proxy = Some(RemoteFileBrowserProxy {
-                                        agent_id: self.agent_id.clone(),
-                                        remote_session_id: remote_sid.clone(),
-                                        agent_manager: self.agent_manager.clone(),
-                                    });
-                                }
-                                // Set up monitoring proxy if supported.
-                                if parsed.monitoring {
-                                    // Local sessions are monitored on the agent host itself
-                                    // via the "self" sentinel; SSH sessions use the session ID.
-                                    let monitoring_host = if session_type == "local" {
-                                        "self".to_string()
-                                    } else {
-                                        remote_sid.clone()
-                                    };
-                                    self.monitoring_proxy = Some(RemoteMonitoringProxy {
-                                        agent_id: self.agent_id.clone(),
-                                        monitoring_host,
-                                        agent_manager: self.agent_manager.clone(),
-                                    });
-                                }
-                            }
-                        }
-                        break;
-                    }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                // Cancellation fired first: drop the handshake future (releasing
+                // its &mut self borrow), then tear down any session the agent
+                // already created so it does not linger.
+                let sid = created_sid.lock().ok().and_then(|g| g.clone());
+                if let Some(sid) = sid {
+                    let _ = agent_manager.unregister_session_output(&agent_id, &sid);
+                    // close_session's internal blocking_recv must not run on a
+                    // tokio worker — offload to the blocking pool.
+                    let _ = tokio::task::spawn_blocking(move || {
+                        agent_manager.close_session(&agent_id, &sid)
+                    })
+                    .await;
                 }
+                Err(SessionError::SpawnFailed(
+                    "remote connect cancelled".to_string(),
+                ))
             }
+            result = self.run_connect_handshake(settings, Some(created_sid.clone())) => result,
         }
-
-        self.connected.store(true, Ordering::SeqCst);
-        debug!(
-            agent_id = self.agent_id(),
-            remote_session_id = %remote_sid,
-            "Remote proxy connected"
-        );
-
-        Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
@@ -413,6 +309,193 @@ impl ConnectionType for RemoteProxy {
         self.file_browser_proxy
             .as_ref()
             .map(|p| p as &dyn FileBrowser)
+    }
+}
+
+impl RemoteProxy {
+    /// Run the agent connect handshake (create session, register + attach
+    /// output, query capabilities) and populate the proxy's state.
+    ///
+    /// When `created_sid` is `Some`, the created remote session ID is written
+    /// into it immediately after `create_session` returns so a concurrent
+    /// cancellation (see [`connect_cancellable`](ConnectionType::connect_cancellable))
+    /// can tear the session down.
+    async fn run_connect_handshake(
+        &mut self,
+        settings: Value,
+        created_sid: Option<Arc<Mutex<Option<String>>>>,
+    ) -> Result<(), SessionError> {
+        if self.connected.load(Ordering::SeqCst) {
+            return Err(SessionError::AlreadyExists(
+                "Already connected to remote session".to_string(),
+            ));
+        }
+
+        // Extract the remote connection type and config from settings.
+        // Normalise frontend aliases: "shell" is the user-facing name but the
+        // agent registry uses "local".  Apply the same mapping here so that
+        // capability lookups and the monitoring-host check ("local" → "self")
+        // work correctly when the frontend sends type = "shell".
+        let raw_type = settings
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("local");
+        let session_type = match raw_type {
+            "shell" => "local".to_string(),
+            other => other.to_string(),
+        };
+
+        let config = settings
+            .get("config")
+            .cloned()
+            .unwrap_or_else(|| settings.clone());
+
+        let title = settings
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Optional: link this session to a saved connection definition so it
+        // can be re-attached after tab close, agent restart, or desktop restart.
+        // The frontend places `definitionId` inside the connection settings
+        // (which the desktop's `SessionManager::create_connection` wraps under
+        // a `config` key before reaching us), so look there first; fall back
+        // to the top level for callers that pass it alongside `type`.
+        let definition_id = config
+            .get("definitionId")
+            .or_else(|| config.get("definition_id"))
+            .or_else(|| settings.get("definitionId"))
+            .or_else(|| settings.get("definition_id"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        // Store the remote type for metadata.
+        if let Ok(mut t) = self.remote_type_id.lock() {
+            *t = session_type.clone();
+        }
+
+        // Create the session on the agent.
+        //
+        // The agent_manager helpers internally call `oneshot::Receiver::blocking_recv`,
+        // which parks the calling thread until the io task delivers the response.
+        // When called directly from an async task (Tauri's `create_connection` command),
+        // the parked tokio worker never wakes from the cross-task `tx.send`, so we run
+        // the blocking calls on the dedicated blocking thread pool via `spawn_blocking`.
+        let mgr = self.agent_manager.clone();
+        let agent_id_owned = self.agent_id.clone();
+        let session_type_owned = session_type.clone();
+        let title_owned = title.clone();
+        let config_owned = config.clone();
+        let definition_id_owned = definition_id.clone();
+        let session_info = tokio::task::spawn_blocking(move || {
+            mgr.create_session(
+                &agent_id_owned,
+                &session_type_owned,
+                config_owned,
+                title_owned.as_deref(),
+                definition_id_owned.as_deref(),
+            )
+        })
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
+        .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        let remote_sid = session_info.session_id.clone();
+
+        // Publish the created session ID so a concurrent cancellation can tear
+        // it down (no orphan) even though we have not finished attaching yet.
+        if let Some(cell) = &created_sid {
+            if let Ok(mut slot) = cell.lock() {
+                *slot = Some(remote_sid.clone());
+            }
+        }
+
+        // Set up output channel: std sync channel for agent_manager,
+        // which we'll bridge to tokio in subscribe_output().
+        let (std_tx, std_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
+
+        // Register the output sender with the agent manager.
+        // `register_session_output` does not block on a response — just pushes a
+        // command into the io task's channel — so it's safe to call directly here.
+        self.agent_manager
+            .register_session_output(self.agent_id(), &remote_sid, std_tx)
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        // Attach to the session to start receiving output. Same reasoning as
+        // `create_session` above: must run on the blocking thread pool.
+        let mgr = self.agent_manager.clone();
+        let agent_id_owned = self.agent_id.clone();
+        let remote_sid_owned = remote_sid.clone();
+        tokio::task::spawn_blocking(move || mgr.attach_session(&agent_id_owned, &remote_sid_owned))
+            .await
+            .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        // Store state.
+        if let Ok(mut sid) = self.remote_session_id.lock() {
+            *sid = Some(remote_sid.clone());
+        }
+        if let Ok(mut rx) = self.std_output_rx.lock() {
+            *rx = Some(std_rx);
+        }
+
+        // Query capabilities from the agent for this session type.
+        let mgr = self.agent_manager.clone();
+        let agent_id_owned = self.agent_id.clone();
+        let caps_result = tokio::task::spawn_blocking(move || {
+            mgr.send_request(&agent_id_owned, "connection.types", serde_json::json!({}))
+        })
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?;
+        if let Ok(caps_result) = caps_result {
+            if let Some(types) = caps_result.get("types").and_then(|v| v.as_array()) {
+                for type_info in types {
+                    if type_info.get("typeId").and_then(|v| v.as_str()) == Some(&session_type) {
+                        if let Some(caps) = type_info.get("capabilities") {
+                            if let Ok(parsed) = serde_json::from_value::<Capabilities>(caps.clone())
+                            {
+                                if let Ok(mut c) = self.remote_capabilities.lock() {
+                                    *c = parsed.clone();
+                                }
+                                // Set up file browser proxy if supported.
+                                if parsed.file_browser {
+                                    self.file_browser_proxy = Some(RemoteFileBrowserProxy {
+                                        agent_id: self.agent_id.clone(),
+                                        remote_session_id: remote_sid.clone(),
+                                        agent_manager: self.agent_manager.clone(),
+                                    });
+                                }
+                                // Set up monitoring proxy if supported.
+                                if parsed.monitoring {
+                                    // Local sessions are monitored on the agent host itself
+                                    // via the "self" sentinel; SSH sessions use the session ID.
+                                    let monitoring_host = if session_type == "local" {
+                                        "self".to_string()
+                                    } else {
+                                        remote_sid.clone()
+                                    };
+                                    self.monitoring_proxy = Some(RemoteMonitoringProxy {
+                                        agent_id: self.agent_id.clone(),
+                                        monitoring_host,
+                                        agent_manager: self.agent_manager.clone(),
+                                    });
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        self.connected.store(true, Ordering::SeqCst);
+        debug!(
+            agent_id = self.agent_id(),
+            remote_session_id = %remote_sid,
+            "Remote proxy connected"
+        );
+
+        Ok(())
     }
 }
 
@@ -1478,5 +1561,262 @@ mod tests {
         result
             .unwrap()
             .expect("connect should succeed against the blocking-recv mock");
+    }
+
+    // ── Regression #1122: cancel must abort the remote-proxy handshake ─
+
+    /// Mock whose `attach_session` blocks until the test releases it, so a
+    /// cancellation can fire *during* the handshake. `create_session` returns a
+    /// session immediately (recording the assigned remote session ID), and every
+    /// `close_session` call is recorded so the test can assert the partially
+    /// established session was torn down (no orphan).
+    struct HangingAttachMockAgentRpcClient {
+        /// Held by the mock so a (never-reached-on-cancel) attach can block on it.
+        attach_gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        /// Remote session IDs passed to `close_session`, in order.
+        closed_sessions: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl HangingAttachMockAgentRpcClient {
+        fn new(attach_gate: std::sync::mpsc::Receiver<()>) -> Self {
+            Self {
+                attach_gate: std::sync::Mutex::new(Some(attach_gate)),
+                closed_sessions: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AgentRpcClient for HangingAttachMockAgentRpcClient {
+        fn connect_agent(
+            &self,
+            _agent_id: &str,
+            _config: &RemoteAgentConfig,
+            _agent_settings: Option<&AgentSettings>,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            unimplemented!()
+        }
+        fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn is_connected(&self, _agent_id: &str) -> bool {
+            true
+        }
+        fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
+            None
+        }
+        fn shutdown_agent(
+            &self,
+            _agent_id: &str,
+            _reason: Option<&str>,
+        ) -> Result<u32, TerminalError> {
+            Ok(0)
+        }
+        fn send_request(
+            &self,
+            _agent_id: &str,
+            _method: &str,
+            _params: serde_json::Value,
+        ) -> Result<serde_json::Value, TerminalError> {
+            Ok(serde_json::Value::Null)
+        }
+        fn create_session(
+            &self,
+            _agent_id: &str,
+            session_type: &str,
+            _config: serde_json::Value,
+            _title: Option<&str>,
+            _definition_id: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            Ok(AgentSessionInfo {
+                session_id: "mock-session-1".to_string(),
+                title: "Mock Session".to_string(),
+                session_type: session_type.to_string(),
+                status: "running".to_string(),
+                attached: false,
+                definition_id: None,
+            })
+        }
+        fn attach_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            // Block until the test releases the gate. On cancellation the caller
+            // aborts the wrapping future, so this blocking call never returns a
+            // successful attach and the gate is simply dropped.
+            if let Some(gate) = self.attach_gate.lock().unwrap().take() {
+                let _ = gate.recv();
+            }
+            Ok(())
+        }
+        fn close_session(
+            &self,
+            _agent_id: &str,
+            remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            self.closed_sessions
+                .lock()
+                .unwrap()
+                .push(remote_session_id.to_string());
+            Ok(())
+        }
+        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn list_connections_and_folders(
+            &self,
+            _agent_id: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            Ok(AgentConnectionsData {
+                connections: vec![],
+                folders: vec![],
+            })
+        }
+        fn list_definitions(
+            &self,
+            _agent_id: &str,
+        ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn save_definition(
+            &self,
+            _agent_id: &str,
+            _definition: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_definition(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn create_folder(
+            &self,
+            _agent_id: &str,
+            _name: &str,
+            _parent_id: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_folder(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _output_tx: OutputSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _monitoring_tx: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn send_session_input(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _data: &[u8],
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn resize_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _cols: u16,
+            _rows: u16,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn apply_agent_settings(
+            &self,
+            _agent_id: &str,
+            _settings: &AgentSettings,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+    }
+
+    /// Regression for #1122: cancelling the token mid-handshake aborts the
+    /// remote-proxy connect. The proxy must return an error, must NOT report
+    /// itself connected, and must tear down the session it created on the agent
+    /// so no orphan is left behind.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn connect_cancellable_aborts_handshake_and_cleans_up() {
+        use tokio_util::sync::CancellationToken;
+
+        // The gate is never released, so `attach_session` hangs until cancel.
+        let (_gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
+        let mock = Arc::new(HangingAttachMockAgentRpcClient::new(gate_rx));
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        let token = CancellationToken::new();
+
+        // Fire the cancel shortly after connect begins, while attach is blocked.
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_token.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            proxy.connect_cancellable(json!({ "type": "local", "config": {} }), Some(token)),
+        )
+        .await
+        .expect("connect_cancellable must not hang after cancellation");
+
+        assert!(
+            result.is_err(),
+            "a cancelled remote connect must return an error"
+        );
+        assert!(
+            !proxy.is_connected(),
+            "a cancelled remote connect must not leave the proxy connected"
+        );
+        assert!(
+            proxy.remote_session_id().is_none(),
+            "a cancelled remote connect must not retain a remote session ID"
+        );
+
+        // The session created on the agent must be torn down (no orphan). The
+        // proxy created "mock-session-1" and must close it on cancel.
+        let closed = mock.closed_sessions.lock().unwrap();
+        assert!(
+            closed.iter().any(|s| s == "mock-session-1"),
+            "the partially established remote session must be closed on cancel, got: {closed:?}"
+        );
     }
 }

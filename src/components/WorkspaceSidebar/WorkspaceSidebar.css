@@ -105,6 +105,36 @@
   color: var(--text-primary);
 }
 
+.workspace-item__action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.workspace-item__action:disabled:hover {
+  background: none;
+  color: var(--text-secondary);
+}
+
+/* Launch-in-flight indicator (GAP G6, issue 1146). */
+.workspace-item__spinner {
+  animation: workspace-item-spin 1s linear infinite;
+}
+
+@keyframes workspace-item-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-item__spinner {
+    animation: none;
+  }
+}
+
 .workspace-item__description {
   padding: 2px 0 0 0;
   font-size: 11px;

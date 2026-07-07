@@ -17,6 +17,7 @@ export function WorkspaceSidebar() {
   const duplicateWorkspace = useAppStore((s) => s.duplicateWorkspaceInBackend);
   const openWorkspaceEditorTab = useAppStore((s) => s.openWorkspaceEditorTab);
   const launchWorkspace = useAppStore((s) => s.launchWorkspace);
+  const launchingWorkspaceId = useAppStore((s) => s.launchingWorkspaceId);
   const saveCurrentAsWorkspace = useAppStore((s) => s.saveCurrentAsWorkspace);
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
@@ -198,6 +199,7 @@ export function WorkspaceSidebar() {
               onEdit={handleEdit}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
+              launchDisabled={launchingWorkspaceId !== null}
             />
           ))}
         </div>

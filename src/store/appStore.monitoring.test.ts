@@ -430,4 +430,102 @@ describe("appStore — monitoring", () => {
       expect(useAppStore.getState().monitoringStatsCache["pi@pi.local:22"]).toEqual(TEST_STATS);
     });
   });
+
+  // Audit gap G9: a stale monitoringError must not linger across hosts. The
+  // store clears it on every successful stat update and exposes an explicit
+  // clearMonitoringError() so the status bar can reset it when switching hosts.
+  describe("clearMonitoringError (G9)", () => {
+    it("clears a lingering monitoringError", () => {
+      useAppStore.setState({ monitoringError: "stale error from previous host" });
+
+      useAppStore.getState().clearMonitoringError();
+
+      expect(useAppStore.getState().monitoringError).toBeNull();
+    });
+
+    it("is a no-op when there is no error", () => {
+      useAppStore.setState({ monitoringError: null });
+
+      useAppStore.getState().clearMonitoringError();
+
+      expect(useAppStore.getState().monitoringError).toBeNull();
+    });
+
+    it("refreshMonitoring success clears a pre-existing error (does not linger)", async () => {
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+        monitoringError: "old timeout error",
+      });
+
+      await useAppStore.getState().refreshMonitoring();
+
+      expect(useAppStore.getState().monitoringError).toBeNull();
+    });
+
+    it("connectMonitoring start clears a stale error before connecting", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      useAppStore.setState({ monitoringError: "error from a previous host" });
+
+      let errorWhileLoading: string | null | undefined = undefined;
+      const unsub = useAppStore.subscribe((state) => {
+        if (state.monitoringLoading && errorWhileLoading === undefined) {
+          errorWhileLoading = state.monitoringError;
+        }
+      });
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+      unsub();
+
+      expect(errorWhileLoading).toBeNull();
+    });
+  });
+
+  // Audit gap G8: cancelling the password prompt during auto-connect must leave
+  // a visible "not connected" affordance instead of silently returning. The
+  // store tracks this via monitoringCancelled.
+  describe("monitoringCancelled (G8)", () => {
+    it("defaults to false", () => {
+      expect(useAppStore.getState().monitoringCancelled).toBe(false);
+    });
+
+    it("setMonitoringCancelled toggles the flag", () => {
+      useAppStore.getState().setMonitoringCancelled(true);
+      expect(useAppStore.getState().monitoringCancelled).toBe(true);
+
+      useAppStore.getState().setMonitoringCancelled(false);
+      expect(useAppStore.getState().monitoringCancelled).toBe(false);
+    });
+
+    it("connectMonitoring start clears a stale cancelled flag", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      useAppStore.setState({ monitoringCancelled: true });
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+
+      expect(useAppStore.getState().monitoringCancelled).toBe(false);
+    });
+
+    it("disconnectMonitoring clears the cancelled flag", async () => {
+      mockMonitoringClose.mockResolvedValue(undefined);
+
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+        monitoringCancelled: true,
+      });
+
+      await useAppStore.getState().disconnectMonitoring();
+
+      expect(useAppStore.getState().monitoringCancelled).toBe(false);
+    });
+  });
 });
