@@ -695,6 +695,12 @@ interface AppState {
   deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
   duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
   openWorkspaceEditorTab: (workspaceId: string | null) => void;
+  /**
+   * The id of the workspace whose launch is currently in flight, or `null` when
+   * none is launching. Used to guard against re-entrant `launchWorkspace` calls
+   * (double-click / repeated Play) and to disable the Launch controls in the UI.
+   */
+  launchingWorkspaceId: string | null;
   launchWorkspace: (workspaceId: string) => Promise<void>;
   /** scope "all" captures all tab groups; "active" captures only the active group. */
   saveCurrentAsWorkspace: (
@@ -3890,6 +3896,7 @@ export const useAppStore = create<AppState>((set, get) => {
     // Workspaces
     workspaces: [],
     activeWorkspaceName: null,
+    launchingWorkspaceId: null,
 
     loadWorkspaces: async () => {
       try {
@@ -3977,6 +3984,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }),
 
     launchWorkspace: async (workspaceId) => {
+      // In-flight guard (GAP G6, #1146): launching a workspace awaits several
+      // multi-second phases (credential unlock, agent connects). Without this
+      // guard a second double-click / Play press starts a concurrent launch,
+      // racing the two `set(...)` calls and orphaning sessions. Ignore any
+      // re-entrant launch (of this or any other workspace) while one is running.
+      if (get().launchingWorkspaceId !== null) {
+        frontendLog(
+          "workspace",
+          `launchWorkspace(${workspaceId}) ignored: a launch is already in flight`
+        );
+        return;
+      }
+      set({ launchingWorkspaceId: workspaceId });
       try {
         const definition = await apiLoadWorkspace(workspaceId);
         const state = get();
@@ -4097,7 +4117,9 @@ export const useAppStore = create<AppState>((set, get) => {
           activeWorkspaceName: definition.name,
         });
       } catch (err) {
-        console.error("Failed to launch workspace:", err);
+        frontendLog("workspace", `Failed to launch workspace ${workspaceId}: ${String(err)}`);
+      } finally {
+        set({ launchingWorkspaceId: null });
       }
     },
 
