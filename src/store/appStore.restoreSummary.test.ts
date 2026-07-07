@@ -45,6 +45,9 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
+  // Teardown-on-restore (GAP G1) closes/detaches prior live sessions best-effort.
+  closeTerminal: vi.fn(() => Promise.resolve()),
+  detachPersistentTab: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/services/lastSessionApi", () => ({
@@ -96,6 +99,7 @@ describe("partial-restore summary", () => {
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
+      restoreCohort: null,
       settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
   });
