@@ -27,10 +27,13 @@ mockups=$(find . -type f -name '*.html' \
   ! -path './_assets/*' ! -name 'mockups-index.html' \
   | sed 's|^\./||' \
   | while IFS= read -r f; do
-      case "$f" in
-        */mockups/*) g="${f%%/mockups/*}" ;;
-        *) g="$(dirname "$f")" ;;
-      esac
+      # NB: avoid `case ... ;;` here — macOS bash 3.2 has a parser bug where a
+      # `case` inside $(...) command substitution fails ("syntax error near `;;'").
+      if [ "$f" != "${f%/mockups/*}" ]; then
+        g="${f%%/mockups/*}"   # legacy folder mockup
+      else
+        g="$(dirname "$f")"    # single-file concept
+      fi
       printf '%s\t%s\n' "$g" "$f"
     done | sort)
 
