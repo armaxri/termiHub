@@ -136,6 +136,7 @@ import {
   clearLastSession as apiClearLastSession,
 } from "@/services/lastSessionApi";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { connectTimeoutMessage, type ConnectTimeoutKind } from "@/utils/connectTimeout";
 import { SystemStats } from "@/types/monitoring";
 import { onSessionMonitoringStats, onPersistentSessionStateChanged } from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
@@ -536,6 +537,12 @@ interface AppState {
   terminalWaitingForAgent: Record<string, string>;
   setTerminalAutoRetrying: (tabId: string, count: number) => void;
   setTerminalWaitingForAgent: (tabId: string, agentId: string | null) => void;
+  /**
+   * Client-side timeout for a pre-connect state. Transitions the tab to Failed
+   * with a contextual hint, but only if it is still in the given state — a
+   * stale timer that fires after the tab connected or was woken is a no-op.
+   */
+  failTerminalConnectTimeout: (tabId: string, kind: ConnectTimeoutKind) => void;
 
   // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
   terminalExitedTabs: Record<string, boolean>;
@@ -3166,6 +3173,31 @@ export const useAppStore = create<AppState>((set, get) => {
             ? omitKey(state.terminalWaitingForAgent, tabId)
             : { ...state.terminalWaitingForAgent, [tabId]: agentId },
       })),
+    failTerminalConnectTimeout: (tabId, kind) =>
+      set((state) => {
+        // Guard against stale timers: only fail the tab if it is still in the
+        // state the timeout was armed for. A connect that succeeded, an agent
+        // that came online, or a cancelled tab all clear the relevant flag
+        // first, making this a no-op.
+        const stillWaiting = state.terminalWaitingForAgent[tabId] !== undefined;
+        const stillConnecting = state.terminalConnecting[tabId] === true;
+        if (kind === "waiting-for-agent" ? !stillWaiting : !stillConnecting) {
+          return {};
+        }
+        frontendLog(
+          "disconnect",
+          `connect timeout (${kind}) for tab=${tabId} — transitioning to Failed`
+        );
+        return {
+          terminalConnecting: omitKey(state.terminalConnecting, tabId),
+          terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+          terminalSpawnErrors: {
+            ...state.terminalSpawnErrors,
+            [tabId]: connectTimeoutMessage(kind),
+          },
+        };
+      }),
 
     // Per-tab terminal session disconnects (runtime-only)
     terminalExitedTabs: {},

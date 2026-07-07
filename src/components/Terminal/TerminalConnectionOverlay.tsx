@@ -1,7 +1,12 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { ServerCrash, RefreshCw, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
+import {
+  CONNECTING_TIMEOUT_MS,
+  WAITING_FOR_AGENT_TIMEOUT_MS,
+  type ConnectTimeoutKind,
+} from "@/utils/connectTimeout";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -69,6 +74,33 @@ export function TerminalConnectionOverlay({
   const elapsedLabel = formatElapsed(elapsedSeconds);
   const isSlowConnect = elapsedSeconds >= SLOW_CONNECT_THRESHOLD_SECONDS;
 
+  // Client-side timeout: bound the WaitingForAgent and Connecting waits so a tab
+  // can never park on an indefinite spinner. WaitingForAgent has no backend
+  // timeout at all; Connecting relies on the backend one, so this is a safety
+  // net that outlasts it. On expiry the tab transitions to Failed with a
+  // contextual hint (#1129). auto-retry manages its own visible-failure cadence,
+  // so it is intentionally not timed here.
+  const failTerminalConnectTimeout = useAppStore((s) => s.failTerminalConnectTimeout);
+  const timeoutKind: ConnectTimeoutKind | null = waitingForAgent
+    ? "waiting-for-agent"
+    : isConnecting
+      ? "connecting"
+      : null;
+  const timeoutMs =
+    timeoutKind === "waiting-for-agent" ? WAITING_FOR_AGENT_TIMEOUT_MS : CONNECTING_TIMEOUT_MS;
+
+  useEffect(() => {
+    if (!timeoutKind) return;
+    const id = setTimeout(() => failTerminalConnectTimeout(tabId, timeoutKind), timeoutMs);
+    return () => clearTimeout(id);
+  }, [tabId, timeoutKind, timeoutMs, failTerminalConnectTimeout]);
+
+  // Whole seconds remaining before the client-side timeout fires (>= 0), for the
+  // visible countdown. Derived from the per-second elapsed tick.
+  const remainingSeconds = timeoutKind
+    ? Math.max(0, Math.round(timeoutMs / 1000) - elapsedSeconds)
+    : 0;
+
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
   }, [tabId, panelId, closeTab]);
@@ -115,6 +147,12 @@ export function TerminalConnectionOverlay({
           <p className="terminal-connection-overlay__heading">Waiting for agent…</p>
           <p className="terminal-connection-overlay__subheading">
             Waiting for the agent to connect before starting the session.
+          </p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-timeout"
+          >
+            Times out in {remainingSeconds}s
           </p>
           <div className="terminal-connection-overlay__actions">
             <button
@@ -181,7 +219,7 @@ export function TerminalConnectionOverlay({
             className="terminal-connection-overlay__elapsed"
             data-testid="terminal-connection-elapsed"
           >
-            Elapsed {elapsedLabel}
+            Elapsed {elapsedLabel} · times out in {remainingSeconds}s
           </p>
           {isSlowConnect && (
             <p className="terminal-connection-overlay__hint-text">
