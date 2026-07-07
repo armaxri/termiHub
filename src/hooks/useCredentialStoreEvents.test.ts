@@ -176,7 +176,7 @@ describe("useCredentialStoreEvents", () => {
     const result = await unlockPromise;
     expect(result).toBe(true);
     expect(useAppStore.getState().unlockDialogOpen).toBe(false);
-    expect(useAppStore.getState().unlockResolve).toBeNull();
+    expect(useAppStore.getState().unlockResolvers).toHaveLength(0);
   });
 
   it("resolves requestUnlock() with false when dialog is closed without unlock", async () => {
@@ -194,7 +194,7 @@ describe("useCredentialStoreEvents", () => {
 
     const result = await unlockPromise;
     expect(result).toBe(false);
-    expect(useAppStore.getState().unlockResolve).toBeNull();
+    expect(useAppStore.getState().unlockResolvers).toHaveLength(0);
   });
 
   it("updates credential store status when status-changed event fires", async () => {

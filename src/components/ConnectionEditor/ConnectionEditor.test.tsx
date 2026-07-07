@@ -328,6 +328,46 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
   });
 
+  it("prompts to unlock the credential store before resolving when locked (G3, #1144)", async () => {
+    // Regression: Save & Connect was the only connect path missing the
+    // mode===master_password && status===locked unlock gate. With the store
+    // locked it silently fell back to an interactive password prompt instead
+    // of first offering to unlock and use the saved credential. It must now
+    // call requestUnlock() before resolveCredential, matching the sidebar path.
+    const mockRequestUnlock = vi.fn().mockResolvedValue(false); // user dismisses
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+      requestUnlock: mockRequestUnlock,
+    });
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "resolve_credential") return Promise.resolve("vault-secret");
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(SSH_CONN_PASSWORD.id);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The unlock gate must fire on the locked store.
+    expect(mockRequestUnlock).toHaveBeenCalledTimes(1);
+    // Dismissed unlock aborts the connect — no interactive password prompt.
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+  });
+
   it("prompts for the key passphrase on key auth when the key is encrypted (#879/#885)", async () => {
     // SSH_CONN_KEY uses key auth. The password field is hidden for key auth, so
     // findPasswordPromptInfo returns null — but a passphrase-protected key still

@@ -754,15 +754,20 @@ interface AppState {
   loadCredentialStoreStatus: () => Promise<void>;
   unlockDialogOpen: boolean;
   setUnlockDialogOpen: (open: boolean) => void;
-  /** Pending resolver for requestUnlock(). Internal — resolved by resolveUnlock(). */
-  unlockResolve: ((unlocked: boolean) => void) | null;
+  /**
+   * Pending resolvers for in-flight requestUnlock() calls. Internal — settled by
+   * resolveUnlock(). Held as a list so that concurrent connect flows each awaiting
+   * requestUnlock() all settle on a single dialog exit; a single resolver would
+   * be overwritten by the second caller, wedging the first connect forever (G1).
+   */
+  unlockResolvers: ((unlocked: boolean) => void)[];
   /**
    * Opens the unlock dialog and returns a Promise that resolves to `true` when the
    * store is successfully unlocked, or `false` when the user cancels/skips.
    * Callers can `await` this before proceeding with a credential-dependent action.
    */
   requestUnlock: () => Promise<boolean>;
-  /** Resolves (and clears) any pending requestUnlock() promise. */
+  /** Settles (and clears) every pending requestUnlock() promise. Idempotent. */
   resolveUnlock: (unlocked: boolean) => void;
   masterPasswordSetupOpen: boolean;
   masterPasswordSetupMode: "setup" | "change";
@@ -4438,16 +4443,26 @@ export const useAppStore = create<AppState>((set, get) => {
         get().resolveUnlock(false);
       }
     },
-    unlockResolve: null,
+    unlockResolvers: [],
     requestUnlock: () =>
       new Promise<boolean>((resolve) => {
-        set({ unlockDialogOpen: true, unlockResolve: resolve });
+        // Append rather than replace: two concurrent connect flows may both await
+        // requestUnlock() before the dialog resolves. Every awaiting caller must
+        // settle on the single dialog exit (G1) — overwriting a single resolver
+        // would leave the earlier connect wedged forever.
+        set((state) => ({
+          unlockDialogOpen: true,
+          unlockResolvers: [...state.unlockResolvers, resolve],
+        }));
       }),
     resolveUnlock: (unlocked) => {
-      const { unlockResolve } = get();
-      if (unlockResolve) {
-        unlockResolve(unlocked);
-        set({ unlockResolve: null });
+      const { unlockResolvers } = get();
+      if (unlockResolvers.length === 0) return;
+      // Clear first so a re-entrant resolveUnlock() (e.g. the unlocked event and a
+      // dialog-close both firing) is a harmless no-op — every promise settles once.
+      set({ unlockResolvers: [] });
+      for (const resolve of unlockResolvers) {
+        resolve(unlocked);
       }
     },
     masterPasswordSetupOpen: false,
