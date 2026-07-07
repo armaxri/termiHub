@@ -826,6 +826,14 @@ export function _resetConnectionReloadSeq(): void {
   _connAppliedSeq = 0;
 }
 
+// In-flight guards for tunnel start/stop (GAP 4, #1141). A rapid double-click on
+// Start/Stop for a tunnel that is already `connecting` must not fire a second
+// backend call — that produces spurious "already active/connecting" error toasts
+// and can flip the visible state. We track the id of each tunnel whose start/stop
+// call has not yet resolved and no-op any re-entrant call for the same id.
+const _tunnelStartInFlight = new Set<string>();
+const _tunnelStopInFlight = new Set<string>();
+
 export const useAppStore = create<AppState>((set, get) => {
   // Reload connections from the backend, applying the result only if this
   // reload was initiated more recently than the last applied one.
@@ -3669,6 +3677,11 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     startTunnel: async (tunnelId) => {
+      // GAP 4 (#1141): ignore a re-entrant start while a prior start for the
+      // same tunnel is still in flight, so a rapid double-click can't fire a
+      // second backend call (spurious "already connecting/active" toast).
+      if (_tunnelStartInFlight.has(tunnelId)) return;
+      _tunnelStartInFlight.add(tunnelId);
       const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
       const toastId = toast.loading(`Starting ${name}…`);
       try {
@@ -3681,10 +3694,16 @@ export const useAppStore = create<AppState>((set, get) => {
           { id: toastId }
         );
         throw err;
+      } finally {
+        _tunnelStartInFlight.delete(tunnelId);
       }
     },
 
     stopTunnel: async (tunnelId) => {
+      // GAP 4 (#1141): ignore a re-entrant stop while a prior stop for the same
+      // tunnel is still in flight (see startTunnel).
+      if (_tunnelStopInFlight.has(tunnelId)) return;
+      _tunnelStopInFlight.add(tunnelId);
       const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
       const toastId = toast.loading(`Stopping ${name}…`);
       try {
@@ -3696,6 +3715,8 @@ export const useAppStore = create<AppState>((set, get) => {
           id: toastId,
         });
         throw err;
+      } finally {
+        _tunnelStopInFlight.delete(tunnelId);
       }
     },
 

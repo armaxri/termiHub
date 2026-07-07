@@ -647,6 +647,11 @@ pub fn run() {
                     if let Some(mgr) = handle.try_state::<Arc<terminal::xserver::XServerManager>>() {
                         mgr.stop();
                     }
+                    // Cancel all HTTP monitor poll loops so in-flight reqwest
+                    // requests are aborted rather than abandoned on exit (#1147).
+                    if let Some(mgr) = handle.try_state::<NetworkManager>() {
+                        mgr.stop_all_http_monitors();
+                    }
                 });
             }
         });

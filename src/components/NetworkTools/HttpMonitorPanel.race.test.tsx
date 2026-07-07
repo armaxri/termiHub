@@ -13,34 +13,12 @@
  * resolves). These tests pin that ordering and that the first check renders.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { networkHttpMonitorStart, onHttpMonitorCheck } from "@/services/networkApi";
 import type { HttpCheckResult } from "@/types/network";
 import { HttpMonitorPanel } from "./HttpMonitorPanel";
-import { TooltipProvider } from "@/components/ui";
-
-// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
-// mounts the tooltip-wrapped icon buttons; shim them so the panel renders.
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-if (!("ResizeObserver" in globalThis)) {
-  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
-    ResizeObserverStub;
-}
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
-
-/** Wrap a subtree so the shared Tooltip primitive finds its provider. */
-function withTooltip(ui: React.ReactElement): React.ReactElement {
-  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
-}
+import { withTooltip } from "@/test/tooltip";
 
 vi.mock("@/services/networkApi", () => ({
   networkHttpMonitorStart: vi.fn(() => Promise.resolve("mon-1")),

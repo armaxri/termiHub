@@ -106,16 +106,6 @@ describe("ConnectionSettingsForm", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    // Radix Select (the migrated auth-method dropdown) probes pointer-capture
-    // and scroll APIs that jsdom omits.
-    if (!Element.prototype.hasPointerCapture) {
-      Element.prototype.hasPointerCapture = () => false;
-      Element.prototype.setPointerCapture = () => {};
-      Element.prototype.releasePointerCapture = () => {};
-    }
-    if (!Element.prototype.scrollIntoView) {
-      Element.prototype.scrollIntoView = () => {};
-    }
   });
 
   afterEach(() => {

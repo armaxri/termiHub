@@ -409,3 +409,63 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(closeFn).toHaveBeenCalledWith(TAB_ID, PANEL_ID);
   });
 });
+
+describe("TerminalConnectionOverlay — elapsed time", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetStore();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
+  it("shows an elapsed-time readout while connecting", () => {
+    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    // Starts at 0s.
+    expect(container.textContent).toContain("0s");
+    // Advances one second at a time.
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(container.textContent).toContain("3s");
+  });
+
+  it("surfaces a slow-connection hint once the connect drags on", () => {
+    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    // No hint early on.
+    expect(container.textContent).not.toContain("Taking longer than usual");
+    act(() => {
+      vi.advanceTimersByTime(20000);
+    });
+    expect(container.textContent).toContain("Taking longer than usual");
+  });
+});

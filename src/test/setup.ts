@@ -1,5 +1,32 @@
 import { vi } from "vitest";
 
+// jsdom omits several DOM APIs that Radix primitives (Tooltip, Select) touch when
+// they measure, portal, or probe pointer capture. These shims are global,
+// environment-level, and idempotent — each is installed only when jsdom lacks a
+// real implementation, so they never clobber a genuine one. Centralizing them here
+// lets every component test mount Radix-backed UI without repeating the block.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+// `Element` is absent in the node test environment (e.g. WebSocket bridge tests),
+// so guard the DOM-only shims — they only matter for jsdom component tests anyway.
+if (typeof Element !== "undefined") {
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false;
+    Element.prototype.setPointerCapture = () => {};
+    Element.prototype.releasePointerCapture = () => {};
+  }
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
+}
+
 // Mock monaco-editor so tests don't need a browser environment.
 vi.mock("monaco-editor", () => ({
   editor: {
