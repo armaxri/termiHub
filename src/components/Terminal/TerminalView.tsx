@@ -29,6 +29,15 @@ export function TerminalView() {
   // Handle backend-reported remote-connection state changes: a "disconnected"
   // state marks the owning tab exited (which drives the per-tab status dot via
   // the tab-id-keyed lifecycle maps — see deriveTabStatus).
+  //
+  // NOTE (#1123): direct sessions (SSH / telnet / serial) do NOT currently
+  // reach this path — the backend never emits `remote-state-change` for them.
+  // Their disconnects — including half-open TCP drops (cable pull, NAT timeout,
+  // crashed host) — surface via `terminal-exit`: TCP keepalive on the socket
+  // (`core::net::enable_tcp_keepalive`) tears the dead connection down, the
+  // reader thread sees the error, and `terminal-exit` fires the overlay. This
+  // listener is retained as the forward-compatible hook for any future backend
+  // that emits explicit `remote-state-change` transitions.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("remote-state-change", (event) => {

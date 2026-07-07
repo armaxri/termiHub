@@ -223,6 +223,13 @@ impl ConnectionType for Telnet {
         let stream = TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT)
             .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))?;
 
+        // Enable TCP keepalive so a half-open connection (peer vanishes with no
+        // FIN/RST — cable pull, NAT timeout, crashed host) is eventually torn
+        // down by the OS instead of hanging in "Connected" forever. The dead
+        // socket surfaces as a read error, the reader thread breaks, and the
+        // session emits `terminal-exit` (#1123).
+        crate::net::enable_tcp_keepalive(&stream);
+
         stream
             .set_read_timeout(Some(READ_TIMEOUT))
             .map_err(|e| SessionError::SpawnFailed(format!("Failed to set read timeout: {e}")))?;
@@ -552,6 +559,45 @@ mod tests {
             .disconnect()
             .await
             .expect("disconnect should not fail");
+    }
+
+    /// Regression test for #1123: a half-open telnet connection (peer vanishes
+    /// with no FIN/RST) must eventually be torn down instead of hanging in
+    /// "Connected" forever. The mechanism is TCP keepalive on the socket — the
+    /// OS probes the dead peer, the read fails, the reader thread breaks, and
+    /// the session emits `terminal-exit`. Without keepalive the socket never
+    /// fails and the read loop spins on `TimedOut` indefinitely.
+    ///
+    /// We assert the observable precondition: after a successful connect, the
+    /// underlying socket has keepalive enabled.
+    #[tokio::test]
+    async fn connect_enables_tcp_keepalive() {
+        // Local listener stands in for a telnet server; accept and hold the
+        // peer so the connection stays established for the assertion.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let accept = std::thread::spawn(move || listener.accept());
+
+        let mut telnet = Telnet::new();
+        let settings = serde_json::json!({
+            "host": addr.ip().to_string(),
+            "port": addr.port(),
+        });
+        telnet
+            .connect(settings)
+            .await
+            .expect("connect should succeed");
+        let _peer = accept.join().expect("accept thread").expect("accept");
+
+        let state = telnet.state.as_ref().expect("connected state");
+        let writer = state.writer.lock().expect("lock writer");
+        let keepalive = socket2::SockRef::from(&*writer)
+            .keepalive()
+            .expect("read keepalive flag");
+        assert!(
+            keepalive,
+            "telnet socket must have TCP keepalive enabled to detect half-open connections (#1123)"
+        );
     }
 
     /// Create a dummy TCP stream for testing `filter_telnet_commands`.
