@@ -1,7 +1,12 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { ServerCrash, RefreshCw, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
+import {
+  connectTimeoutMs,
+  connectTimeoutSeconds,
+  type ConnectTimeoutKind,
+} from "@/utils/connectTimeout";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -69,6 +74,40 @@ export function TerminalConnectionOverlay({
   const elapsedLabel = formatElapsed(elapsedSeconds);
   const isSlowConnect = elapsedSeconds >= SLOW_CONNECT_THRESHOLD_SECONDS;
 
+  // Client-side timeout: bound the WaitingForAgent and Connecting waits so a tab
+  // can never park on an indefinite spinner. WaitingForAgent has no backend
+  // timeout at all; Connecting relies on the backend one, so this is a safety
+  // net that outlasts it. On expiry the tab transitions to Failed with a
+  // contextual hint (#1129). auto-retry manages its own visible-failure cadence,
+  // so it is intentionally not timed here.
+  const failTerminalConnectTimeout = useAppStore((s) => s.failTerminalConnectTimeout);
+  const timeoutKind: ConnectTimeoutKind | null = waitingForAgent
+    ? "waiting-for-agent"
+    : isConnecting
+      ? "connecting"
+      : null;
+
+  // The timer is armed once per state transition (deps exclude the per-second
+  // elapsed tick), so it is not re-armed every second. Note: because it is tied
+  // to this component's lifetime, unmounting and remounting the overlay while
+  // still connecting (e.g. dragging the tab to another panel) restarts the
+  // countdown — a wall-clock deadline in the store would make it survive
+  // remounts (tracked as a follow-up).
+  useEffect(() => {
+    if (!timeoutKind) return;
+    const id = setTimeout(
+      () => failTerminalConnectTimeout(tabId, timeoutKind),
+      connectTimeoutMs(timeoutKind)
+    );
+    return () => clearTimeout(id);
+  }, [tabId, timeoutKind, failTerminalConnectTimeout]);
+
+  // Whole seconds remaining before the client-side timeout fires (>= 0), for the
+  // visible countdown. Derived from the per-second elapsed tick.
+  const remainingSeconds = timeoutKind
+    ? Math.max(0, connectTimeoutSeconds(timeoutKind) - elapsedSeconds)
+    : 0;
+
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
   }, [tabId, panelId, closeTab]);
@@ -115,6 +154,12 @@ export function TerminalConnectionOverlay({
           <p className="terminal-connection-overlay__heading">Waiting for agent…</p>
           <p className="terminal-connection-overlay__subheading">
             Waiting for the agent to connect before starting the session.
+          </p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-timeout"
+          >
+            Times out in {remainingSeconds}s
           </p>
           <div className="terminal-connection-overlay__actions">
             <button
@@ -181,7 +226,7 @@ export function TerminalConnectionOverlay({
             className="terminal-connection-overlay__elapsed"
             data-testid="terminal-connection-elapsed"
           >
-            Elapsed {elapsedLabel}
+            Elapsed {elapsedLabel} · times out in {remainingSeconds}s
           </p>
           {isSlowConnect && (
             <p className="terminal-connection-overlay__hint-text">
