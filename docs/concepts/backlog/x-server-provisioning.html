@@ -548,7 +548,7 @@ flowchart TD
           <pre class="mermaid">
 stateDiagram-v2
     [*] --> Absent
-    Absent --> Adopted: external server detected on :0/6000
+    Absent --> Adopted: external server detected on display 0 (port 6000)
     Absent --> Downloading: provision consented
     Downloading --> Verifying: zip fetched
     Verifying --> Downloading: checksum mismatch (retry once)
@@ -582,7 +582,7 @@ sequenceDiagram
     Conn->>Orch: ensure_x_server()
     Orch->>Mgr: status()
     alt server already running/adopted
-        Mgr-->>Orch: Running(:0, cookie)
+        Mgr-->>Orch: Some(ResolvedXServer(:0, cookie))
     else must provision
         Orch->>User: consent prompt (download ~N MB?)
         User-->>Orch: Download & Enable
@@ -591,31 +591,46 @@ sequenceDiagram
         Orch->>Mgr: start(path)
         Mgr->>Mgr: gen cookie + write .Xauthority
         Mgr->>VcX: spawn :0 -multiwindow -auth file
-        Mgr-->>Orch: Running(:0, cookie)
+        Mgr-->>Orch: Some(ResolvedXServer(:0, cookie))
     end
-    Orch-->>Conn: LocalXServerInfo(:0, cookie)
+    Note over Orch: provisioner returns Option&lt;ResolvedXServer&gt;,<br/>ensure_x_server returns EnsureOutcome (report and resolved)
+    Orch-->>Conn: ResolvedXServer(:0, cookie)
     Conn->>Fwd: start forwarding to display :0 (known cookie)
     Note over Fwd,VcX: remote GUI apps render as native windows
           </pre>
         </div>
 
         <div class="diagram">
-          <span class="diagram__caption">Detection decision flow (detect_local_x_server)</span>
+          <span class="diagram__caption"
+            >Detection decision flow — two layers after the #1087 seam collapse</span
+          >
           <pre class="mermaid">
 flowchart TD
-    A[detect_local_x_server] --> M{Managed server<br/>registered?}
-    M -->|Yes| R1[Return Tcp 127.0.0.1:6000<br/>+ known cookie]
-    M -->|No| B{DISPLAY set?}
-    B -->|Yes| R2[Parse DISPLAY → info]
-    B -->|No| U{Unix?}
-    U -->|Yes| S[Scan /tmp/.X11-unix]
-    U -->|No: Windows| T{TCP 127.0.0.1:6000<br/>open?}
-    S -->|found| R3[UnixSocket info]
-    S -->|none| N[None]
-    T -->|open| R4[Tcp info<br/>cookie via xauth or none]
-    T -->|closed| N
-    style M fill:#e87d0d,stroke:#333,color:#fff
-    style T fill:#e87d0d,stroke:#333,color:#fff
+    subgraph ORCHL["Desktop orchestrator (src-tauri) — managed/adopted resolution"]
+        O[ensure_x_server] --> OM{Manager adopts or spawns<br/>a server on 127.0.0.1:6000+n?}
+        OM -->|Yes| OR["ResolvedXServer<br/>Tcp 127.0.0.1:6000+n + known cookie<br/>(managed: cookie up front; adopted: via xauth)"]
+        OM -->|No| DU
+    end
+    subgraph CORE["Core fallback (x11.rs) — user-run server only"]
+        DU["ResolvedXServer::detect_user_run()"] --> A[detect_local_x_server]
+        A --> B{DISPLAY set?}
+        B -->|Yes| R2[Parse DISPLAY to info]
+        B -->|No| U{Unix?}
+        U -->|Yes| S[Scan /tmp/.X11-unix]
+        U -->|No: Windows| T{TCP 127.0.0.1:6000<br/>open?}
+        S -->|found| R3[UnixSocket info]
+        S -->|none| N[None]
+        T -->|open| R4[Tcp info]
+        T -->|closed| N
+        R2 --> RC["attach cookie via read_local_xauth_cookie()"]
+        R3 --> RC
+        R4 --> RC
+    end
+    OR --> FWD[Forward to resolved target]
+    RC --> FWD
+    N --> W[No X server]
+    style OR fill:#e87d0d,stroke:#333,color:#fff
+    style DU fill:#e87d0d,stroke:#333,color:#fff
           </pre>
         </div>
 
@@ -793,7 +808,9 @@ flowchart TB
               <tr>
                 <td><code>core/src/backends/ssh/x11.rs</code></td>
                 <td>
-                  <strong>Modify</strong> — managed-server-aware detection; Windows TCP:6000 probe
+                  <strong>Modify</strong> — Windows TCP:6000 probe fallback +
+                  <code>ResolvedXServer</code> (<code>detect_user_run()</code>); managed resolution
+                  lives in the orchestrator (#1087), not in core detection
                 </td>
               </tr>
               <tr>
@@ -877,12 +894,26 @@ flowchart TB
         <p>
           <code>detect_local_x_server()</code> scans <code>/tmp/.X11-unix</code> and
           <code>read_local_xauth_cookie()</code> shells to <code>xauth</code> — both no-ops on
-          Windows. Make detection <strong>managed-server-aware</strong>: consult
-          <code>XServerManager</code> first (return
-          <code>LocalXServerInfo { Tcp("127.0.0.1", 6000+n) }</code> + known cookie), and add a
-          Windows TCP <code>127.0.0.1:6000</code> probe fallback for user-installed servers.
-          <code>LocalXConnection</code> already has a <code>Tcp</code> variant, so no new transport
-          type is needed. Unix behavior stays unchanged.
+          Windows. Two changes: add a Windows TCP <code>127.0.0.1:6000</code> probe fallback for
+          user-installed servers, and wrap detection in
+          <code>ResolvedXServer::detect_user_run()</code> so a user-run server (DISPLAY / Unix
+          socket / Windows TCP:6000) resolves into <code>ResolvedXServer { info, cookie }</code> in
+          one place. <code>LocalXServerInfo</code> already has a TCP-loopback form
+          (<code>tcp_loopback(n)</code> → <code>127.0.0.1:6000+n</code>), so no new transport type is
+          needed. Unix behavior stays unchanged.
+        </p>
+        <p>
+          <strong>Managed resolution lives in the orchestrator, not in core detection (#1087).</strong>
+          After the seam collapse, <code>detect_local_x_server()</code> is <em>only</em> the user-run
+          fallback: it does <strong>not</strong> consult any manager. The desktop
+          <code>ensure_x_server()</code> resolves a managed (spawned) or adopted server into a
+          <code>ResolvedXServer</code> (TCP <code>127.0.0.1:6000+n</code> + the cookie known up front
+          for a managed server, or read via <code>xauth</code> for an adopted one) and threads it
+          straight to <code>X11Forwarder::start(resolved: Option&lt;ResolvedXServer&gt;)</code>, which
+          uses it as-is with no second probe. The retired
+          <code>ManagedXServerSource</code> trait / <code>SingleManagedServer</code> adapter from the
+          pre-#1087 design no longer exist — observable behavior is identical; the seam simply moved up
+          a layer into the app.
         </p>
 
         <h3>macOS &amp; Linux</h3>
@@ -953,12 +984,12 @@ flowchart TB
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-05 at commit <code>17a7bba2</code> ·
+          <strong>Last synced:</strong> 2026-07-07 at commit <code>66ca7724</code> ·
           <strong>Status:</strong> diverged — <strong>backend implemented</strong> (acquire #1048,
           manager #1049, auth #1050, detection #1051, orchestrator + Tauri commands #1052, seam
-          refactor #1087); <strong>frontend UI pending</strong> (#1053). Three artifacts describe
-          the pre-#1087 detection design and need updating to the current layering (tracked in
-          #1100).
+          refactor #1087); <strong>frontend UI pending</strong> (#1053). The three detection
+          diagram/prose artifacts were reconciled to the post-#1087 two-layer design (#1100); the
+          remaining open divergences are all the pending frontend UI (#1053).
         </p>
 
         <h3>Open divergences</h3>
@@ -977,49 +1008,6 @@ flowchart TB
               <tr>
                 <td>1</td>
                 <td>
-                  "Detection decision flow" diagram + "Detection fix (x11.rs)" prose:
-                  <code>detect_local_x_server</code> consults a registered managed server first and
-                  returns TCP loopback + known cookie
-                </td>
-                <td>
-                  Post-#1087, core detection is <strong>not</strong> managed-aware. The desktop
-                  orchestrator/provisioner resolves the managed server into a
-                  <code>ResolvedXServer</code> and threads it to <code>X11Forwarder::start</code>;
-                  <code>detect_local_x_server()</code> handles only the user-run fallback (DISPLAY /
-                  socket / Windows TCP:6000). Observable behavior is unchanged — the seam moved up a
-                  layer.
-                </td>
-                <td>Design reality (approved #1087 refactor)</td>
-                <td>Edit concept — redraw the detection diagram + reword the prose (#1100)</td>
-              </tr>
-              <tr>
-                <td>2</td>
-                <td>
-                  Session-open sequence diagram: <code>Orch-->>Conn: LocalXServerInfo(:0, cookie)</code>
-                </td>
-                <td>
-                  Provisioner returns <code>Option&lt;ResolvedXServer&gt;</code>;
-                  <code>ensure_x_server</code> returns
-                  <code>EnsureOutcome { report, resolved }</code>
-                </td>
-                <td>Design reality (#1087)</td>
-                <td>Edit concept — relabel to <code>ResolvedXServer</code> (#1100)</td>
-              </tr>
-              <tr>
-                <td>3</td>
-                <td>
-                  Impl-details table row <code>core/src/backends/ssh/x11.rs</code> →
-                  "managed-server-aware detection; Windows TCP:6000 probe"
-                </td>
-                <td>
-                  Windows TCP:6000 probe present; managed-awareness removed from detection in #1087
-                </td>
-                <td>Design reality (#1087)</td>
-                <td>Edit concept — reword row (#1100)</td>
-              </tr>
-              <tr>
-                <td>4</td>
-                <td>
                   Settings <code>provideXServerAutomatically</code> /
                   <code>stopXServerWhenIdle</code> rendered by <code>DynamicForm</code>
                 </td>
@@ -1032,14 +1020,14 @@ flowchart TB
                 <td>Implement settings UI in #1053</td>
               </tr>
               <tr>
-                <td>5</td>
+                <td>2</td>
                 <td>First-run consent + provisioning-progress UI (Mockup 1)</td>
                 <td>No frontend consent/progress surface; backend emits progress events</td>
                 <td>Missing</td>
                 <td>Implement in #1053</td>
               </tr>
               <tr>
-                <td>6</td>
+                <td>3</td>
                 <td>"X Servers" section in Open Connections panel (Mockup 2)</td>
                 <td>Not present in <code>OpenConnectionsModal.tsx</code></td>
                 <td>Missing</td>
@@ -1060,6 +1048,24 @@ flowchart TB
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>2026-07-07</td>
+                <td>#1100</td>
+                <td>
+                  Reconciled the three pre-#1087 detection artifacts to the post-seam-collapse
+                  two-layer design: the "Detection decision flow" diagram now shows the desktop
+                  orchestrator resolving a managed/adopted server into a
+                  <code>ResolvedXServer</code> (TCP <code>127.0.0.1:6000+n</code> + known cookie) with
+                  <code>detect_local_x_server()</code> as the user-run fallback (DISPLAY / socket /
+                  Windows TCP:6000) via <code>ResolvedXServer::detect_user_run()</code>; the
+                  session-open sequence now labels the provisioner return
+                  <code>Some(ResolvedXServer(:0, cookie))</code> and notes
+                  <code>ensure_x_server → EnsureOutcome { report, resolved }</code>; and the
+                  "Detection fix (x11.rs)" prose + impl-details row drop the retired
+                  <code>ManagedXServerSource</code> / <code>SingleManagedServer</code> managed-aware
+                  detection, keeping only the Windows TCP:6000 probe + <code>ResolvedXServer</code>.
+                </td>
+              </tr>
               <tr>
                 <td>2026-07-05</td>
                 <td>—</td>
