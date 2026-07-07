@@ -258,7 +258,9 @@ Fixed strings — match exactly.
 | `monitoring-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-loading` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-mem` | `src/components/StatusBar/StatusBar.tsx` |
+| `monitoring-not-connected` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-refresh` | `src/components/StatusBar/StatusBar.tsx` |
+| `monitoring-retry-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `multi-select-copy` | `src/components/Sidebar/FileBrowser.tsx` |
 | `multi-select-cut` | `src/components/Sidebar/FileBrowser.tsx` |
 | `multi-select-delete` | `src/components/Sidebar/FileBrowser.tsx` |

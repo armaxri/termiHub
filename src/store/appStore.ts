@@ -653,11 +653,22 @@ interface AppState {
    * gap G10.
    */
   monitoringSampleCount: number;
+  /**
+   * True when auto-connect was aborted because the user cancelled the password
+   * prompt. The status bar renders a subtle "Monitoring not connected"
+   * affordance (with a reachable Retry) instead of failing silently. Reset on
+   * connect start, disconnect, and retry. See audit gap G8.
+   */
+  monitoringCancelled: boolean;
   /** Last-known stats per host key, persisted across tab switches for instant display on reconnect. */
   monitoringStatsCache: Record<string, SystemStats>;
   connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
   disconnectMonitoring: () => Promise<void>;
   refreshMonitoring: () => Promise<void>;
+  /** Clear a lingering monitoringError so a stale tooltip cannot persist across hosts (audit gap G9). */
+  clearMonitoringError: () => void;
+  /** Set/reset the "connect was cancelled" affordance flag (audit gap G8). */
+  setMonitoringCancelled: (cancelled: boolean) => void;
   /** Per-session capabilities fetched after session creation (keyed by sessionId). */
   sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
   setSessionCapabilities: (
@@ -3478,8 +3489,12 @@ export const useAppStore = create<AppState>((set, get) => {
     monitoringLoading: false,
     monitoringError: null,
     monitoringSampleCount: 0,
+    monitoringCancelled: false,
     monitoringStatsCache: {},
     sessionCapabilities: {},
+
+    clearMonitoringError: () => set({ monitoringError: null }),
+    setMonitoringCancelled: (cancelled) => set({ monitoringCancelled: cancelled }),
 
     setSessionCapabilities: (sessionId, caps) =>
       set((state) => ({
@@ -3502,6 +3517,8 @@ export const useAppStore = create<AppState>((set, get) => {
             // Fresh connection: reset the sample counter so CPU shows the
             // priming indicator until the second push arrives (audit gap G10).
             monitoringSampleCount: 0,
+            // Clear any stale cancel affordance from a previous attempt (G8).
+            monitoringCancelled: false,
           });
 
           const unlisten = await onSessionMonitoringStats((sid, stats) => {
@@ -3537,6 +3554,8 @@ export const useAppStore = create<AppState>((set, get) => {
           // Fresh connection: reset the sample counter so CPU shows the priming
           // indicator until the second fetch arrives (audit gap G10).
           monitoringSampleCount: 0,
+          // Clear any stale cancel affordance from a previous attempt (G8).
+          monitoringCancelled: false,
         });
 
         const sessionId = await monitoringOpen(config);
@@ -3591,6 +3610,7 @@ export const useAppStore = create<AppState>((set, get) => {
         monitoringStats: null,
         monitoringError: null,
         monitoringSampleCount: 0,
+        monitoringCancelled: false,
         // Preserve last-known stats so the UI can show them instantly on reconnect.
         monitoringStatsCache:
           monitoringHost && monitoringStats

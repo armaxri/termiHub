@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Activity, RefreshCw, Unplug, Loader2, Server, Route } from "lucide-react";
+import { Activity, RefreshCw, Unplug, Loader2, Server, Route, RotateCw } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { frontendLog } from "@/utils/frontendLog";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
 import { ConnectionConfig } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
@@ -240,6 +241,7 @@ function MonitoringStatus() {
   const monitoringSampleCount = useAppStore((s) => s.monitoringSampleCount);
   const monitoringLoading = useAppStore((s) => s.monitoringLoading);
   const monitoringError = useAppStore((s) => s.monitoringError);
+  const monitoringCancelled = useAppStore((s) => s.monitoringCancelled);
   const connectMonitoring = useAppStore((s) => s.connectMonitoring);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
   const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
@@ -267,6 +269,13 @@ function MonitoringStatus() {
 
   /** Tracks which host key already failed auto-connect to prevent retry loops. */
   const autoConnectFailedRef = useRef<string | null>(null);
+
+  /**
+   * Bumped by the Retry control to re-run the auto-connect effect after clearing
+   * the failed-host latch, so a failed/cancelled auto-connect is not a dead-end
+   * (audit gaps G7 + G8).
+   */
+  const [retryNonce, setRetryNonce] = useState(0);
 
   const monitorableConnections = useMemo(() => {
     return connections.filter((c) =>
@@ -364,7 +373,14 @@ function MonitoringStatus() {
         });
         const baseConfig = savedConn ? savedConn.config.config : cfg;
         const password = await requestPassword(host, username);
-        if (password === null) return;
+        if (password === null) {
+          // The user cancelled the password prompt. Surface a subtle
+          // "Monitoring not connected" affordance instead of returning silently,
+          // and keep the Retry/picker reachable (audit gap G8).
+          frontendLog("monitoring", "auto-connect cancelled at password prompt");
+          useAppStore.getState().setMonitoringCancelled(true);
+          return;
+        }
         configToUse = { ...baseConfig, password };
       }
 
@@ -383,6 +399,8 @@ function MonitoringStatus() {
     monitoringHost,
     monitoringEnabled,
     activeTabExited,
+    // Re-run auto-connect when the user hits Retry (audit gaps G7 + G8).
+    retryNonce,
   ]);
 
   const handleConnect = useCallback(
@@ -395,6 +413,21 @@ function MonitoringStatus() {
     [connectMonitoring]
   );
 
+  /**
+   * Retry auto-connect after a failure or a cancelled password prompt. Clears
+   * the failed-host latch, the stale error, and the cancel affordance, then
+   * bumps the nonce so the auto-connect effect fires again (audit gaps G7 + G8;
+   * G9 — the lingering error is cleared here too).
+   */
+  const handleRetry = useCallback(() => {
+    frontendLog("monitoring", "user retrying monitoring auto-connect");
+    autoConnectFailedRef.current = null;
+    const { clearMonitoringError, setMonitoringCancelled } = useAppStore.getState();
+    clearMonitoringError();
+    setMonitoringCancelled(false);
+    setRetryNonce((n) => n + 1);
+  }, []);
+
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
 
@@ -403,14 +436,20 @@ function MonitoringStatus() {
   const isReconnectingWithCache =
     !monitoringSessionId && monitoringLoading && monitoringStats !== null;
 
-  // Not connected: show connect button (or loading/error state)
+  // Not connected: show connect button (or loading/error/cancelled state)
   if (!monitoringSessionId && !isReconnectingWithCache) {
-    // Remote-session tabs auto-connect; show loading indicator while connecting.
+    // Remote-session tabs auto-connect; show loading/error/cancelled feedback.
     if (isRemoteSession) {
-      if (!monitoringLoading && !monitoringError) return null;
-    } else if (monitorableConnections.length === 0) {
+      if (!monitoringLoading && !monitoringError && !monitoringCancelled) return null;
+    } else if (monitorableConnections.length === 0 && !monitoringError && !monitoringCancelled) {
+      // No saved monitorable connections to offer — but a failed/cancelled
+      // auto-connect must still surface its feedback + Retry (audit gaps G7/G8).
       return null;
     }
+
+    // Retry is reachable whenever auto-connect failed or was cancelled, so the
+    // failure is never a dead-end (audit gaps G7 + G8).
+    const showRetry = !monitoringLoading && (monitoringError !== null || monitoringCancelled);
 
     return (
       <>
@@ -434,7 +473,31 @@ function MonitoringStatus() {
           </span>
         )}
 
-        {!monitoringLoading && (
+        {monitoringCancelled && !monitoringError && (
+          <span
+            className="status-bar__item monitoring-status__cancelled"
+            title="Monitoring not connected — the password prompt was cancelled"
+            data-testid="monitoring-not-connected"
+          >
+            Monitoring not connected
+          </span>
+        )}
+
+        {showRetry && (
+          <Tooltip content="Retry monitoring connection" side="top">
+            <button
+              className="status-bar__item status-bar__item--interactive"
+              aria-label="Retry monitoring connection"
+              data-testid="monitoring-retry-btn"
+              onClick={handleRetry}
+            >
+              <RotateCw size={12} />
+              Retry
+            </button>
+          </Tooltip>
+        )}
+
+        {!monitoringLoading && monitorableConnections.length > 0 && (
           <DropdownMenu.Root>
             <Tooltip content="Connect monitoring" side="top">
               <DropdownMenu.Trigger asChild>

@@ -95,7 +95,12 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
   }
 
   it("(G7) shows a Retry control when monitoring is in the error state", () => {
-    useAppStore.setState({ monitoringError: "Connection refused" });
+    // A no-op connect prevents the mount auto-connect effect from mutating the
+    // error/cancelled state we set up for the render assertions.
+    useAppStore.setState({
+      monitoringError: "Connection refused",
+      connectMonitoring: vi.fn(() => Promise.resolve()),
+    });
     renderStatusBar();
 
     const err = container.querySelector('[data-testid="monitoring-error"]');
@@ -105,26 +110,39 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
     expect(retry).not.toBeNull();
   });
 
-  it("(G7 + G9) Retry clears the lingering error and re-invokes connect", () => {
+  it("(G7 + G9) Retry clears the lingering error and re-invokes connect", async () => {
     const connectSpy = vi.fn(() => Promise.resolve());
     useAppStore.setState({ monitoringError: "Connection refused", connectMonitoring: connectSpy });
     renderStatusBar();
+    // Let any mount auto-connect microtasks settle before counting.
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     const retry = container.querySelector<HTMLButtonElement>(
       '[data-testid="monitoring-retry-btn"]'
     );
     expect(retry).not.toBeNull();
 
-    act(() => retry!.click());
+    // Count connect calls after mount settles (the auto-connect effect may have
+    // fired once on mount); Retry must add exactly one fresh attempt.
+    const before = connectSpy.mock.calls.length;
+    await act(async () => {
+      retry!.click();
+      await Promise.resolve();
+    });
 
     // The stale error must be cleared so it does not linger (G9)…
     expect(useAppStore.getState().monitoringError).toBeNull();
     // …and a fresh connect attempt must be made (G7).
-    expect(connectSpy).toHaveBeenCalledTimes(1);
+    expect(connectSpy.mock.calls.length).toBe(before + 1);
   });
 
   it("(G8) shows a 'not connected' affordance with Retry when the password prompt was cancelled", () => {
-    useAppStore.setState({ monitoringCancelled: true });
+    useAppStore.setState({
+      monitoringCancelled: true,
+      connectMonitoring: vi.fn(() => Promise.resolve()),
+    });
     renderStatusBar();
 
     const notConnected = container.querySelector('[data-testid="monitoring-not-connected"]');
@@ -135,17 +153,24 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
     expect(retry).not.toBeNull();
   });
 
-  it("(G8) Retry from the cancelled affordance clears the flag and re-invokes connect", () => {
+  it("(G8) Retry from the cancelled affordance clears the flag and re-invokes connect", async () => {
     const connectSpy = vi.fn(() => Promise.resolve());
     useAppStore.setState({ monitoringCancelled: true, connectMonitoring: connectSpy });
     renderStatusBar();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     const retry = container.querySelector<HTMLButtonElement>(
       '[data-testid="monitoring-retry-btn"]'
     );
-    act(() => retry!.click());
+    const before = connectSpy.mock.calls.length;
+    await act(async () => {
+      retry!.click();
+      await Promise.resolve();
+    });
 
     expect(useAppStore.getState().monitoringCancelled).toBe(false);
-    expect(connectSpy).toHaveBeenCalledTimes(1);
+    expect(connectSpy.mock.calls.length).toBe(before + 1);
   });
 });
