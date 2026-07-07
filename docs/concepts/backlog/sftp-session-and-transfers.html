@@ -1,0 +1,1096 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SFTP Session Tracking + Cancellable Transfers (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Only the symbols used below. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="M7 10l5 5 5-5" />
+        <path d="M12 15V3" />
+      </symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="M17 8l-5-5-5 5" />
+        <path d="M12 3v12" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-file" viewBox="0 0 24 24">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      </symbol>
+      <symbol id="i-loader" viewBox="0 0 24 24">
+        <path d="M12 2v4" />
+        <path d="m16.2 7.8 2.9-2.9" />
+        <path d="M18 12h4" />
+        <path d="m16.2 16.2 2.9 2.9" />
+        <path d="M12 18v4" />
+        <path d="m4.9 19.1 2.9-2.9" />
+        <path d="M2 12h4" />
+        <path d="m4.9 4.9 2.9 2.9" />
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-alert-circle" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 8v4" />
+        <path d="M12 16h.01" />
+      </symbol>
+      <symbol id="i-arrow-up-down" viewBox="0 0 24 24">
+        <path d="m21 16-4 4-4-4" />
+        <path d="M17 20V4" />
+        <path d="m3 8 4-4 4 4" />
+        <path d="M7 4v16" />
+      </symbol>
+      <symbol id="i-ban" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m4.9 4.9 14.2 14.2" />
+      </symbol>
+      <symbol id="i-power" viewBox="0 0 24 24">
+        <path d="M12 2v10" />
+        <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>SFTP Session Tracking + Cancellable Transfer Subsystem</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/1192">#1192</a></span
+          >
+          <span
+            >Audit:
+            <code>docs/audits/sftp-file-browser-state-machine.md</code> (from #1132 / #1143)</span
+          >
+          <span><code>docs/concepts/backlog/sftp-session-and-transfers.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#decisions">Design Decisions</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          The SFTP file browser has two structural defects called out by the
+          <a href="https://github.com/armaxri/termiHub/issues/1132">audit</a> (gaps
+          <strong>L1, L2, D1, D3</strong>). This concept designs the fix for both, concept-first,
+          before any code is written.
+        </p>
+        <p>
+          <strong>Orphaned, invisible, unkillable sessions.</strong> The Rust
+          <code>SftpManager</code> already holds <em>N</em> sessions in a
+          <code>HashMap&lt;String, Arc&lt;Mutex&lt;SftpSession&gt;&gt;&gt;</code>, but the frontend
+          tracks only a single slot — one <code>sftpSessionId</code> plus one
+          <code>sftpConnectedHost</code> string. When the owning tab closes, or the user switches to
+          another host, the old UUID is silently overwritten with <strong>no</strong>
+          <code>sftp_close</code>. The dedicated SSH+SFTP connection stays open on the server
+          forever, and because the Open Connections panel derives its "SFTP" row purely from the
+          single <code>sftpConnectedHost</code> string, those orphaned sessions
+          <strong>never appear</strong> and <strong>cannot be killed</strong> — directly
+          contradicting the panel's mandate as the canonical place to kill every connection. Quitting
+          the app leaves them dangling too: no shutdown hook closes SFTP.
+        </p>
+        <p>
+          <strong>Transfers freeze the whole browser and can't be cancelled.</strong>
+          <code>sftp_download</code> / <code>sftp_upload</code> read the entire file into a
+          <code>Vec&lt;u8&gt;</code> in RAM and hold the per-session <code>Mutex</code> for the whole
+          copy. A multi-GB transfer consumes RAM equal to the file size and blocks every other list /
+          navigate on that session — with <em>no spinner</em>, because the shared
+          <code>sftpLoading</code> flag is never even set for transfers. There is no progress event,
+          no cancel token, and (per gap D2) no error feedback. A user who starts a large or wrong
+          transfer has no way to see it, no way to stop it, and no idea whether the frozen browser is
+          working or hung.
+        </p>
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            <strong>L1</strong> — key SFTP sessions in a frontend map (by session-id), close the
+            session on owning-tab close and on host-switch, and surface <em>every</em> live session
+            (one Open Connections row per <code>HashMap</code> entry) with a per-session Kill.
+          </li>
+          <li>
+            <strong>L2</strong> — add <code>SftpManager::close_all()</code> and wire it to the Tauri
+            window <code>Destroyed</code> / app-exit handler alongside the existing manager cleanups.
+          </li>
+          <li>
+            <strong>D1</strong> — a cancellable, chunked transfer subsystem that runs
+            <em>off</em> the shared session <code>Mutex</code> (dedicated channel), so browsing stays
+            live during a transfer, with a per-transfer id + cancel command.
+          </li>
+          <li>
+            <strong>D3</strong> — emit chunked progress events and render them: a progress indicator
+            with a <strong>Cancel</strong> control, and each active transfer visible in Open
+            Connections.
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            The connect-failure Retry (S1), dead-session Reconnect (S2), the
+            <code>sftpStatus</code> enum (A1), the overlapping-list race (R1), and the transfer-error
+            toast wiring (D2) are separate audit gaps — related but out of this issue's L1/L2/D1/D3
+            scope. They get their own follow-ups.
+          </li>
+          <li>No resumable / restartable transfers, no transfer queue reordering UI in this pass.</li>
+          <li>
+            No change to the agent-side (remote) file browser — this concept targets the desktop
+            <code>SftpManager</code> path (<code>src-tauri/src/files/sftp.rs</code>).
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          Three user-facing surfaces change. (1) The <strong>Open Connections</strong> panel gains a
+          real per-session <strong>SFTP</strong> section — one row per live backend session, each
+          with a Kill — plus a <strong>Transfers</strong> section for in-flight copies, each with a
+          Cancel. (2) The file browser toolbar/footer gains a <strong>transfer progress
+          indicator</strong> with a Cancel control. (3) Nothing new is visible for close-all-on-quit
+          — it just runs. The mockups below are authoritative for layout; they reuse the real
+          <code>OpenConnectionsModal</code> section/row structure (title + count + kill-all; per-row
+          badge + Kill).
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — Open Connections: per-session SFTP + live Transfers</h3>
+          <div class="mockup-note">
+            The Open Connections modal (Settings wheel → Open Connections) now lists each live SFTP
+            session <span class="callout">A</span> individually, driven from the keyed session map
+            rather than a single host string — so orphaned / previous-host sessions are visible and
+            killable. A new <strong>Transfers</strong> section <span class="callout">C</span> shows
+            each in-flight copy with a live percentage and a Cancel control.
+          </div>
+          <div class="menu" style="width: 520px">
+            <div
+              class="menu__title"
+              style="display: flex; align-items: center; justify-content: space-between"
+            >
+              <span>Open Connections</span>
+              <button class="tab__close" style="opacity: 1">
+                <svg class="li"><use href="#i-x" /></svg>
+              </button>
+            </div>
+
+            <div class="state-label" style="padding: 8px 14px 0; margin: 0">
+              Local Sessions <span class="count">1</span>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--running"></span> zsh — /Users/arne
+            </div>
+
+            <!-- SFTP section: one row per live session -->
+            <div
+              class="state-label"
+              style="
+                padding: 10px 14px 2px;
+                margin: 0;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                border-top: 1px solid var(--border-secondary);
+              "
+            >
+              <svg class="li" style="width: 13px; height: 13px"><use href="#i-server" /></svg>
+              SFTP <span class="count" style="margin-left: 0">2</span>
+              <button class="btn btn--link" style="margin-left: auto">Kill all</button>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--connected"></span>
+              arne@server-1:22
+              <span style="color: var(--text-secondary)">· tab “ssh: server-1”</span>
+              <button
+                class="btn"
+                style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px"
+              >
+                <svg class="li"><use href="#i-power" /></svg> Kill
+              </button>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--disconnected"></span>
+              arne@build-box:22
+              <span style="color: var(--color-warning)">· orphaned (owning tab closed)</span>
+              <button
+                class="btn"
+                style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px"
+              >
+                <svg class="li"><use href="#i-power" /></svg> Kill
+              </button>
+            </div>
+
+            <!-- Transfers section: one row per in-flight copy -->
+            <div
+              class="state-label"
+              style="
+                padding: 10px 14px 2px;
+                margin: 0;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                border-top: 1px solid var(--border-secondary);
+              "
+            >
+              <svg class="li" style="width: 13px; height: 13px"><use href="#i-arrow-up-down" /></svg>
+              Transfers <span class="count" style="margin-left: 0">1</span>
+              <button class="btn btn--link" style="margin-left: auto">Cancel all</button>
+            </div>
+            <div class="menu__row menu__row--selected" style="display: block">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <svg class="li" style="color: var(--accent-color)"><use href="#i-download" /></svg>
+                <span>ubuntu-24.04.iso</span>
+                <span style="color: var(--text-secondary)">· arne@server-1 → ~/Downloads</span>
+                <span class="count" style="margin-left: auto; color: var(--text-primary)"
+                  >48% · 1.7/3.6 GB</span
+                >
+                <button
+                  class="btn"
+                  style="display: inline-flex; align-items: center; gap: 5px"
+                >
+                  <svg class="li"><use href="#i-ban" /></svg> Cancel
+                </button>
+              </div>
+              <div style="padding: 8px 0 2px">
+                <div style="height: 4px; border-radius: 2px; background: var(--bg-active)">
+                  <div
+                    style="
+                      width: 48%;
+                      height: 100%;
+                      border-radius: 2px;
+                      background: var(--accent-color);
+                    "
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> <strong>SFTP</strong> section — one
+                <code>ConnectionRow</code> per entry in the keyed session map, following the existing
+                <code>Section</code> / <code>ConnectionRow</code> pattern in
+                <code>OpenConnectionsModal.tsx</code> (title + count + <em>Kill all</em>; per-row
+                badge + <em>Kill</em>). Replaces today's single
+                <code>sftpConnectedHost</code>-derived row.
+              </li>
+              <li>
+                <span class="callout">B</span> An <strong>orphaned</strong> session (owning tab
+                already closed) still shows here with a warning badge and a Kill — the whole point of
+                L1: nothing is invisible or unkillable.
+              </li>
+              <li>
+                <span class="callout">C</span> <strong>Transfers</strong> section — one row per
+                in-flight copy, driven by <code>transfer-progress</code> events. Each has an inline
+                progress bar and a <strong>Cancel</strong> (lucide <code>Ban</code>) that fires the
+                <code>sftp_cancel_transfer</code> command. <em>Cancel all</em> aborts every transfer.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — file-browser transfer progress + Cancel (in-context)</h3>
+          <div class="mockup-note">
+            While a transfer runs, a compact progress affordance appears in the file-browser footer
+            <span class="callout">D</span> (mirroring the Transfers row, but where the user started
+            it). The browser list stays live above it — navigation is <em>not</em> frozen, because
+            the transfer runs off the session mutex. States shown: transferring, cancelled, done.
+          </div>
+          <div class="app" style="height: 340px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar" style="width: 300px">
+                <div class="sidebar__header">
+                  <span class="sidebar__title">Files — arne@server-1</span>
+                </div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item">
+                    <svg class="li"><use href="#i-folder-open" /></svg> ..
+                  </div>
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <svg class="li" style="color: var(--accent-color)"><use href="#i-file" /></svg>
+                    ubuntu-24.04.iso
+                  </div>
+                  <div class="connection-tree__item">
+                    <svg class="li"><use href="#i-file" /></svg> notes.txt
+                  </div>
+                  <!-- footer: transfer progress affordance -->
+                  <div
+                    style="
+                      margin-top: 10px;
+                      padding: 10px;
+                      border-top: 1px solid var(--border-secondary);
+                    "
+                  >
+                    <div style="display: flex; align-items: center; gap: 6px; font-size: 12px">
+                      <svg class="li" style="color: var(--accent-color)"
+                        ><use href="#i-download"
+                      /></svg>
+                      <span>Downloading ubuntu-24.04.iso</span>
+                      <span style="margin-left: auto; color: var(--text-secondary)">48%</span>
+                      <button
+                        class="btn"
+                        style="
+                          padding: 2px 6px;
+                          display: inline-flex;
+                          align-items: center;
+                          gap: 4px;
+                        "
+                      >
+                        <svg class="li"><use href="#i-ban" /></svg> Cancel
+                      </button>
+                    </div>
+                    <div
+                      style="
+                        margin-top: 6px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: var(--bg-active);
+                      "
+                    >
+                      <div
+                        style="
+                          width: 48%;
+                          height: 100%;
+                          border-radius: 2px;
+                          background: var(--accent-color);
+                        "
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">arne@server-1 $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">
+                  <svg class="li"><use href="#i-arrow-up-down" /></svg> 1 transfer · 48%
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">D</span> File-browser footer transfer indicator — appears only
+                while a transfer is active, driven by <code>transfer-progress</code> events for
+                transfers owned by <em>this</em> session. Cancel fires
+                <code>sftp_cancel_transfer</code>. On completion → toast (D2 follow-up); on cancel →
+                the row clears and the partial local file is removed.
+              </li>
+              <li>
+                A <strong>status-bar</strong> summary (<code>N transfers · P%</code>) gives an
+                always-visible aggregate, matching how other long-running work reports there.
+              </li>
+            </ul>
+          </div>
+
+          <div class="states" style="margin-top: 14px">
+            <div>
+              <p class="state-label">Transferring</p>
+              <div class="menu" style="width: 260px">
+                <div class="menu__row" style="display: block">
+                  <div style="display: flex; align-items: center; gap: 6px">
+                    <svg class="li" style="color: var(--accent-color)"
+                      ><use href="#i-loader"
+                    /></svg>
+                    file.bin <span class="count" style="margin-left: auto">48%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">Cancelled</p>
+              <div class="menu" style="width: 260px">
+                <div class="menu__row" style="display: block">
+                  <div style="display: flex; align-items: center; gap: 6px">
+                    <svg class="li" style="color: var(--color-warning)"><use href="#i-ban" /></svg>
+                    file.bin <span class="count" style="margin-left: auto">cancelled</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">Done</p>
+              <div class="menu" style="width: 260px">
+                <div class="menu__row" style="display: block">
+                  <div style="display: flex; align-items: center; gap: 6px">
+                    <svg class="li" style="color: var(--color-success)"
+                      ><use href="#i-circle-check"
+                    /></svg>
+                    file.bin <span class="count" style="margin-left: auto">3.6 GB</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Session lifecycle workflows (L1 / L2)</h3>
+        <ul>
+          <li>
+            <strong>Open.</strong> The auto-connect effect opens a session for the active tab's host;
+            <code>sftp_open</code> returns a UUID. The frontend records it in a keyed map
+            <code>Record&lt;sessionId, SftpSessionMeta&gt;</code> (meta = host label + owning tab id),
+            <em>not</em> a single slot.
+          </li>
+          <li>
+            <strong>Owning-tab close.</strong> On <code>closeTab</code>, if the closing tab owns any
+            SFTP session(s), the store calls <code>sftpClose(sessionId)</code> for each and removes
+            them from the map. This is the L1 leak fix: the SSH+SFTP connection is torn down instead
+            of orphaned.
+          </li>
+          <li>
+            <strong>Host switch.</strong> When the browser re-targets a different host, the previous
+            session is <em>not</em> silently overwritten — it is explicitly closed (if the old tab is
+            gone) or left registered (if the old tab is still open and may return to it). Keying by
+            session-id makes "which sessions still have a live owner" answerable, which the single
+            slot could not.
+          </li>
+          <li>
+            <strong>Orphan safety net.</strong> Should a session ever end up with no owning tab (edge
+            cases, races), it still appears in Open Connections with a warning badge and a Kill — so
+            it is never invisible. This is the belt to L1's suspenders.
+          </li>
+          <li>
+            <strong>App quit.</strong> On window <code>Destroyed</code> / app exit, the Rust handler
+            calls <code>SftpManager::close_all()</code> alongside the existing tunnel / embedded-server
+            / X-server / HTTP-monitor cleanups already wired there (L2). No orphan is left on the
+            server.
+          </li>
+        </ul>
+
+        <h3>Transfer workflows (D1 / D3)</h3>
+        <ul>
+          <li>
+            <strong>Start.</strong> Download/upload registers a transfer in a Rust
+            <code>TransferRegistry</code> keyed by a fresh <code>transfer_id</code>, returns that id
+            immediately, and spawns the copy on a <strong>dedicated SFTP channel</strong> cloned from
+            the session's SSH connection — <em>not</em> under the shared session <code>Mutex</code>.
+            Browsing on the same session therefore stays responsive.
+          </li>
+          <li>
+            <strong>Chunked progress.</strong> The copy loops over fixed-size chunks (e.g. 256&nbsp;KiB),
+            writing each and emitting a throttled <code>transfer-progress</code> event
+            (<code>{ transferId, transferred, total, phase }</code>). The UI renders a percentage +
+            bar in both the file-browser footer and the Open Connections Transfers row.
+          </li>
+          <li>
+            <strong>Cancel mid-transfer.</strong> Each chunk checks a
+            <code>CancellationToken</code>. <code>sftp_cancel_transfer(transferId)</code> trips the
+            token; the loop stops at the next chunk boundary, closes the dedicated channel, removes
+            the partial destination file (download) or leaves a clearly-partial remote file flagged
+            for the user (upload), emits a terminal <code>cancelled</code> progress event, and drops
+            the registry entry.
+          </li>
+          <li>
+            <strong>Concurrent transfers.</strong> Because each transfer uses its own channel and its
+            own registry entry, multiple transfers on the same or different sessions run in parallel
+            and each reports independently. The Transfers section aggregates them; the status bar
+            shows the count + rolled-up percentage.
+          </li>
+          <li>
+            <strong>Completion &amp; error.</strong> On success the registry entry is dropped and a
+            terminal <code>done</code> event fires (→ success toast, D2 follow-up). On error a
+            terminal <code>error</code> event fires with the message (→ error toast, D2 follow-up).
+            Either way the transfer row clears.
+          </li>
+        </ul>
+
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>Session killed while a transfer runs.</strong> Killing an SFTP session in Open
+            Connections first cancels any transfers owned by it, then closes the session — so no
+            transfer keeps a dead session's channel alive.
+          </li>
+          <li>
+            <strong>App quit with an active transfer.</strong> <code>close_all()</code> trips every
+            transfer's cancel token before closing sessions, so no half-written file keeps a channel
+            open during teardown.
+          </li>
+          <li>
+            <strong>Unknown / stale transfer id.</strong> <code>sftp_cancel_transfer</code> on an
+            already-finished id is a no-op (the registry entry is gone) rather than an error.
+          </li>
+          <li>
+            <strong>Zero-byte / tiny files.</strong> The chunk loop still emits at least a
+            <code>0%</code> start and a terminal <code>done</code> so the UI is consistent.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >SFTP session lifecycle (keyed map; close on tab-close, host-switch, and quit)</span
+          >
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Opening : auto-connect effect (sftp_open)
+    Opening --> Registered : UUID returned, added to keyed map with owning-tab id
+    Opening --> OpenFailed : sftp_open error
+
+    Registered --> Registered : list / navigate / refresh (browse ops)
+    Registered --> Transferring : start transfer (dedicated channel, off mutex)
+    Transferring --> Registered : transfer settles (done / cancelled / error)
+
+    Registered --> Closing : owning tab closed (closeTab then sftpClose)
+    Registered --> Closing : per-session Kill in Open Connections
+    Registered --> Closing : host switch, old tab gone
+    Registered --> Orphaned : owning tab missing (safety net) — still listed + killable
+    Orphaned --> Closing : Kill in Open Connections
+    Registered --> Closing : app quit (close_all trips transfers, then closes)
+
+    Closing --> [*] : entry removed from map + HashMap
+    OpenFailed --> [*]
+
+    note right of Orphaned
+        L1 guarantee: no live HashMap
+        entry is ever invisible/unkillable.
+    end note
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Transfer lifecycle (queued to transferring to done / cancelled / error)</span
+          >
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Queued : register transfer_id in TransferRegistry
+    Queued --> Transferring : dedicated channel opened, chunk loop starts
+
+    Transferring --> Transferring : chunk written then throttled transfer-progress event
+    Transferring --> Done : last chunk written (done event)
+    Transferring --> Cancelled : cancel token tripped at chunk boundary (cancelled event)
+    Transferring --> Errored : IO / channel error (error event)
+
+    Done --> [*] : registry entry dropped
+    Cancelled --> [*] : partial dest removed; entry dropped
+    Errored --> [*] : entry dropped
+
+    note right of Transferring
+        Runs OFF the session Mutex on a
+        cloned channel — browsing stays live.
+        Cancellation checked each chunk.
+    end note
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Cancellable chunked transfer — progress events + cancel command</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant FB as FileBrowser / OpenConnections
+    participant St as appStore
+    participant API as api.ts
+    participant Cmd as sftp_download (Rust)
+    participant Reg as TransferRegistry
+    participant Ch as Dedicated SFTP channel
+    participant EV as Tauri events
+
+    U->>FB: start download
+    FB->>St: startTransfer(sessionId, remote, local)
+    St->>API: sftpDownload(...)
+    API->>Cmd: invoke("sftp_download")
+    Cmd->>Reg: register(transfer_id, cancel_token)
+    Cmd-->>St: transfer_id (returns immediately)
+    Cmd->>Ch: open channel (clone of session, NOT the shared mutex)
+    loop each 256 KiB chunk
+        Ch->>Ch: read chunk (remote) + write chunk (local)
+        Cmd->>EV: emit transfer-progress {transferId, transferred, total}
+        EV-->>St: progress updates Transfers row + footer bar
+        alt cancel requested
+            U->>FB: click Cancel
+            FB->>API: sftpCancelTransfer(transfer_id)
+            API->>Cmd: invoke("sftp_cancel_transfer")
+            Cmd->>Reg: trip cancel_token
+            Cmd->>Ch: stop at next boundary, close channel, remove partial file
+            Cmd->>EV: emit transfer-progress {phase: cancelled}
+            EV-->>St: clear row
+        end
+    end
+    Cmd->>EV: emit transfer-progress {phase: done}
+    Cmd->>Reg: drop entry
+    EV-->>St: clear row + success toast (D2 follow-up)
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Session close on owning-tab close (L1)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant Tab as Tab UI
+    participant St as appStore.closeTab
+    participant Map as keyed session map
+    participant API as api.ts
+    participant Cmd as sftp_close (Rust)
+    participant Mgr as SftpManager
+
+    U->>Tab: close SSH tab
+    Tab->>St: closeTab(tabId, panelId)
+    St->>Map: find sessions owned by tabId
+    loop each owned sessionId
+        St->>API: sftpClose(sessionId)
+        API->>Cmd: invoke("sftp_close")
+        Cmd->>Mgr: close_session(sessionId)
+        Mgr->>Mgr: remove entry (poison-safe), drop SSH+SFTP conn
+        St->>Map: delete sessionId
+    end
+    Note over Map,Mgr: no orphan left — HashMap entry gone, OC row disappears
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Design Decisions ───────────────────────────────────────── -->
+      <section>
+        <h2 id="decisions">Design Decisions <a class="anchor" href="#decisions">#</a></h2>
+
+        <h3>Decision 1 — key sessions by session-id, not by host</h3>
+        <p>
+          <strong>Recommendation: key by session-id (UUID).</strong> The backend
+          <code>SftpManager</code> already keys its <code>HashMap</code> by UUID, and
+          <code>sftp_close</code> / <code>get_session</code> take a session id. Keying the frontend
+          map the same way makes the two sides bijective, so Open Connections can render exactly one
+          row per live backend entry — the L1 requirement that <em>every</em> session be visible and
+          killable.
+        </p>
+        <p>
+          Keying by <em>host</em> would collapse two sessions to the same host into one slot (exactly
+          today's single-slot bug in a thinner disguise) and would make an orphaned previous-host
+          session — whose whole problem is that its host is <em>not</em> the current one —
+          unrepresentable. Host stays as <strong>display metadata</strong>
+          (<code>SftpSessionMeta.hostLabel</code>) on the id-keyed entry, plus the owning-tab id so
+          close-on-tab-close and orphan detection work. Net:
+          <code>Record&lt;sessionId, { hostLabel, owningTabId }&gt;</code>.
+        </p>
+
+        <h3>Decision 2 — transfer chunk/cancel protocol</h3>
+        <p>
+          <strong>Progress-event shape.</strong> A single Tauri event channel,
+          <code>transfer-progress</code>, carries the whole transfer lifecycle so the UI has one
+          subscription:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Type</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>transferId</code></td>
+                <td><code>string</code></td>
+                <td>UUID minted at registration; the cancel key.</td>
+              </tr>
+              <tr>
+                <td><code>sessionId</code></td>
+                <td><code>string</code></td>
+                <td>Owning SFTP session (for the Open Connections row + kill-cascade).</td>
+              </tr>
+              <tr>
+                <td><code>direction</code></td>
+                <td><code>"download" | "upload"</code></td>
+                <td>Drives the icon / verb.</td>
+              </tr>
+              <tr>
+                <td><code>fileName</code></td>
+                <td><code>string</code></td>
+                <td>Display label.</td>
+              </tr>
+              <tr>
+                <td><code>transferred</code> / <code>total</code></td>
+                <td><code>number</code> (bytes)</td>
+                <td><code>total = 0</code> means indeterminate (stat unavailable); show a spinner.</td>
+              </tr>
+              <tr>
+                <td><code>phase</code></td>
+                <td><code>"transferring" | "done" | "cancelled" | "error"</code></td>
+                <td>Terminal phases clear the row; <code>error</code> carries <code>message</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Cancel command.</strong> One new command
+          <code>sftp_cancel_transfer(transferId: string)</code> trips the transfer's
+          <code>CancellationToken</code> in the <code>TransferRegistry</code>; unknown/finished ids
+          are a no-op. <code>sftp_download</code> / <code>sftp_upload</code> change to return the
+          <code>transferId</code> synchronously (registration) and run the copy in the background,
+          rather than blocking until the whole file is done. Progress is <strong>throttled</strong>
+          (emit at most ~10&nbsp;Hz or every N chunks) to avoid flooding the event bus. Chunk size
+          starts at <strong>256&nbsp;KiB</strong> (tunable) — large enough to keep SFTP round-trips
+          amortised, small enough that cancel latency stays sub-second.
+        </p>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">
+          Preliminary Implementation Details <a class="anchor" href="#impl">#</a>
+        </h2>
+        <p>
+          Grounded in the current code (<code>src-tauri/src/files/sftp.rs</code>,
+          <code>src-tauri/src/commands/files.rs</code>, <code>src-tauri/src/lib.rs</code>,
+          <code>src/store/appStore.ts</code>, <code>src/services/api.ts</code>,
+          <code>src/components/OpenConnections/OpenConnectionsModal.tsx</code>). Staged
+          <strong>S1 = L1 + L2</strong> (session tracking + close-all), then
+          <strong>S2 = D1 + D3</strong> (cancellable chunked transfers + progress). S1 lands first
+          because a keyed session map and a live kill surface are prerequisites for surfacing
+          transfers per-session in S2.
+        </p>
+
+        <h3>Stage S1 — L1 (keyed sessions) + L2 (close-all)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>
+                  <strong>Replace</strong> single-slot state (<code>sftpSessionId</code>,
+                  <code>sftpConnectedHost</code>) with a keyed map
+                  <code>sftpSessions: Record&lt;sessionId, { hostLabel, owningTabId }&gt;</code>
+                  (Decision 1). Keep a derived "active" session id for the current browser. Add
+                  <code>closeSftpSession(id)</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/store/appStore.ts</code> · <code>closeTab</code> (~L2003)</td>
+                <td>
+                  <strong>New</strong> — on tab close, find sessions with
+                  <code>owningTabId === tabId</code> and call <code>sftpClose</code> for each, then
+                  drop them from the map (L1 leak fix; the sequence diagram above).
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/components/OpenConnections/OpenConnectionsModal.tsx</code> (~L431)
+                </td>
+                <td>
+                  <strong>Replace</strong> the single <code>sftpConnectedHost</code> row with a
+                  <code>Section</code> that maps over <code>sftpSessions</code> — one
+                  <code>ConnectionRow</code> per entry (badge <code>connected</code> /
+                  warning for orphaned), <code>onKill</code> → <code>closeSftpSession(id)</code>,
+                  <code>onKillAll</code> → close every session. Reuses the existing
+                  <code>Section</code>/<code>ConnectionRow</code> components (mockup A/B).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/files/sftp.rs</code> · <code>SftpManager</code> (~L466)</td>
+                <td>
+                  <strong>New</strong> <code>close_all(&amp;self)</code> — drain the sessions map
+                  (poison-safe, mirroring <code>close_session</code>'s
+                  <code>unwrap_or_else(into_inner)</code>) and drop every session.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src-tauri/src/lib.rs</code> · <code>RunEvent::WindowEvent { Destroyed }</code>
+                  (~L626)
+                </td>
+                <td>
+                  <strong>New</strong> — inside the existing spawn that already calls
+                  <code>TunnelManager::stop_all()</code>,
+                  <code>EmbeddedServerManager::stop_all()</code>, etc., add
+                  <code>try_state::&lt;SftpManager&gt;()</code> → <code>close_all()</code> (L2).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Stage S2 — D1 (cancellable chunked transfers) + D3 (progress)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code>src-tauri/src/files/transfer.rs</code> <em>(new)</em>
+                </td>
+                <td>
+                  <strong>New</strong> <code>TransferRegistry</code>:
+                  <code>Arc&lt;Mutex&lt;HashMap&lt;transferId, CancellationToken&gt;&gt;&gt;</code>
+                  (managed via Tauri state). Helpers <code>register</code>, <code>cancel</code>,
+                  <code>cancel_all</code>, <code>drop_entry</code>. The chunked copy loop lives here,
+                  emitting <code>transfer-progress</code> via the app handle.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src-tauri/src/files/sftp.rs</code> · <code>read_file</code> /
+                  <code>write_file</code> (L107 / L134)
+                </td>
+                <td>
+                  <strong>Replace</strong> the buffer-whole-file
+                  (<code>read_to_end</code> / <code>fs::read</code>) approach with a chunked loop over
+                  a <strong>dedicated cloned channel</strong> (a second
+                  <code>channel_open_session</code> + <code>sftp</code> subsystem off the same
+                  <code>SshSession</code>) so the copy does <em>not</em> hold the session
+                  <code>Mutex</code> (D1 core). Check the <code>CancellationToken</code> each chunk;
+                  emit throttled progress.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src-tauri/src/commands/files.rs</code> · <code>sftp_download</code> /
+                  <code>sftp_upload</code> (L63 / L96)
+                </td>
+                <td>
+                  <strong>Change</strong> to register a <code>transfer_id</code>, spawn the chunked
+                  copy in the background, and return the id immediately (no longer block on the whole
+                  transfer). <strong>New</strong> command
+                  <code>sftp_cancel_transfer(transfer_id)</code> → <code>registry.cancel</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/lib.rs</code></td>
+                <td>
+                  Register <code>TransferRegistry</code> in <code>.manage(...)</code>, add
+                  <code>sftp_cancel_transfer</code> to the <code>invoke_handler</code>, and call
+                  <code>registry.cancel_all()</code> before <code>SftpManager::close_all()</code> in
+                  the <code>Destroyed</code> handler.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/api.ts</code> (~L516) &amp; <code>events.ts</code></td>
+                <td>
+                  <code>sftpDownload</code> / <code>sftpUpload</code> return the
+                  <code>transferId</code>. <strong>New</strong>
+                  <code>sftpCancelTransfer(id)</code>. <strong>New</strong> event subscription
+                  <code>onTransferProgress(cb)</code> for the <code>transfer-progress</code> payload
+                  (Decision 2 shape).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>
+                  <strong>New</strong> <code>transfers: Record&lt;transferId, TransferState&gt;</code>
+                  updated from <code>transfer-progress</code> events; actions
+                  <code>startTransfer</code>, <code>cancelTransfer</code>, and terminal-phase cleanup.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/components/OpenConnections/OpenConnectionsModal.tsx</code> +
+                  file-browser footer / <code>StatusBar</code>
+                </td>
+                <td>
+                  <strong>New</strong> <em>Transfers</em> section (one row per active transfer, bar +
+                  Cancel + Cancel-all — mockup C), the file-browser footer progress affordance
+                  (mockup D), and a status-bar aggregate. Killing a session cancels its transfers
+                  first (kill-cascade).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Notes</h3>
+        <ul>
+          <li>
+            The dedicated-channel approach reuses the existing
+            <code>SftpSession::new</code> pattern (<code>channel_open_session</code> →
+            <code>request_subsystem("sftp")</code> → <code>RusshSftp::new</code>, sftp.rs L47–61) —
+            transfers open their own channel from the same authenticated
+            <code>SshSession</code> instead of sharing the browse channel's mutex.
+          </li>
+          <li>
+            <strong>Libraries first:</strong> use <code>tokio_util::sync::CancellationToken</code>
+            for cancel and Tauri's built-in <code>Emitter</code> for progress (already imported in
+            <code>lib.rs</code>) rather than hand-rolled channels. <code>russh-sftp</code>'s
+            <code>File</code> already implements chunked <code>AsyncRead</code>/<code>AsyncWrite</code>,
+            so the loop is a <code>read</code>/<code>write</code> chunk pair, not custom framing.
+          </li>
+          <li>
+            <strong>Tests:</strong> unit-test <code>close_all</code> (poison-safe drain) and the
+            keyed-map close-on-tab-close store logic; a Docker SFTP integration test for a
+            cancel-mid-transfer (partial file removed) and a concurrent-transfer-while-browsing
+            liveness check.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept sftp-session-and-transfers</code>. Records the last
+            commit at which the concept and code were reconciled, plus open divergences. The concept
+            is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) ·
+          <strong>Status:</strong> diverged (design-only, from audit
+          <code>docs/audits/sftp-file-browser-state-machine.md</code>)
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>L1 — keyed frontend session map, close on tab-close/host-switch, per-session Kill</td>
+                <td>
+                  Single slot (<code>sftpSessionId</code>/<code>sftpConnectedHost</code>);
+                  <code>closeTab</code> never closes SFTP; OC shows one host-derived row
+                </td>
+                <td>Missing</td>
+                <td>Implement S1, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>L2 — <code>SftpManager::close_all()</code> wired to window Destroyed / app exit</td>
+                <td>
+                  No <code>close_all</code>; <code>Destroyed</code> handler cleans tunnels / servers /
+                  X / HTTP monitors but not SFTP
+                </td>
+                <td>Missing</td>
+                <td>Implement S1, then re-sync</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>D1 — chunked, cancellable transfers off the session mutex (dedicated channel)</td>
+                <td>
+                  <code>read_file</code>/<code>write_file</code> buffer whole file in RAM under the
+                  session <code>Mutex</code>; no cancel token
+                </td>
+                <td>Missing</td>
+                <td>Implement S2, then re-sync</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>D3 — <code>transfer-progress</code> events + rendered progress/Cancel (OC + footer)</td>
+                <td>No progress event anywhere; transfers invisible</td>
+                <td>Missing</td>
+                <td>Implement S2, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
