@@ -124,7 +124,7 @@ describe("appStore credential store state", () => {
   // its store actions were removed. Setup happens via SecuritySettings' inline
   // dialog + switchCredentialStore, so these dead members must not exist.
   it("does not expose the orphaned master-password-setup modal state/actions", () => {
-    const state = useAppStore.getState() as Record<string, unknown>;
+    const state = useAppStore.getState() as unknown as Record<string, unknown>;
     expect(state.masterPasswordSetupOpen).toBeUndefined();
     expect(state.masterPasswordSetupMode).toBeUndefined();
     expect(state.openMasterPasswordSetup).toBeUndefined();

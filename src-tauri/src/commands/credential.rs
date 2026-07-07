@@ -75,10 +75,7 @@ impl From<UnlockFailure> for UnlockError {
 ///   a spurious "already unlocked" error.
 /// - Classified (G8, #1144): a wrong password yields `corrupted: false`; an
 ///   unreadable/malformed file yields `corrupted: true`.
-fn unlock_store_classified(
-    store: &MasterPasswordStore,
-    password: &str,
-) -> Result<(), UnlockError> {
+fn unlock_store_classified(store: &MasterPasswordStore, password: &str) -> Result<(), UnlockError> {
     if store.is_unlocked() {
         return Ok(());
     }
