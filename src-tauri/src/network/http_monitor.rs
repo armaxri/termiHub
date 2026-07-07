@@ -187,7 +187,17 @@ async fn run_monitor(
     let client = match build_client_outcome(&config, build_result) {
         ClientBuildOutcome::Ready(c) => c,
         ClientBuildOutcome::Failed(result) => {
-            tracing::error!("HTTP monitor: failed to build client: {:?}", result.error);
+            // Surface the failure on the normal check-event path so the monitor
+            // shows as down/errored instead of a stuck "checking…" zombie, then
+            // stop the loop (a rebuilt client would fail identically).
+            tracing::error!(
+                monitor_id = %config.id,
+                "HTTP monitor: failed to build client — emitting failure result and stopping"
+            );
+            let _ = app.emit("network-http-monitor-check", &result);
+            if let Ok(mut guard) = last_result.lock() {
+                *guard = Some(result);
+            }
             return;
         }
     };
