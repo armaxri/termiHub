@@ -49,6 +49,22 @@ pub fn disconnect_agent(
         .map_err(|e| e.to_string())
 }
 
+/// Cancel an in-flight (still connecting) agent connect.
+///
+/// Fires the per-agent cancellation token registered by [`connect_agent`] so a
+/// Cancel while connecting aborts the blocking SSH + initialize handshake
+/// promptly instead of waiting out the connect timeout; the connect path then
+/// emits `disconnected` (single writer). Returns whether a connecting agent was
+/// found. No-op if the connect already finished (G1, #1235).
+#[tauri::command]
+pub fn cancel_connect_agent(
+    agent_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<bool, String> {
+    info!(agent_id, "Cancelling in-flight agent connect");
+    Ok(agent_manager.cancel_connect(&agent_id))
+}
+
 /// Gracefully shut down a remote agent and disconnect.
 ///
 /// Sends `agent.shutdown` over JSON-RPC, waits for the response, then

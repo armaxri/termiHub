@@ -49,6 +49,27 @@ pub fn connect_with_registry_cancellable(
     .map_err(|e| TerminalError::SshError(e.to_string()))
 }
 
+/// Connect and authenticate, returning just the session, abortable via a
+/// [`CancellationToken`].
+///
+/// Like [`connect_and_authenticate`] but a fired token aborts an in-flight TCP
+/// connect / SSH handshake promptly instead of waiting out the connect or OS
+/// TCP timeout. Used by the agent connect path so a Cancel while connecting
+/// interrupts a hung connect to an unreachable host (G1, #1235).
+///
+/// Same runtime-context requirement as [`connect_and_authenticate`]: call only
+/// from inside `spawn_blocking` or an async task (#828).
+pub fn connect_and_authenticate_cancellable(
+    config: &SshConfig,
+    cancel: CancellationToken,
+) -> Result<SshSession, TerminalError> {
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(core_connect_cancellable(config, Some(cancel)))
+    })
+    .map(|(session, _registry)| session)
+    .map_err(|e| TerminalError::SshError(e.to_string()))
+}
+
 /// Check whether the SSH agent is running or stopped.
 pub fn check_ssh_agent_status() -> String {
     core_check_agent()

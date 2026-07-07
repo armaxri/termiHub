@@ -522,6 +522,7 @@ pub fn run() {
             commands::monitoring::monitoring_fetch_stats,
             // Agent management
             commands::agent::connect_agent,
+            commands::agent::cancel_connect_agent,
             commands::agent::disconnect_agent,
             commands::agent::shutdown_agent,
             commands::agent::get_agent_capabilities,
