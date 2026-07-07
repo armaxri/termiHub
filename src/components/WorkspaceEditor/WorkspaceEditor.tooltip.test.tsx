@@ -8,10 +8,10 @@
  * must survive the migration.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { LayoutDesigner } from "./LayoutDesigner";
-import { TooltipProvider } from "@/components/ui";
+import { withTooltip } from "@/test/tooltip";
 import type { WorkspaceLayoutNode, WorkspaceTabDef } from "@/types/workspace";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -26,23 +26,6 @@ vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(),
 }));
-
-// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
-// mounts its trigger; shim them so the tooltip-wrapped buttons render.
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-if (!("ResizeObserver" in globalThis)) {
-  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
-    ResizeObserverStub;
-}
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
 
 function tab(ref?: string): WorkspaceTabDef {
   return { connectionRef: ref };
@@ -65,11 +48,6 @@ async function flush() {
   await act(async () => {
     await Promise.resolve();
   });
-}
-
-/** Wrap so the shared Tooltip primitive finds its provider (zero delay). */
-function withTooltip(ui: React.ReactElement): React.ReactElement {
-  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
 }
 
 function render(layout: WorkspaceLayoutNode): void {

@@ -1,23 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { LayoutDesigner } from "./LayoutDesigner";
-import { TooltipProvider } from "@/components/ui";
+import { withTooltip } from "@/test/tooltip";
 import { WorkspaceLayoutNode, WorkspaceLeafNode, WorkspaceTabDef } from "@/types/workspace";
 import { getWorkspaceLeaves } from "@/utils/workspaceLayout";
-
-// jsdom lacks the pointer-capture APIs Radix Tooltip touches; shim them so the
-// tooltip-wrapped layout buttons render.
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
-
-/** Wrap so the shared Tooltip primitive finds its provider. */
-function withTooltip(ui: React.ReactElement): React.ReactElement {
-  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
-}
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
