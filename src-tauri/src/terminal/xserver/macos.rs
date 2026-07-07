@@ -211,7 +211,10 @@ mod tests {
             || false,
             |d| slept.set(slept.get() + d),
         );
-        assert!(ready, "an already-ready server must be detected immediately");
+        assert!(
+            ready,
+            "an already-ready server must be detected immediately"
+        );
         assert_eq!(slept.get(), Duration::ZERO, "no sleep when ready up front");
     }
 

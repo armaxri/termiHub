@@ -1,6 +1,6 @@
 # Changelog fragment — feature/1088-macos-xquartz-readiness-wait
 
-### Fixed
+## Fixed
 
 - **macOS X11 forwarding:** After launching XQuartz for an SSH X11 connection,
   termiHub now waits a short, bounded time (~4s, polled every 250 ms) for the X
