@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::RecvTimeoutError;
+use std::sync::mpsc::{RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -24,6 +24,31 @@ use crate::utils::errors::TerminalError;
 /// generous timeout only guards against a wedged thread (GAP G3, #1145).
 const BIND_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// One-shot handle a server thread uses to report whether its listening socket
+/// bound successfully.
+///
+/// The manager holds the receiving end and only emits `Running` once
+/// [`BindSignal::confirm`] arrives; a [`BindSignal::fail`] (or a dropped sender)
+/// keeps the server out of the `active` map so it never shows a stuck "Running"
+/// before flipping to `Error` (GAP G3, #1145).
+pub(super) struct BindSignal {
+    tx: SyncSender<Result<(), String>>,
+}
+
+impl BindSignal {
+    /// Report that the listening socket bound successfully.
+    pub(super) fn confirm(&self) {
+        // A full/closed channel means the manager already gave up waiting; the
+        // send failure is harmless because the thread will still shut down.
+        let _ = self.tx.send(Ok(()));
+    }
+
+    /// Report that binding failed, carrying the reason for the UI.
+    pub(super) fn fail(&self, reason: &str) {
+        let _ = self.tx.send(Err(reason.to_string()));
+    }
+}
+
 /// Decision the manager makes from a server thread's bind signal.
 #[derive(Debug)]
 enum BindOutcome {
@@ -39,7 +64,6 @@ enum BindOutcome {
 /// bind (GAP G3, #1145).
 ///
 /// Pure and `AppHandle`-free so the start-flow decision can be unit-tested.
-#[allow(dead_code)]
 fn decide_bind_outcome(signal: Result<Result<(), String>, RecvTimeoutError>) -> BindOutcome {
     match signal {
         Ok(Ok(())) => BindOutcome::Running,
@@ -213,7 +237,8 @@ impl EmbeddedServerManager {
             }
         }
 
-        // Pre-flight bind check so we can return an error immediately.
+        // Pre-flight bind check so we can return an error immediately for the
+        // common "port already in use" case.
         self.check_port(&config)?;
 
         self.emit_status(server_id, ServerStatus::Starting, None);
@@ -221,6 +246,11 @@ impl EmbeddedServerManager {
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = AtomicServerStats::new();
         let error_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+        // One-slot channel the server thread uses to confirm (or reject) its
+        // real bind. `Running` is only emitted after this confirmation, so a
+        // late bind failure never leaves the item stuck green (GAP G3, #1145).
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
         let cfg = config.clone();
         let shutdown_clone = Arc::clone(&shutdown);
@@ -230,10 +260,11 @@ impl EmbeddedServerManager {
         let id = server_id.to_string();
 
         let thread_handle = thread::spawn(move || {
+            let ready = BindSignal { tx: ready_tx };
             let result = match cfg.server_type {
-                ServerType::Http => start_http_server(&cfg, shutdown_clone, stats_clone),
-                ServerType::Ftp => start_ftp_server(&cfg, shutdown_clone, stats_clone),
-                ServerType::Tftp => start_tftp_server(&cfg, shutdown_clone, stats_clone),
+                ServerType::Http => start_http_server(&cfg, shutdown_clone, stats_clone, ready),
+                ServerType::Ftp => start_ftp_server(&cfg, shutdown_clone, stats_clone, ready),
+                ServerType::Tftp => start_tftp_server(&cfg, shutdown_clone, stats_clone, ready),
             };
 
             if let Err(e) = result {
@@ -253,28 +284,40 @@ impl EmbeddedServerManager {
             }
         });
 
-        let started_at = chrono::Utc::now().to_rfc3339();
+        // Wait for the thread to confirm its bind before declaring Running.
+        match decide_bind_outcome(ready_rx.recv_timeout(BIND_CONFIRM_TIMEOUT)) {
+            BindOutcome::Running => {
+                let started_at = chrono::Utc::now().to_rfc3339();
+                {
+                    let mut active = self.active.lock().map_err(|e| {
+                        TerminalError::EmbeddedServerError(format!("Lock error: {e}"))
+                    })?;
+                    active.insert(
+                        server_id.to_string(),
+                        ActiveServer {
+                            shutdown,
+                            thread_handle,
+                            stats,
+                            started_at,
+                            error: error_slot,
+                        },
+                    );
+                }
 
-        {
-            let mut active = self
-                .active
-                .lock()
-                .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))?;
-            active.insert(
-                server_id.to_string(),
-                ActiveServer {
-                    shutdown,
-                    thread_handle,
-                    stats,
-                    started_at,
-                    error: error_slot,
-                },
-            );
+                self.emit_status(server_id, ServerStatus::Running, None);
+                tracing::info!(%server_id, "Embedded server started");
+                Ok(())
+            }
+            BindOutcome::Failed(reason) => {
+                // Bind never confirmed. Signal the thread to unwind (in case it
+                // did bind but timed out) and leave nothing in `active`, so the
+                // server is reported as Error rather than a stuck Running.
+                shutdown.store(true, Ordering::Relaxed);
+                tracing::warn!(%server_id, "Embedded server failed to start: {reason}");
+                self.emit_status(server_id, ServerStatus::Error, Some(reason.clone()));
+                Err(TerminalError::EmbeddedServerError(reason))
+            }
         }
-
-        self.emit_status(server_id, ServerStatus::Running, None);
-        tracing::info!(%server_id, "Embedded server started");
-        Ok(())
     }
 
     /// Stop a running server by ID.

@@ -20,6 +20,7 @@ use libunftp::ServerBuilder;
 use unftp_sbe_fs::Filesystem;
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
+use super::server_manager::BindSignal;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -27,31 +28,42 @@ use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
 ///
 /// Internally this creates a single-threaded tokio runtime so that the async
 /// libunftp server can run inside the OS thread that the `EmbeddedServerManager`
-/// already spawned.
+/// already spawned. `ready` is signalled exactly once once the control port is
+/// confirmed bindable (or if binding fails), so the manager only reports
+/// `Running` after the bind is confirmed (GAP G3, #1145).
 pub fn start_ftp_server(
     config: &EmbeddedServerConfig,
     shutdown: Arc<AtomicBool>,
     stats: Arc<AtomicServerStats>,
+    ready: BindSignal,
 ) -> Result<()> {
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .context("Failed to build tokio runtime for FTP server")?;
+        .context("Failed to build tokio runtime for FTP server")
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            ready.fail(&e.to_string());
+            return Err(e);
+        }
+    };
 
-    rt.block_on(run_ftp_server(config, shutdown, stats))
+    rt.block_on(run_ftp_server(config, shutdown, stats, ready))
 }
 
 async fn run_ftp_server(
     config: &EmbeddedServerConfig,
     shutdown: Arc<AtomicBool>,
     stats: Arc<AtomicServerStats>,
+    ready: BindSignal,
 ) -> Result<()> {
     let root: PathBuf = config.root_directory.clone().into();
     let addr = format!("{}:{}", config.bind_host, config.port);
     let read_only = config.read_only;
 
     let root_for_factory = root.clone();
-    let server = ServerBuilder::new(Box::new(move || MaybeReadOnlyFilesystem {
+    let server = match ServerBuilder::new(Box::new(move || MaybeReadOnlyFilesystem {
         inner: Filesystem::new(root_for_factory.clone()),
         read_only,
     }))
@@ -65,7 +77,30 @@ async fn run_ftp_server(
         stats: Arc::clone(&stats),
     })
     .build()
-    .context("Failed to build libunftp server")?;
+    .context("Failed to build libunftp server")
+    {
+        Ok(server) => server,
+        Err(e) => {
+            ready.fail(&e.to_string());
+            return Err(e);
+        }
+    };
+
+    // libunftp binds the control port inside `listen`, with no bound-callback.
+    // Probe-bind the control port ourselves so we can confirm (or fail) the
+    // bind before reporting Running; drop the probe immediately so libunftp can
+    // take the port (GAP G3, #1145).
+    match tokio::net::TcpListener::bind(&addr).await {
+        Ok(probe) => {
+            drop(probe);
+            ready.confirm();
+        }
+        Err(e) => {
+            let msg = format!("Failed to bind FTP server to {addr}: {e}");
+            ready.fail(&msg);
+            return Err(anyhow::anyhow!(msg));
+        }
+    }
 
     tracing::info!(addr, "FTP server listening (libunftp)");
 

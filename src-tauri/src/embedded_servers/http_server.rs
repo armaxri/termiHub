@@ -14,6 +14,7 @@ use axum::{middleware, Router};
 use tower_http::services::ServeDir;
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig};
+use super::server_manager::BindSignal;
 
 /// State shared with middleware for connection tracking.
 #[derive(Clone)]
@@ -168,15 +169,25 @@ fn build_router(root: PathBuf, directory_listing: bool, tracking_state: Tracking
 /// Start and run the HTTP server, blocking until the shutdown flag is set.
 ///
 /// The function must be called from within a dedicated std thread that builds
-/// its own tokio runtime.
+/// its own tokio runtime. `ready` is signalled exactly once as soon as the
+/// listening socket is bound (or if binding fails), so the manager only reports
+/// `Running` after the bind is confirmed (GAP G3, #1145).
 pub fn start_http_server(
     config: &EmbeddedServerConfig,
     shutdown: Arc<AtomicBool>,
     stats: Arc<AtomicServerStats>,
+    ready: BindSignal,
 ) -> Result<()> {
-    let addr: SocketAddr = format!("{}:{}", config.bind_host, config.port)
+    let addr: SocketAddr = match format!("{}:{}", config.bind_host, config.port)
         .parse()
-        .context("Invalid bind address")?;
+        .context("Invalid bind address")
+    {
+        Ok(addr) => addr,
+        Err(e) => {
+            ready.fail(&e.to_string());
+            return Err(e);
+        }
+    };
 
     let root = PathBuf::from(&config.root_directory);
     let directory_listing = config.directory_listing.unwrap_or(false);
@@ -185,15 +196,32 @@ pub fn start_http_server(
     };
 
     // Build a tokio current-thread runtime in this thread.
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .context("Failed to build async runtime")?;
+        .context("Failed to build async runtime")
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            ready.fail(&e.to_string());
+            return Err(e);
+        }
+    };
 
     rt.block_on(async move {
-        let listener = tokio::net::TcpListener::bind(addr)
+        let listener = match tokio::net::TcpListener::bind(addr)
             .await
-            .context("Failed to bind HTTP server")?;
+            .context("Failed to bind HTTP server")
+        {
+            Ok(listener) => listener,
+            Err(e) => {
+                ready.fail(&e.to_string());
+                return Err(e);
+            }
+        };
+
+        // Bind confirmed — tell the manager it is safe to report Running.
+        ready.confirm();
 
         let router = build_router(root, directory_listing, tracking_state);
 
