@@ -449,9 +449,6 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let outcome = wait_for_ack(&socket, peer, &[0, 3, 0, 1], 1, 2, &shutdown);
-        assert!(
-            matches!(outcome, Err(_)),
-            "expected timeout error, got {outcome:?}"
-        );
+        assert!(outcome.is_err(), "expected timeout error, got {outcome:?}");
     }
 }
