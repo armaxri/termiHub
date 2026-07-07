@@ -28,6 +28,22 @@ pub fn lock_session<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, TerminalEr
         .map_err(|_| TerminalError::SshError("SFTP session lock poisoned".to_string()))
 }
 
+/// Drain every entry from a keyed session map, poison-safe, and drop the values.
+///
+/// Recovers the guard even if the map mutex is poisoned — draining is cleanup
+/// (e.g. on app quit) and must never itself panic, mirroring
+/// [`SftpManager::close_session`]'s handling (audit GAP C1, issues #1143/#1244).
+/// Returns the number of sessions removed. Values are dropped as the map clears,
+/// tearing down each underlying connection.
+fn drain_sessions<V>(sessions: &Mutex<HashMap<String, V>>) -> usize {
+    let mut guard = sessions
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let count = guard.len();
+    guard.clear();
+    count
+}
+
 /// SFTP session backed by a dedicated SSH connection.
 ///
 /// The canonical implementation is now
@@ -495,6 +511,17 @@ impl SftpManager {
         sessions.remove(id);
     }
 
+    /// Close and drop every open SFTP session, tearing down each SSH+SFTP
+    /// connection.
+    ///
+    /// Called on app quit so no session is left dangling on the server until it
+    /// times out. Poison-safe: a prior panic that poisoned the sessions mutex
+    /// does not abort teardown (mirrors [`Self::close_session`], issue #1244).
+    pub fn close_all(&self) {
+        let count = drain_sessions(&self.sessions);
+        info!(session_count = count, "Closing all SFTP sessions");
+    }
+
     /// Get a session Arc for use outside the manager lock.
     pub fn get_session(&self, id: &str) -> Result<Arc<Mutex<SftpSession>>, TerminalError> {
         let sessions = lock_session(&self.sessions)?;
@@ -539,5 +566,42 @@ mod tests {
         let mut guard = lock_session(&mutex).expect("healthy lock should succeed");
         *guard += 1;
         assert_eq!(*guard, 42);
+    }
+
+    /// `close_all`'s drain must empty the map even when the map mutex is
+    /// poisoned by a prior panic — teardown on quit must never itself abort
+    /// (mirrors `close_session`'s poison handling, issue #1244). Uses a
+    /// `String`-valued map so no real SSH/SFTP session is required.
+    #[test]
+    fn drain_sessions_empties_map_despite_poisoned_mutex() {
+        let sessions: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut guard = sessions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.insert("session-a".to_string(), "a".to_string());
+            guard.insert("session-b".to_string(), "b".to_string());
+        }
+
+        // Poison the sessions mutex by panicking while holding the lock.
+        let poisoner = Arc::clone(&sessions);
+        let handle = thread::spawn(move || {
+            let _guard = poisoner.lock().expect("first lock should succeed");
+            panic!("intentional panic to poison the sessions mutex");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+
+        // A raw `.lock().unwrap()` inside the drain would panic here.
+        let drained = drain_sessions(&sessions);
+        assert_eq!(drained, 2, "drain should report the two removed sessions");
+
+        let guard = sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            guard.is_empty(),
+            "drain should empty the sessions map, still had {} entries",
+            guard.len()
+        );
     }
 }
