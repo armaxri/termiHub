@@ -756,6 +756,53 @@ mod tests {
         assert_eq!(mgr.status(), XServerStatus::Adopted { display: 0 });
     }
 
+    // -- session count (refcount surfaced to the UI, #1107) ----------------
+
+    #[test]
+    fn session_count_tracks_acquire_and_release() {
+        let launcher = FakeLauncher::new();
+        // idle-stop off so releasing to zero does not tear the server down and
+        // reset the count out from under the assertions.
+        let mgr = manager_with(&[], launcher.clone(), true, false);
+
+        assert_eq!(mgr.session_count(), 0, "no sessions before acquire");
+
+        mgr.acquire_session().unwrap();
+        assert_eq!(mgr.session_count(), 1, "one acquired session");
+
+        mgr.acquire_session().unwrap();
+        assert_eq!(mgr.session_count(), 2, "two acquired sessions");
+
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 1, "one released, one remaining");
+
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 0, "all sessions released");
+    }
+
+    #[test]
+    fn session_count_is_zero_after_idle_shutdown() {
+        let launcher = FakeLauncher::new();
+        let mgr = manager_with(&[], launcher.clone(), true, true);
+
+        mgr.acquire_session().unwrap();
+        assert_eq!(mgr.session_count(), 1);
+        // Last release with idle-stop on tears the server down and resets state.
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 0);
+        assert_eq!(mgr.status(), XServerStatus::Stopped);
+    }
+
+    #[test]
+    fn release_without_acquire_does_not_underflow() {
+        let launcher = FakeLauncher::new();
+        let mgr = manager_with(&[6000], launcher.clone(), true, false);
+
+        // Defensive: an unpaired release must saturate at zero, never wrap.
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 0);
+    }
+
     // -- explicit stop / shutdown ------------------------------------------
 
     #[test]

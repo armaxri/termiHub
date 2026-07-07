@@ -439,5 +439,57 @@ mod tests {
             assert_eq!(resolved.info.display_number, 0);
             assert_tcp_loopback(&resolved.info.connection, 6000);
         }
+
+        // ── Session refcount wiring (#1107) ──────────────────────────────
+
+        #[test]
+        fn acquire_flag_increments_refcount_and_populates_session_count() {
+            // The connect path acquires a session: the refcount rises and the
+            // status report surfaces it as `session_count`.
+            let mgr = manager(vec![], true);
+
+            let outcome = ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            assert_eq!(outcome.report.session_count, 1, "first session counted");
+            assert_eq!(mgr.session_count(), 1);
+
+            let outcome = ensure_x_server_for_session(&mgr, true).expect("second session acquired");
+            assert_eq!(outcome.report.session_count, 2, "second session counted");
+            assert_eq!(mgr.session_count(), 2);
+        }
+
+        #[test]
+        fn probe_only_ensure_does_not_acquire_a_session() {
+            // The status/probe path (`x_server_ensure` command) must not leak a
+            // refcount: it ensures the server but acquires nothing.
+            let mgr = manager(vec![], true);
+
+            let outcome = ensure_x_server(&mgr, true).expect("server ensured");
+            assert_eq!(outcome.report.session_count, 0, "probe must not acquire");
+            assert_eq!(mgr.session_count(), 0);
+        }
+
+        #[test]
+        fn current_status_reflects_live_session_count() {
+            let mgr = manager(vec![], true);
+
+            ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            ensure_x_server_for_session(&mgr, true).expect("session acquired");
+
+            let status = current_status(&mgr);
+            assert_eq!(status.state, XServerState::Running);
+            assert_eq!(status.session_count, 2, "live count surfaced in status");
+        }
+
+        #[test]
+        fn session_lease_releases_on_drop() {
+            // The lease returned by the connect path releases exactly one
+            // session when dropped, preserving the manager's refcount.
+            let mgr = std::sync::Arc::new(manager(vec![], true));
+
+            let lease = XServerManager::acquire_session_lease(&mgr).expect("session lease");
+            assert_eq!(mgr.session_count(), 1);
+            drop(lease);
+            assert_eq!(mgr.session_count(), 0, "lease drop releases the session");
+        }
     }
 }
