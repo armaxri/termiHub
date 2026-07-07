@@ -327,6 +327,70 @@ describe("SecuritySettings", () => {
     expect(mockedToast.success).toHaveBeenCalled();
   });
 
+  it("triggers the unlock flow when Change Master Password is clicked while locked", async () => {
+    // GAP G4: change_master_password requires an unlocked store. When locked, the
+    // change-password button must route through the unlock flow instead of opening a
+    // dialog that dead-ends on a raw "Store is locked" error.
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+    });
+
+    // requestUnlock never resolves here so we can assert it was invoked and that the
+    // change dialog does NOT open before the store is unlocked.
+    const requestUnlock = vi.fn(() => new Promise<boolean>(() => {}));
+    useAppStore.setState({ requestUnlock });
+
+    render();
+
+    const btn = query("change-master-password-btn") as HTMLElement;
+    await act(async () => {
+      btn.click();
+    });
+
+    expect(requestUnlock).toHaveBeenCalledTimes(1);
+    // The change-password dialog stays closed until the store is unlocked.
+    expect(query("change-password-dialog")).toBeNull();
+  });
+
+  it("opens the change-password dialog after a successful unlock while locked", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+    });
+
+    const requestUnlock = vi.fn(() => Promise.resolve(true));
+    useAppStore.setState({ requestUnlock });
+
+    render();
+
+    const btn = query("change-master-password-btn") as HTMLElement;
+    await act(async () => {
+      btn.click();
+    });
+
+    expect(requestUnlock).toHaveBeenCalledTimes(1);
+    // Unlock succeeded, so the change-password dialog is now available.
+    expect(query("change-password-dialog")).not.toBeNull();
+  });
+
+  it("does not open the change-password dialog if the unlock is cancelled while locked", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+    });
+
+    const requestUnlock = vi.fn(() => Promise.resolve(false));
+    useAppStore.setState({ requestUnlock });
+
+    render();
+
+    const btn = query("change-master-password-btn") as HTMLElement;
+    await act(async () => {
+      btn.click();
+    });
+
+    expect(requestUnlock).toHaveBeenCalledTimes(1);
+    expect(query("change-password-dialog")).toBeNull();
+  });
+
   it("keeps the wrong-password change failure inline (no success toast, dialog stays open)", async () => {
     // Per the audit, the wrong-current-password case stays an inline field error
     // (not a toast); only the success path is promoted to a toast.
