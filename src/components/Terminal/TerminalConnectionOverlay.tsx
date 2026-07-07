@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { ServerCrash, RefreshCw, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useElapsed } from "@/hooks/useElapsed";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -22,6 +23,17 @@ const TIMEOUT_PATTERN = "timed out";
 const SERIAL_NOT_FOUND_PATTERNS = ["No such file", "cannot find", "not found"];
 const SERIAL_PERMISSION_PATTERN = "Permission denied";
 const SERIAL_BUSY_PATTERNS = ["busy", "in use", "Access is denied"];
+
+/** Seconds after which a still-pending connect is flagged as unusually slow. */
+const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
+
+/** Formats whole seconds as a compact `mm:ss`-ish readout: `5s`, `1m 05s`. */
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${String(secs).padStart(2, "0")}s`;
+}
 
 /**
  * Shown over a terminal slot while the backend session is being established.
@@ -49,6 +61,13 @@ export function TerminalConnectionOverlay({
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
   const isReattaching = useAppStore((s) => s.terminalReattaching[tabId] ?? false);
   const error = useAppStore((s) => s.terminalSpawnErrors[tabId] ?? "");
+
+  // Tick a wall-clock timer while any active connect attempt is in flight so the
+  // overlay can show elapsed time and flag an unusually slow connect (#1127).
+  const isActivelyConnecting = isConnecting || autoRetryCount > 0 || !!waitingForAgent;
+  const elapsedSeconds = useElapsed(isActivelyConnecting);
+  const elapsedLabel = formatElapsed(elapsedSeconds);
+  const isSlowConnect = elapsedSeconds >= SLOW_CONNECT_THRESHOLD_SECONDS;
 
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
@@ -123,6 +142,17 @@ export function TerminalConnectionOverlay({
             Connecting… (attempt {autoRetryCount + 1})
           </p>
           <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-elapsed"
+          >
+            Elapsed {elapsedLabel}
+          </p>
+          {isSlowConnect && (
+            <p className="terminal-connection-overlay__hint-text">
+              Taking longer than usual — the host may be slow to respond or unreachable.
+            </p>
+          )}
           <div className="terminal-connection-overlay__actions">
             <button
               className="terminal-connection-overlay__cancel-btn"
@@ -147,6 +177,17 @@ export function TerminalConnectionOverlay({
           />
           <p className="terminal-connection-overlay__heading">Connecting…</p>
           <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-elapsed"
+          >
+            Elapsed {elapsedLabel}
+          </p>
+          {isSlowConnect && (
+            <p className="terminal-connection-overlay__hint-text">
+              Taking longer than usual — the host may be slow to respond or unreachable.
+            </p>
+          )}
           <div className="terminal-connection-overlay__actions">
             <button
               className="terminal-connection-overlay__cancel-btn"
