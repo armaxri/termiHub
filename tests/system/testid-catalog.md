@@ -96,6 +96,7 @@ Fixed strings — match exactly.
 | `connection-picker-inline` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-search` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-settings-form` | `src/components/DynamicForm/ConnectionSettingsForm.tsx` |
+| `context-agent-cancel-connect` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-connect` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-def-attach-persistent` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-def-duplicate` | `src/components/Sidebar/AgentNode.tsx` |
@@ -261,6 +262,7 @@ Fixed strings — match exactly.
 | `network-monitors-section` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-new-monitor` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-tools-sidebar` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `open-connections-establishing-agents-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-http-monitors-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-sftp-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-server-empty` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
@@ -513,6 +515,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `*key-path-validation` | `${prefix}key-path-validation` | `src/components/Settings/KeyPathInput.tsx` |
 | `activity-bar-*` | `activity-bar-${label.toLowerCase().replace(/\s+/g, "-")}` | `src/components/ActivityBar/ActivityBarItem.tsx` |
 | `activity-bar-context-toggle-*` | `activity-bar-context-toggle-${item.view}` | `src/components/ActivityBar/ActivityBar.tsx` |
+| `agent-cancel-connect-*` | `agent-cancel-connect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-header-*` | `agent-header-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-node-*` | `agent-node-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |

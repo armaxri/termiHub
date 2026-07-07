@@ -32,9 +32,10 @@ import {
   Zap,
   Copy,
   Link,
+  XCircle,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Tooltip } from "@/components/ui";
+import { Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
@@ -44,6 +45,7 @@ import {
   AgentFolderInfo,
   removeCredential,
   storeCredential,
+  cancelConnectAgent,
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
@@ -564,6 +566,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const isConnected = agent.connectionState === "connected";
   const isReconnecting = agent.connectionState === "reconnecting";
+  const isConnecting = agent.connectionState === "connecting";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
   // Derived: root-level folders and definitions (no parent/folder)
@@ -687,6 +690,21 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const handleDisconnect = useCallback(() => {
     disconnectRemoteAgent(agent.id);
   }, [agent.id, disconnectRemoteAgent]);
+
+  // Cancel an in-flight connect (G1, #1235). Fires cancel_connect_agent, which
+  // aborts the blocking SSH + initialize handshake; the backend then emits
+  // `disconnected` (single writer), so the state dot returns on its own — no
+  // optimistic write here. The prompt-driven `connecting` local state (set by
+  // handleConnect) also clears when connectRemoteAgent's promise rejects.
+  const handleCancelConnect = useCallback(async () => {
+    try {
+      await cancelConnectAgent(agent.id);
+      toast.success("Connect cancelled");
+    } catch (err) {
+      frontendLog("agent_node", `Failed to cancel agent connect: ${err}`);
+      toast.error(`Failed to cancel: ${err}`);
+    }
+  }, [agent.id]);
 
   const handleNewShellSession = useCallback(() => {
     const defaultShell = agent.capabilities?.availableShells?.[0];
@@ -887,12 +905,39 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                 </Tooltip>
               </div>
             )}
+            {isConnecting && (
+              // Inline Cancel so a stuck connect is abortable without opening the
+              // context menu (G1, #1235).
+              <div className="connection-list__group-actions">
+                <Tooltip content="Cancel Connect" side="top">
+                  <button
+                    className="connection-list__add-btn"
+                    onClick={() => void handleCancelConnect()}
+                    aria-label="Cancel Connect"
+                    data-testid={`agent-cancel-connect-${agent.id}`}
+                  >
+                    <XCircle size={16} />
+                  </button>
+                </Tooltip>
+              </div>
+            )}
           </div>
         </ContextMenu.Trigger>
 
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
-            {!isConnected && !isReconnecting ? (
+            {isConnecting ? (
+              // A connecting agent is no longer a dead-end: offer Cancel, which
+              // aborts the in-flight handshake (G1, #1235).
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => void handleCancelConnect()}
+                data-testid="context-agent-cancel-connect"
+              >
+                <XCircle size={14} />
+                Cancel Connect
+              </ContextMenu.Item>
+            ) : !isConnected && !isReconnecting ? (
               <>
                 <ContextMenu.Item
                   className="context-menu__item"

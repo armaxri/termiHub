@@ -1788,6 +1788,9 @@ mod tests {
         ) -> Result<AgentConnectResult, TerminalError> {
             unimplemented!()
         }
+        fn cancel_connect(&self, _: &str) -> bool {
+            false
+        }
         fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
             unimplemented!()
         }
@@ -2402,6 +2405,9 @@ mod tests {
             _: Option<&AgentSettings>,
         ) -> Result<AgentConnectResult, TerminalError> {
             unimplemented!()
+        }
+        fn cancel_connect(&self, _: &str) -> bool {
+            false
         }
         fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
             unimplemented!()
