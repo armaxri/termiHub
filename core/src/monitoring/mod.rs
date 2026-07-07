@@ -2,6 +2,7 @@
 
 pub mod parser;
 pub mod provider;
+pub mod status;
 pub mod types;
 
 pub use parser::{
@@ -9,6 +10,10 @@ pub use parser::{
     MONITORING_COMMAND,
 };
 pub use provider::{MonitoringProvider, MonitoringReceiver, MonitoringSender};
+pub use status::{
+    CollectLoopState, MonitorStatus, MonitorStatusReceiver, MonitorStatusSender,
+    DEFAULT_STALE_THRESHOLD,
+};
 pub use types::{CpuCounters, SystemStats};
 
 use crate::errors::CoreError;
