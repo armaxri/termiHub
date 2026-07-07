@@ -372,6 +372,33 @@ fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
 mod tests {
     use super::*;
 
+    /// A freshly-spawned server whose error slot is still empty is live and must
+    /// block a second, concurrent start with "already running".
+    #[test]
+    fn active_entry_without_error_is_live() {
+        let error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        assert!(
+            active_entry_is_live(&error),
+            "a running server (no error recorded) must count as live"
+        );
+    }
+
+    /// GAP G2/G9: once a server thread has failed at runtime its `active` entry is
+    /// a dead husk — `active_entry_is_live` must report `false` so `start_server`
+    /// no longer rejects a retry with "already running". This makes `Error →
+    /// Stopped` real and Start/Retry work again, while `get_states` still surfaces
+    /// the recorded error until the retry happens.
+    #[test]
+    fn errored_active_entry_is_not_live_so_start_is_allowed() {
+        let error: Arc<Mutex<Option<String>>> =
+            Arc::new(Mutex::new(Some("Port 8080 is already in use".to_string())));
+        assert!(
+            !active_entry_is_live(&error),
+            "a server whose error slot is set must NOT count as live, so a retry \
+             (start_server) is allowed instead of being blocked as 'already running'"
+        );
+    }
+
     /// A port bound at boot must not cause a silent no-op: the auto-start
     /// failure has to surface as an `Error` state carrying the reason so the
     /// sidebar can show the server red at launch (GAP G7, #1145).
