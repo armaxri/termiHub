@@ -2,6 +2,8 @@
 //!
 //! This is desktop-only (uses `reqwest`) and is not part of `termihub-core`.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
@@ -44,12 +46,19 @@ pub struct HttpCheckResult {
     pub timestamp_ms: u64,
 }
 
-/// Current state of a running HTTP monitor (for listing).
+/// Current state of a monitor (for listing).
+///
+/// The lifecycle is derived from two booleans:
+/// - `running`  — the poll loop is alive (`false` == stopped-but-listed).
+/// - `paused`   — the loop is alive but its poll body is suspended.
+///
+/// (`running: false` implies `paused: false`.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpMonitorState {
     pub config: HttpMonitorConfig,
     pub running: bool,
+    pub paused: bool,
     pub last_result: Option<HttpCheckResult>,
 }
 
@@ -57,6 +66,8 @@ pub struct HttpMonitorState {
 pub struct HttpMonitorHandle {
     pub config: HttpMonitorConfig,
     pub cancel: CancellationToken,
+    /// When set, the poll loop stays alive but skips the HTTP check (Pause).
+    pub paused: Arc<AtomicBool>,
     pub last_result: std::sync::Arc<std::sync::Mutex<Option<HttpCheckResult>>>,
 }
 
@@ -89,9 +100,11 @@ impl HttpMonitorConfig {
 /// Returns a [`HttpMonitorHandle`] that can be used to stop the task.
 pub fn start_monitor(config: HttpMonitorConfig, app: AppHandle) -> HttpMonitorHandle {
     let cancel = CancellationToken::new();
+    let paused = Arc::new(AtomicBool::new(false));
     let last_result = std::sync::Arc::new(std::sync::Mutex::new(None::<HttpCheckResult>));
 
     let cancel_clone = cancel.clone();
+    let paused_clone = Arc::clone(&paused);
     let config_clone = config.clone();
     let last_result_clone = std::sync::Arc::clone(&last_result);
 
@@ -100,12 +113,20 @@ pub fn start_monitor(config: HttpMonitorConfig, app: AppHandle) -> HttpMonitorHa
     // with no Tokio reactor — `tokio::spawn` there panics ("no reactor running").
     // `tauri::async_runtime::spawn` works from any thread (see #828, #982).
     tauri::async_runtime::spawn(async move {
-        run_monitor(config_clone, app, cancel_clone, last_result_clone).await;
+        run_monitor(
+            config_clone,
+            app,
+            cancel_clone,
+            paused_clone,
+            last_result_clone,
+        )
+        .await;
     });
 
     HttpMonitorHandle {
         config,
         cancel,
+        paused,
         last_result,
     }
 }
@@ -114,6 +135,7 @@ async fn run_monitor(
     config: HttpMonitorConfig,
     app: AppHandle,
     cancel: CancellationToken,
+    paused: Arc<AtomicBool>,
     last_result: std::sync::Arc<std::sync::Mutex<Option<HttpCheckResult>>>,
 ) {
     let client = match Client::builder()
@@ -132,18 +154,25 @@ async fn run_monitor(
             break;
         }
 
-        let result = check_once(&config, &client).await;
-        debug!(
-            monitor_id = %config.id,
-            ok = result.ok,
-            latency_ms = ?result.latency_ms,
-            "HTTP monitor check complete"
-        );
+        // Pause suspends the poll body but keeps the loop alive so Resume is
+        // instant. The interval sleep still runs so the loop stays responsive to
+        // cancellation and re-checks the flag each tick.
+        if paused.load(Ordering::SeqCst) {
+            debug!(monitor_id = %config.id, "HTTP monitor paused — skipping check");
+        } else {
+            let result = check_once(&config, &client).await;
+            debug!(
+                monitor_id = %config.id,
+                ok = result.ok,
+                latency_ms = ?result.latency_ms,
+                "HTTP monitor check complete"
+            );
 
-        let _ = app.emit("network-http-monitor-check", &result);
+            let _ = app.emit("network-http-monitor-check", &result);
 
-        if let Ok(mut guard) = last_result.lock() {
-            *guard = Some(result);
+            if let Ok(mut guard) = last_result.lock() {
+                *guard = Some(result);
+            }
         }
 
         tokio::select! {

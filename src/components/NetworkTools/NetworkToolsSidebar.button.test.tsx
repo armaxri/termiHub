@@ -37,6 +37,7 @@ function makeMonitor(id: string): HttpMonitorState {
       timeoutMs: 10_000,
     },
     running: true,
+    paused: false,
   };
 }
 

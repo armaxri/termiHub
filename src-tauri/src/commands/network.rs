@@ -333,13 +333,42 @@ pub fn network_http_monitor_start(
     manager.start_http_monitor(config)
 }
 
-/// Stop a running HTTP monitor.
+/// Stop a running HTTP monitor, keeping it listed (as not running) so it can be
+/// resumed. Use [`network_http_monitor_remove`] to delete it.
 #[tauri::command]
 pub fn network_http_monitor_stop(
     monitor_id: String,
     manager: State<'_, NetworkManager>,
 ) -> Result<(), TerminalError> {
     manager.stop_http_monitor(&monitor_id)
+}
+
+/// Remove an HTTP monitor entirely (cancel + drop handle + delete persisted
+/// config).
+#[tauri::command]
+pub fn network_http_monitor_remove(
+    monitor_id: String,
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
+    manager.remove_http_monitor(&monitor_id)
+}
+
+/// Pause a running HTTP monitor (suspend polling, keep the loop alive).
+#[tauri::command]
+pub fn network_http_monitor_pause(
+    monitor_id: String,
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
+    manager.pause_http_monitor(&monitor_id)
+}
+
+/// Resume a paused or stopped HTTP monitor with the same config.
+#[tauri::command]
+pub fn network_http_monitor_resume(
+    monitor_id: String,
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
+    manager.resume_http_monitor(&monitor_id)
 }
 
 /// Stop every running HTTP monitor at once.

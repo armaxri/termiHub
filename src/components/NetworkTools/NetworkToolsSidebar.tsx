@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import "./NetworkTools.css";
-import { Play, RefreshCw, Plus, Circle, StopCircle, AlertTriangle } from "lucide-react";
+import {
+  Play,
+  Pause,
+  RefreshCw,
+  Plus,
+  Circle,
+  StopCircle,
+  Trash2,
+  AlertTriangle,
+} from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   networkHttpMonitorList,
   networkHttpMonitorStop,
+  networkHttpMonitorRemove,
+  networkHttpMonitorPause,
+  networkHttpMonitorResume,
   onHttpMonitorCheck,
 } from "@/services/networkApi";
 import type { NetworkTool } from "@/types/terminal";
@@ -47,11 +59,22 @@ interface MonitorRowProps {
   monitor: HttpMonitorState;
   now: number;
   onStop: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+  onRemove: (id: string) => void;
   onOpen: (id: string) => void;
 }
 
-function MonitorRow({ monitor, now, onStop, onOpen }: MonitorRowProps) {
-  const { config, running, lastResult } = monitor;
+function MonitorRow({
+  monitor,
+  now,
+  onStop,
+  onPause,
+  onResume,
+  onRemove,
+  onOpen,
+}: MonitorRowProps) {
+  const { config, running, paused, lastResult } = monitor;
   const shortUrl = config.url.replace(/^https?:\/\//, "").slice(0, 24);
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
 
@@ -77,9 +100,11 @@ function MonitorRow({ monitor, now, onStop, onOpen }: MonitorRowProps) {
             {lastResult.ok ? `${lastResult.statusCode} · ${lastResult.latencyMs}ms` : "✗ down"}
           </span>
         )}
-        {!lastResult && running && (
+        {!lastResult && running && !paused && (
           <span className="network-sidebar__monitor-status">checking…</span>
         )}
+        {running && paused && <span className="network-sidebar__monitor-status">paused</span>}
+        {!running && <span className="network-sidebar__monitor-status">stopped</span>}
         {lastResult && (
           <span
             className={`network-sidebar__monitor-age${
@@ -106,6 +131,28 @@ function MonitorRow({ monitor, now, onStop, onOpen }: MonitorRowProps) {
           </span>
         )}
       </div>
+      {running && !paused && (
+        <Tooltip content="Pause monitor" side="left">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Pause monitor"
+            icon={<Pause size={12} />}
+            onClick={() => onPause(config.id)}
+          />
+        </Tooltip>
+      )}
+      {(paused || !running) && (
+        <Tooltip content="Resume monitor" side="left">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Resume monitor"
+            icon={<Play size={12} />}
+            onClick={() => onResume(config.id)}
+          />
+        </Tooltip>
+      )}
       {running && (
         <Tooltip content="Stop monitor" side="left">
           <Button
@@ -117,6 +164,15 @@ function MonitorRow({ monitor, now, onStop, onOpen }: MonitorRowProps) {
           />
         </Tooltip>
       )}
+      <Tooltip content="Remove monitor" side="left">
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label="Remove monitor"
+          icon={<Trash2 size={12} />}
+          onClick={() => onRemove(config.id)}
+        />
+      </Tooltip>
     </div>
   );
 }
@@ -197,6 +253,48 @@ export function NetworkToolsSidebar() {
     [refreshMonitors]
   );
 
+  const handlePauseMonitor = useCallback(
+    async (id: string) => {
+      try {
+        await networkHttpMonitorPause(id);
+        await refreshMonitors();
+        toast.success("Monitor paused");
+      } catch (err) {
+        frontendLog("network_sidebar", `Failed to pause monitor: ${err}`);
+        toast.error(`Failed to pause monitor: ${err}`);
+      }
+    },
+    [refreshMonitors]
+  );
+
+  const handleResumeMonitor = useCallback(
+    async (id: string) => {
+      try {
+        await networkHttpMonitorResume(id);
+        await refreshMonitors();
+        toast.success("Monitor resumed");
+      } catch (err) {
+        frontendLog("network_sidebar", `Failed to resume monitor: ${err}`);
+        toast.error(`Failed to resume monitor: ${err}`);
+      }
+    },
+    [refreshMonitors]
+  );
+
+  const handleRemoveMonitor = useCallback(
+    async (id: string) => {
+      try {
+        await networkHttpMonitorRemove(id);
+        await refreshMonitors();
+        toast.success("Monitor removed");
+      } catch (err) {
+        frontendLog("network_sidebar", `Failed to remove monitor: ${err}`);
+        toast.error(`Failed to remove monitor: ${err}`);
+      }
+    },
+    [refreshMonitors]
+  );
+
   const handleOpenMonitor = useCallback(
     (_id: string) => {
       openNetworkDiagnosticTab("http-monitor");
@@ -238,6 +336,9 @@ export function NetworkToolsSidebar() {
             monitor={m}
             now={now}
             onStop={handleStopMonitor}
+            onPause={handlePauseMonitor}
+            onResume={handleResumeMonitor}
+            onRemove={handleRemoveMonitor}
             onOpen={handleOpenMonitor}
           />
         ))}

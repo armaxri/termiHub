@@ -580,7 +580,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `layout-remove-tab-*-*` | `layout-remove-tab-${idx}-${tabIdx}` | `src/components/WorkspaceEditor/LayoutDesigner.tsx` |
 | `layout-sidebar-*` | `layout-sidebar-${pos}` | `src/components/Settings/CustomizeLayoutDialog.tsx` |
 | `layout-split-*` | `layout-split-${node.direction}` | `src/components/WorkspaceEditor/LayoutDesigner.tsx` |
-| `monitor-row-*` | `monitor-row-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `monitor-row-*` | `monitor-row-${config.id}` | `src/components/NetworkTools/HttpMonitorPanel.tsx`, `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `monitor-stale-*` | `monitor-stale-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `monitoring-connect-*` | `monitoring-connect-${conn.id}` | `src/components/StatusBar/StatusBar.tsx` |
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |

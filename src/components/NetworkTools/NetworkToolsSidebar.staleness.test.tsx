@@ -37,6 +37,7 @@ function makeMonitor(id: string, timestampMs: number, intervalMs: number): HttpM
       timeoutMs: 10_000,
     },
     running: true,
+    paused: false,
     lastResult: {
       monitorId: id,
       statusCode: 200,

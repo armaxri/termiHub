@@ -477,7 +477,17 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 key={m.config.id}
                 icon={<Globe size={14} />}
                 title={m.config.url}
-                badge={m.lastResult ? (m.lastResult.ok ? "up" : "down") : "connecting"}
+                badge={
+                  !m.running
+                    ? "stopped"
+                    : m.paused
+                      ? "paused"
+                      : m.lastResult
+                        ? m.lastResult.ok
+                          ? "up"
+                          : "down"
+                        : "connecting"
+                }
                 onKill={() => handleStopHttpMonitor(m.config.id)}
                 killLabel="Stop"
               />
@@ -589,7 +599,9 @@ type BadgeVariant =
   | "managed"
   | "external"
   | "up"
-  | "down";
+  | "down"
+  | "paused"
+  | "stopped";
 
 interface ConnectionRowProps {
   icon: React.ReactNode;

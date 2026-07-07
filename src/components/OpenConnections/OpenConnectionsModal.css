@@ -110,9 +110,15 @@
   color: var(--color-error);
 }
 
-.oc-row__badge--connecting {
+.oc-row__badge--connecting,
+.oc-row__badge--paused {
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
   color: var(--color-warning);
+}
+
+.oc-row__badge--stopped {
+  background: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  color: var(--text-secondary);
 }
 
 /* termiHub-managed X server: accent to signal termiHub ownership. */

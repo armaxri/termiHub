@@ -579,6 +579,9 @@ pub fn run() {
             commands::network::network_wol_device_delete,
             commands::network::network_http_monitor_start,
             commands::network::network_http_monitor_stop,
+            commands::network::network_http_monitor_remove,
+            commands::network::network_http_monitor_pause,
+            commands::network::network_http_monitor_resume,
             commands::network::network_http_monitor_stop_all,
             commands::network::network_http_monitor_list,
             // Embedded servers
