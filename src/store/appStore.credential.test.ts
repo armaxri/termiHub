@@ -122,32 +122,15 @@ describe("appStore credential store state", () => {
     expect(useAppStore.getState().unlockDialogOpen).toBe(false);
   });
 
-  // Master password setup state
-  it("masterPasswordSetupOpen is initially false", () => {
-    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(false);
-  });
-
-  it("masterPasswordSetupMode is initially setup", () => {
-    expect(useAppStore.getState().masterPasswordSetupMode).toBe("setup");
-  });
-
-  it("openMasterPasswordSetup sets open and mode", () => {
-    useAppStore.getState().openMasterPasswordSetup("change");
-    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(true);
-    expect(useAppStore.getState().masterPasswordSetupMode).toBe("change");
-
-    useAppStore.getState().closeMasterPasswordSetup();
-    useAppStore.getState().openMasterPasswordSetup("setup");
-    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(true);
-    expect(useAppStore.getState().masterPasswordSetupMode).toBe("setup");
-  });
-
-  it("closeMasterPasswordSetup sets open to false", () => {
-    useAppStore.getState().openMasterPasswordSetup("change");
-    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(true);
-
-    useAppStore.getState().closeMasterPasswordSetup();
-    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(false);
+  // Orphan-UI cleanup (#1144): the never-triggered MasterPasswordSetup modal and
+  // its store actions were removed. Setup happens via SecuritySettings' inline
+  // dialog + switchCredentialStore, so these dead members must not exist.
+  it("does not expose the orphaned master-password-setup modal state/actions", () => {
+    const state = useAppStore.getState() as Record<string, unknown>;
+    expect(state.masterPasswordSetupOpen).toBeUndefined();
+    expect(state.masterPasswordSetupMode).toBeUndefined();
+    expect(state.openMasterPasswordSetup).toBeUndefined();
+    expect(state.closeMasterPasswordSetup).toBeUndefined();
   });
 });
 

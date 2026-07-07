@@ -412,6 +412,72 @@ mod tests {
         assert!(!store.is_unlocked());
     }
 
+    // --- G8 (#1144): distinguish wrong-password from corrupt-file failures ---
+
+    #[test]
+    fn unlock_classified_wrong_password_reports_wrong_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("correct").unwrap();
+        store.lock();
+
+        let err = store.unlock_classified("wrong").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::WrongPassword),
+            "expected WrongPassword, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_correct_password_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("correct").unwrap();
+        store.lock();
+
+        store.unlock_classified("correct").unwrap();
+        assert!(store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_garbage_file_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        // Write a non-JSON file where the encrypted envelope should be.
+        fs::write(&store.file_path, b"this is not a valid envelope").unwrap();
+
+        let err = store.unlock_classified("any-password").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_unsupported_version_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        // Rewrite the envelope with an unsupported version number.
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.version = ENVELOPE_VERSION + 99;
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let err = store.unlock_classified("pw").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted for unsupported version, got {err:?}"
+        );
+    }
+
     #[test]
     fn set_then_get_returns_value() {
         let dir = tempfile::tempdir().unwrap();

@@ -288,6 +288,16 @@ mod tests {
     }
 
     #[test]
+    fn auto_lock_payload_flags_auto_true() {
+        // G7 (#1144): the auto-lock timer must tag its lock event with auto=true
+        // so the frontend can show the "auto-locked after inactivity" toast
+        // while a manual lock (auto=false) stays silent to avoid a double-toast.
+        let payload = LockedEventPayload { auto: true };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["auto"], serde_json::json!(true));
+    }
+
+    #[test]
     fn remaining_duration_decreases_over_time() {
         let mut inner = make_inner(Some(15), true);
         // Simulate activity 5 minutes ago.

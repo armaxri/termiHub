@@ -441,4 +441,65 @@ mod tests {
         assert!(result.is_ok());
         assert!(store.is_unlocked());
     }
+
+    // --- G8 (#1144): wrong password vs corrupt-file unlock classification ---
+
+    /// A wrong password maps to a non-corruption `UnlockError` so the UI shows
+    /// the retry (wrong password) affordance, not the reset-store one.
+    #[test]
+    fn unlock_store_classified_wrong_password_is_not_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("correct").unwrap();
+        store.lock();
+
+        let err = unlock_store_classified(&store, "wrong").unwrap_err();
+        assert!(!err.corrupted, "wrong password must not be flagged corrupt");
+    }
+
+    /// A corrupt credentials file maps to a corruption `UnlockError` so the UI
+    /// offers the reset-store affordance instead of an endless wrong-pw loop.
+    #[test]
+    fn unlock_store_classified_corrupt_file_is_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.enc");
+        std::fs::write(&path, b"not a valid envelope").unwrap();
+        let store = MasterPasswordStore::new(path);
+
+        let err = unlock_store_classified(&store, "any").unwrap_err();
+        assert!(err.corrupted, "corrupt file must be flagged corrupt");
+    }
+
+    /// An already-unlocked store stays idempotent under the classified path.
+    #[test]
+    fn unlock_store_classified_already_unlocked_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("pw").unwrap();
+        assert!(store.is_unlocked());
+
+        assert!(unlock_store_classified(&store, "pw").is_ok());
+    }
+
+    /// Resetting a corrupt store deletes the credentials file so the user can
+    /// start over (Unavailable → setup), rather than being stuck on unlock.
+    #[test]
+    fn reset_store_file_deletes_credentials_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.enc");
+        std::fs::write(&path, b"corrupt").unwrap();
+        let store = MasterPasswordStore::new(path.clone());
+        assert!(path.exists());
+
+        reset_store_file(&store).unwrap();
+        assert!(!path.exists(), "reset must delete the credentials file");
+    }
+
+    /// Resetting when no file exists is a benign no-op.
+    #[test]
+    fn reset_store_file_no_file_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        assert!(reset_store_file(&store).is_ok());
+    }
 }
