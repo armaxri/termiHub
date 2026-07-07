@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import { FileTypeSettings } from "./FileTypeSettings";
 
 vi.mock("@/themes", () => ({
@@ -17,7 +18,11 @@ let root: Root;
 
 function render(props: { visibleFields?: Set<string> } = {}) {
   act(() => {
-    root.render(<FileTypeSettings {...props} />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <FileTypeSettings {...props} />
+      </TooltipProvider>
+    );
   });
 }
 

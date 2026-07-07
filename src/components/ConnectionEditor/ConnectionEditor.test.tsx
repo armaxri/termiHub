@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
+import { TooltipProvider } from "@/components/ui";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
@@ -1098,11 +1099,13 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
   function renderFor(connId: string) {
     act(() => {
       root.render(
-        <ConnectionEditor
-          tabId="tab-jh-1"
-          meta={{ connectionId: connId, folderId: null }}
-          isVisible={true}
-        />
+        <TooltipProvider>
+          <ConnectionEditor
+            tabId="tab-jh-1"
+            meta={{ connectionId: connId, folderId: null }}
+            isVisible={true}
+          />
+        </TooltipProvider>
       );
     });
   }

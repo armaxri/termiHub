@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 
 vi.mock("@/themes", () => ({
@@ -30,7 +31,11 @@ let root: Root;
 
 function render(props: { visibleFields?: Set<string> } = {}) {
   act(() => {
-    root.render(<CustomGrammarsSettings {...props} />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <CustomGrammarsSettings {...props} />
+      </TooltipProvider>
+    );
   });
 }
 

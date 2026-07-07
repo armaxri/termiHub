@@ -5,7 +5,7 @@ import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import { registerCustomGrammars } from "@/utils/monacoCustomLanguages";
 import type { CustomLanguageGrammar } from "@/types/connection";
-import { Button } from "@/components/ui";
+import { Button, Tooltip } from "@/components/ui";
 
 interface CustomGrammarsSettingsProps {
   visibleFields?: Set<string>;
@@ -273,14 +273,16 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                     >
                       {g.name}
                     </span>
-                    <button
-                      className="settings-panel__file-remove"
-                      onClick={() => handleRemove(g.id)}
-                      title={`Remove grammar "${g.name}"`}
-                      data-testid={`custom-grammar-remove-${g.id}`}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <Tooltip content={`Remove grammar "${g.name}"`}>
+                      <button
+                        className="settings-panel__file-remove"
+                        onClick={() => handleRemove(g.id)}
+                        aria-label={`Remove grammar "${g.name}"`}
+                        data-testid={`custom-grammar-remove-${g.id}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </Tooltip>
                   </li>
                 ))}
               </ul>
