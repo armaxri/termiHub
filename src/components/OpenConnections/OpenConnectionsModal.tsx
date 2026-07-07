@@ -19,6 +19,7 @@ import {
   closeTerminal,
   closeAgentSession,
   cancelConnecting,
+  cancelConnectAgent,
   xServerStatus,
   xServerStop,
   LocalSessionInfo,
@@ -87,6 +88,15 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [loading, setLoading] = useState(false);
 
   const connectedAgents = remoteAgents.filter((a) => a.connectionState === "connected");
+
+  // Agents still establishing (connecting) or recovering (reconnecting) their
+  // transport. Previously hidden — the panel only listed "connected" agents — so
+  // a stuck connect or a failing reconnect had no visible, killable surface (G2,
+  // #1235). Connecting → cancel the in-flight handshake; reconnecting → kill the
+  // backoff loop by disconnecting.
+  const establishingAgents = remoteAgents.filter(
+    (a) => a.connectionState === "connecting" || a.connectionState === "reconnecting"
+  );
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -163,6 +173,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   const totalCount =
     connectingTabs.length +
+    establishingAgents.length +
     localSessions.length +
     connectedAgents.length +
     Object.values(proxySessions).reduce((s, arr) => s + arr.length, 0) +
@@ -181,6 +192,38 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleCancelAllConnecting = async () => {
     await Promise.all(connectingTabs.map((t) => cancelConnecting(t.id).catch(() => {})));
     connectingTabs.forEach((t) => closeTab(t.id, t.panelId));
+  };
+
+  // Cancel/kill an establishing (connecting) or recovering (reconnecting) agent.
+  // Connecting → cancel_connect_agent aborts the in-flight handshake; reconnecting
+  // → disconnect ends the backoff loop (sets alive=false). The backend is the
+  // single writer of connectionState, so the row clears when its event lands.
+  const handleCancelEstablishingAgent = async (
+    agentId: string,
+    state: "connecting" | "reconnecting"
+  ) => {
+    try {
+      if (state === "connecting") {
+        await cancelConnectAgent(agentId);
+        toast.success("Connect cancelled");
+      } else {
+        await disconnectRemoteAgent(agentId);
+        toast.success("Reconnect stopped");
+      }
+    } catch (err) {
+      frontendLog("open_connections", `Failed to cancel agent connect: ${err}`);
+      toast.error(`Failed to cancel: ${err}`);
+    }
+  };
+
+  const handleCancelAllEstablishingAgents = async () => {
+    await Promise.all(
+      establishingAgents.map((a) =>
+        a.connectionState === "connecting"
+          ? cancelConnectAgent(a.id).catch(() => {})
+          : disconnectRemoteAgent(a.id).catch(() => {})
+      )
+    );
   };
 
   const handleKillLocal = async (id: string) => {
@@ -320,6 +363,40 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 title={tab.title}
                 badge="connecting"
                 onKill={() => handleCancelConnecting(tab.id, tab.panelId)}
+              />
+            ))}
+          </Section>
+        )}
+
+        {/* Establishing / recovering agents (connecting or reconnecting) */}
+        {establishingAgents.length > 0 && (
+          <Section
+            title="Establishing / recovering"
+            icon={<Loader2 size={14} />}
+            count={establishingAgents.length}
+            onKillAll={handleCancelAllEstablishingAgents}
+            killAllLabel="Cancel All"
+            data-testid="open-connections-establishing-agents-section"
+          >
+            {establishingAgents.map((a) => (
+              <ConnectionRow
+                key={a.id}
+                icon={
+                  a.connectionState === "reconnecting" ? (
+                    <Server size={14} />
+                  ) : (
+                    <Loader2 size={14} />
+                  )
+                }
+                title={a.name}
+                badge={a.connectionState === "reconnecting" ? "reconnecting" : "connecting"}
+                onKill={() =>
+                  handleCancelEstablishingAgent(
+                    a.id,
+                    a.connectionState === "reconnecting" ? "reconnecting" : "connecting"
+                  )
+                }
+                killLabel="Cancel"
               />
             ))}
           </Section>
@@ -613,6 +690,7 @@ type BadgeVariant =
   | "dead"
   | "connected"
   | "connecting"
+  | "reconnecting"
   | "managed"
   | "external"
   | "up"

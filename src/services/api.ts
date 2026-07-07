@@ -748,6 +748,17 @@ export async function disconnectAgent(agentId: string): Promise<void> {
   await invoke("disconnect_agent", { agentId });
 }
 
+/**
+ * Cancel an in-flight (still connecting) agent connect. Aborts the blocking
+ * SSH + initialize handshake promptly instead of waiting out the connect
+ * timeout; the backend then emits `disconnected` (single writer). No-op if the
+ * connect already finished. Returns whether a connecting agent was found (G1,
+ * #1235).
+ */
+export async function cancelConnectAgent(agentId: string): Promise<boolean> {
+  return await invoke<boolean>("cancel_connect_agent", { agentId });
+}
+
 /** Gracefully shut down a remote agent and disconnect. Returns detached session count. */
 export async function shutdownAgent(agentId: string, reason?: string): Promise<number> {
   return await invoke<number>("shutdown_agent", { agentId, reason: reason ?? null });

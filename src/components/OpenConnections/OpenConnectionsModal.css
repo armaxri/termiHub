@@ -112,6 +112,7 @@
 }
 
 .oc-row__badge--connecting,
+.oc-row__badge--reconnecting,
 .oc-row__badge--paused {
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
   color: var(--color-warning);
