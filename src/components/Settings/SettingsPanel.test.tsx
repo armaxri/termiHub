@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
+import { TooltipProvider } from "@/components/ui";
 import { SettingsPanel } from "./SettingsPanel";
 
 vi.mock("@/themes", () => ({
@@ -45,7 +46,11 @@ let root: Root;
 
 function render() {
   act(() => {
-    root.render(<SettingsPanel tabId={TAB_ID} isVisible={true} />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <SettingsPanel tabId={TAB_ID} isVisible={true} />
+      </TooltipProvider>
+    );
   });
 }
 
