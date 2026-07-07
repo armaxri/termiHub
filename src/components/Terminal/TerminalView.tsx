@@ -176,7 +176,9 @@ export function TerminalView() {
           }
           frontendLog("disconnect", `agent connected: restarted ${restartedRetryCount} retry tabs`);
 
-          store.refreshAgentSessions(session_id);
+          // The sessions/definitions refresh is owned by `setAgentConnectionState`
+          // (called above for the "connected" transition), so it runs exactly
+          // once per connect (G4/#1234) — do not refresh again here.
         } else if (state === "reconnecting") {
           // Show the reconnecting spinner overlay on all tabs with an active
           // session for this agent.

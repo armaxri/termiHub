@@ -3360,12 +3360,14 @@ export const useAppStore = create<AppState>((set, get) => {
       const agent = state.remoteAgents.find((a) => a.id === agentId);
       if (!agent) return;
 
-      set((s) => ({
-        remoteAgents: s.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState: "connecting" as const } : a
-        ),
-      }));
-
+      // Single-writer rule (G4/#1234): `connectionState` is written ONLY by the
+      // backend `agent-state-change` event (via `setAgentConnectionState`). This
+      // action just kicks off the request and consumes the returned
+      // `capabilities` — it writes no `connecting`/`connected`/`disconnected`
+      // states. The backend is authoritative for every transition (it emits
+      // "connecting" up front and "connected"/"disconnected" on the outcome),
+      // so an optimistic write here could clobber a fast drop → "reconnecting"
+      // event that arrives before this promise settles.
       try {
         const config: RemoteAgentConfig = { ...agent.config };
         if (password && config.authMethod === "password") {
@@ -3373,28 +3375,21 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         const result = await apiConnectAgent(agentId, config, agent.agentSettings);
 
+        // Consume capabilities only (no connectionState write). Use a functional
+        // update so a state the event set in the meantime is preserved.
         set((s) => ({
           remoteAgents: s.remoteAgents.map((a) =>
-            a.id === agentId
-              ? {
-                  ...a,
-                  connectionState: "connected" as const,
-                  capabilities: result.capabilities,
-                  isExpanded: true,
-                }
-              : a
+            a.id === agentId ? { ...a, capabilities: result.capabilities, isExpanded: true } : a
           ),
         }));
 
-        // Fetch sessions and definitions
-        await get().refreshAgentSessions(agentId);
+        // The session/definition refresh is owned by the "connected" event
+        // (`setAgentConnectionState`), so it runs exactly once per connect and
+        // also covers the reconnect path — do not refresh here (de-dup, G4).
       } catch (err) {
         console.error(`Failed to connect agent ${agentId}:`, err);
-        set((s) => ({
-          remoteAgents: s.remoteAgents.map((a) =>
-            a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
-          ),
-        }));
+        // No optimistic "disconnected" write: the backend emits "disconnected"
+        // on every connect-failure path, so the event will drive the state.
         throw err;
       }
     },
@@ -3415,11 +3410,24 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     setAgentConnectionState: (agentId, connectionState) => {
+      // Single writer for `connectionState` (G4/#1234): only the backend
+      // `agent-state-change` event reaches this setter.
+      const previous = get().remoteAgents.find((a) => a.id === agentId)?.connectionState;
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) =>
           a.id === agentId ? { ...a, connectionState } : a
         ),
       }));
+
+      // The refresh of sessions/definitions is owned by the transition INTO
+      // "connected" — this is the single, de-duped refresh per connect (G4).
+      // Guarding on the previous state keeps a redundant/duplicate "connected"
+      // event from triggering a second refresh, and it also covers the
+      // reconnect path (reconnecting → connected) which never runs
+      // `connectRemoteAgent`.
+      if (connectionState === "connected" && previous !== "connected") {
+        void get().refreshAgentSessions(agentId);
+      }
     },
 
     clearAgentSessions: (agentId) => {
@@ -4328,6 +4336,14 @@ export const useAppStore = create<AppState>((set, get) => {
 
         // Connect any disconnected agents that have stored credentials so that
         // buildTabGroupsFromWorkspace can resolve their tabs to live terminals.
+        //
+        // `connectRemoteAgent` no longer writes `connectionState` or refreshes
+        // sessions (single-writer rule, G4/#1234) — those now flow through the
+        // async `agent-state-change` event, which may not have landed by the
+        // time this returns. This restore path builds the layout synchronously,
+        // so it tracks which agents connected (the request resolved) and drives
+        // the build off that set rather than the not-yet-updated store state.
+        const justConnectedAgentIds = new Set<string>();
         if (disconnectedAgentsNeedingCreds.length > 0) {
           await Promise.all(
             disconnectedAgentsNeedingCreds.map(async (agent) => {
@@ -4342,11 +4358,16 @@ export const useAppStore = create<AppState>((set, get) => {
                     ? resolution.password
                     : undefined;
                 await get().connectRemoteAgent(agent.id, password);
+                justConnectedAgentIds.add(agent.id);
               } catch {
                 // Connection failure is surfaced as agent-error tabs below
               }
             })
           );
+          // Populate sessions/definitions for the agents we just connected so
+          // buildTabGroupsFromWorkspace can resolve their tabs now — the
+          // event-driven refresh is fire-and-forget and may not have run yet.
+          await Promise.all([...justConnectedAgentIds].map((id) => get().refreshAgentSessions(id)));
         }
 
         // After the store is unlocked (or was already unlocked), resolve stored
@@ -4375,13 +4396,17 @@ export const useAppStore = create<AppState>((set, get) => {
           })
         );
 
-        // Re-read agent state so newly-connected agents are reflected in tab resolution.
+        // Re-read agent state so newly-connected agents are reflected in tab
+        // resolution. Agents we connected in this pass are treated as connected
+        // even if their `agent-state-change` "connected" event has not yet
+        // updated the store (single-writer rule, G4/#1234): a resolved connect
+        // request means the backend is connected.
         const freshState = get();
         const agentContext = {
           agents: freshState.remoteAgents.map((a) => ({
             id: a.id,
             name: a.name,
-            connected: a.connectionState === "connected",
+            connected: a.connectionState === "connected" || justConnectedAgentIds.has(a.id),
           })),
           definitions: freshState.agentDefinitions,
         };
