@@ -479,12 +479,21 @@ interface AppState {
   sftpLoading: boolean;
   sftpError: string | null;
   sftpConnectedHost: string | null;
+  /**
+   * The last config passed to `connectSftp`, retained so a failed connect can be
+   * retried (audit gap S1). Cleared on `disconnectSftp`.
+   */
+  sftpLastConfig: Record<string, unknown> | null;
   setCurrentPath: (path: string) => void;
   setFileEntries: (entries: FileEntry[]) => void;
   connectSftp: (config: Record<string, unknown>) => Promise<void>;
   disconnectSftp: () => Promise<void>;
   navigateSftp: (path: string) => Promise<void>;
   refreshSftp: () => Promise<void>;
+  /** Re-invoke `connectSftp` with the persisted last config (audit gap S1). */
+  retrySftp: () => Promise<void>;
+  /** Clear the SFTP error so the failed-connect placeholder resets (audit gap S1). */
+  dismissSftpError: () => void;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -859,6 +868,26 @@ let _sftpListSeq = 0;
 /** @internal Reset the SFTP list sequencer — for tests only. */
 export function _resetSftpListSeq(): void {
   _sftpListSeq = 0;
+}
+
+// Detects a mid-browse failure that means the underlying SFTP session is dead
+// (audit gap S2): the Rust side raises "SFTP session not found" when the slot is
+// gone, and russh reports channel/transport drops with these phrasings. On such
+// an error the front end must stop pretending it is connected (clear
+// sftpSessionId) so the auto-connect effect can re-establish and a Reconnect
+// control is offered — as opposed to a recoverable per-directory error (e.g.
+// "permission denied") which must leave the session intact.
+function isSftpSessionDeadError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("session not found") ||
+    m.includes("channel") ||
+    m.includes("disconnected") ||
+    m.includes("connection reset") ||
+    m.includes("broken pipe") ||
+    m.includes("not connected") ||
+    m.includes("transport")
+  );
 }
 
 // In-flight guards for tunnel start/stop (GAP 4, #1141). A rapid double-click on
@@ -2740,12 +2769,14 @@ export const useAppStore = create<AppState>((set, get) => {
     sftpLoading: false,
     sftpError: null,
     sftpConnectedHost: null,
+    sftpLastConfig: null,
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
 
     connectSftp: async (config: Record<string, unknown>) => {
-      set({ sftpLoading: true, sftpError: null });
+      // Retain the config so a failed connect can be retried (audit gap S1).
+      set({ sftpLoading: true, sftpError: null, sftpLastConfig: config });
       try {
         const sessionId = await sftpOpen(config);
         const homePath = `/home/${config.username as string}`;
@@ -2788,8 +2819,21 @@ export const useAppStore = create<AppState>((set, get) => {
         currentPath: "/",
         sftpError: null,
         sftpConnectedHost: null,
+        sftpLastConfig: null,
       });
     },
+
+    retrySftp: async () => {
+      const config = useAppStore.getState().sftpLastConfig;
+      if (!config) {
+        frontendLog("sftp", "retrySftp: no persisted config to retry with");
+        return;
+      }
+      frontendLog("sftp", "retrySftp: re-attempting SFTP connect");
+      await useAppStore.getState().connectSftp(config);
+    },
+
+    dismissSftpError: () => set({ sftpError: null }),
 
     navigateSftp: async (path: string) => {
       const sessionId = useAppStore.getState().sftpSessionId;
@@ -2806,9 +2850,17 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ fileEntries: entries, currentPath: path, sftpLoading: false });
       } catch (err) {
         if (seq !== _sftpListSeq) return;
+        const message = err instanceof Error ? err.message : String(err);
+        // A dead session (audit gap S2) must drop sftpSessionId so the UI stops
+        // looking connected and the auto-connect effect / Reconnect can recover.
+        const sessionDead = isSftpSessionDeadError(message);
+        if (sessionDead) {
+          frontendLog("sftp", `navigateSftp: session appears dead — clearing session (${message})`);
+        }
         set({
           sftpLoading: false,
-          sftpError: err instanceof Error ? err.message : String(err),
+          sftpError: message,
+          ...(sessionDead ? { sftpSessionId: null, sftpConnectedHost: null } : {}),
         });
       }
     },
@@ -2828,9 +2880,15 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ fileEntries: entries, sftpLoading: false });
       } catch (err) {
         if (seq !== _sftpListSeq) return;
+        const message = err instanceof Error ? err.message : String(err);
+        const sessionDead = isSftpSessionDeadError(message);
+        if (sessionDead) {
+          frontendLog("sftp", `refreshSftp: session appears dead — clearing session (${message})`);
+        }
         set({
           sftpLoading: false,
-          sftpError: err instanceof Error ? err.message : String(err),
+          sftpError: message,
+          ...(sessionDead ? { sftpSessionId: null, sftpConnectedHost: null } : {}),
         });
       }
     },
@@ -4132,7 +4190,23 @@ export const useAppStore = create<AppState>((set, get) => {
           state.defaultShell,
           agentContext
         );
-        if (builtGroups.length === 0) return;
+        // GAP G3 (#1146): a workspace that builds no launchable tabs (e.g. its
+        // referenced connections were all deleted, or it was saved empty) used
+        // to return silently, leaving the user with an unchanged window and no
+        // explanation. `buildTabGroupsFromWorkspace` maps one group per def, so
+        // "empty" means either zero groups or zero tabs across every group.
+        const builtTabCount = builtGroups.reduce(
+          (n, g) => n + getAllLeaves(g.rootPanel).reduce((m, leaf) => m + leaf.tabs.length, 0),
+          0
+        );
+        if (builtGroups.length === 0 || builtTabCount === 0) {
+          frontendLog(
+            "workspace",
+            `launchWorkspace(${workspaceId}): "${definition.name}" produced no launchable tabs`
+          );
+          toast.info(`Workspace "${definition.name}" had no launchable tabs`);
+          return;
+        }
         const firstGroup = builtGroups[0];
         set({
           tabGroups: builtGroups,
@@ -4142,7 +4216,10 @@ export const useAppStore = create<AppState>((set, get) => {
           activeWorkspaceName: definition.name,
         });
       } catch (err) {
+        // GAP G3 (#1146): a failed load used to be a silent console.error, so a
+        // launch that could not open anything looked like nothing happened.
         frontendLog("workspace", `Failed to launch workspace ${workspaceId}: ${String(err)}`);
+        toast.error("Could not launch workspace");
       } finally {
         set({ launchingWorkspaceId: null });
       }
@@ -4236,7 +4313,23 @@ export const useAppStore = create<AppState>((set, get) => {
           state.defaultShell,
           agentContext
         );
-        if (builtGroups.length === 0) return false;
+        // GAP G3 (#1146): a stored session whose tabs all fail to build (e.g.
+        // every referenced connection was deleted) used to return silently,
+        // leaving the user at an empty window indistinguishable from "nothing
+        // was saved". `buildTabGroupsFromWorkspace` maps one group per def, so
+        // "empty" means either zero groups or zero tabs across every group.
+        const builtTabCount = builtGroups.reduce(
+          (n, g) => n + getAllLeaves(g.rootPanel).reduce((m, leaf) => m + leaf.tabs.length, 0),
+          0
+        );
+        if (builtGroups.length === 0 || builtTabCount === 0) {
+          frontendLog(
+            "workspace",
+            "restoreLastSession: stored session produced no launchable tabs"
+          );
+          toast.info("Previous session had no launchable tabs");
+          return false;
+        }
         const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
         const activeGroup = builtGroups[idx];
         set({
@@ -4247,7 +4340,11 @@ export const useAppStore = create<AppState>((set, get) => {
         });
         return true;
       } catch (err) {
-        console.error("Failed to restore last session:", err);
+        // GAP G3 (#1146): a corrupt/failed last-session load used to be a silent
+        // console.error, so a user who had a populated session opened to a blank
+        // window with no explanation. Surface a recoverable error toast.
+        frontendLog("workspace", `Failed to restore last session: ${String(err)}`);
+        toast.error("Could not restore last session");
         return false;
       }
     },

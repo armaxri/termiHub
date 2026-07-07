@@ -37,14 +37,28 @@ vi.mock("@/services/lastSessionApi", () => ({
   clearLastSession: vi.fn(() => Promise.resolve()),
 }));
 
+// Spy on the shared toast hub so restore-failure feedback (G3, #1146) is observable.
+vi.mock("@/components/ui", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    loading: vi.fn(),
+    promise: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+
 import { useAppStore } from "./appStore";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
+import { toast } from "@/components/ui";
 import type { LastSession } from "@/types/lastSession";
 import { getAllLeaves } from "@/utils/panelTree";
 
 const mockSave = vi.mocked(saveLastSession);
 const mockLoad = vi.mocked(loadLastSession);
 const mockClear = vi.mocked(clearLastSession);
+const mockToast = vi.mocked(toast);
 
 describe("last session persistence", () => {
   beforeEach(() => {
@@ -110,6 +124,39 @@ describe("last session persistence", () => {
 
       expect(restored).toBe(false);
       expect(useAppStore.getState().tabGroups).toBe(before);
+      // A genuinely empty/absent session is not a failure — stay silent (G3, #1146).
+      expect(mockToast.error).not.toHaveBeenCalled();
+      expect(mockToast.info).not.toHaveBeenCalled();
+    });
+
+    // G3 (#1146): a corrupt/failed load must not leave the user at a blank
+    // window with no explanation — surface an error toast.
+    it("surfaces an error toast when the load fails", async () => {
+      mockLoad.mockRejectedValue(new Error("corrupt last-session.json"));
+
+      const restored = await useAppStore.getState().restoreLastSession();
+
+      expect(restored).toBe(false);
+      expect(mockToast.error).toHaveBeenCalledTimes(1);
+      expect(mockToast.error.mock.calls[0][0]).toMatch(/restore/i);
+    });
+
+    // G3 (#1146): a stored session whose tabs all fail to build (e.g. every
+    // referenced connection was deleted) must be surfaced, not silently dropped.
+    it("surfaces a notice when a stored session builds no launchable tabs", async () => {
+      mockLoad.mockResolvedValue({
+        version: "1",
+        activeGroupIndex: 0,
+        tabGroups: [{ name: "Gone", layout: { type: "leaf", tabs: [] } }],
+      });
+
+      const restored = await useAppStore.getState().restoreLastSession();
+
+      expect(restored).toBe(false);
+      expect(mockToast.info).toHaveBeenCalledTimes(1);
+      expect(mockToast.info.mock.calls[0][0]).toMatch(/no launchable tabs/i);
+      // Not an error — this is a soft notice.
+      expect(mockToast.error).not.toHaveBeenCalled();
     });
 
     it("rebuilds the live layout from a stored session", async () => {
@@ -140,6 +187,9 @@ describe("last session persistence", () => {
       expect(tabs.map((t) => t.title).sort()).toEqual(["Shell A", "Shell B"]);
       // Active group/panel point at the restored group.
       expect(state.activeTabGroupId).toBe(state.tabGroups[0].id);
+      // A successful restore must stay silent — no failure/notice toast (G3, #1146).
+      expect(mockToast.error).not.toHaveBeenCalled();
+      expect(mockToast.info).not.toHaveBeenCalled();
     });
   });
 
