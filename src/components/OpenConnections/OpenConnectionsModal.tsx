@@ -143,9 +143,19 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Include errored / reconnecting tunnels, not just connected/connecting: an
+  // errored tunnel still holds a leaked `active_tunnels` entry + pool guards, so
+  // it must be force-Stoppable from the canonical kill panel (#1240). stop_tunnel
+  // releases the leak and clears the persisted error (#1238).
   const activeTunnels = tunnels.filter((t) => {
     const state = tunnelStates[t.id];
-    return state && (state.status === "connected" || state.status === "connecting");
+    return (
+      state &&
+      (state.status === "connected" ||
+        state.status === "connecting" ||
+        state.status === "reconnecting" ||
+        state.status === "error")
+    );
   });
 
   // Only surface a live X server: a managed one that is running, or an adopted
@@ -454,13 +464,20 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           >
             {activeTunnels.map((t) => {
               const state = tunnelStates[t.id];
+              const status = state?.status ?? "connecting";
+              // Map the tunnel status onto a badge; connecting/reconnecting share
+              // the "connecting" badge, error surfaces its persisted message.
+              const badge: BadgeVariant =
+                status === "connected" ? "connected" : status === "error" ? "error" : "connecting";
               return (
                 <ConnectionRow
                   key={t.id}
                   icon={<ArrowLeftRight size={14} />}
                   title={t.name}
-                  badge={state?.status === "connected" ? "connected" : "connecting"}
+                  detail={status === "error" ? state?.error : undefined}
+                  badge={badge}
                   onKill={() => handleKillTunnel(t.id)}
+                  killLabel="Stop"
                 />
               );
             })}
@@ -648,7 +665,8 @@ type BadgeVariant =
   | "down"
   | "paused"
   | "stopped"
-  | "orphaned";
+  | "orphaned"
+  | "error";
 
 interface ConnectionRowProps {
   icon: React.ReactNode;

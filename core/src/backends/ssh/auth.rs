@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use socket2::TcpKeepalive;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::expand_config_value;
@@ -84,22 +83,10 @@ async fn do_connect_and_authenticate(
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("Connection failed: {e}")))?;
 
-    // Configure TCP keepalives on the connected socket before the SSH handshake.
-    // This mirrors the libssh2 setup: probe after 2 s idle, retry every 2 s,
-    // give up after 1 failed probe.
-    {
-        let ka = {
-            let base = TcpKeepalive::new()
-                .with_time(Duration::from_secs(2))
-                .with_interval(Duration::from_secs(2));
-            #[cfg(not(target_os = "windows"))]
-            let base = base.with_retries(1);
-            base
-        };
-        if let Err(e) = socket2::SockRef::from(&tokio_tcp).set_tcp_keepalive(&ka) {
-            tracing::warn!("TCP keepalive setup failed: {e}");
-        }
-    }
+    // Configure TCP keepalives on the connected socket before the SSH
+    // handshake so a half-open transport is torn down promptly. Shared with the
+    // telnet backend via `crate::net` to keep the tuning identical (#1123).
+    crate::net::enable_tcp_keepalive(&tokio_tcp);
 
     handshake_and_authenticate(config, tokio_tcp).await
 }
