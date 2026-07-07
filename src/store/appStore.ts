@@ -3844,14 +3844,14 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     deleteWorkspaceFromBackend: async (workspaceId) => {
-      try {
-        await apiDeleteWorkspace(workspaceId);
-        set((state) => ({
-          workspaces: state.workspaces.filter((ws) => ws.id !== workspaceId),
-        }));
-      } catch (err) {
-        console.error("Failed to delete workspace:", err);
-      }
+      // Only mutate local state after the backend delete resolves, and rethrow
+      // on failure so the caller can surface the error (GAP G7). A swallowed
+      // failure would optimistically remove the item, then silently "un-delete"
+      // it on the next loadWorkspaces with no explanation.
+      await apiDeleteWorkspace(workspaceId);
+      set((state) => ({
+        workspaces: state.workspaces.filter((ws) => ws.id !== workspaceId),
+      }));
     },
 
     duplicateWorkspaceInBackend: async (workspaceId) => {

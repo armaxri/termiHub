@@ -185,4 +185,59 @@ describe("WorkspaceSidebar", () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(toastError).not.toHaveBeenCalled();
   });
+
+  it("asks for confirmation before deleting and does not delete on click alone", () => {
+    const deleteWorkspaceFromBackend = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
+
+    act(() => {
+      root.render(<WorkspaceSidebar />);
+    });
+
+    // No confirm dialog before the delete button is pressed.
+    expect(query("confirm-delete-dialog")).toBeNull();
+
+    act(() => (query("workspace-delete-ws-1") as HTMLButtonElement).click());
+
+    // Confirm dialog appears; the backend delete has NOT been called yet.
+    expect(query("confirm-delete-dialog")).not.toBeNull();
+    expect(deleteWorkspaceFromBackend).not.toHaveBeenCalled();
+  });
+
+  it("deletes and surfaces success when the user confirms and the backend resolves", async () => {
+    const deleteWorkspaceFromBackend = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
+
+    act(() => {
+      root.render(<WorkspaceSidebar />);
+    });
+
+    act(() => (query("workspace-delete-ws-1") as HTMLButtonElement).click());
+    act(() => (query("confirm-delete-confirm") as HTMLButtonElement).click());
+    await flush();
+
+    expect(deleteWorkspaceFromBackend).toHaveBeenCalledWith("ws-1");
+    expect(query("confirm-delete-dialog")).toBeNull();
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("does not remove the workspace and surfaces an error when the backend delete rejects", async () => {
+    const deleteWorkspaceFromBackend = vi.fn().mockRejectedValue(new Error("lock poisoned"));
+    useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
+
+    act(() => {
+      root.render(<WorkspaceSidebar />);
+    });
+
+    act(() => (query("workspace-delete-ws-1") as HTMLButtonElement).click());
+    act(() => (query("confirm-delete-confirm") as HTMLButtonElement).click());
+    await flush();
+
+    expect(deleteWorkspaceFromBackend).toHaveBeenCalledWith("ws-1");
+    // The item must remain visible — a failed delete must not silently vanish.
+    expect(query("workspace-item-ws-1")).not.toBeNull();
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
 });

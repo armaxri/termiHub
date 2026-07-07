@@ -8,6 +8,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
+import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import "./WorkspaceSidebar.css";
 
 export function WorkspaceSidebar() {
@@ -21,6 +22,8 @@ export function WorkspaceSidebar() {
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  // The workspace pending deletion once the user confirms the destructive action.
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   const handleNew = useCallback(() => {
     openWorkspaceEditorTab(null);
@@ -47,12 +50,31 @@ export function WorkspaceSidebar() {
     [duplicateWorkspace]
   );
 
+  // Open the confirmation dialog rather than deleting immediately — delete is a
+  // destructive one-click action on a named workspace (GAP G7).
   const handleDelete = useCallback(
     (workspaceId: string) => {
-      deleteWorkspace(workspaceId);
+      const workspace = workspaces.find((ws) => ws.id === workspaceId);
+      if (!workspace) return;
+      setPendingDelete({ id: workspace.id, name: workspace.name });
     },
-    [deleteWorkspace]
+    [workspaces]
   );
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+    const { id, name } = pendingDelete;
+    setPendingDelete(null);
+    try {
+      // The store only removes the item from local state after the backend
+      // resolves, so a failed delete leaves the workspace visible.
+      await deleteWorkspace(id);
+      toast.success(`Deleted workspace ${name}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to delete workspace: ${message}`);
+    }
+  }, [pendingDelete, deleteWorkspace]);
 
   const handleSaveCurrent = useCallback(
     async (name: string, scope: SaveWorkspaceScope, description?: string) => {
@@ -179,6 +201,14 @@ export function WorkspaceSidebar() {
           onCancel={() => setShowSaveDialog(false)}
         />
       )}
+      <ConfirmDeleteDialog
+        open={pendingDelete !== null}
+        message={
+          pendingDelete ? `Delete workspace "${pendingDelete.name}"? This cannot be undone.` : ""
+        }
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
