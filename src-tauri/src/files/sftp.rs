@@ -468,3 +468,40 @@ impl SftpManager {
             .ok_or_else(|| TerminalError::SftpSessionNotFound(id.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    /// The lock helper must map a poisoned mutex to a recoverable
+    /// `TerminalError` instead of panicking (audit GAP C1, #1143).
+    #[test]
+    fn lock_session_maps_poisoned_mutex_to_error() {
+        let mutex = Arc::new(Mutex::new(0i32));
+
+        // Poison the mutex by panicking while holding the lock.
+        let poisoner = Arc::clone(&mutex);
+        let handle = thread::spawn(move || {
+            let _guard = poisoner.lock().expect("first lock should succeed");
+            panic!("intentional panic to poison the mutex");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+
+        // A raw `.lock().unwrap()` would panic here; the helper must not.
+        let result = lock_session(&mutex);
+        assert!(
+            matches!(result, Err(TerminalError::SshError(_))),
+            "poisoned lock should return a recoverable SshError, got {result:?}"
+        );
+    }
+
+    /// On a healthy mutex the helper returns a usable guard.
+    #[test]
+    fn lock_session_returns_guard_when_healthy() {
+        let mutex = Mutex::new(41i32);
+        let mut guard = lock_session(&mutex).expect("healthy lock should succeed");
+        *guard += 1;
+        assert_eq!(*guard, 42);
+    }
+}
