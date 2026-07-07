@@ -3,7 +3,7 @@ import { Play, Square, Pencil, Copy, Trash2, ExternalLink, Clipboard } from "luc
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { toast } from "@/components/ui";
+import { toast, Tooltip } from "@/components/ui";
 import {
   EmbeddedServerConfig,
   ServerState,
@@ -133,65 +133,75 @@ export function EmbeddedServerItem({
             </span>
             <div className="server-item__actions">
               {active ? (
-                <button
-                  className="server-item__action"
-                  title="Stop"
-                  data-testid={`server-stop-${config.id}`}
-                  disabled={busy}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void handleStop();
-                  }}
-                >
-                  <Square size={12} />
-                </button>
+                <Tooltip content="Stop" side="top">
+                  <button
+                    className="server-item__action"
+                    aria-label="Stop"
+                    data-testid={`server-stop-${config.id}`}
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleStop();
+                    }}
+                  >
+                    <Square size={12} />
+                  </button>
+                </Tooltip>
               ) : (
+                <Tooltip content="Start" side="top">
+                  <button
+                    className="server-item__action"
+                    aria-label="Start"
+                    data-testid={`server-start-${config.id}`}
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleStart();
+                    }}
+                  >
+                    <Play size={12} />
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip content="Edit" side="top">
                 <button
                   className="server-item__action"
-                  title="Start"
-                  data-testid={`server-start-${config.id}`}
-                  disabled={busy}
+                  aria-label="Edit"
+                  data-testid={`server-edit-${config.id}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    void handleStart();
+                    onEdit(config.id);
                   }}
                 >
-                  <Play size={12} />
+                  <Pencil size={12} />
                 </button>
-              )}
-              <button
-                className="server-item__action"
-                title="Edit"
-                data-testid={`server-edit-${config.id}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(config.id);
-                }}
-              >
-                <Pencil size={12} />
-              </button>
-              <button
-                className="server-item__action"
-                title="Duplicate"
-                data-testid={`server-duplicate-${config.id}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDuplicate(config.id);
-                }}
-              >
-                <Copy size={12} />
-              </button>
-              <button
-                className="server-item__action server-item__action--danger"
-                title="Delete"
-                data-testid={`server-delete-${config.id}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(config.id);
-                }}
-              >
-                <Trash2 size={12} />
-              </button>
+              </Tooltip>
+              <Tooltip content="Duplicate" side="top">
+                <button
+                  className="server-item__action"
+                  aria-label="Duplicate"
+                  data-testid={`server-duplicate-${config.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDuplicate(config.id);
+                  }}
+                >
+                  <Copy size={12} />
+                </button>
+              </Tooltip>
+              <Tooltip content="Delete" side="top">
+                <button
+                  className="server-item__action server-item__action--danger"
+                  aria-label="Delete"
+                  data-testid={`server-delete-${config.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(config.id);
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </Tooltip>
             </div>
           </div>
           <div className="server-item__details">

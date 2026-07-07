@@ -1,4 +1,5 @@
 import { Play, Square, Pencil, Copy, Trash2 } from "lucide-react";
+import { Tooltip } from "@/components/ui";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
@@ -62,63 +63,73 @@ export function TunnelListItem({
         </span>
         <div className="tunnel-item__actions">
           {isActive ? (
-            <button
-              className="tunnel-item__action"
-              title="Stop"
-              data-testid={`tunnel-stop-${tunnel.id}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onStop(tunnel.id);
-              }}
-            >
-              <Square size={12} />
-            </button>
+            <Tooltip content="Stop" side="top">
+              <button
+                className="tunnel-item__action"
+                aria-label="Stop"
+                data-testid={`tunnel-stop-${tunnel.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStop(tunnel.id);
+                }}
+              >
+                <Square size={12} />
+              </button>
+            </Tooltip>
           ) : (
+            <Tooltip content="Start" side="top">
+              <button
+                className="tunnel-item__action"
+                aria-label="Start"
+                data-testid={`tunnel-start-${tunnel.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStart(tunnel.id);
+                }}
+              >
+                <Play size={12} />
+              </button>
+            </Tooltip>
+          )}
+          <Tooltip content="Edit" side="top">
             <button
               className="tunnel-item__action"
-              title="Start"
-              data-testid={`tunnel-start-${tunnel.id}`}
+              aria-label="Edit"
+              data-testid={`tunnel-edit-${tunnel.id}`}
               onClick={(e) => {
                 e.stopPropagation();
-                onStart(tunnel.id);
+                onEdit(tunnel.id);
               }}
             >
-              <Play size={12} />
+              <Pencil size={12} />
             </button>
-          )}
-          <button
-            className="tunnel-item__action"
-            title="Edit"
-            data-testid={`tunnel-edit-${tunnel.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(tunnel.id);
-            }}
-          >
-            <Pencil size={12} />
-          </button>
-          <button
-            className="tunnel-item__action"
-            title="Duplicate"
-            data-testid={`tunnel-duplicate-${tunnel.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate(tunnel.id);
-            }}
-          >
-            <Copy size={12} />
-          </button>
-          <button
-            className="tunnel-item__action"
-            title="Delete"
-            data-testid={`tunnel-delete-${tunnel.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(tunnel.id);
-            }}
-          >
-            <Trash2 size={12} />
-          </button>
+          </Tooltip>
+          <Tooltip content="Duplicate" side="top">
+            <button
+              className="tunnel-item__action"
+              aria-label="Duplicate"
+              data-testid={`tunnel-duplicate-${tunnel.id}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDuplicate(tunnel.id);
+              }}
+            >
+              <Copy size={12} />
+            </button>
+          </Tooltip>
+          <Tooltip content="Delete" side="top">
+            <button
+              className="tunnel-item__action"
+              aria-label="Delete"
+              data-testid={`tunnel-delete-${tunnel.id}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(tunnel.id);
+              }}
+            >
+              <Trash2 size={12} />
+            </button>
+          </Tooltip>
         </div>
       </div>
       <div className="tunnel-item__details">

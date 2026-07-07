@@ -289,7 +289,15 @@ impl EmbeddedServerManager {
         for cfg in configs {
             if cfg.auto_start {
                 if let Err(e) = self.start_server(&cfg.id) {
-                    tracing::warn!(id = %cfg.id, "Failed to auto-start embedded server: {e}");
+                    // Surface the failure (e.g. port busy at boot) as an Error
+                    // state so the sidebar shows the server red with a reason,
+                    // instead of silently leaving it stopped (GAP G7, #1145).
+                    let msg = e.to_string();
+                    tracing::warn!(id = %cfg.id, "Failed to auto-start embedded server: {msg}");
+                    let state = auto_start_error_state(&cfg.id, &msg);
+                    let _ = self
+                        .app_handle
+                        .emit("embedded-server-status-changed", &state);
                 }
             }
         }
@@ -299,6 +307,14 @@ impl EmbeddedServerManager {
 
     /// Attempt a quick bind to check whether the port is available.
     fn check_port(&self, config: &EmbeddedServerConfig) -> Result<(), TerminalError> {
+        Self::check_port_config(config)
+    }
+
+    /// Attempt a quick bind to check whether a config's port is available.
+    ///
+    /// Static so the pre-flight check can be exercised without a live manager
+    /// (and its [`AppHandle`]).
+    fn check_port_config(config: &EmbeddedServerConfig) -> Result<(), TerminalError> {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
             ServerType::Tftp => {
@@ -334,5 +350,73 @@ impl EmbeddedServerManager {
         let _ = self
             .app_handle
             .emit("embedded-server-status-changed", &state);
+    }
+}
+
+/// Build the `Error` [`ServerState`] surfaced when a server marked `auto_start`
+/// fails to start at launch (e.g. its port is already in use).
+///
+/// Keeps the failure visible in the sidebar (red, with a reason) instead of
+/// silently leaving the server stopped (GAP G7, #1145).
+fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
+    ServerState {
+        server_id: server_id.to_string(),
+        status: ServerStatus::Error,
+        error: Some(error.to_string()),
+        stats: ServerStats::default(),
+        started_at: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A port bound at boot must not cause a silent no-op: the auto-start
+    /// failure has to surface as an `Error` state carrying the reason so the
+    /// sidebar can show the server red at launch (GAP G7, #1145).
+    #[test]
+    fn auto_start_failure_surfaces_error_state_with_message() {
+        // Bind a TCP port so the pre-flight bind check fails deterministically.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("should bind an ephemeral port for the test");
+        let busy_port = listener
+            .local_addr()
+            .expect("bound listener should expose its address")
+            .port();
+
+        let config = EmbeddedServerConfig {
+            id: "auto-http".to_string(),
+            name: "Auto HTTP".to_string(),
+            server_type: ServerType::Http,
+            root_directory: ".".to_string(),
+            bind_host: "127.0.0.1".to_string(),
+            port: busy_port,
+            auto_start: true,
+            read_only: true,
+            directory_listing: None,
+            ftp_auth: None,
+        };
+
+        // Reproduce the auto-start pre-flight failure: the port is taken.
+        let err = EmbeddedServerManager::check_port_config(&config)
+            .expect_err("binding an already-bound port must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("already in use"),
+            "error should explain the port is busy, got: {msg}"
+        );
+
+        // The failure must be turned into a visible Error state, not swallowed.
+        let state = auto_start_error_state(&config.id, &msg);
+        assert_eq!(state.server_id, "auto-http");
+        assert_eq!(state.status, ServerStatus::Error);
+        assert_eq!(state.error.as_deref(), Some(msg.as_str()));
+        assert!(
+            state.error.is_some_and(|e| e.contains("already in use")),
+            "surfaced error must carry the reason"
+        );
+
+        drop(listener);
     }
 }
