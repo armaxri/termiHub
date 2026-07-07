@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use russh_sftp::client::SftpSession as RusshSftp;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,6 +13,20 @@ use termihub_core::files::{FileBackend, FileEntry};
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
+
+/// Lock a mutex, mapping a poisoned lock to a recoverable [`TerminalError`]
+/// instead of panicking.
+///
+/// A prior SFTP op that panicked while holding the lock poisons the `Mutex`;
+/// a raw `.lock().unwrap()` would then abort the whole process on every
+/// subsequent command. Mapping the error keeps the session recoverable
+/// (audit GAP C1, issue #1143). Mirrors the error mapping already used by the
+/// [`SftpFileBackend`] impl.
+pub fn lock_session<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, TerminalError> {
+    mutex
+        .lock()
+        .map_err(|_| TerminalError::SshError("SFTP session lock poisoned".to_string()))
+}
 
 /// SFTP session backed by a dedicated SSH connection.
 ///
@@ -447,7 +461,7 @@ impl SftpManager {
     pub fn open_session(&self, config: &SshConfig) -> Result<String, TerminalError> {
         let session = SftpSession::new(config)?;
         let id = uuid::Uuid::new_v4().to_string();
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = lock_session(&self.sessions)?;
         sessions.insert(id.clone(), Arc::new(Mutex::new(session)));
         Ok(id)
     }
@@ -455,16 +469,58 @@ impl SftpManager {
     /// Close and drop an SFTP session.
     pub fn close_session(&self, id: &str) {
         info!(session_id = id, "Closing SFTP session");
-        let mut sessions = self.sessions.lock().unwrap();
+        // Recover the guard even if the map mutex is poisoned — removing a
+        // session is cleanup and must not itself panic (audit GAP C1, #1143).
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         sessions.remove(id);
     }
 
     /// Get a session Arc for use outside the manager lock.
     pub fn get_session(&self, id: &str) -> Result<Arc<Mutex<SftpSession>>, TerminalError> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = lock_session(&self.sessions)?;
         sessions
             .get(id)
             .cloned()
             .ok_or_else(|| TerminalError::SftpSessionNotFound(id.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    /// The lock helper must map a poisoned mutex to a recoverable
+    /// `TerminalError` instead of panicking (audit GAP C1, #1143).
+    #[test]
+    fn lock_session_maps_poisoned_mutex_to_error() {
+        let mutex = Arc::new(Mutex::new(0i32));
+
+        // Poison the mutex by panicking while holding the lock.
+        let poisoner = Arc::clone(&mutex);
+        let handle = thread::spawn(move || {
+            let _guard = poisoner.lock().expect("first lock should succeed");
+            panic!("intentional panic to poison the mutex");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+
+        // A raw `.lock().unwrap()` would panic here; the helper must not.
+        let result = lock_session(&mutex);
+        assert!(
+            matches!(result, Err(TerminalError::SshError(_))),
+            "poisoned lock should return a recoverable SshError, got {result:?}"
+        );
+    }
+
+    /// On a healthy mutex the helper returns a usable guard.
+    #[test]
+    fn lock_session_returns_guard_when_healthy() {
+        let mutex = Mutex::new(41i32);
+        let mut guard = lock_session(&mutex).expect("healthy lock should succeed");
+        *guard += 1;
+        assert_eq!(*guard, 42);
     }
 }
