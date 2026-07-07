@@ -298,6 +298,57 @@ describe("appStore — monitoring", () => {
     });
   });
 
+  // Audit gap G10: the first sample reports CPU 0% (no prior delta), so the
+  // status bar shows a priming indicator until the second sample. The store
+  // tracks progress via monitoringSampleCount.
+  describe("monitoringSampleCount (CPU priming)", () => {
+    it("is 1 after the first SSH connect fetch", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+
+      expect(useAppStore.getState().monitoringSampleCount).toBe(1);
+    });
+
+    it("increments to 2 after a subsequent refresh", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+
+      mockMonitoringFetchStats.mockResolvedValue({ ...TEST_STATS, cpuUsagePercent: 40 });
+      await useAppStore.getState().refreshMonitoring();
+
+      expect(useAppStore.getState().monitoringSampleCount).toBe(2);
+    });
+
+    it("resets to 0 on disconnect", async () => {
+      mockMonitoringClose.mockResolvedValue(undefined);
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+        monitoringSampleCount: 5,
+      });
+
+      await useAppStore.getState().disconnectMonitoring();
+
+      expect(useAppStore.getState().monitoringSampleCount).toBe(0);
+    });
+
+    it("resets to 0 at the start of a fresh connect", async () => {
+      // Simulate a stale counter from a previous session.
+      useAppStore.setState({ monitoringSampleCount: 7 });
+      mockMonitoringOpen.mockResolvedValue("session-456");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+
+      // Reset to 0, then +1 for the initial fetch = 1.
+      expect(useAppStore.getState().monitoringSampleCount).toBe(1);
+    });
+  });
+
   describe("stats cache", () => {
     it("disconnectMonitoring saves stats to cache keyed by host", async () => {
       mockMonitoringClose.mockResolvedValue(undefined);
