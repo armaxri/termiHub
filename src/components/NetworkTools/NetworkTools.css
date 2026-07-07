@@ -350,9 +350,32 @@
 }
 
 .network-sidebar__monitor-status {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-disabled);
   white-space: nowrap;
+}
+
+/* Relative "checked N ago" label; the freshest reading's age lives here so a
+   long-interval monitor no longer looks perpetually current (audit gap #11). */
+.network-sidebar__monitor-age {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--text-disabled);
+  white-space: nowrap;
+}
+
+.network-sidebar__monitor-age--stale {
+  color: var(--color-warning);
+}
+
+/* Overdue chip: shown when the last check is older than 2× the interval. */
+.network-sidebar__monitor-stale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--color-warning);
 }
 
 /* The Monitors-header refresh button needs a little breathing room from the

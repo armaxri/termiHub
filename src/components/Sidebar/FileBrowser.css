@@ -262,3 +262,10 @@
   font-size: var(--font-size-sm);
   text-align: center;
 }
+
+/* Recovery controls (Retry / Dismiss) shown under a failed-connect message. */
+.file-browser__error-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}

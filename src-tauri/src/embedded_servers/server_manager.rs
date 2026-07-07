@@ -226,14 +226,28 @@ impl EmbeddedServerManager {
         };
 
         {
-            let active = self
+            let mut active = self
                 .active
                 .lock()
                 .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))?;
-            if active.contains_key(server_id) {
-                return Err(TerminalError::EmbeddedServerError(format!(
-                    "Server {server_id} is already running"
-                )));
+            match active.get(server_id) {
+                // A live server (no runtime error recorded) genuinely blocks a
+                // second start.
+                Some(srv) if active_entry_is_live(&srv.error) => {
+                    return Err(TerminalError::EmbeddedServerError(format!(
+                        "Server {server_id} is already running"
+                    )));
+                }
+                // GAP G2/G9: a server that failed at runtime leaves a dead husk
+                // in `active`. Drop it so `Error → Stopped` is real and this
+                // start acts as a Retry instead of being rejected as "already
+                // running". Its thread has already exited (it emitted `Error`).
+                Some(_) => {
+                    if let Some(dead) = active.remove(server_id) {
+                        dead.shutdown.store(true, Ordering::Relaxed);
+                    }
+                }
+                None => {}
             }
         }
 
@@ -432,6 +446,22 @@ impl EmbeddedServerManager {
     }
 }
 
+/// Decide whether an `active` map entry represents a *live* server (as opposed
+/// to a dead husk left behind by a runtime failure).
+///
+/// The server thread records the failure reason into its shared `error` slot and
+/// then exits, but the manager keeps the map entry so `get_states` can keep
+/// surfacing the error. A live entry (empty error slot) must block a second
+/// concurrent start; a failed entry (error slot set) must NOT, so a subsequent
+/// `start_server` acts as a Retry rather than being rejected as "already
+/// running" — making `Error → Stopped` a real, escapable transition
+/// (GAP G2/G9, #1145).
+fn active_entry_is_live(error: &Arc<Mutex<Option<String>>>) -> bool {
+    // If the lock is poisoned we cannot prove the server is healthy, so treat it
+    // as not-live and allow a fresh start to recover.
+    error.lock().map(|slot| slot.is_none()).unwrap_or(false)
+}
+
 /// Build the `Error` [`ServerState`] surfaced when a server marked `auto_start`
 /// fails to start at launch (e.g. its port is already in use).
 ///
@@ -522,6 +552,33 @@ mod tests {
         });
         let outcome = decide_bind_outcome(rx.recv_timeout(BIND_CONFIRM_TIMEOUT));
         assert!(matches!(outcome, BindOutcome::Failed(_)));
+    }
+
+    /// A freshly-spawned server whose error slot is still empty is live and must
+    /// block a second, concurrent start with "already running".
+    #[test]
+    fn active_entry_without_error_is_live() {
+        let error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        assert!(
+            active_entry_is_live(&error),
+            "a running server (no error recorded) must count as live"
+        );
+    }
+
+    /// GAP G2/G9: once a server thread has failed at runtime its `active` entry is
+    /// a dead husk — `active_entry_is_live` must report `false` so `start_server`
+    /// no longer rejects a retry with "already running". This makes `Error →
+    /// Stopped` real and Start/Retry work again, while `get_states` still surfaces
+    /// the recorded error until the retry happens.
+    #[test]
+    fn errored_active_entry_is_not_live_so_start_is_allowed() {
+        let error: Arc<Mutex<Option<String>>> =
+            Arc::new(Mutex::new(Some("Port 8080 is already in use".to_string())));
+        assert!(
+            !active_entry_is_live(&error),
+            "a server whose error slot is set must NOT count as live, so a retry \
+             (start_server) is allowed instead of being blocked as 'already running'"
+        );
     }
 
     /// A port bound at boot must not cause a silent no-op: the auto-start
