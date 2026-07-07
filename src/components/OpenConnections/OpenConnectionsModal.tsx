@@ -23,7 +23,6 @@ import {
   LocalSessionInfo,
   AgentSessionInfo,
 } from "@/services/api";
-import { TunnelState } from "@/types/tunnel";
 import { XServerStatusReport } from "@/types/xserver";
 import { XServerSetupDialog } from "./XServerSetupDialog";
 import "./OpenConnectionsModal.css";
@@ -50,6 +49,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
   const tunnels = useAppStore((s) => s.tunnels);
+  // Live single source of truth for tunnel status (kept in sync by tunnel
+  // events); the panel reads it directly so it never drifts from the sidebar.
+  const tunnelStates = useAppStore((s) => s.tunnelStates);
   const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
@@ -68,7 +70,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [localSessions, setLocalSessions] = useState<LocalSessionInfo[]>([]);
   const [proxySessions, setProxySessions] = useState<ProxySessionsState>({});
   const [agentSessions, setAgentSessions] = useState<AgentSessionsState>({});
-  const [tunnelStates, setTunnelStates] = useState<TunnelState[]>([]);
   const [xServer, setXServer] = useState<XServerStatusReport | null>(null);
   const [xServerSetupOpen, setXServerSetupOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -108,17 +109,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   useEffect(() => {
     if (open) {
       void loadData();
-      // Tunnel states are already in the store; grab them.
-      import("@/services/tunnelApi").then(({ getTunnelStatuses }) => {
-        getTunnelStatuses()
-          .then(setTunnelStates)
-          .catch(() => {});
-      });
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeTunnels = tunnels.filter((t) => {
-    const state = tunnelStates.find((ts) => ts.tunnelId === t.id);
+    const state = tunnelStates[t.id];
     return state && (state.status === "connected" || state.status === "connecting");
   });
 
@@ -211,14 +206,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     setAgentSessions((prev) => ({ ...prev, [agentId]: [] }));
   };
 
+  // stopTunnel updates the store's live tunnelStates (via tunnel events), which
+  // this panel now reads directly — no separate local copy to prune.
   const handleKillTunnel = async (tunnelId: string) => {
     await stopTunnel(tunnelId);
-    setTunnelStates((prev) => prev.filter((ts) => ts.tunnelId !== tunnelId));
   };
 
   const handleKillAllTunnels = async () => {
     await Promise.all(activeTunnels.map((t) => stopTunnel(t.id)));
-    setTunnelStates([]);
   };
 
   const handleStopXServer = async () => {
@@ -363,7 +358,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             onKillAll={handleKillAllTunnels}
           >
             {activeTunnels.map((t) => {
-              const state = tunnelStates.find((ts) => ts.tunnelId === t.id);
+              const state = tunnelStates[t.id];
               return (
                 <ConnectionRow
                   key={t.id}

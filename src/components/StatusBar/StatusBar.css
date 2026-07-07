@@ -229,6 +229,11 @@
   color: var(--color-error);
 }
 
+/* Subtle "not connected" affordance after a cancelled password prompt (G8). */
+.monitoring-status__cancelled {
+  color: var(--text-secondary);
+}
+
 /* Monitoring connection picker dropdown */
 .monitoring-picker__content {
   min-width: 180px;

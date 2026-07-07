@@ -653,11 +653,22 @@ interface AppState {
    * gap G10.
    */
   monitoringSampleCount: number;
+  /**
+   * True when auto-connect was aborted because the user cancelled the password
+   * prompt. The status bar renders a subtle "Monitoring not connected"
+   * affordance (with a reachable Retry) instead of failing silently. Reset on
+   * connect start, disconnect, and retry. See audit gap G8.
+   */
+  monitoringCancelled: boolean;
   /** Last-known stats per host key, persisted across tab switches for instant display on reconnect. */
   monitoringStatsCache: Record<string, SystemStats>;
   connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
   disconnectMonitoring: () => Promise<void>;
   refreshMonitoring: () => Promise<void>;
+  /** Clear a lingering monitoringError so a stale tooltip cannot persist across hosts (audit gap G9). */
+  clearMonitoringError: () => void;
+  /** Set/reset the "connect was cancelled" affordance flag (audit gap G8). */
+  setMonitoringCancelled: (cancelled: boolean) => void;
   /** Per-session capabilities fetched after session creation (keyed by sessionId). */
   sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
   setSessionCapabilities: (
@@ -695,6 +706,12 @@ interface AppState {
   deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
   duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
   openWorkspaceEditorTab: (workspaceId: string | null) => void;
+  /**
+   * The id of the workspace whose launch is currently in flight, or `null` when
+   * none is launching. Used to guard against re-entrant `launchWorkspace` calls
+   * (double-click / repeated Play) and to disable the Launch controls in the UI.
+   */
+  launchingWorkspaceId: string | null;
   launchWorkspace: (workspaceId: string) => Promise<void>;
   /** scope "all" captures all tab groups; "active" captures only the active group. */
   saveCurrentAsWorkspace: (
@@ -824,6 +841,19 @@ let _connAppliedSeq = 0;
 export function _resetConnectionReloadSeq(): void {
   _connReloadSeq = 0;
   _connAppliedSeq = 0;
+}
+
+// Monotonic sequencer for SFTP directory-list requests (GAP R1, #1143).
+// navigateSftp/refreshSftp await sftpListDir with no ordering guarantee, so when
+// two navigations overlap the response that resolves LAST wins currentPath/
+// fileEntries — leaving the path and displayed list desynced. Each list request
+// captures the next seq; a response only commits state if it is still the latest
+// request, so a stale (superseded) response is ignored.
+let _sftpListSeq = 0;
+
+/** @internal Reset the SFTP list sequencer — for tests only. */
+export function _resetSftpListSeq(): void {
+  _sftpListSeq = 0;
 }
 
 // In-flight guards for tunnel start/stop (GAP 4, #1141). A rapid double-click on
@@ -2759,11 +2789,18 @@ export const useAppStore = create<AppState>((set, get) => {
     navigateSftp: async (path: string) => {
       const sessionId = useAppStore.getState().sftpSessionId;
       if (!sessionId) return;
+      const seq = ++_sftpListSeq;
       set({ sftpLoading: true, sftpError: null });
       try {
         const entries = await sftpListDir(sessionId, path);
+        // Ignore a stale response: a newer navigate/refresh superseded this one.
+        if (seq !== _sftpListSeq) {
+          frontendLog("sftp", `navigateSftp: dropping stale list for ${path} (seq ${seq})`);
+          return;
+        }
         set({ fileEntries: entries, currentPath: path, sftpLoading: false });
       } catch (err) {
+        if (seq !== _sftpListSeq) return;
         set({
           sftpLoading: false,
           sftpError: err instanceof Error ? err.message : String(err),
@@ -2774,11 +2811,18 @@ export const useAppStore = create<AppState>((set, get) => {
     refreshSftp: async () => {
       const { sftpSessionId, currentPath } = useAppStore.getState();
       if (!sftpSessionId) return;
+      const seq = ++_sftpListSeq;
       set({ sftpLoading: true, sftpError: null });
       try {
         const entries = await sftpListDir(sftpSessionId, currentPath);
+        // Ignore a stale response: a newer navigate/refresh superseded this one.
+        if (seq !== _sftpListSeq) {
+          frontendLog("sftp", `refreshSftp: dropping stale list for ${currentPath} (seq ${seq})`);
+          return;
+        }
         set({ fileEntries: entries, sftpLoading: false });
       } catch (err) {
+        if (seq !== _sftpListSeq) return;
         set({
           sftpLoading: false,
           sftpError: err instanceof Error ? err.message : String(err),
@@ -3478,8 +3522,12 @@ export const useAppStore = create<AppState>((set, get) => {
     monitoringLoading: false,
     monitoringError: null,
     monitoringSampleCount: 0,
+    monitoringCancelled: false,
     monitoringStatsCache: {},
     sessionCapabilities: {},
+
+    clearMonitoringError: () => set({ monitoringError: null }),
+    setMonitoringCancelled: (cancelled) => set({ monitoringCancelled: cancelled }),
 
     setSessionCapabilities: (sessionId, caps) =>
       set((state) => ({
@@ -3502,6 +3550,8 @@ export const useAppStore = create<AppState>((set, get) => {
             // Fresh connection: reset the sample counter so CPU shows the
             // priming indicator until the second push arrives (audit gap G10).
             monitoringSampleCount: 0,
+            // Clear any stale cancel affordance from a previous attempt (G8).
+            monitoringCancelled: false,
           });
 
           const unlisten = await onSessionMonitoringStats((sid, stats) => {
@@ -3537,6 +3587,8 @@ export const useAppStore = create<AppState>((set, get) => {
           // Fresh connection: reset the sample counter so CPU shows the priming
           // indicator until the second fetch arrives (audit gap G10).
           monitoringSampleCount: 0,
+          // Clear any stale cancel affordance from a previous attempt (G8).
+          monitoringCancelled: false,
         });
 
         const sessionId = await monitoringOpen(config);
@@ -3591,6 +3643,7 @@ export const useAppStore = create<AppState>((set, get) => {
         monitoringStats: null,
         monitoringError: null,
         monitoringSampleCount: 0,
+        monitoringCancelled: false,
         // Preserve last-known stats so the UI can show them instantly on reconnect.
         monitoringStatsCache:
           monitoringHost && monitoringStats
@@ -3863,6 +3916,7 @@ export const useAppStore = create<AppState>((set, get) => {
     // Workspaces
     workspaces: [],
     activeWorkspaceName: null,
+    launchingWorkspaceId: null,
 
     loadWorkspaces: async () => {
       try {
@@ -3950,6 +4004,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }),
 
     launchWorkspace: async (workspaceId) => {
+      // In-flight guard (GAP G6, #1146): launching a workspace awaits several
+      // multi-second phases (credential unlock, agent connects). Without this
+      // guard a second double-click / Play press starts a concurrent launch,
+      // racing the two `set(...)` calls and orphaning sessions. Ignore any
+      // re-entrant launch (of this or any other workspace) while one is running.
+      if (get().launchingWorkspaceId !== null) {
+        frontendLog(
+          "workspace",
+          `launchWorkspace(${workspaceId}) ignored: a launch is already in flight`
+        );
+        return;
+      }
+      set({ launchingWorkspaceId: workspaceId });
       try {
         const definition = await apiLoadWorkspace(workspaceId);
         const state = get();
@@ -4070,7 +4137,9 @@ export const useAppStore = create<AppState>((set, get) => {
           activeWorkspaceName: definition.name,
         });
       } catch (err) {
-        console.error("Failed to launch workspace:", err);
+        frontendLog("workspace", `Failed to launch workspace ${workspaceId}: ${String(err)}`);
+      } finally {
+        set({ launchingWorkspaceId: null });
       }
     },
 
