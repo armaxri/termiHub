@@ -85,14 +85,33 @@ pub(super) fn launch_xquartz() {
 /// unit tests.
 #[cfg(any(target_os = "macos", test))]
 fn poll_until_ready(
-    _interval: Duration,
-    _total_budget: Duration,
-    _is_ready: impl Fn() -> bool,
-    _cancelled: impl Fn() -> bool,
-    mut _sleep: impl FnMut(Duration),
+    interval: Duration,
+    total_budget: Duration,
+    is_ready: impl Fn() -> bool,
+    cancelled: impl Fn() -> bool,
+    mut sleep: impl FnMut(Duration),
 ) -> bool {
-    // TODO(#1088): stub for the TDD red phase — replaced by the real poll loop.
-    false
+    let mut elapsed = Duration::ZERO;
+    loop {
+        // A connect abort takes precedence over anything else.
+        if cancelled() {
+            return false;
+        }
+        // The first probe fires before any sleep, so an already-up server is
+        // detected immediately.
+        if is_ready() {
+            return true;
+        }
+        // Budget spent → give up so a dead launch still fails fast with the
+        // existing typed error instead of hanging.
+        if elapsed >= total_budget {
+            return false;
+        }
+        // Clamp the final sleep so total waiting never overshoots the budget.
+        let wait = interval.min(total_budget - elapsed);
+        sleep(wait);
+        elapsed += wait;
+    }
 }
 
 /// Launch XQuartz (best-effort) and wait a short, bounded time for it to become
