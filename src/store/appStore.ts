@@ -826,6 +826,19 @@ export function _resetConnectionReloadSeq(): void {
   _connAppliedSeq = 0;
 }
 
+// Monotonic sequencer for SFTP directory-list requests (GAP R1, #1143).
+// navigateSftp/refreshSftp await sftpListDir with no ordering guarantee, so when
+// two navigations overlap the response that resolves LAST wins currentPath/
+// fileEntries — leaving the path and displayed list desynced. Each list request
+// captures the next seq; a response only commits state if it is still the latest
+// request, so a stale (superseded) response is ignored.
+let _sftpListSeq = 0;
+
+/** @internal Reset the SFTP list sequencer — for tests only. */
+export function _resetSftpListSeq(): void {
+  _sftpListSeq = 0;
+}
+
 // In-flight guards for tunnel start/stop (GAP 4, #1141). A rapid double-click on
 // Start/Stop for a tunnel that is already `connecting` must not fire a second
 // backend call — that produces spurious "already active/connecting" error toasts
@@ -2759,11 +2772,18 @@ export const useAppStore = create<AppState>((set, get) => {
     navigateSftp: async (path: string) => {
       const sessionId = useAppStore.getState().sftpSessionId;
       if (!sessionId) return;
+      const seq = ++_sftpListSeq;
       set({ sftpLoading: true, sftpError: null });
       try {
         const entries = await sftpListDir(sessionId, path);
+        // Ignore a stale response: a newer navigate/refresh superseded this one.
+        if (seq !== _sftpListSeq) {
+          frontendLog("sftp", `navigateSftp: dropping stale list for ${path} (seq ${seq})`);
+          return;
+        }
         set({ fileEntries: entries, currentPath: path, sftpLoading: false });
       } catch (err) {
+        if (seq !== _sftpListSeq) return;
         set({
           sftpLoading: false,
           sftpError: err instanceof Error ? err.message : String(err),
@@ -2774,11 +2794,18 @@ export const useAppStore = create<AppState>((set, get) => {
     refreshSftp: async () => {
       const { sftpSessionId, currentPath } = useAppStore.getState();
       if (!sftpSessionId) return;
+      const seq = ++_sftpListSeq;
       set({ sftpLoading: true, sftpError: null });
       try {
         const entries = await sftpListDir(sftpSessionId, currentPath);
+        // Ignore a stale response: a newer navigate/refresh superseded this one.
+        if (seq !== _sftpListSeq) {
+          frontendLog("sftp", `refreshSftp: dropping stale list for ${currentPath} (seq ${seq})`);
+          return;
+        }
         set({ fileEntries: entries, sftpLoading: false });
       } catch (err) {
+        if (seq !== _sftpListSeq) return;
         set({
           sftpLoading: false,
           sftpError: err instanceof Error ? err.message : String(err),
