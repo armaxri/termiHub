@@ -42,6 +42,17 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn(() => Promise.resolve(null)),
 }));
 
+vi.mock("@/components/ui", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    loading: vi.fn(),
+    promise: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+
 // Test the SFTP navigateUp path logic — same algorithm as the local version,
 // but without Windows drive-root handling.
 function navigateUpSftp(currentPath: string): string | null {
@@ -207,5 +218,130 @@ describe("useFileSystem (SFTP) — store integration", () => {
   it("isConnected is false when sftpSessionId is null", () => {
     const { sftpSessionId } = useAppStore.getState();
     expect(sftpSessionId).toBeNull();
+  });
+});
+
+// D2 (#1143): a failed transfer must surface an error to the user via toast
+// rather than resolving silently or producing an unhandled rejection.
+import { sftpDownload } from "@/services/api";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { toast } from "@/components/ui";
+
+describe("useFileSystem (SFTP) — transfer-error feedback (D2, #1143)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  async function renderHook(): Promise<ReturnType<typeof useFileSystem>> {
+    let api: ReturnType<typeof useFileSystem> | undefined;
+    function Harness() {
+      api = useFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    return api!;
+  }
+
+  it("surfaces a toast error (not an unhandled rejection) when an upload fails", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+    vi.mocked(open).mockResolvedValueOnce("/local/file.txt");
+    vi.mocked(sftpUpload).mockRejectedValueOnce(new Error("permission denied"));
+
+    const api = await renderHook();
+
+    // Must resolve (swallow the rejection), not throw an unhandled rejection.
+    await act(async () => {
+      await expect(api.uploadFile()).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalled();
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toContain("permission denied");
+  });
+
+  it("surfaces a toast error when uploadFileFromPath (OS drop) fails", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+    vi.mocked(sftpUpload).mockRejectedValueOnce(new Error("disk full"));
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await expect(api.uploadFileFromPath("/local/big.bin")).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalled();
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toContain("disk full");
+  });
+
+  it("surfaces a toast error when a download fails", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/" });
+    vi.mocked(save).mockResolvedValueOnce("/local/save.txt");
+    vi.mocked(sftpDownload).mockRejectedValueOnce(new Error("no such file"));
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await expect(api.downloadFile("/remote/save.txt", "save.txt")).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalled();
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toContain("no such file");
+  });
+
+  it("surfaces a toast error when a paste (copy) transfer fails", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/dest" });
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.txt",
+          path: "/src/file.txt",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/src",
+      sftpSessionId: null,
+    });
+    vi.mocked(sftpUpload).mockRejectedValueOnce(new Error("connection reset"));
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await expect(api.pasteEntry()).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalled();
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toContain("connection reset");
+  });
+
+  it("does not toast an error on a successful upload", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+    vi.mocked(open).mockResolvedValueOnce("/local/file.txt");
+    vi.mocked(sftpUpload).mockResolvedValueOnce(0);
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await api.uploadFile();
+    });
+
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
   });
 });
