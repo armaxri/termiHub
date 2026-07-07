@@ -131,6 +131,49 @@ pub fn start_monitor(config: HttpMonitorConfig, app: AppHandle) -> HttpMonitorHa
     }
 }
 
+/// Outcome of building the HTTP client for a monitor.
+///
+/// Splitting this out makes the client-build failure path testable without
+/// having to force `reqwest::Client::builder().build()` to fail: given a build
+/// `Result`, [`build_client_outcome`] either yields the ready client or the
+/// failure [`HttpCheckResult`] that must be emitted so the monitor is visibly
+/// down instead of a stuck "checking…" zombie (see audit gap #4).
+enum ClientBuildOutcome {
+    /// Client built successfully — proceed to the poll loop.
+    Ready(Client),
+    /// Client build failed — emit this failure result, then stop the loop.
+    Failed(HttpCheckResult),
+}
+
+/// Map a client-build `Result` to a [`ClientBuildOutcome`].
+///
+/// On failure this produces a failed [`HttpCheckResult`] (`ok == false`, `error`
+/// set to the build error) tied to `config.id`, so the caller can emit it on the
+/// normal check-event path and the UI shows the monitor as errored rather than
+/// forever "checking…".
+fn build_client_outcome(
+    config: &HttpMonitorConfig,
+    build_result: Result<Client, reqwest::Error>,
+) -> ClientBuildOutcome {
+    match build_result {
+        Ok(client) => ClientBuildOutcome::Ready(client),
+        Err(e) => {
+            let timestamp_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            ClientBuildOutcome::Failed(HttpCheckResult {
+                monitor_id: config.id.clone(),
+                status_code: None,
+                latency_ms: None,
+                ok: false,
+                error: Some(format!("failed to build HTTP client: {e}")),
+                timestamp_ms,
+            })
+        }
+    }
+}
+
 async fn run_monitor(
     config: HttpMonitorConfig,
     app: AppHandle,
@@ -138,13 +181,23 @@ async fn run_monitor(
     paused: Arc<AtomicBool>,
     last_result: std::sync::Arc<std::sync::Mutex<Option<HttpCheckResult>>>,
 ) {
-    let client = match Client::builder()
+    let build_result = Client::builder()
         .timeout(Duration::from_millis(config.timeout_ms))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("HTTP monitor: failed to build client: {e}");
+        .build();
+    let client = match build_client_outcome(&config, build_result) {
+        ClientBuildOutcome::Ready(c) => c,
+        ClientBuildOutcome::Failed(result) => {
+            // Surface the failure on the normal check-event path so the monitor
+            // shows as down/errored instead of a stuck "checking…" zombie, then
+            // stop the loop (a rebuilt client would fail identically).
+            tracing::error!(
+                monitor_id = %config.id,
+                "HTTP monitor: failed to build client — emitting failure result and stopping"
+            );
+            let _ = app.emit("network-http-monitor-check", &result);
+            if let Ok(mut guard) = last_result.lock() {
+                *guard = Some(result);
+            }
             return;
         }
     };
@@ -273,5 +326,75 @@ mod tests {
             5_000,
         );
         assert_eq!(cfg.interval_ms, 5_000);
+    }
+
+    /// Obtain a genuine `reqwest::Error` offline so the build-failure branch can
+    /// be exercised without forcing `Client::builder().build()` to actually fail
+    /// (which is impractical). A blocking request to a malformed URL fails at the
+    /// URL-parse stage — no network required — giving a real `reqwest::Error`
+    /// that stands in for a build error in [`build_client_outcome`].
+    fn a_reqwest_error() -> reqwest::Error {
+        reqwest::blocking::Client::new()
+            .get("http://[invalid-url")
+            .send()
+            .expect_err("malformed URL must yield a reqwest::Error")
+    }
+
+    #[test]
+    fn client_build_failure_surfaces_as_failed_check_result() {
+        // Gap #4 regression: a client-build failure must NOT silently early-return
+        // (leaving a stuck "checking…" zombie). It must map to a failed
+        // HttpCheckResult so the UI shows the monitor as errored.
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            5_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let err = a_reqwest_error();
+
+        match build_client_outcome(&cfg, Err(err)) {
+            ClientBuildOutcome::Failed(result) => {
+                assert_eq!(result.monitor_id, cfg.id);
+                assert!(!result.ok, "failed build must produce ok == false");
+                assert!(
+                    result.error.is_some(),
+                    "failed build must carry an error message"
+                );
+                assert!(
+                    result
+                        .error
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains("failed to build HTTP client"),
+                    "error should describe the client-build failure"
+                );
+                assert!(result.status_code.is_none());
+                assert!(result.latency_ms.is_none());
+            }
+            ClientBuildOutcome::Ready(_) => {
+                panic!("build error must map to a Failed outcome, not Ready")
+            }
+        }
+    }
+
+    #[test]
+    fn client_build_success_yields_ready_outcome() {
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            5_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let ok_client = Client::builder().build().expect("default client builds");
+
+        match build_client_outcome(&cfg, Ok(ok_client)) {
+            ClientBuildOutcome::Ready(_) => {}
+            ClientBuildOutcome::Failed(_) => {
+                panic!("a successful build must map to Ready, not Failed")
+            }
+        }
     }
 }
