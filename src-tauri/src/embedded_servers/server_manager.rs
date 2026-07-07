@@ -433,16 +433,47 @@ impl EmbeddedServerManager {
     }
 
     fn emit_status(&self, server_id: &str, status: ServerStatus, error: Option<String>) {
-        let state = ServerState {
-            server_id: server_id.to_string(),
-            status,
-            error,
-            stats: ServerStats::default(),
-            started_at: None,
-        };
+        // Snapshot the *real* live stats and start time from the active entry (as
+        // `get_states` does) instead of shipping zeroed defaults, so the sidebar
+        // traffic line and uptime reflect reality (GAP G6, #1145). If the server
+        // is no longer active (e.g. a `Stopped` transition), fall back to the
+        // zeroed defaults, which is correct for a server with no live traffic.
+        let (stats, started_at) = self
+            .active
+            .lock()
+            .ok()
+            .and_then(|active| {
+                active
+                    .get(server_id)
+                    .map(|srv| (srv.stats.snapshot(), Some(srv.started_at.clone())))
+            })
+            .unwrap_or_default();
+
+        let state = build_status_state(server_id, status, error, stats, started_at);
         let _ = self
             .app_handle
             .emit("embedded-server-status-changed", &state);
+    }
+}
+
+/// Assemble the [`ServerState`] broadcast on `embedded-server-status-changed`.
+///
+/// Kept as a free function so the payload contract (real stats + `started_at`
+/// carried through, not zeroed — GAP G6, #1145) can be unit-tested without a
+/// live [`AppHandle`].
+fn build_status_state(
+    server_id: &str,
+    status: ServerStatus,
+    error: Option<String>,
+    stats: ServerStats,
+    started_at: Option<String>,
+) -> ServerState {
+    ServerState {
+        server_id: server_id.to_string(),
+        status,
+        error,
+        stats,
+        started_at,
     }
 }
 
@@ -579,6 +610,67 @@ mod tests {
             "a server whose error slot is set must NOT count as live, so a retry \
              (start_server) is allowed instead of being blocked as 'already running'"
         );
+    }
+
+    /// GAP G6, #1145: the status payload broadcast on
+    /// `embedded-server-status-changed` must carry the *real* live stats and
+    /// `started_at` snapshotted from the active entry, not zeroed defaults —
+    /// otherwise the sidebar traffic line and uptime always read zero.
+    #[test]
+    fn status_state_carries_real_stats_and_started_at() {
+        let stats = ServerStats {
+            active_connections: 2,
+            total_connections: 7,
+            bytes_sent: 4096,
+            bytes_received: 512,
+        };
+        let started_at = "2024-01-01T00:00:00+00:00".to_string();
+
+        let state = build_status_state(
+            "srv-1",
+            ServerStatus::Running,
+            None,
+            stats.clone(),
+            Some(started_at.clone()),
+        );
+
+        assert_eq!(state.server_id, "srv-1");
+        assert_eq!(state.status, ServerStatus::Running);
+        assert_eq!(
+            state.stats.total_connections, 7,
+            "live total_connections must be preserved, not reset to 0"
+        );
+        assert_eq!(
+            state.stats.active_connections, 2,
+            "live active_connections must be preserved"
+        );
+        assert_eq!(state.stats.bytes_sent, 4096, "bytes_sent must be preserved");
+        assert_eq!(
+            state.stats.bytes_received, 512,
+            "bytes_received must be preserved"
+        );
+        assert_eq!(
+            state.started_at,
+            Some(started_at),
+            "started_at must be carried through so uptime can render (GAP G6)"
+        );
+    }
+
+    /// When no active entry exists (e.g. a `Stopped` transition after the entry
+    /// was removed), the status payload falls back to zeroed stats / no start
+    /// time — which is correct, since a stopped server has no live traffic.
+    #[test]
+    fn status_state_defaults_when_no_active_entry() {
+        let state = build_status_state(
+            "srv-1",
+            ServerStatus::Stopped,
+            None,
+            ServerStats::default(),
+            None,
+        );
+        assert_eq!(state.status, ServerStatus::Stopped);
+        assert_eq!(state.stats.total_connections, 0);
+        assert!(state.started_at.is_none());
     }
 
     /// A port bound at boot must not cause a silent no-op: the auto-start
