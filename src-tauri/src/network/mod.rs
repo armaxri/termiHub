@@ -138,6 +138,26 @@ impl NetworkManager {
         }
     }
 
+    /// Stop and remove **all** running HTTP monitors.
+    ///
+    /// Used during app shutdown (mirrors [`TunnelManager::stop_all`] /
+    /// [`EmbeddedServerManager::stop_all`]): cancels every monitor's
+    /// [`CancellationToken`] so its poll loop breaks and any in-flight `reqwest`
+    /// request is aborted, then clears the map so nothing lingers. Without this,
+    /// the poll tasks would only die when the process exits, abandoning
+    /// in-flight requests — inconsistent with every sibling subsystem's clean
+    /// teardown.
+    pub fn stop_all_http_monitors(&self) {
+        let Ok(mut monitors) = self.http_monitors.lock() else {
+            error!("http monitor lock poisoned during stop_all");
+            return;
+        };
+        for (id, handle) in monitors.drain() {
+            handle.cancel.cancel();
+            debug!(monitor_id = %id, "Stopped HTTP monitor during teardown");
+        }
+    }
+
     /// List all HTTP monitors (running and stopped).
     pub fn list_http_monitors(&self) -> Vec<HttpMonitorState> {
         let Ok(monitors) = self.http_monitors.lock() else {
@@ -198,5 +218,62 @@ impl NetworkManager {
 impl Default for NetworkManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_monitor::HttpCheckResult;
+
+    /// Insert a bare monitor handle (no spawned task) so `stop_all_http_monitors`
+    /// can be exercised without a live Tauri `AppHandle`.
+    fn insert_dummy_monitor(mgr: &NetworkManager) -> (String, CancellationToken) {
+        let config = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let id = config.id.clone();
+        let cancel = CancellationToken::new();
+        let handle = HttpMonitorHandle {
+            config,
+            cancel: cancel.clone(),
+            last_result: Arc::new(Mutex::new(None::<HttpCheckResult>)),
+        };
+        mgr.http_monitors
+            .lock()
+            .expect("http monitor lock")
+            .insert(id.clone(), handle);
+        (id, cancel)
+    }
+
+    #[test]
+    fn stop_all_http_monitors_cancels_and_clears() {
+        let mgr = NetworkManager::new();
+        let (_id1, token1) = insert_dummy_monitor(&mgr);
+        let (_id2, token2) = insert_dummy_monitor(&mgr);
+
+        assert_eq!(mgr.list_http_monitors().len(), 2);
+        assert!(!token1.is_cancelled());
+        assert!(!token2.is_cancelled());
+
+        mgr.stop_all_http_monitors();
+
+        // Every monitor's cancellation token is fired...
+        assert!(token1.is_cancelled());
+        assert!(token2.is_cancelled());
+        // ...and the map is emptied so nothing lingers.
+        assert!(mgr.list_http_monitors().is_empty());
+    }
+
+    #[test]
+    fn stop_all_http_monitors_is_noop_when_empty() {
+        let mgr = NetworkManager::new();
+        assert!(mgr.list_http_monitors().is_empty());
+        mgr.stop_all_http_monitors();
+        assert!(mgr.list_http_monitors().is_empty());
     }
 }

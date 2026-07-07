@@ -58,6 +58,15 @@
   margin: 0;
 }
 
+.terminal-connection-overlay__elapsed {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs, var(--font-size-sm));
+  color: var(--text-secondary);
+  letter-spacing: var(--letter-spacing-ui, normal);
+  opacity: 0.85;
+  margin: 0;
+}
+
 .terminal-connection-overlay__error-box {
   max-width: 520px;
   width: 100%;

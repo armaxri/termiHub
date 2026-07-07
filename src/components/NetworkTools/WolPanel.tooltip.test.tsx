@@ -7,29 +7,12 @@
  * when focused. These assertions pin both.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { networkWolDevicesList } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
 import { WolPanel } from "./WolPanel";
-import { TooltipProvider } from "@/components/ui";
-
-// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
-// mounts its trigger; shim them so the tooltip-wrapped buttons render.
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-if (!("ResizeObserver" in globalThis)) {
-  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
-    ResizeObserverStub;
-}
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
+import { withTooltip } from "@/test/tooltip";
 
 vi.mock("@/services/networkApi", () => ({
   networkWolSend: vi.fn(() => Promise.resolve()),
@@ -55,11 +38,6 @@ async function flush() {
   await act(async () => {
     await Promise.resolve();
   });
-}
-
-/** Wrap so the shared Tooltip primitive finds its provider (zero delay). */
-function withTooltip(ui: React.ReactElement): React.ReactElement {
-  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
 }
 
 describe("WolPanel — tooltip adoption (#1102)", () => {

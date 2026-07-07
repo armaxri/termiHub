@@ -14,21 +14,6 @@ import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
 import { TunnelSidebar } from "./TunnelSidebar";
 
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-if (!("ResizeObserver" in globalThis)) {
-  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
-    ResizeObserverStub;
-}
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
-
 const mockDeleteTunnel = vi.fn(() => Promise.resolve());
 
 vi.mock("@/store/appStore", () => {
