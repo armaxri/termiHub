@@ -3629,6 +3629,8 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     deleteTunnel: async (tunnelId) => {
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Deleting ${name}…`);
       try {
         await apiDeleteTunnel(tunnelId);
         set((state) => ({
@@ -3637,8 +3639,13 @@ export const useAppStore = create<AppState>((set, get) => {
             Object.entries(state.tunnelStates).filter(([k]) => k !== tunnelId)
           ),
         }));
+        toast.success(`Deleted ${name}`, { id: toastId });
       } catch (err) {
-        console.error("Failed to delete tunnel:", err);
+        toast.error(
+          `Failed to delete ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
       }
     },
 
