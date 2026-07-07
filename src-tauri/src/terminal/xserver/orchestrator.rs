@@ -505,7 +505,7 @@ mod tests {
         fn acquire_flag_increments_refcount_and_populates_session_count() {
             // The connect path acquires a session: the refcount rises and the
             // status report surfaces it as `session_count`.
-            let mgr = manager(vec![], true);
+            let mgr = std::sync::Arc::new(manager(vec![], true));
 
             // Hold each guard alive: dropping it would release the session and
             // decrement the refcount, so the accumulation assertions below rely
@@ -534,7 +534,7 @@ mod tests {
 
         #[test]
         fn current_status_reflects_live_session_count() {
-            let mgr = manager(vec![], true);
+            let mgr = std::sync::Arc::new(manager(vec![], true));
 
             // Keep both leases alive so the live count stays at 2.
             let (_o1, _guard1) = ensure_x_server_for_session(&mgr, true).expect("session acquired");
