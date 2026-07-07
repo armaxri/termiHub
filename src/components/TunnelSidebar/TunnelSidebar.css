@@ -156,3 +156,32 @@
   color: var(--text-secondary);
   padding-top: 2px;
 }
+
+/*
+ * Errored resting row (#1240): the persisted error message plus its recovery
+ * controls (Retry / View last error) stay visible without a hover, so the user
+ * always sees why the tunnel failed and how to recover it.
+ */
+.tunnel-item--error .tunnel-item__actions {
+  opacity: 1;
+}
+
+.tunnel-item__error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-error);
+  min-width: 0;
+}
+
+.tunnel-item__error-icon {
+  flex-shrink: 0;
+}
+
+/* Keep the resting error row a single line; the full text lives in the
+ * "View last error" toast and the row's native title tooltip. */
+.tunnel-item__error-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

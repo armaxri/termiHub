@@ -1,5 +1,5 @@
-import { Play, Square, Pencil, Copy, Trash2 } from "lucide-react";
-import { Tooltip } from "@/components/ui";
+import { Play, Square, Pencil, Copy, Trash2, RotateCw, Info, AlertTriangle } from "lucide-react";
+import { Tooltip, toast } from "@/components/ui";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
@@ -39,14 +39,23 @@ export function TunnelListItem({
 }: TunnelListItemProps) {
   const status = state?.status ?? "disconnected";
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
+  const isError = status === "error";
+  const lastError = state?.error;
   const sshConn = connections.find((c) => c.id === tunnel.sshConnectionId);
   const sshLabel = sshConn?.name ?? "Unknown";
   const typeLabel =
     tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
 
+  /** Surface the persisted last-error message (View last error affordance). */
+  const handleViewError = () => {
+    toast.error(`${tunnel.name}: tunnel error`, {
+      description: lastError ?? "No error details were recorded.",
+    });
+  };
+
   return (
     <div
-      className="tunnel-item"
+      className={`tunnel-item${isError ? " tunnel-item--error" : ""}`}
       data-testid={`tunnel-item-${tunnel.id}`}
       onDoubleClick={() => onEdit(tunnel.id)}
     >
@@ -62,7 +71,7 @@ export function TunnelListItem({
           {typeLabel}
         </span>
         <div className="tunnel-item__actions">
-          {isActive ? (
+          {isActive && (
             <Tooltip content="Stop" side="top">
               <button
                 className="tunnel-item__action"
@@ -76,7 +85,38 @@ export function TunnelListItem({
                 <Square size={12} />
               </button>
             </Tooltip>
-          ) : (
+          )}
+          {isError && (
+            <>
+              <Tooltip content="View last error" side="top">
+                <button
+                  className="tunnel-item__action"
+                  aria-label="View last error"
+                  data-testid={`tunnel-view-error-${tunnel.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleViewError();
+                  }}
+                >
+                  <Info size={12} />
+                </button>
+              </Tooltip>
+              <Tooltip content="Retry" side="top">
+                <button
+                  className="tunnel-item__action"
+                  aria-label="Retry"
+                  data-testid={`tunnel-retry-${tunnel.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStart(tunnel.id);
+                  }}
+                >
+                  <RotateCw size={12} />
+                </button>
+              </Tooltip>
+            </>
+          )}
+          {!isActive && !isError && (
             <Tooltip content="Start" side="top">
               <button
                 className="tunnel-item__action"
@@ -142,8 +182,11 @@ export function TunnelListItem({
             <span>{state.stats.activeConnections} conn</span>
           </div>
         )}
-        {status === "error" && state?.error && (
-          <span style={{ color: "var(--color-error)" }}>{state.error}</span>
+        {isError && lastError && (
+          <span className="tunnel-item__error" title={lastError}>
+            <AlertTriangle size={12} className="tunnel-item__error-icon" />
+            <span className="tunnel-item__error-text">{lastError}</span>
+          </span>
         )}
       </div>
     </div>
