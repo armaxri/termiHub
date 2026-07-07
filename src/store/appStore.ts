@@ -579,20 +579,52 @@ interface AppState {
    * and settles them as each connects ({@link setTabSessionId}) or fails
    * ({@link setTerminalDisconnectWithError}); when the last one settles a single
    * summary toast is raised. `null` when no restore/launch is in flight.
+   *
+   * `failedTabIds` is the subset of settled tabs that failed and can be
+   * re-driven through the per-tab reconnect path — it feeds the bulk
+   * "Reconnect failed tabs" control (#1227). `toastId`, when present, is the
+   * id of a pending toast this cohort should resolve in place on settle
+   * (used by {@link reconnectFailedRestoreTabs} for pending → result feedback).
    */
-  restoreCohort: { pending: Set<string>; total: number; failed: number } | null;
+  restoreCohort: {
+    pending: Set<string>;
+    total: number;
+    failed: number;
+    failedTabIds: Set<string>;
+    toastId?: string | number;
+  } | null;
+  /**
+   * The failed terminal tab ids captured from the most recently settled
+   * restore/launch (or bulk-reconnect) cohort. Drives the bulk "Reconnect
+   * failed tabs" control (#1227, audit M2); empty when there is nothing to
+   * retry. Consumed (cleared) by {@link reconnectFailedRestoreTabs}.
+   */
+  failedRestoreTabIds: string[];
   /**
    * Register the cohort of tabs placed by a restore/launch. `pendingTabIds` are
    * the live terminal tabs that will attempt to connect; `preFailedCount` counts
    * tabs already known to have failed at build time (e.g. agent-error tabs that
-   * never emit a connect/fail signal). If nothing is pending, the summary is
-   * raised immediately.
+   * never emit a connect/fail signal). `toastId`, when given, is a pending toast
+   * the settle should resolve in place instead of raising a fresh one. If
+   * nothing is pending, the summary is raised immediately.
    */
-  beginRestoreCohort: (pendingTabIds: string[], preFailedCount: number) => void;
+  beginRestoreCohort: (
+    pendingTabIds: string[],
+    preFailedCount: number,
+    toastId?: string | number
+  ) => void;
   /** Settle one tab of the active restore cohort; raises the summary once the cohort empties. */
   settleRestoreTab: (tabId: string, outcome: "connected" | "failed") => void;
   /** Raise the single aggregate summary toast for the settled cohort and clear it. Internal. */
   settleRestoreCohort: () => void;
+  /**
+   * Bulk-retry every failed tab remembered from the last partial restore
+   * ({@link failedRestoreTabIds}) in one action (#1227, audit M2). Re-drives
+   * only those tabs through the existing per-tab {@link reconnectTerminal}
+   * path, registers a fresh cohort so the outcome re-summarizes, and shows a
+   * pending toast that resolves into the aggregate result.
+   */
+  reconnectFailedRestoreTabs: () => void;
   setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
   setTerminalReattaching: (tabId: string, reattaching: boolean) => void;
   setTerminalReconnectTriggerError: (tabId: string, error: string | null) => void;
@@ -906,6 +938,23 @@ function collectRestoreCohort(groups: TabGroup[]): {
   const pendingTabIds = tabs.filter((t) => t.contentType === "terminal").map((t) => t.id);
   const preFailedCount = tabs.filter((t) => t.contentType === "agent-error").length;
   return { pendingTabIds, preFailedCount };
+}
+
+/**
+ * Enumerate every live tab across all tab groups (the active group is
+ * represented by the live `rootPanel`, the others by their stored trees). Used
+ * by the bulk-reconnect control to filter captured failed ids down to tabs that
+ * still exist and can actually be re-driven (#1227).
+ */
+function collectLiveTabs(state: {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+}): TerminalTab[] {
+  const trees = state.tabGroups.map((g) =>
+    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
+  );
+  return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
 }
 
 /** Unlisten function for the active session-based monitoring event subscription. */
@@ -3182,9 +3231,10 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    // Aggregate partial-restore feedback (#1146, audit G4).
+    // Aggregate partial-restore feedback (#1146, audit G4) + bulk retry (#1227, M2).
     restoreCohort: null,
-    beginRestoreCohort: (pendingTabIds, preFailedCount) => {
+    failedRestoreTabIds: [],
+    beginRestoreCohort: (pendingTabIds, preFailedCount, toastId) => {
       const pending = new Set(pendingTabIds);
       const total = pending.size + preFailedCount;
       if (total === 0) return;
@@ -3192,7 +3242,11 @@ export const useAppStore = create<AppState>((set, get) => {
         "workspace_restore",
         `restore cohort started: ${total} tab(s), ${pending.size} pending, ${preFailedCount} pre-failed`
       );
-      set({ restoreCohort: { pending, total, failed: preFailedCount } });
+      // A fresh cohort supersedes any leftover retry set from the prior one.
+      set({
+        restoreCohort: { pending, total, failed: preFailedCount, failedTabIds: new Set(), toastId },
+        failedRestoreTabIds: [],
+      });
       // A cohort with no live tabs to wait on (e.g. all agent-error) settles now.
       if (pending.size === 0) get().settleRestoreCohort();
     },
@@ -3202,25 +3256,75 @@ export const useAppStore = create<AppState>((set, get) => {
       const pending = new Set(cohort.pending);
       pending.delete(tabId);
       const failed = cohort.failed + (outcome === "failed" ? 1 : 0);
-      set({ restoreCohort: { ...cohort, pending, failed } });
+      // Remember which terminal tabs failed so they can be bulk-reconnected.
+      const failedTabIds = new Set(cohort.failedTabIds);
+      if (outcome === "failed") failedTabIds.add(tabId);
+      set({ restoreCohort: { ...cohort, pending, failed, failedTabIds } });
       if (pending.size === 0) get().settleRestoreCohort();
     },
     settleRestoreCohort: () => {
       const cohort = get().restoreCohort;
       if (!cohort) return;
-      // Clear first so this fires exactly once even if a stray settle races in.
-      set({ restoreCohort: null });
-      const { total, failed } = cohort;
+      // Restrict the retry set to tabs that still exist as live terminal tabs.
+      const liveTerminalIds = new Set(
+        collectLiveTabs(get())
+          .filter((t) => t.contentType === "terminal")
+          .map((t) => t.id)
+      );
+      const retryTabIds = [...cohort.failedTabIds].filter((id) => liveTerminalIds.has(id));
+      // Clear first (and record the retry set) so this fires exactly once even
+      // if a stray settle races in.
+      set({ restoreCohort: null, failedRestoreTabIds: retryTabIds });
+      const { total, failed, toastId } = cohort;
       const restored = total - failed;
       frontendLog(
         "workspace_restore",
         `restore cohort settled: ${restored}/${total} connected, ${failed} failed`
       );
       if (failed === 0) {
-        toast.success(`Restored ${total} ${total === 1 ? "tab" : "tabs"}`);
+        // Resolve the pending bulk-retry toast in place when present.
+        toast.success(`Restored ${total} ${total === 1 ? "tab" : "tabs"}`, { id: toastId });
       } else {
         // No toast.warning primitive — use info for the partial-failure case.
-        toast.info(`Restored ${restored} of ${total} tabs — ${failed} could not reconnect`);
+        // Offer a one-tap bulk retry when there are reconnectable failed tabs.
+        const action =
+          retryTabIds.length > 0
+            ? { label: "Reconnect failed tabs", onClick: () => get().reconnectFailedRestoreTabs() }
+            : undefined;
+        toast.info(`Restored ${restored} of ${total} tabs — ${failed} could not reconnect`, {
+          id: toastId,
+          action,
+          // Persist while a bulk retry is offered so the action is not lost to
+          // auto-dismiss (matches the "recoverable" feedback pillar).
+          duration: action ? Infinity : undefined,
+        });
+      }
+    },
+    reconnectFailedRestoreTabs: () => {
+      const captured = get().failedRestoreTabIds;
+      // Consume the captured set regardless of outcome.
+      set({ failedRestoreTabIds: [] });
+      if (captured.length === 0) return;
+      // Only re-drive tabs that still exist as live terminal tabs.
+      const liveTerminalIds = new Set(
+        collectLiveTabs(get())
+          .filter((t) => t.contentType === "terminal")
+          .map((t) => t.id)
+      );
+      const targets = captured.filter((id) => liveTerminalIds.has(id));
+      if (targets.length === 0) return;
+      frontendLog(
+        "workspace_restore",
+        `bulk reconnect: re-driving ${targets.length} failed tab(s)`
+      );
+      // Pending feedback that resolves into the aggregate cohort summary.
+      const toastId = toast.loading(
+        `Reconnecting ${targets.length} ${targets.length === 1 ? "tab" : "tabs"}…`
+      );
+      // Register the fresh cohort before re-driving so each settle lands in it.
+      get().beginRestoreCohort(targets, 0, toastId);
+      for (const id of targets) {
+        get().reconnectTerminal(id);
       }
     },
     setTerminalReconnecting: (tabId, reconnecting) =>

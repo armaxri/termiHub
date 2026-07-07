@@ -1,5 +1,17 @@
 import { toast as sonnerToast } from "sonner";
 
+/**
+ * A single inline action button rendered on a toast (a token-styled skin over
+ * sonner's `action`). Use for one-tap recovery affordances such as
+ * "Reconnect failed tabs" on a partial-restore summary.
+ */
+export interface ToastAction {
+  /** Button label. */
+  label: string;
+  /** Invoked when the action button is pressed. */
+  onClick: () => void;
+}
+
 /** Options accepted by the toast helpers. A thin, intentional subset of sonner. */
 export interface ToastOptions {
   /** Secondary line rendered under the title. */
@@ -14,6 +26,8 @@ export interface ToastOptions {
    * auto-dismiss, errors persist until dismissed. Pass `Infinity` to persist.
    */
   duration?: number;
+  /** Optional inline action button (e.g. a retry affordance). */
+  action?: ToastAction;
 }
 
 /** The success/error messages a loading toast resolves into. */
@@ -74,6 +88,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration,
+      action: opts?.action,
     });
   },
 
@@ -82,6 +97,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
+      action: opts?.action,
     });
   },
 
@@ -90,6 +106,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration,
+      action: opts?.action,
     });
   },
 
