@@ -53,7 +53,6 @@ vi.mock("@/services/api", () => ({
 }));
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
-// eslint-disable-next-line import/first
 import { TerminalView } from "./TerminalView";
 
 let container: HTMLDivElement;
