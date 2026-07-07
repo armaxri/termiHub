@@ -35,7 +35,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
@@ -567,6 +567,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const isConnected = agent.connectionState === "connected";
   const isReconnecting = agent.connectionState === "reconnecting";
   const isConnecting = agent.connectionState === "connecting";
+  const isDisconnected = agent.connectionState === "disconnected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
   // Derived: root-level folders and definitions (no parent/folder)
@@ -919,6 +920,27 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                     <XCircle size={16} />
                   </button>
                 </Tooltip>
+              </div>
+            )}
+            {isDisconnected && (
+              // First-class Reconnect after a drop / auto-reconnect exhaustion
+              // (G3, #1236). The native `title` carries the stored last error so
+              // the user learns *why* the agent went down (matching the sidebar
+              // tree's title-based hover help); clicking re-runs the normal
+              // connect path (disconnected → connecting). The async Button gives
+              // pending/success feedback and a toast on failure.
+              <div className="connection-list__group-actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<RefreshCw size={14} />}
+                  onClick={handleConnect}
+                  aria-label="Reconnect"
+                  title={agent.lastError ?? "Reconnect"}
+                  data-testid={`agent-reconnect-${agent.id}`}
+                >
+                  Reconnect
+                </Button>
               </div>
             )}
           </div>
