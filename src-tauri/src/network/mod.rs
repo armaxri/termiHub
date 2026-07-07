@@ -5,6 +5,7 @@
 //! the persistent HTTP monitors.
 
 pub mod http_monitor;
+pub mod http_monitor_storage;
 pub mod wol_storage;
 
 use std::collections::HashMap;
