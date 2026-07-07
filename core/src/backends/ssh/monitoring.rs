@@ -158,3 +158,96 @@ impl MonitoringProvider for SshMonitoringProvider {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    /// Fake transport with scripted connect / collect behaviour for tests.
+    struct FakeTransport {
+        connect_ok: bool,
+        collect_delay: Duration,
+        collect_calls: Arc<AtomicUsize>,
+    }
+
+    impl FakeTransport {
+        fn new(connect_ok: bool, collect_delay: Duration) -> Self {
+            Self {
+                connect_ok,
+                collect_delay,
+                collect_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MonitoringTransport for FakeTransport {
+        type Session = ();
+
+        async fn connect(&self, _cancel: CancellationToken) -> Result<Self::Session, CoreError> {
+            if self.connect_ok {
+                Ok(())
+            } else {
+                Err(CoreError::Other("connect refused".to_string()))
+            }
+        }
+
+        async fn collect(&self, _session: &Self::Session) -> Result<String, CoreError> {
+            self.collect_calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.collect_delay).await;
+            Ok("collected".to_string())
+        }
+    }
+
+    /// G4: a connect failure must surface as `Err` from `subscribe`, so the
+    /// caller never sees a false "connected".
+    #[tokio::test]
+    async fn subscribe_returns_err_when_connect_fails() {
+        let transport = FakeTransport::new(false, Duration::ZERO);
+        let provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+
+        let result = provider.subscribe().await;
+
+        assert!(
+            result.is_err(),
+            "connect failure must surface as Err, not a false connected state"
+        );
+    }
+
+    /// G4: a successful connect yields a live receiver.
+    #[tokio::test]
+    async fn subscribe_returns_ok_when_connect_succeeds() {
+        let transport = FakeTransport::new(true, Duration::ZERO);
+        let provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+
+        let result = provider.subscribe().await;
+
+        assert!(result.is_ok(), "successful connect must return a receiver");
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// G3: a stalled collect must time out and be reported as a failure rather
+    /// than hanging forever.
+    #[tokio::test]
+    async fn collect_once_times_out_as_failure() {
+        let transport = FakeTransport::new(true, Duration::from_secs(60));
+
+        let result = collect_once(&transport, &(), Duration::from_millis(50)).await;
+
+        assert!(
+            result.is_err(),
+            "a collect that outlasts the timeout must be a failure"
+        );
+    }
+
+    /// A fast collect returns its output unchanged.
+    #[tokio::test]
+    async fn collect_once_returns_output_when_fast() {
+        let transport = FakeTransport::new(true, Duration::ZERO);
+
+        let result = collect_once(&transport, &(), Duration::from_secs(5)).await;
+
+        assert_eq!(result.expect("collect should succeed"), "collected");
+    }
+}
