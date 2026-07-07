@@ -143,9 +143,13 @@ export function TerminalConnectionOverlay({
     setTerminalSpawnError,
   ]);
 
-  // Remaining seconds before the active pending phase times out — surfaced in
-  // the overlay so the bounded wait is visible to the user (#1129, P7).
-  const waitingRemaining = Math.max(0, WAITING_FOR_AGENT_TIMEOUT_SECONDS - elapsedSeconds);
+  // Remaining seconds before the waiting-for-agent park times out — surfaced in
+  // the overlay so the bounded wait is visible to the user (#1129, P7). Keyed
+  // off the waiting phase specifically (not the overall connect elapsed) so the
+  // countdown resets when the park begins and stays in step with the real
+  // deadline scheduled above.
+  const waitingElapsed = useElapsed(!!waitingForAgent);
+  const waitingRemaining = Math.max(0, WAITING_FOR_AGENT_TIMEOUT_SECONDS - waitingElapsed);
 
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
