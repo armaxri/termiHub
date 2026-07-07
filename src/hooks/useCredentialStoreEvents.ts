@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "@/components/ui";
 import {
   onCredentialStoreLocked,
   onCredentialStoreUnlocked,
@@ -24,11 +25,17 @@ export function useCredentialStoreEvents(): void {
     let unlistenUnlockNeeded: (() => void) | null = null;
 
     const setup = async () => {
-      // When the store locks (e.g. auto-lock timer), just refresh status silently.
-      // Do NOT open the unlock dialog proactively — only do so when credentials
-      // are actually needed (see unlock-needed handler below).
-      unlistenLocked = await onCredentialStoreLocked(() => {
+      // When the store locks, refresh status. Do NOT open the unlock dialog
+      // proactively — only do so when credentials are actually needed (see the
+      // unlock-needed handler below). On an inactivity auto-lock (auto=true),
+      // show a low-key toast so the user knows why the next connect re-prompts
+      // (G7, #1144). A manual lock (auto=false) is already confirmed by the
+      // indicator, so it stays silent to avoid a double-toast.
+      unlistenLocked = await onCredentialStoreLocked((auto) => {
         loadCredentialStoreStatus();
+        if (auto) {
+          toast.success("Credential store auto-locked after inactivity");
+        }
       });
 
       unlistenUnlocked = await onCredentialStoreUnlocked(() => {

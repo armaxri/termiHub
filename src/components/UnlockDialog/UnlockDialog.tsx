@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
-import { unlockCredentialStore } from "@/services/api";
+import { unlockCredentialStore, resetCredentialStore } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, toast } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
 import "./UnlockDialog.css";
 
 interface UnlockDialogProps {
@@ -9,21 +10,38 @@ interface UnlockDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/** Type guard for the backend's unlock error shape (see `UnlockCredentialStoreError`). */
+function isCorruptStoreError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "corrupted" in err &&
+    (err as { corrupted?: unknown }).corrupted === true
+  );
+}
+
 /**
  * Dialog shown on app startup when the credential store is locked.
  * Prompts the user for their master password to unlock saved credentials.
+ *
+ * If the credentials file is corrupt (G8, #1144) the dialog surfaces a
+ * "reset store" affordance instead of an endless "wrong password" loop.
  */
 export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [corrupt, setCorrupt] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
       setPassword("");
       setError("");
+      setCorrupt(false);
       setLoading(false);
+      setResetting(false);
     }
   }, [open]);
 
@@ -35,13 +53,37 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
       await unlockCredentialStore(password);
       toast.success("Credential store unlocked");
       onOpenChange(false);
-    } catch {
-      setError("Incorrect master password.");
+    } catch (err) {
+      if (isCorruptStoreError(err)) {
+        frontendLog("credential", "Unlock failed: credentials file is corrupt");
+        setCorrupt(true);
+        setError(
+          "The credential store is corrupted and cannot be unlocked. Reset it to start over — your saved credentials will be lost."
+        );
+      } else {
+        setError("Incorrect master password.");
+      }
       setPassword("");
     } finally {
       setLoading(false);
     }
   }, [password, loading, onOpenChange]);
+
+  const handleReset = useCallback(async () => {
+    if (resetting) return;
+    setResetting(true);
+    try {
+      await resetCredentialStore();
+      toast.success("Credential store reset — set a new master password to start over");
+      onOpenChange(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      frontendLog("credential", `Failed to reset credential store: ${message}`);
+      toast.error(`Failed to reset credential store: ${message}`);
+    } finally {
+      setResetting(false);
+    }
+  }, [resetting, onOpenChange]);
 
   const handleSkip = useCallback(() => {
     onOpenChange(false);
@@ -64,14 +106,25 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
           <Button variant="secondary" onClick={handleSkip} data-testid="unlock-dialog-skip">
             Skip
           </Button>
-          <Button
-            variant="primary"
-            onClick={handleUnlock}
-            disabled={!password || loading}
-            data-testid="unlock-dialog-unlock"
-          >
-            Unlock
-          </Button>
+          {corrupt ? (
+            <Button
+              variant="danger"
+              onClick={handleReset}
+              disabled={resetting}
+              data-testid="unlock-dialog-reset"
+            >
+              {resetting ? "Resetting…" : "Reset store"}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={handleUnlock}
+              disabled={!password || loading}
+              data-testid="unlock-dialog-unlock"
+            >
+              Unlock
+            </Button>
+          )}
         </>
       }
     >

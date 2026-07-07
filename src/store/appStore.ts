@@ -779,10 +779,6 @@ interface AppState {
   requestUnlock: () => Promise<boolean>;
   /** Settles (and clears) every pending requestUnlock() promise. Idempotent. */
   resolveUnlock: (unlocked: boolean) => void;
-  masterPasswordSetupOpen: boolean;
-  masterPasswordSetupMode: "setup" | "change";
-  openMasterPasswordSetup: (mode: "setup" | "change") => void;
-  closeMasterPasswordSetup: () => void;
 
   // Portable mode
   isPortableMode: boolean;
@@ -4545,11 +4541,6 @@ export const useAppStore = create<AppState>((set, get) => {
         resolve(unlocked);
       }
     },
-    masterPasswordSetupOpen: false,
-    masterPasswordSetupMode: "setup",
-    openMasterPasswordSetup: (mode) =>
-      set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
-    closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
 
     // Portable mode
     isPortableMode: false,
