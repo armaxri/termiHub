@@ -98,12 +98,14 @@
 }
 
 .oc-row__badge--alive,
-.oc-row__badge--connected {
+.oc-row__badge--connected,
+.oc-row__badge--up {
   background: color-mix(in srgb, var(--color-success) 18%, transparent);
   color: var(--color-success);
 }
 
-.oc-row__badge--dead {
+.oc-row__badge--dead,
+.oc-row__badge--down {
   background: color-mix(in srgb, var(--color-error) 18%, transparent);
   color: var(--color-error);
 }
