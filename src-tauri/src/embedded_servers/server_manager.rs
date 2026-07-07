@@ -166,14 +166,28 @@ impl EmbeddedServerManager {
         };
 
         {
-            let active = self
+            let mut active = self
                 .active
                 .lock()
                 .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))?;
-            if active.contains_key(server_id) {
-                return Err(TerminalError::EmbeddedServerError(format!(
-                    "Server {server_id} is already running"
-                )));
+            match active.get(server_id) {
+                // A live server (no runtime error recorded) genuinely blocks a
+                // second start.
+                Some(srv) if active_entry_is_live(&srv.error) => {
+                    return Err(TerminalError::EmbeddedServerError(format!(
+                        "Server {server_id} is already running"
+                    )));
+                }
+                // GAP G2/G9: a server that failed at runtime leaves a dead husk
+                // in `active`. Drop it so `Error → Stopped` is real and this
+                // start acts as a Retry instead of being rejected as "already
+                // running". Its thread has already exited (it emitted `Error`).
+                Some(_) => {
+                    if let Some(dead) = active.remove(server_id) {
+                        dead.shutdown.store(true, Ordering::Relaxed);
+                    }
+                }
+                None => {}
             }
         }
 
@@ -351,6 +365,22 @@ impl EmbeddedServerManager {
             .app_handle
             .emit("embedded-server-status-changed", &state);
     }
+}
+
+/// Decide whether an `active` map entry represents a *live* server (as opposed
+/// to a dead husk left behind by a runtime failure).
+///
+/// The server thread records the failure reason into its shared `error` slot and
+/// then exits, but the manager keeps the map entry so `get_states` can keep
+/// surfacing the error. A live entry (empty error slot) must block a second
+/// concurrent start; a failed entry (error slot set) must NOT, so a subsequent
+/// `start_server` acts as a Retry rather than being rejected as "already
+/// running" — making `Error → Stopped` a real, escapable transition
+/// (GAP G2/G9, #1145).
+fn active_entry_is_live(error: &Arc<Mutex<Option<String>>>) -> bool {
+    // If the lock is poisoned we cannot prove the server is healthy, so treat it
+    // as not-live and allow a fresh start to recover.
+    error.lock().map(|slot| slot.is_none()).unwrap_or(false)
 }
 
 /// Build the `Error` [`ServerState`] surfaced when a server marked `auto_start`
