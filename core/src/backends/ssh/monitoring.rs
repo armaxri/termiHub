@@ -230,8 +230,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
 
         let (tx, rx): (MonitoringSender, MonitoringReceiver) =
             tokio::sync::mpsc::channel(MONITORING_CHANNEL_CAPACITY);
-        let (status_tx, status_rx) =
-            tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
+        let (status_tx, status_rx) = tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
 
         let alive = Arc::new(AtomicBool::new(true));
         let alive_clone = alive.clone();
