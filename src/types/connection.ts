@@ -2,6 +2,21 @@ import { ConnectionConfig, RemoteAgentConfig, TerminalOptions, LineEnding } from
 import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
 
+/**
+ * Explicit lifecycle status of the single desktop SFTP session (audit gap A1).
+ *
+ * Replaces the previously-overloaded `sftpLoading` boolean, which could not
+ * distinguish "connecting" from "listing"/"refreshing" from "idle". The UI reads
+ * this to pick the right placeholder (e.g. "Connecting SFTP…" vs "Loading…").
+ *
+ * - `idle`      — no session, no error (initial / after disconnect)
+ * - `connecting`— `connectSftp` in flight, no session yet
+ * - `connected` — session established, no operation in flight
+ * - `listing`   — a `navigateSftp` / `refreshSftp` list request is in flight
+ * - `error`     — the last connect or list operation failed (see `sftpError`)
+ */
+export type SftpStatus = "idle" | "connecting" | "connected" | "listing" | "error";
+
 export interface SavedConnection {
   id: string;
   name: string;
