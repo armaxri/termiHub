@@ -516,6 +516,12 @@ pub struct SftpManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SftpSession>>>>>,
 }
 
+impl Default for SftpManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SftpManager {
     pub fn new() -> Self {
         Self {

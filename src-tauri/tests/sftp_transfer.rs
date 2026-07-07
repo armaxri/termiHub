@@ -119,14 +119,11 @@ async fn connect() -> (SftpManager, Arc<Mutex<SftpSession>>) {
 /// Open a dedicated SFTP channel off `session` (mirrors the command layer):
 /// lock briefly and drive the async open under `block_in_place` so the std
 /// guard never spans an `.await`.
-async fn open_dedicated(
-    session: Arc<Mutex<SftpSession>>,
-) -> russh_sftp::client::SftpSession {
+async fn open_dedicated(session: Arc<Mutex<SftpSession>>) -> russh_sftp::client::SftpSession {
     tokio::task::spawn_blocking(move || {
         let guard = lock_session(&session).expect("lock");
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(async { guard.open_dedicated_sftp().await })
+            tokio::runtime::Handle::current().block_on(async { guard.open_dedicated_sftp().await })
         })
     })
     .await

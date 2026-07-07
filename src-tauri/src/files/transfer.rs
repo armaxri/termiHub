@@ -145,6 +145,12 @@ impl TransferRegistry {
         self.lock().len()
     }
 
+    /// Whether no transfers are currently registered (for tests / diagnostics).
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.lock().is_empty()
+    }
+
     /// Whether a transfer id is currently registered (for tests / diagnostics).
     #[cfg(test)]
     pub fn contains(&self, transfer_id: &str) -> bool {
@@ -179,7 +185,12 @@ pub struct TransferContext {
 }
 
 impl TransferContext {
-    fn progress(&self, transferred: u64, phase: TransferPhase, message: Option<String>) -> TransferProgress {
+    fn progress(
+        &self,
+        transferred: u64,
+        phase: TransferPhase,
+        message: Option<String>,
+    ) -> TransferProgress {
         TransferProgress {
             transfer_id: self.transfer_id.clone(),
             session_id: self.session_id.clone(),
@@ -388,7 +399,10 @@ mod tests {
         let reg = TransferRegistry::new();
         let token = reg.register("t1");
         assert!(reg.cancel("t1"), "cancelling a live transfer returns true");
-        assert!(token.is_cancelled(), "the copy loop's token must be tripped");
+        assert!(
+            token.is_cancelled(),
+            "the copy loop's token must be tripped"
+        );
     }
 
     #[test]
@@ -406,7 +420,11 @@ mod tests {
         let a = reg.register("a");
         let b = reg.register("b");
         let c = reg.register("c");
-        assert_eq!(reg.cancel_all(), 3, "cancel_all reports the count signalled");
+        assert_eq!(
+            reg.cancel_all(),
+            3,
+            "cancel_all reports the count signalled"
+        );
         assert!(a.is_cancelled());
         assert!(b.is_cancelled());
         assert!(c.is_cancelled());

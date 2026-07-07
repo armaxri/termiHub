@@ -141,7 +141,16 @@ pub async fn sftp_download(
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
-        transfer::run_download(dedicated, remote_path, local_path, ctx, token, registry, sink).await;
+        transfer::run_download(
+            dedicated,
+            remote_path,
+            local_path,
+            ctx,
+            token,
+            registry,
+            sink,
+        )
+        .await;
     });
     Ok(transfer_id)
 }
@@ -180,7 +189,16 @@ pub async fn sftp_upload(
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
-        transfer::run_upload(dedicated, local_path, remote_path, ctx, token, registry, sink).await;
+        transfer::run_upload(
+            dedicated,
+            local_path,
+            remote_path,
+            ctx,
+            token,
+            registry,
+            sink,
+        )
+        .await;
     });
     Ok(transfer_id)
 }
