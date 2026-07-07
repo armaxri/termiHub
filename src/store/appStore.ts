@@ -25,6 +25,7 @@ import {
   ConnectionFolder,
   FileEntry,
   SftpStatus,
+  SftpSessionEntry,
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
@@ -487,7 +488,20 @@ interface AppState {
    */
   sftpStatus: SftpStatus;
   sftpError: string | null;
+  /**
+   * Host label (`user@host:port`) of the session the browser is currently
+   * viewing. Derived from `sftpSessions[sftpSessionId]`; kept as its own field
+   * so the file browser and status UI can read the active host cheaply.
+   */
   sftpConnectedHost: string | null;
+  /**
+   * Every live backend SFTP session, keyed by its session-id / UUID (Decision 1
+   * of the sftp-session-and-transfers concept, issue #1241). `hostLabel` is
+   * display metadata; `owningTabId` binds the session to the tab that opened it
+   * so it can be closed when that tab closes (the L1 leak fix). `sftpSessionId`
+   * above is the derived "active" pointer into this map for the current browser.
+   */
+  sftpSessions: Record<string, SftpSessionEntry>;
   /**
    * The last config passed to `connectSftp`, retained so a failed connect can be
    * retried (audit gap S1). Cleared on `disconnectSftp`.
@@ -495,7 +509,7 @@ interface AppState {
   sftpLastConfig: Record<string, unknown> | null;
   setCurrentPath: (path: string) => void;
   setFileEntries: (entries: FileEntry[]) => void;
-  connectSftp: (config: Record<string, unknown>) => Promise<void>;
+  connectSftp: (config: Record<string, unknown>, owningTabId?: string) => Promise<void>;
   disconnectSftp: () => Promise<void>;
   navigateSftp: (path: string) => Promise<void>;
   refreshSftp: () => Promise<void>;
@@ -503,6 +517,12 @@ interface AppState {
   retrySftp: () => Promise<void>;
   /** Clear the SFTP error so the failed-connect placeholder resets (audit gap S1). */
   dismissSftpError: () => void;
+  /**
+   * Close a single tracked SFTP session (`sftp_close`) and drop it from
+   * `sftpSessions`. When it is the active browser session, the browser is reset
+   * to idle. Drives the per-session Kill in the Open Connections panel (#1241).
+   */
+  closeSftpSession: (sessionId: string) => Promise<void>;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -2140,7 +2160,17 @@ export const useAppStore = create<AppState>((set, get) => {
     pendingShortcutCloseConfirm: null,
     setPendingShortcutCloseConfirm: (req) => set({ pendingShortcutCloseConfirm: req }),
 
-    closeTab: (tabId, panelId) =>
+    closeTab: (tabId, panelId) => {
+      // Close every SFTP session owned by this tab and drop it from the map —
+      // the L1 leak fix (#1241). Fire the async closes here (fire-and-forget)
+      // so the state updater below stays pure; the entries are removed regardless.
+      const ownedSftp = Object.entries(useAppStore.getState().sftpSessions)
+        .filter(([, entry]) => entry.owningTabId === tabId)
+        .map(([sessionId]) => sessionId);
+      ownedSftp.forEach((sessionId) => {
+        sftpClose(sessionId).catch(() => {});
+      });
+
       set((state) => {
         // Clean up per-tab state for the closed tab
         const remainingCwds = omitKey(state.tabCwds, tabId);
@@ -2161,6 +2191,25 @@ export const useAppStore = create<AppState>((set, get) => {
         const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
         const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
         const remainingWaiting = omitKey(state.terminalWaitingForAgent, tabId);
+
+        // Drop the SFTP sessions owned by this tab (closed above) from the map,
+        // and reset the browser when the active session was one of them (#1241).
+        const remainingSftp = ownedSftp.reduce(
+          (acc, sessionId) => omitKey(acc, sessionId),
+          state.sftpSessions
+        );
+        const activeSftpClosed =
+          state.sftpSessionId != null && ownedSftp.includes(state.sftpSessionId);
+        const sftpBrowserReset = activeSftpClosed
+          ? {
+              sftpSessionId: null,
+              sftpConnectedHost: null,
+              sftpStatus: "idle" as SftpStatus,
+              fileEntries: [],
+              currentPath: "/",
+              sftpError: null,
+            }
+          : {};
 
         // Remove this tab from any persistent session's attachedTabIds
         const persistentSessions = { ...state.persistentSessions };
@@ -2212,6 +2261,8 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalReconnectPrompt: remainingPrompt,
             terminalAutoRetryCount: remainingAutoRetry,
             terminalWaitingForAgent: remainingWaiting,
+            sftpSessions: remainingSftp,
+            ...sftpBrowserReset,
           };
         }
 
@@ -2237,8 +2288,11 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalReconnectPrompt: remainingPrompt,
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
+          sftpSessions: remainingSftp,
+          ...sftpBrowserReset,
         };
-      }),
+      });
+    },
 
     setActiveTab: (tabId, panelId) =>
       set((state) => {
@@ -2944,12 +2998,31 @@ export const useAppStore = create<AppState>((set, get) => {
     sftpStatus: "idle",
     sftpError: null,
     sftpConnectedHost: null,
+    sftpSessions: {},
     sftpLastConfig: null,
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
 
-    connectSftp: async (config: Record<string, unknown>) => {
+    connectSftp: async (config: Record<string, unknown>, owningTabId?: string) => {
+      // Host switch: do not silently overwrite the previous active session.
+      // Close it only when its owning tab is gone (orphan cleanup); otherwise
+      // leave it registered so it stays visible/killable (issue #1241, L1).
+      const prev = useAppStore.getState();
+      const prevId = prev.sftpSessionId;
+      if (prevId) {
+        const prevEntry = prev.sftpSessions[prevId];
+        const ownerAlive =
+          prevEntry != null && collectLiveTabs(prev).some((t) => t.id === prevEntry.owningTabId);
+        if (!ownerAlive) {
+          try {
+            await sftpClose(prevId);
+          } catch {
+            // Ignore close errors — the entry is dropped regardless.
+          }
+          set((state) => ({ sftpSessions: omitKey(state.sftpSessions, prevId) }));
+        }
+      }
       // Retain the config so a failed connect can be retried (audit gap S1).
       set({ sftpStatus: "connecting", sftpError: null, sftpLastConfig: config });
       try {
@@ -2973,13 +3046,19 @@ export const useAppStore = create<AppState>((set, get) => {
           );
           entries = await sftpListDir(sessionId, "/");
         }
-        set({
+        const hostLabel = `${config.username as string}@${config.host as string}:${config.port as number}`;
+        set((state) => ({
           sftpSessionId: sessionId,
           sftpStatus: "connected",
           currentPath: activePath,
           fileEntries: entries,
-          sftpConnectedHost: `${config.username as string}@${config.host as string}:${config.port as number}`,
-        });
+          sftpConnectedHost: hostLabel,
+          // Register the new session keyed by its UUID. Only tracked when the
+          // owning tab is known so it can be closed on tab close (#1241).
+          sftpSessions: owningTabId
+            ? { ...state.sftpSessions, [sessionId]: { hostLabel, owningTabId } }
+            : state.sftpSessions,
+        }));
       } catch (err) {
         set({
           sftpStatus: "error",
@@ -2997,7 +3076,7 @@ export const useAppStore = create<AppState>((set, get) => {
           // Ignore close errors
         }
       }
-      set({
+      set((state) => ({
         sftpSessionId: null,
         sftpStatus: "idle",
         fileEntries: [],
@@ -3005,6 +3084,33 @@ export const useAppStore = create<AppState>((set, get) => {
         sftpError: null,
         sftpConnectedHost: null,
         sftpLastConfig: null,
+        sftpSessions: sessionId ? omitKey(state.sftpSessions, sessionId) : state.sftpSessions,
+      }));
+    },
+
+    closeSftpSession: async (sessionId: string) => {
+      try {
+        await sftpClose(sessionId);
+      } catch {
+        // Ignore close errors — the entry is dropped regardless.
+      }
+      set((state) => {
+        const isActive = state.sftpSessionId === sessionId;
+        return {
+          sftpSessions: omitKey(state.sftpSessions, sessionId),
+          // When the killed session was the one the browser is viewing, reset
+          // the browser to idle so it stops looking connected.
+          ...(isActive
+            ? {
+                sftpSessionId: null,
+                sftpConnectedHost: null,
+                sftpStatus: "idle" as SftpStatus,
+                fileEntries: [],
+                currentPath: "/",
+                sftpError: null,
+              }
+            : {}),
+        };
       });
     },
 
@@ -3050,11 +3156,17 @@ export const useAppStore = create<AppState>((set, get) => {
         if (sessionDead) {
           frontendLog("sftp", `navigateSftp: session appears dead — clearing session (${message})`);
         }
-        set({
+        set((state) => ({
           sftpStatus: "error",
           sftpError: message,
-          ...(sessionDead ? { sftpSessionId: null, sftpConnectedHost: null } : {}),
-        });
+          ...(sessionDead
+            ? {
+                sftpSessionId: null,
+                sftpConnectedHost: null,
+                sftpSessions: omitKey(state.sftpSessions, sessionId),
+              }
+            : {}),
+        }));
       }
     },
 
@@ -3078,11 +3190,19 @@ export const useAppStore = create<AppState>((set, get) => {
         if (sessionDead) {
           frontendLog("sftp", `refreshSftp: session appears dead — clearing session (${message})`);
         }
-        set({
+        set((state) => ({
           sftpStatus: "error",
           sftpError: message,
-          ...(sessionDead ? { sftpSessionId: null, sftpConnectedHost: null } : {}),
-        });
+          ...(sessionDead
+            ? {
+                sftpSessionId: null,
+                sftpConnectedHost: null,
+                sftpSessions: sftpSessionId
+                  ? omitKey(state.sftpSessions, sftpSessionId)
+                  : state.sftpSessions,
+              }
+            : {}),
+        }));
       }
     },
 
