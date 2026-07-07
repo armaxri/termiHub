@@ -3047,18 +3047,32 @@ export const useAppStore = create<AppState>((set, get) => {
           entries = await sftpListDir(sessionId, "/");
         }
         const hostLabel = `${config.username as string}@${config.host as string}:${config.port as number}`;
-        set((state) => ({
-          sftpSessionId: sessionId,
-          sftpStatus: "connected",
-          currentPath: activePath,
-          fileEntries: entries,
-          sftpConnectedHost: hostLabel,
-          // Register the new session keyed by its UUID. Only tracked when the
-          // owning tab is known so it can be closed on tab close (#1241).
-          sftpSessions: owningTabId
-            ? { ...state.sftpSessions, [sessionId]: { hostLabel, owningTabId } }
-            : state.sftpSessions,
-        }));
+        // One SFTP session per owning tab: close any prior session the same tab
+        // owned (e.g. revisiting the tab or reconnecting to a new host) so
+        // sessions don't accumulate for a single browser (#1241).
+        const staleForTab = owningTabId
+          ? Object.entries(useAppStore.getState().sftpSessions)
+              .filter(([sid, e]) => e.owningTabId === owningTabId && sid !== sessionId)
+              .map(([sid]) => sid)
+          : [];
+        staleForTab.forEach((sid) => {
+          sftpClose(sid).catch(() => {});
+        });
+        set((state) => {
+          let sessions = state.sftpSessions;
+          if (owningTabId) {
+            sessions = staleForTab.reduce((acc, sid) => omitKey(acc, sid), sessions);
+            sessions = { ...sessions, [sessionId]: { hostLabel, owningTabId } };
+          }
+          return {
+            sftpSessionId: sessionId,
+            sftpStatus: "connected" as SftpStatus,
+            currentPath: activePath,
+            fileEntries: entries,
+            sftpConnectedHost: hostLabel,
+            sftpSessions: sessions,
+          };
+        });
       } catch (err) {
         set({
           sftpStatus: "error",
