@@ -251,9 +251,9 @@ impl SessionManager {
         }
 
         // Register a cancellation token so a Stop/close while connecting can abort
-        // the in-flight handshake (#952). Local (core-backend) connects honour it;
-        // remote proxy connects currently ignore it. The guard clears the entry
-        // when this connect finishes, even on an early `?` return.
+        // the in-flight handshake (#952). Both local (core-backend) and remote
+        // proxy (#1122) connects honour it. The guard clears the entry when this
+        // connect finishes, even on an early `?` return.
         let (cancel_token, _connecting_guard) = match connect_id {
             Some(cid) => {
                 let token = CancellationToken::new();
@@ -283,7 +283,7 @@ impl SessionManager {
                     "config": settings,
                 });
                 proxy
-                    .connect(remote_settings)
+                    .connect_cancellable(remote_settings, cancel_token.clone())
                     .await
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
                 let remote_sid = proxy.remote_session_id();
