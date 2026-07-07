@@ -5,7 +5,7 @@ import { WorkspaceEditorMeta } from "@/types/terminal";
 import { WorkspaceDefinition, WorkspaceLayoutNode, WorkspaceTabGroupDef } from "@/types/workspace";
 import { loadWorkspace } from "@/services/workspaceApi";
 import { getWorkspaceLeaves, countWorkspaceTabs } from "@/utils/workspaceLayout";
-import { Button, Input, Field } from "@/components/ui";
+import { Button, Input, Field, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
 import "./WorkspaceEditor.css";
@@ -241,41 +241,47 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                       {group.name}
                     </span>
                   )}
-                  <button
-                    className="workspace-group-chip__close"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleCloseGroup(index);
-                    }}
-                    title="Remove group"
-                    data-testid={`workspace-group-close-${index}`}
-                  >
-                    <X size={10} />
-                  </button>
+                  <Tooltip content="Remove group" side="top">
+                    <button
+                      className="workspace-group-chip__close"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCloseGroup(index);
+                      }}
+                      aria-label="Remove group"
+                      data-testid={`workspace-group-close-${index}`}
+                    >
+                      <X size={10} />
+                    </button>
+                  </Tooltip>
                 </div>
               ))}
-              <button
-                className="workspace-group-strip__add"
-                onClick={handleAddGroup}
-                title="Add group"
-                data-testid="workspace-group-add"
-              >
-                <Plus size={12} />
-              </button>
+              <Tooltip content="Add group" side="top">
+                <button
+                  className="workspace-group-strip__add"
+                  onClick={handleAddGroup}
+                  aria-label="Add group"
+                  data-testid="workspace-group-add"
+                >
+                  <Plus size={12} />
+                </button>
+              </Tooltip>
             </div>
           )}
 
           {!showGroupStrip && (
             <div className="workspace-group-strip workspace-group-strip--single">
-              <button
-                className="workspace-group-strip__add"
-                onClick={handleAddGroup}
-                title="Add group"
-                data-testid="workspace-group-add"
-              >
-                <Plus size={12} />
-                Add Group
-              </button>
+              <Tooltip content="Add group" side="top">
+                <button
+                  className="workspace-group-strip__add"
+                  onClick={handleAddGroup}
+                  aria-label="Add group"
+                  data-testid="workspace-group-add"
+                >
+                  <Plus size={12} />
+                  Add Group
+                </button>
+              </Tooltip>
             </div>
           )}
 

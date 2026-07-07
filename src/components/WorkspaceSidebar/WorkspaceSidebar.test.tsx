@@ -1,8 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
+import { TooltipProvider } from "@/components/ui";
 import { WorkspaceSummary } from "@/types/workspace";
+
+// jsdom lacks the pointer-capture APIs Radix Tooltip touches; shim them so the
+// tooltip-wrapped sidebar buttons render.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+
+/** Wrap so the shared Tooltip primitive finds its provider. */
+function withTooltip(ui: React.ReactElement): React.ReactElement {
+  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
+}
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -84,7 +98,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [] });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     expect(query("workspace-empty-message")).not.toBeNull();
@@ -95,7 +109,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: sampleWorkspaces });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     expect(query("workspace-empty-message")).toBeNull();
@@ -108,7 +122,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: sampleWorkspaces });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     expect(query("workspace-name-ws-1")?.textContent).toBe("Dev Setup");
@@ -119,7 +133,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [] });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     expect(query("workspace-new-btn")).not.toBeNull();
@@ -129,7 +143,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]] });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     expect(query("workspace-edit-ws-1")).not.toBeNull();
@@ -142,7 +156,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [], saveCurrentAsWorkspace });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     openDialogAndConfirm("My Layout");
@@ -160,7 +174,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [], saveCurrentAsWorkspace });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     openDialogAndConfirm("My Layout");
