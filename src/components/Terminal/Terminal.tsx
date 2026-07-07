@@ -243,8 +243,12 @@ export function Terminal({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  // True only while a backend connect is in flight, so teardown can abort it (#952).
-  const connectInFlightRef = useRef(false);
+  // The set of connect ids (`${tabId}:${retryCount}`) whose backend handshake is
+  // currently in flight, so teardown can abort them (#952). Tracked PER attempt
+  // rather than as a single shared boolean: overlapping attempts each add/remove
+  // their own id, so a stale attempt that settles late can no longer clear the
+  // flag out from under a live attempt and skip its cancel on teardown (#1214).
+  const connectInFlightRef = useRef<Set<string>>(new Set());
   const horizontalScrollingRef = useRef(false);
   const userScrolledUpRef = useRef(false);
   const lastInputTimeRef = useRef(0);
@@ -443,11 +447,11 @@ export function Terminal({
               // overlapping retry/reconnect never shares the previous attempt's
               // id. If it did, the old effect's cleanup would cancel the fresh
               // attempt's token instead of its own (#1125).
-              connectInFlightRef.current = true;
+              connectInFlightRef.current.add(connectId);
               try {
                 resolved = await createTerminal(sessionConfig, connectId);
               } finally {
-                connectInFlightRef.current = false;
+                connectInFlightRef.current.delete(connectId);
               }
 
               if (isCanceled()) {
@@ -768,6 +772,13 @@ export function Terminal({
     // attempt's in-flight handshake (#1125).
     const connectId = `${tabId}:${retryCount}`;
 
+    // Capture the in-flight connect-id set for the cleanup below. The ref's
+    // `.current` identity is stable for the tab's lifetime (it is never
+    // reassigned, only mutated), so this local is the same Set the connect loop
+    // adds/removes ids on — and reading it in cleanup avoids the
+    // react-hooks/exhaustive-deps stale-ref warning.
+    const inFlightConnects = connectInFlightRef.current;
+
     // Create an imperative DOM element for xterm (not managed by React rendering)
     const el = document.createElement("div");
     el.style.position = "absolute";
@@ -1042,7 +1053,7 @@ export function Terminal({
       // of leaving it to run to completion (#952). Cancel only THIS effect run's
       // connect id — never the bare tabId — so an overlapping newer attempt is
       // not aborted by this stale cleanup (#1125).
-      if (connectInFlightRef.current) {
+      if (inFlightConnects.has(connectId)) {
         void cancelConnecting(connectId).catch(() => {});
       }
       resizeObserver.disconnect();
