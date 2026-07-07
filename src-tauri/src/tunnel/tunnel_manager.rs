@@ -70,6 +70,55 @@ impl PooledSessionGuards {
     }
 }
 
+/// Record a tunnel's last error into the persisted per-tunnel error map.
+///
+/// Set on the failing `Error` branch of a start so the failure becomes a
+/// durable, queryable resting state (GAP 3, #1238). Poison-safe: a poisoned
+/// mutex silently no-ops rather than panicking, consistent with the manager's
+/// other lock handling.
+fn record_last_error(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str, error: String) {
+    if let Ok(mut map) = errors.lock() {
+        map.insert(tunnel_id.to_string(), error);
+    }
+}
+
+/// Clear a tunnel's persisted last error (on a successful start or an explicit
+/// stop), returning it to the "never failed" resting state.
+fn clear_last_error(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) {
+    if let Ok(mut map) = errors.lock() {
+        map.remove(tunnel_id);
+    }
+}
+
+/// Look up a tunnel's persisted last error, if any. Reading never mutates the
+/// map, so repeated `get_statuses` calls (a reload) keep reporting `Error`.
+fn last_error_for(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) -> Option<String> {
+    errors
+        .lock()
+        .ok()
+        .and_then(|map| map.get(tunnel_id).cloned())
+}
+
+/// Resolve the resting (non-active) status of a tunnel from its transient
+/// connecting state and any persisted last error.
+///
+/// Precedence: an in-flight connect wins over a stale error; otherwise a
+/// recorded failure surfaces as `Error` carrying its message, and only the
+/// absence of both is a plain `Disconnected`. This is what distinguishes
+/// "never started" (no error entry) from "died with an error" (entry present).
+fn resting_status(
+    is_connecting: bool,
+    last_error: Option<String>,
+) -> (TunnelStatus, Option<String>) {
+    if is_connecting {
+        (TunnelStatus::Connecting, None)
+    } else if let Some(error) = last_error {
+        (TunnelStatus::Error, Some(error))
+    } else {
+        (TunnelStatus::Disconnected, None)
+    }
+}
+
 /// An active tunnel with its forwarder.
 enum ActiveForwarder {
     Local(LocalForwarder),
@@ -93,6 +142,11 @@ pub struct TunnelManager {
     tunnel_configs: Mutex<TunnelStore>,
     storage: TunnelStorage,
     active_tunnels: Mutex<HashMap<String, ActiveTunnel>>,
+    /// Last error per tunnel id, making a failed start a durable, queryable
+    /// resting state that survives a `loadTunnels` reload (GAP 3, #1238). An
+    /// entry is set when a start fails and committed (not cancelled), and
+    /// cleared on a successful start or an explicit stop.
+    last_errors: Mutex<HashMap<String, String>>,
     connecting: ConnectingTracker,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
@@ -116,6 +170,7 @@ impl TunnelManager {
             tunnel_configs: Mutex::new(result.data),
             storage,
             active_tunnels: Mutex::new(HashMap::new()),
+            last_errors: Mutex::new(HashMap::new()),
             connecting: ConnectingTracker::new(),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
@@ -207,15 +262,19 @@ impl TunnelManager {
                         stats,
                     }
                 } else {
-                    let status = if self.connecting.is_connecting(&config.id) {
-                        TunnelStatus::Connecting
-                    } else {
-                        TunnelStatus::Disconnected
-                    };
+                    // A tunnel that is neither active nor connecting rests as
+                    // either `Disconnected` (never failed) or `Error` (its last
+                    // start failed) — the latter carries the recorded message so
+                    // it survives a reload instead of being laundered back to
+                    // `Disconnected` (GAP 3, #1238).
+                    let (status, error) = resting_status(
+                        self.connecting.is_connecting(&config.id),
+                        last_error_for(&self.last_errors, &config.id),
+                    );
                     TunnelState {
                         tunnel_id: config.id.clone(),
                         status,
-                        error: None,
+                        error,
                         stats: TunnelStats::default(),
                     }
                 }
@@ -280,6 +339,10 @@ impl TunnelManager {
                         self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
                     }
                     FinishOutcome::Commit => {
+                        // Persist the failure so `Error` is a durable, queryable
+                        // resting state, not just a fire-and-forget event that a
+                        // reload launders away (GAP 3, #1238).
+                        record_last_error(&self.last_errors, tunnel_id, e.to_string());
                         self.emit_status(tunnel_id, TunnelStatus::Error, Some(e.to_string()));
                     }
                 }
@@ -305,6 +368,10 @@ impl TunnelManager {
                 .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
             active.insert(tunnel_id.to_string(), ActiveTunnel { forwarder, guards });
         }
+
+        // A successful start clears any recorded failure so the tunnel no longer
+        // rests in `Error` once it is running again (GAP 3, #1238).
+        clear_last_error(&self.last_errors, tunnel_id);
 
         // Emit connected status
         self.emit_status(tunnel_id, TunnelStatus::Connected, None);
@@ -450,6 +517,10 @@ impl TunnelManager {
 
     /// Stop an active tunnel by ID.
     pub fn stop_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        // An explicit stop dismisses any recorded failure, returning the tunnel
+        // from the `Error` resting state to `Disconnected` (GAP 3, #1238).
+        clear_last_error(&self.last_errors, tunnel_id);
+
         let tunnel = {
             let mut active = self
                 .active_tunnels
