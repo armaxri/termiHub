@@ -29,6 +29,15 @@ const DEFAULT_INTERVAL_MS: u64 = 2000;
 /// Minimum allowed collection interval in milliseconds.
 const MIN_INTERVAL_MS: u64 = 500;
 
+/// Maximum time a single collect may take before it is treated as a failure.
+///
+/// Bounds a stalled SSH collect (half-dropped TCP, unresponsive remote) so the
+/// task returns to its `select!` — where cancellation is honored — instead of
+/// awaiting the collect forever (#1228, gap G3). The sequential loop is the
+/// in-flight guard: the next tick's collect never starts until this one
+/// resolves or times out.
+const COLLECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 // ── MonitoringManagerApi trait ─────────────────────────────────────
 
 /// Abstract interface over the monitoring manager.
@@ -220,10 +229,19 @@ async fn monitoring_task(
             _ = ticker.tick() => {
                 let collector = collector.clone();
                 let host_label = host.clone();
-                let result = tokio::task::spawn_blocking(move || {
+                let collect = tokio::task::spawn_blocking(move || {
                     let mut c = collector.lock().unwrap();
                     c.collect(&host_label)
-                }).await;
+                });
+                // Bound the collect so a stalled remote cannot pin the loop
+                // and keep it from ever re-checking cancellation (#1228, G3).
+                let result = match tokio::time::timeout(COLLECT_TIMEOUT, collect).await {
+                    Ok(join_result) => join_result,
+                    Err(_elapsed) => {
+                        warn!("Monitoring collection timed out for '{}'", host);
+                        continue;
+                    }
+                };
 
                 match result {
                     Ok(Ok(stats)) => {
