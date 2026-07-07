@@ -65,6 +65,7 @@ const AUTO_LOCK_OPTIONS: AutoLockOption[] = [
 export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
   const loadCredentialStoreStatus = useAppStore((s) => s.loadCredentialStoreStatus);
+  const requestUnlock = useAppStore((s) => s.requestUnlock);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
@@ -194,6 +195,21 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       setChangePasswordError(err instanceof Error ? err.message : String(err));
     }
   }, [currentPasswordInput, changeNewPassword, changeConfirmPassword, resetChangePasswordDialog]);
+
+  /**
+   * Opens the change-master-password dialog. changeMasterPassword requires an unlocked
+   * store, so when the store is locked this routes through the shared unlock flow first
+   * (matching the connect-flow gate) and only opens the dialog once the unlock succeeds —
+   * avoiding the dead-end where submitting yields a raw "Store is locked" error with no
+   * unlock affordance (audit GAP G4).
+   */
+  const handleOpenChangePassword = useCallback(async () => {
+    if (credentialStoreStatus?.status === "locked") {
+      const unlocked = await requestUnlock();
+      if (!unlocked) return;
+    }
+    setChangingPassword(true);
+  }, [credentialStoreStatus?.status, requestUnlock]);
 
   const handleAutoLockChange = useCallback(
     (value: number) => {
@@ -355,7 +371,12 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   variant="secondary"
                   size="sm"
                   data-testid="change-master-password-btn"
-                  onClick={() => setChangingPassword(true)}
+                  onClick={handleOpenChangePassword}
+                  title={
+                    credentialStoreStatus?.status === "locked"
+                      ? "The credential store is locked — you'll be asked to unlock it first."
+                      : undefined
+                  }
                 >
                   Change Master Password
                 </Button>

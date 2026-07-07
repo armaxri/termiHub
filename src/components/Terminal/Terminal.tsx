@@ -28,6 +28,8 @@ import {
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveLineEnding } from "@/utils/lineEndings";
+import { getAllLeaves } from "@/utils/panelTree";
+import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 
 const HORIZONTAL_SCROLL_COLS = 500;
@@ -48,6 +50,20 @@ const DEFAULT_CURSOR_BLINK = true;
  * remote command is gone) does not retry forever.
  */
 const MAX_AGENT_SPAWN_ATTEMPTS = 5;
+
+/**
+ * Resolves a tab's display title from the current store so the connect success
+ * toast can name the connection. Falls back to a generic label if the tab has
+ * been removed by the time the connect resolves.
+ */
+function resolveTabTitle(tabId: string): string {
+  const state = useAppStore.getState();
+  const tab = [
+    ...getAllLeaves(state.rootPanel).flatMap((l) => l.tabs),
+    ...state.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+  ].find((t) => t.id === tabId);
+  return tab?.title?.trim() || "Session";
+}
 
 /**
  * Wait until the xterm element is sitting in a real slot (large parent
@@ -438,10 +454,13 @@ export function Terminal({
                 closeTerminal(resolved);
                 return;
               }
-              // Success — clear all pre-connect overlay state.
+              // Success — clear all pre-connect overlay state and give the user
+              // a brief, non-intrusive confirmation that the session is live so
+              // the connect does not resolve silently (#1127).
               useAppStore.getState().setTerminalConnecting(tabId, false);
               useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
               useAppStore.getState().setTerminalSpawnError(tabId, null);
+              toast.success("Connected", { description: resolveTabTitle(tabId) });
               break;
             } catch (err) {
               if (isCanceled()) return;

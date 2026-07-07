@@ -17,26 +17,9 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { AgentNode } from "./AgentNode";
-import { TooltipProvider } from "@/components/ui";
+import { withTooltip } from "@/test/tooltip";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo } from "@/services/api";
-
-// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
-// mounts its trigger; shim them so the tooltip-wrapped buttons render.
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-if (!("ResizeObserver" in globalThis)) {
-  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
-    ResizeObserverStub;
-}
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -132,11 +115,6 @@ function makePersistentDefinition(): AgentDefinitionInfo {
 
 let container: HTMLDivElement;
 let root: Root;
-
-/** Wrap so the shared Tooltip primitive finds its provider (zero delay). */
-function withTooltip(ui: React.ReactElement): React.ReactElement {
-  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
-}
 
 /** Every converted icon button must have an accessible name and no bare title. */
 function expectAccessibleIconButton(btn: HTMLButtonElement | null): void {

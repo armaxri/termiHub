@@ -1,31 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
-import { TooltipProvider } from "@/components/ui";
+import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
-
-// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
-// mounts its trigger; shim them so the tooltip-wrapped dismiss button renders.
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-if (!("ResizeObserver" in globalThis)) {
-  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
-    ResizeObserverStub;
-}
-if (!Element.prototype.hasPointerCapture) {
-  Element.prototype.hasPointerCapture = () => false;
-  Element.prototype.setPointerCapture = () => {};
-  Element.prototype.releasePointerCapture = () => {};
-}
-
-/** Wrap a subtree so the shared Tooltip primitive finds its provider. */
-function withTooltip(ui: React.ReactElement): React.ReactElement {
-  return <TooltipProvider delayDuration={0}>{ui}</TooltipProvider>;
-}
 
 // Stub lucide-react icons used in the overlay
 vi.mock("lucide-react", () => ({
