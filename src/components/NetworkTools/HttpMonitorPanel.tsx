@@ -41,6 +41,12 @@ export function HttpMonitorPanel() {
   // stop/unmount/restart.
   const activeMonitorIdRef = useRef<string | null>(null);
   const unlistenCheckRef = useRef<(() => void) | null>(null);
+  // Guards against a Start double-fire (#1147, GAP #7). The Button's async
+  // lifecycle only disables on the *next* click; two clicks in the same tick
+  // both reach handleStart before React re-renders the pending state, spawning
+  // two backend monitors for one URL. This synchronous ref rejects the second
+  // call immediately, so only one start is ever in flight.
+  const startInFlightRef = useRef(false);
 
   const loadMonitors = useCallback(async () => {
     try {
@@ -69,6 +75,9 @@ export function HttpMonitorPanel() {
 
   const handleStart = useCallback(async () => {
     if (!url.trim()) return;
+    // Reject a re-entrant start while one is already in flight (#1147, GAP #7).
+    if (startInFlightRef.current) return;
+    startInFlightRef.current = true;
     setError(null);
     setHistory([]);
     stopListening();
@@ -102,6 +111,8 @@ export function HttpMonitorPanel() {
       stopListening();
       setError(String(err));
       frontendLog("http_monitor", `Start failed: ${err}`);
+    } finally {
+      startInFlightRef.current = false;
     }
   }, [url, intervalSecs, method, expectedStatus, timeoutSecs, loadMonitors, stopListening]);
 
