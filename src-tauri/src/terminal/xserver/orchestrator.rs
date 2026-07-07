@@ -507,11 +507,16 @@ mod tests {
             // status report surfaces it as `session_count`.
             let mgr = manager(vec![], true);
 
-            let outcome = ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            // Hold each guard alive: dropping it would release the session and
+            // decrement the refcount, so the accumulation assertions below rely
+            // on both leases staying in scope.
+            let (outcome, _guard1) =
+                ensure_x_server_for_session(&mgr, true).expect("session acquired");
             assert_eq!(outcome.report.session_count, 1, "first session counted");
             assert_eq!(mgr.session_count(), 1);
 
-            let outcome = ensure_x_server_for_session(&mgr, true).expect("second session acquired");
+            let (outcome, _guard2) =
+                ensure_x_server_for_session(&mgr, true).expect("second session acquired");
             assert_eq!(outcome.report.session_count, 2, "second session counted");
             assert_eq!(mgr.session_count(), 2);
         }
@@ -531,8 +536,9 @@ mod tests {
         fn current_status_reflects_live_session_count() {
             let mgr = manager(vec![], true);
 
-            ensure_x_server_for_session(&mgr, true).expect("session acquired");
-            ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            // Keep both leases alive so the live count stays at 2.
+            let (_o1, _guard1) = ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            let (_o2, _guard2) = ensure_x_server_for_session(&mgr, true).expect("session acquired");
 
             let status = current_status(&mgr);
             assert_eq!(status.state, XServerState::Running);
