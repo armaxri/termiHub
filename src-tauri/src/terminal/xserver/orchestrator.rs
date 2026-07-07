@@ -8,6 +8,8 @@
 //! status. The per-platform install internals (VcXsrv download #1047 remainder,
 //! XQuartz install #1054, Linux gap classification #1055) are their own issues.
 
+use std::sync::Arc;
+
 use termihub_core::backends::ssh::x11::{
     detect_local_x_server, read_local_xauth_cookie, LocalXServerInfo, ResolvedXServer,
 };
@@ -30,12 +32,52 @@ pub struct EnsureOutcome {
     pub resolved: ResolvedXServer,
 }
 
-/// Ensure a usable local X server for the current platform.
+/// Ensure a usable local X server for the current platform, **without** claiming
+/// a session against it (the status/probe path behind the `x_server_ensure`
+/// command).
 ///
 /// Resolution order: the manager's own adopt/spawn (`ensure_running`) → a
 /// cross-platform detection fallback for a user-run server the TCP probe can't
 /// see (e.g. XQuartz on a Unix socket) → a typed, actionable error.
 pub fn ensure_x_server(
+    manager: &XServerManager,
+    provide_automatically: bool,
+) -> Result<EnsureOutcome, XServerError> {
+    ensure_x_server_impl(manager, provide_automatically)
+}
+
+/// Ensure a usable local X server **and** claim a session against it, returning
+/// an owned [`SessionGuard`] whose drop releases the session exactly once (the
+/// SSH X11 connect path, #1107).
+///
+/// The guard is threaded into core's connect path as a session-lifetime
+/// resource, so [`release_session`](XServerManager::release_session) — and thus
+/// the existing idle-shutdown behavior — fires when the session ends. The
+/// returned [`EnsureOutcome::report`] reflects the freshly-incremented count.
+pub fn ensure_x_server_for_session(
+    manager: &Arc<XServerManager>,
+    provide_automatically: bool,
+) -> Result<(EnsureOutcome, super::manager::SessionGuard), XServerError> {
+    // Acquire first: this drives the same adopt/reuse/spawn logic as
+    // `ensure_running` while bumping the refcount, and hands back a guard that
+    // releases on drop. If acquisition fails there is nothing to release.
+    let guard = manager
+        .acquire_session_lease()
+        .map_err(|e| XServerError::LaunchFailed {
+            message: format!("failed to acquire X server session: {e}"),
+        })?;
+    // Resolve the (now running) server for the report/forwarder. The lease
+    // already ensured it, so this reuses the live process without a second
+    // acquire. If resolution somehow fails, dropping `guard` releases the
+    // session we just claimed.
+    let outcome = ensure_x_server_impl(manager, provide_automatically)?;
+    Ok((outcome, guard))
+}
+
+/// Shared adopt/reuse/spawn + resolve body for the probe and connect paths. The
+/// session claim (if any) is made by the caller via `acquire_session_lease`;
+/// this reads the resulting count into the report.
+fn ensure_x_server_impl(
     manager: &XServerManager,
     provide_automatically: bool,
 ) -> Result<EnsureOutcome, XServerError> {
@@ -73,6 +115,7 @@ pub fn ensure_x_server(
             Some(resolved.info.display_number),
             managed,
             dependency,
+            manager.session_count(),
         );
         return Ok(EnsureOutcome { report, resolved });
     }
@@ -87,6 +130,7 @@ pub fn ensure_x_server(
             Some(resolved.info.display_number),
             false,
             dependency,
+            manager.session_count(),
         );
         return Ok(EnsureOutcome { report, resolved });
     }
@@ -114,6 +158,11 @@ pub fn current_status(manager: &XServerManager) -> XServerStatusReport {
     let platform = XServerPlatform::current();
     let dependency = dependency_available(platform);
 
+    // Live dependent-session count from the manager's refcount (#1107). Only the
+    // manager-tracked Running/Adopted states carry live sessions; the
+    // detection-fallback and Failed/Absent cases report zero.
+    let sessions = manager.session_count();
+
     match manager.status() {
         ManagedStatus::Running { display } => report(
             platform,
@@ -121,6 +170,7 @@ pub fn current_status(manager: &XServerManager) -> XServerStatusReport {
             Some(display),
             true,
             dependency,
+            sessions,
         ),
         ManagedStatus::Adopted { display } => report(
             platform,
@@ -128,9 +178,10 @@ pub fn current_status(manager: &XServerManager) -> XServerStatusReport {
             Some(display),
             false,
             dependency,
+            sessions,
         ),
         ManagedStatus::Failed { message } => {
-            let mut r = report(platform, XServerState::Failed, None, false, dependency);
+            let mut r = report(platform, XServerState::Failed, None, false, dependency, 0);
             r.message = Some(message);
             r
         }
@@ -144,9 +195,10 @@ pub fn current_status(manager: &XServerManager) -> XServerStatusReport {
                     Some(local.display_number),
                     false,
                     dependency,
+                    0,
                 ),
                 None => {
-                    let mut r = report(platform, XServerState::Absent, None, false, dependency);
+                    let mut r = report(platform, XServerState::Absent, None, false, dependency, 0);
                     r.message = Some("No local X server detected.".to_string());
                     r
                 }
@@ -178,12 +230,16 @@ pub fn classify_failure(
 }
 
 /// Build a status report with an adoption/managed message derived from the state.
+///
+/// `session_count` is the live dependent-session refcount (#1107), surfaced to
+/// the UI; it is `0` for states with no active server.
 fn report(
     platform: XServerPlatform,
     state: XServerState,
     display_number: Option<u32>,
     managed: bool,
     dependency_available: bool,
+    session_count: usize,
 ) -> XServerStatusReport {
     let message = match (state, display_number) {
         (XServerState::Running, Some(d)) => {
@@ -200,6 +256,7 @@ fn report(
         display_number,
         managed,
         dependency_available: Some(dependency_available),
+        session_count,
         message,
     }
 }
@@ -325,10 +382,12 @@ mod tests {
             Some(7),
             false,
             true,
+            3,
         );
         assert_eq!(r.state, XServerState::Adopted);
         assert_eq!(r.display_number, Some(7));
         assert!(!r.managed);
+        assert_eq!(r.session_count, 3);
         assert!(r.message.unwrap().contains(":7"));
     }
 
@@ -438,6 +497,64 @@ mod tests {
             let resolved = outcome.resolved;
             assert_eq!(resolved.info.display_number, 0);
             assert_tcp_loopback(&resolved.info.connection, 6000);
+        }
+
+        // ── Session refcount wiring (#1107) ──────────────────────────────
+
+        #[test]
+        fn acquire_flag_increments_refcount_and_populates_session_count() {
+            // The connect path acquires a session: the refcount rises and the
+            // status report surfaces it as `session_count`.
+            let mgr = std::sync::Arc::new(manager(vec![], true));
+
+            // Hold each guard alive: dropping it would release the session and
+            // decrement the refcount, so the accumulation assertions below rely
+            // on both leases staying in scope.
+            let (outcome, _guard1) =
+                ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            assert_eq!(outcome.report.session_count, 1, "first session counted");
+            assert_eq!(mgr.session_count(), 1);
+
+            let (outcome, _guard2) =
+                ensure_x_server_for_session(&mgr, true).expect("second session acquired");
+            assert_eq!(outcome.report.session_count, 2, "second session counted");
+            assert_eq!(mgr.session_count(), 2);
+        }
+
+        #[test]
+        fn probe_only_ensure_does_not_acquire_a_session() {
+            // The status/probe path (`x_server_ensure` command) must not leak a
+            // refcount: it ensures the server but acquires nothing.
+            let mgr = manager(vec![], true);
+
+            let outcome = ensure_x_server(&mgr, true).expect("server ensured");
+            assert_eq!(outcome.report.session_count, 0, "probe must not acquire");
+            assert_eq!(mgr.session_count(), 0);
+        }
+
+        #[test]
+        fn current_status_reflects_live_session_count() {
+            let mgr = std::sync::Arc::new(manager(vec![], true));
+
+            // Keep both leases alive so the live count stays at 2.
+            let (_o1, _guard1) = ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            let (_o2, _guard2) = ensure_x_server_for_session(&mgr, true).expect("session acquired");
+
+            let status = current_status(&mgr);
+            assert_eq!(status.state, XServerState::Running);
+            assert_eq!(status.session_count, 2, "live count surfaced in status");
+        }
+
+        #[test]
+        fn session_lease_releases_on_drop() {
+            // The lease returned by the connect path releases exactly one
+            // session when dropped, preserving the manager's refcount.
+            let mgr = std::sync::Arc::new(manager(vec![], true));
+
+            let lease = XServerManager::acquire_session_lease(&mgr).expect("session lease");
+            assert_eq!(mgr.session_count(), 1);
+            drop(lease);
+            assert_eq!(mgr.session_count(), 0, "lease drop releases the session");
         }
     }
 }

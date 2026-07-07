@@ -23,7 +23,7 @@ vi.mock("@/services/api", () => ({
   closeAgentSession: vi.fn(() => Promise.resolve()),
   cancelConnecting: vi.fn(() => Promise.resolve(true)),
   xServerStatus: vi.fn(() =>
-    Promise.resolve({ state: "absent", platform: "linux", managed: false })
+    Promise.resolve({ state: "absent", platform: "linux", managed: false, sessionCount: 0 })
   ),
   xServerStop: vi.fn(() => Promise.resolve()),
 }));

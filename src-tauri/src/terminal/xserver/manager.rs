@@ -18,7 +18,7 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use termihub_core::backends::ssh::x11::ManagedXServer;
@@ -204,6 +204,16 @@ impl XServerManager {
         self.inner.lock().expect("xserver lock").status.clone()
     }
 
+    /// Number of live X11 sessions currently depending on the server.
+    ///
+    /// Surfaced to the UI (Open Connections "X Servers" row → "· N sessions",
+    /// #1107). Mirrors the internal refcount driven by
+    /// [`acquire_session`](Self::acquire_session) /
+    /// [`release_session`](Self::release_session).
+    pub fn session_count(&self) -> usize {
+        self.inner.lock().expect("xserver lock").refcount
+    }
+
     /// Ensure a usable X server exists, spawning or adopting one as needed.
     ///
     /// Order: reuse our live managed process → adopt an external server on `:0`
@@ -219,6 +229,21 @@ impl XServerManager {
         let info = self.ensure_running_locked(&mut inner)?;
         inner.refcount += 1;
         Ok(info)
+    }
+
+    /// Acquire a session and return a RAII [`SessionGuard`] that releases it
+    /// exactly once when dropped.
+    ///
+    /// This is the connect-lifecycle entry point (#1107): the SSH X11 connect
+    /// path holds the guard for the session's lifetime (alongside the
+    /// `X11Forwarder`), so [`release_session`](Self::release_session) — and thus
+    /// the existing idle-shutdown behavior — fires precisely when the session
+    /// ends, whether it closed cleanly or the connect failed.
+    pub fn acquire_session_lease(self: &Arc<Self>) -> Result<SessionGuard> {
+        self.acquire_session()?;
+        Ok(SessionGuard {
+            manager: self.clone(),
+        })
     }
 
     /// Release a previously acquired session (refcount - 1). When the count
@@ -333,6 +358,23 @@ impl XServerManager {
     }
 }
 
+/// RAII guard for one acquired X11 session (#1107).
+///
+/// Holds a session against the shared [`XServerManager`] for as long as it is
+/// alive; dropping it calls [`release_session`](XServerManager::release_session)
+/// exactly once, preserving idle-shutdown for a managed server. Threaded into
+/// core's SSH connect path as an opaque, session-lifetime resource so release is
+/// tied to the session ending (or its connect failing).
+pub struct SessionGuard {
+    manager: Arc<XServerManager>,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.manager.release_session();
+    }
+}
+
 /// Best-effort removal of a written `.Xauthority` file.
 fn remove_auth_file(path: &Option<PathBuf>) {
     if let Some(path) = path {
@@ -438,7 +480,6 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
 
     /// Probe backed by a fixed set of "open" ports.
     struct FakeProbe {
@@ -754,6 +795,53 @@ mod tests {
         assert_eq!(launcher.count(), 0);
         // External server keeps running; we simply report Adopted/idle.
         assert_eq!(mgr.status(), XServerStatus::Adopted { display: 0 });
+    }
+
+    // -- session count (refcount surfaced to the UI, #1107) ----------------
+
+    #[test]
+    fn session_count_tracks_acquire_and_release() {
+        let launcher = FakeLauncher::new();
+        // idle-stop off so releasing to zero does not tear the server down and
+        // reset the count out from under the assertions.
+        let mgr = manager_with(&[], launcher.clone(), true, false);
+
+        assert_eq!(mgr.session_count(), 0, "no sessions before acquire");
+
+        mgr.acquire_session().unwrap();
+        assert_eq!(mgr.session_count(), 1, "one acquired session");
+
+        mgr.acquire_session().unwrap();
+        assert_eq!(mgr.session_count(), 2, "two acquired sessions");
+
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 1, "one released, one remaining");
+
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 0, "all sessions released");
+    }
+
+    #[test]
+    fn session_count_is_zero_after_idle_shutdown() {
+        let launcher = FakeLauncher::new();
+        let mgr = manager_with(&[], launcher.clone(), true, true);
+
+        mgr.acquire_session().unwrap();
+        assert_eq!(mgr.session_count(), 1);
+        // Last release with idle-stop on tears the server down and resets state.
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 0);
+        assert_eq!(mgr.status(), XServerStatus::Stopped);
+    }
+
+    #[test]
+    fn release_without_acquire_does_not_underflow() {
+        let launcher = FakeLauncher::new();
+        let mgr = manager_with(&[6000], launcher.clone(), true, false);
+
+        // Defensive: an unpaired release must saturate at zero, never wrap.
+        mgr.release_session();
+        assert_eq!(mgr.session_count(), 0);
     }
 
     // -- explicit stop / shutdown ------------------------------------------

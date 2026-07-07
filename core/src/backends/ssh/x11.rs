@@ -4,6 +4,7 @@
 //! connections, then routes incoming channels through the [`ForwardedChannelRegistry`]
 //! to async proxy tasks that bridge to the local X server.
 
+use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -100,6 +101,25 @@ impl ResolvedXServer {
     }
 }
 
+/// The outcome of [`XServerProvisioner::ensure`]: where to forward, plus an
+/// opaque session-lifetime guard.
+///
+/// The `guard` is a desktop-side RAII handle (a dependent-session refcount lease,
+/// #1107) that core keeps alive alongside the [`X11Forwarder`] for the session's
+/// lifetime and drops when the session ends — so the desktop side sees exactly
+/// one release per acquired session, whether the session closed cleanly or the
+/// connect failed after acquisition. Core treats it as an opaque `Any` and never
+/// inspects it.
+#[derive(Default)]
+pub struct XServerLease {
+    /// The resolved server to forward to, or `None` to fall back to
+    /// [`detect_local_x_server`] (provisioning disabled / nothing resolved).
+    pub resolved: Option<ResolvedXServer>,
+    /// Opaque guard held for the session lifetime; dropping it releases the
+    /// desktop-side session claim. `None` when nothing was claimed.
+    pub guard: Option<Box<dyn Any + Send>>,
+}
+
 /// A hook the desktop app installs so the SSH connect path can ensure a usable
 /// local X server *before* X11 forwarding starts.
 ///
@@ -113,15 +133,20 @@ impl ResolvedXServer {
 /// user-run server.
 #[async_trait]
 pub trait XServerProvisioner: Send + Sync {
-    /// Ensure a usable local X server exists and resolve where to reach it.
+    /// Ensure a usable local X server exists, resolve where to reach it, and
+    /// claim a dependent session against it.
     ///
-    /// - `Ok(Some(resolved))` — a server (managed or adopted) is ready; forward
-    ///   to `resolved.info` with `resolved.cookie`, no further detection.
-    /// - `Ok(None)` — provisioning is disabled or resolved nothing; fall back to
-    ///   [`detect_local_x_server`] for a user-run server.
-    /// - `Err(message)` — provisioning failed; `message` is an actionable,
-    ///   user-facing explanation surfaced to the UI (never a silent no-op).
-    async fn ensure(&self) -> Result<Option<ResolvedXServer>, String>;
+    /// On success returns an [`XServerLease`]:
+    /// - `lease.resolved = Some(resolved)` — a server (managed or adopted) is
+    ///   ready; forward to `resolved.info` with `resolved.cookie`.
+    /// - `lease.resolved = None` — provisioning is disabled or resolved nothing;
+    ///   fall back to [`detect_local_x_server`] for a user-run server.
+    /// - `lease.guard` — an opaque session-lifetime guard the connect path holds
+    ///   until the session ends (see [`XServerLease`]).
+    ///
+    /// `Err(message)` — provisioning failed; `message` is an actionable,
+    /// user-facing explanation surfaced to the UI (never a silent no-op).
+    async fn ensure(&self) -> Result<XServerLease, String>;
 }
 
 static PROVISIONER: OnceLock<Arc<dyn XServerProvisioner>> = OnceLock::new();

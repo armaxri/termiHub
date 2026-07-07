@@ -33,6 +33,11 @@ export interface XServerStatusReport {
   managed: boolean;
   /** Whether the platform dependency (e.g. VcXsrv) is installed. */
   dependencyAvailable?: boolean;
+  /**
+   * Number of live X11-forwarding sessions currently depending on this server.
+   * Drives the Open Connections "· N sessions" detail; `0` when idle or absent.
+   */
+  sessionCount: number;
   /** Human-readable status detail, if any. */
   message?: string;
 }
