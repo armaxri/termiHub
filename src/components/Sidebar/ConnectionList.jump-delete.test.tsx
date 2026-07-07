@@ -90,7 +90,10 @@ describe("ConnectionList — jump-host delete protection", () => {
     useAppStore.setState({ connections });
     act(() =>
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       )
     );
   }

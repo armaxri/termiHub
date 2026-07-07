@@ -98,7 +98,10 @@ describe("ConnectionList — folder chevron placement", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -119,7 +122,10 @@ describe("ConnectionList — folder chevron placement", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -137,7 +143,10 @@ describe("ConnectionList — folder chevron placement", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 

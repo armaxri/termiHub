@@ -112,7 +112,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -133,7 +136,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -158,7 +164,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -183,7 +192,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -212,7 +224,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -241,7 +256,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -272,7 +290,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -299,7 +320,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -329,7 +353,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -362,7 +389,10 @@ describe("ConnectionList — multi-select", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 

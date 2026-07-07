@@ -167,7 +167,10 @@ describe("AgentNode — Active Sessions reattach", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(AgentNode, { agent: makeAgent() }) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(AgentNode, { agent: makeAgent() }),
+        })
       );
     });
 
@@ -203,7 +206,10 @@ describe("AgentNode — Active Sessions reattach", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(AgentNode, { agent: makeAgent() }) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(AgentNode, { agent: makeAgent() }),
+        })
       );
     });
 

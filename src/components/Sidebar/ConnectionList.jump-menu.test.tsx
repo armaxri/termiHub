@@ -98,7 +98,10 @@ describe("ConnectionList — jump-host context menu", () => {
     useAppStore.setState({ connections: [connection] });
     act(() =>
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       )
     );
     const trigger = container.querySelector(`[data-testid="connection-item-${connection.id}"]`);

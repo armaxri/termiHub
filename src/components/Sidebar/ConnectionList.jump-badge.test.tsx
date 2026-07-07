@@ -83,7 +83,10 @@ describe("ConnectionList — jump-host hop badge", () => {
     useAppStore.setState({ connections });
     act(() =>
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       )
     );
   }

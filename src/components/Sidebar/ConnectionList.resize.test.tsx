@@ -108,7 +108,10 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -120,7 +123,10 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -133,7 +139,10 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -161,7 +170,10 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -178,7 +190,10 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -195,7 +210,10 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
@@ -213,7 +231,10 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
 
     act(() => {
       root.render(
-        React.createElement(TooltipProvider, { delayDuration: 0, children: React.createElement(ConnectionList) })
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
       );
     });
 
