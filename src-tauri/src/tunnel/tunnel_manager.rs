@@ -70,6 +70,55 @@ impl PooledSessionGuards {
     }
 }
 
+/// Record a tunnel's last error into the persisted per-tunnel error map.
+///
+/// Set on the failing `Error` branch of a start so the failure becomes a
+/// durable, queryable resting state (GAP 3, #1238). Poison-safe: a poisoned
+/// mutex silently no-ops rather than panicking, consistent with the manager's
+/// other lock handling.
+fn record_last_error(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str, error: String) {
+    if let Ok(mut map) = errors.lock() {
+        map.insert(tunnel_id.to_string(), error);
+    }
+}
+
+/// Clear a tunnel's persisted last error (on a successful start or an explicit
+/// stop), returning it to the "never failed" resting state.
+fn clear_last_error(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) {
+    if let Ok(mut map) = errors.lock() {
+        map.remove(tunnel_id);
+    }
+}
+
+/// Look up a tunnel's persisted last error, if any. Reading never mutates the
+/// map, so repeated `get_statuses` calls (a reload) keep reporting `Error`.
+fn last_error_for(errors: &Mutex<HashMap<String, String>>, tunnel_id: &str) -> Option<String> {
+    errors
+        .lock()
+        .ok()
+        .and_then(|map| map.get(tunnel_id).cloned())
+}
+
+/// Resolve the resting (non-active) status of a tunnel from its transient
+/// connecting state and any persisted last error.
+///
+/// Precedence: an in-flight connect wins over a stale error; otherwise a
+/// recorded failure surfaces as `Error` carrying its message, and only the
+/// absence of both is a plain `Disconnected`. This is what distinguishes
+/// "never started" (no error entry) from "died with an error" (entry present).
+fn resting_status(
+    is_connecting: bool,
+    last_error: Option<String>,
+) -> (TunnelStatus, Option<String>) {
+    if is_connecting {
+        (TunnelStatus::Connecting, None)
+    } else if let Some(error) = last_error {
+        (TunnelStatus::Error, Some(error))
+    } else {
+        (TunnelStatus::Disconnected, None)
+    }
+}
+
 /// An active tunnel with its forwarder.
 enum ActiveForwarder {
     Local(LocalForwarder),
@@ -93,6 +142,11 @@ pub struct TunnelManager {
     tunnel_configs: Mutex<TunnelStore>,
     storage: TunnelStorage,
     active_tunnels: Mutex<HashMap<String, ActiveTunnel>>,
+    /// Last error per tunnel id, making a failed start a durable, queryable
+    /// resting state that survives a `loadTunnels` reload (GAP 3, #1238). An
+    /// entry is set when a start fails and committed (not cancelled), and
+    /// cleared on a successful start or an explicit stop.
+    last_errors: Mutex<HashMap<String, String>>,
     connecting: ConnectingTracker,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
@@ -116,6 +170,7 @@ impl TunnelManager {
             tunnel_configs: Mutex::new(result.data),
             storage,
             active_tunnels: Mutex::new(HashMap::new()),
+            last_errors: Mutex::new(HashMap::new()),
             connecting: ConnectingTracker::new(),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
@@ -207,15 +262,19 @@ impl TunnelManager {
                         stats,
                     }
                 } else {
-                    let status = if self.connecting.is_connecting(&config.id) {
-                        TunnelStatus::Connecting
-                    } else {
-                        TunnelStatus::Disconnected
-                    };
+                    // A tunnel that is neither active nor connecting rests as
+                    // either `Disconnected` (never failed) or `Error` (its last
+                    // start failed) — the latter carries the recorded message so
+                    // it survives a reload instead of being laundered back to
+                    // `Disconnected` (GAP 3, #1238).
+                    let (status, error) = resting_status(
+                        self.connecting.is_connecting(&config.id),
+                        last_error_for(&self.last_errors, &config.id),
+                    );
                     TunnelState {
                         tunnel_id: config.id.clone(),
                         status,
-                        error: None,
+                        error,
                         stats: TunnelStats::default(),
                     }
                 }
@@ -280,6 +339,10 @@ impl TunnelManager {
                         self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
                     }
                     FinishOutcome::Commit => {
+                        // Persist the failure so `Error` is a durable, queryable
+                        // resting state, not just a fire-and-forget event that a
+                        // reload launders away (GAP 3, #1238).
+                        record_last_error(&self.last_errors, tunnel_id, e.to_string());
                         self.emit_status(tunnel_id, TunnelStatus::Error, Some(e.to_string()));
                     }
                 }
@@ -305,6 +368,10 @@ impl TunnelManager {
                 .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
             active.insert(tunnel_id.to_string(), ActiveTunnel { forwarder, guards });
         }
+
+        // A successful start clears any recorded failure so the tunnel no longer
+        // rests in `Error` once it is running again (GAP 3, #1238).
+        clear_last_error(&self.last_errors, tunnel_id);
 
         // Emit connected status
         self.emit_status(tunnel_id, TunnelStatus::Connected, None);
@@ -450,6 +517,10 @@ impl TunnelManager {
 
     /// Stop an active tunnel by ID.
     pub fn stop_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        // An explicit stop dismisses any recorded failure, returning the tunnel
+        // from the `Error` resting state to `Disconnected` (GAP 3, #1238).
+        clear_last_error(&self.last_errors, tunnel_id);
+
         let tunnel = {
             let mut active = self
                 .active_tunnels
@@ -596,9 +667,11 @@ mod tests {
 
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
+    use super::{clear_last_error, last_error_for, record_last_error, resting_status};
+    use crate::tunnel::config::TunnelStatus;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
 
     /// Stand-in for a pooled `Arc<SshSession>` that records when the underlying
@@ -778,5 +851,100 @@ mod tests {
             "pool drains once the active tunnel is stopped"
         );
         assert_eq!(live.load(Ordering::SeqCst), 0);
+    }
+
+    // --- GAP 3: persisted, queryable `Error` resting state (#1238) ---------
+    //
+    // Driving the full `get_statuses` path in a unit test needs a live Tauri
+    // `AppHandle` (for storage + event emission), which `src-tauri` has no mock
+    // harness for. So — exactly like the teardown tests above — these exercise
+    // the production building blocks the manager uses directly: the
+    // `last_errors` map helpers (`record_last_error` / `clear_last_error` /
+    // `last_error_for`) and the `resting_status` decision that `get_statuses`
+    // applies to every non-active tunnel.
+
+    /// GAP 3: after a failure is recorded, the resting status a reload computes
+    /// is `Error` carrying the recorded message — not `Disconnected`.
+    #[test]
+    fn resting_status_reports_error_after_recorded_failure() {
+        let errors = Mutex::new(HashMap::new());
+        let tracker = ConnectingTracker::new();
+
+        record_last_error(&errors, TUNNEL_ID, "connect refused".to_string());
+
+        let (status, error) = resting_status(
+            tracker.is_connecting(TUNNEL_ID),
+            last_error_for(&errors, TUNNEL_ID),
+        );
+        assert_eq!(status, TunnelStatus::Error);
+        assert_eq!(error.as_deref(), Some("connect refused"));
+    }
+
+    /// GAP 3: "never started" (no map entry) stays `Disconnected` — distinct
+    /// from "died with an error" (entry present).
+    #[test]
+    fn never_started_tunnel_reports_disconnected_not_error() {
+        let errors = Mutex::new(HashMap::new());
+        let (status, error) = resting_status(false, last_error_for(&errors, "never-started"));
+        assert_eq!(status, TunnelStatus::Disconnected);
+        assert!(error.is_none());
+    }
+
+    /// GAP 3: an in-flight connect wins over a stale recorded error.
+    #[test]
+    fn connecting_takes_precedence_over_recorded_error() {
+        let errors = Mutex::new(HashMap::new());
+        record_last_error(&errors, TUNNEL_ID, "old failure".to_string());
+
+        let (status, error) = resting_status(true, last_error_for(&errors, TUNNEL_ID));
+        assert_eq!(status, TunnelStatus::Connecting);
+        assert!(error.is_none());
+    }
+
+    /// GAP 3: a successful start clears the recorded error, so a later resting
+    /// read reports `Disconnected` (not the stale `Error`).
+    #[test]
+    fn successful_start_clears_recorded_error() {
+        let errors = Mutex::new(HashMap::new());
+        record_last_error(&errors, TUNNEL_ID, "boom".to_string());
+        assert!(last_error_for(&errors, TUNNEL_ID).is_some());
+
+        // start_tunnel clears the id on a successful insert.
+        clear_last_error(&errors, TUNNEL_ID);
+
+        let (status, error) = resting_status(false, last_error_for(&errors, TUNNEL_ID));
+        assert_eq!(status, TunnelStatus::Disconnected);
+        assert!(error.is_none());
+    }
+
+    /// GAP 3: an explicit stop clears the recorded error.
+    #[test]
+    fn explicit_stop_clears_recorded_error() {
+        let errors = Mutex::new(HashMap::new());
+        record_last_error(&errors, TUNNEL_ID, "boom".to_string());
+
+        // stop_tunnel clears the id.
+        clear_last_error(&errors, TUNNEL_ID);
+        assert!(last_error_for(&errors, TUNNEL_ID).is_none());
+
+        let (status, _) = resting_status(false, last_error_for(&errors, TUNNEL_ID));
+        assert_eq!(status, TunnelStatus::Disconnected);
+    }
+
+    /// GAP 3 core regression: repeated status reads (a simulated `loadTunnels`
+    /// reload) must NOT launder `Error` back to `Disconnected` — the second read
+    /// still reports `Error` with its message because reading never mutates the
+    /// persisted map.
+    #[test]
+    fn error_survives_repeated_status_reads() {
+        let errors = Mutex::new(HashMap::new());
+        record_last_error(&errors, TUNNEL_ID, "session died".to_string());
+
+        let first = resting_status(false, last_error_for(&errors, TUNNEL_ID));
+        assert_eq!(first.0, TunnelStatus::Error);
+
+        let second = resting_status(false, last_error_for(&errors, TUNNEL_ID));
+        assert_eq!(second.0, TunnelStatus::Error);
+        assert_eq!(second.1.as_deref(), Some("session died"));
     }
 }
