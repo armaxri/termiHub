@@ -69,8 +69,9 @@ pub fn resolve_provide_automatically(app: &AppHandle) -> bool {
 ///
 /// Core's SSH connect path calls [`ensure`](XServerProvisioner::ensure) before
 /// starting X11 forwarding; this runs the orchestrator (off the async reactor,
-/// since detection briefly blocks) and returns the managed server to forward to
-/// — or `Ok(None)` to let core adopt a user-run server, or an actionable `Err`.
+/// since detection briefly blocks), claims a dependent session (#1107), and
+/// returns an [`XServerLease`] with the server to forward to plus a
+/// session-lifetime guard — or an actionable `Err`.
 pub struct XServerProvisionerImpl {
     app: AppHandle,
     manager: Arc<XServerManager>,
