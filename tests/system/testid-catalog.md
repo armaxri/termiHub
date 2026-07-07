@@ -238,15 +238,6 @@ Fixed strings — match exactly.
 | `master-password-confirm-input` | `src/components/Settings/SecuritySettings.tsx` |
 | `master-password-input` | `src/components/Settings/SecuritySettings.tsx` |
 | `master-password-setup` | `src/components/Settings/SecuritySettings.tsx` |
-| `master-pw-cancel` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-confirm` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-current` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-error` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-mismatch` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-new` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-strength` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-submit` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-warning` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
 | `migration-cancel` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-confirm` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-dialog` | `src/components/Settings/PortableModeSettings.tsx` |
