@@ -433,16 +433,47 @@ impl EmbeddedServerManager {
     }
 
     fn emit_status(&self, server_id: &str, status: ServerStatus, error: Option<String>) {
-        let state = ServerState {
-            server_id: server_id.to_string(),
-            status,
-            error,
-            stats: ServerStats::default(),
-            started_at: None,
-        };
+        // Snapshot the *real* live stats and start time from the active entry (as
+        // `get_states` does) instead of shipping zeroed defaults, so the sidebar
+        // traffic line and uptime reflect reality (GAP G6, #1145). If the server
+        // is no longer active (e.g. a `Stopped` transition), fall back to the
+        // zeroed defaults, which is correct for a server with no live traffic.
+        let (stats, started_at) = self
+            .active
+            .lock()
+            .ok()
+            .and_then(|active| {
+                active
+                    .get(server_id)
+                    .map(|srv| (srv.stats.snapshot(), Some(srv.started_at.clone())))
+            })
+            .unwrap_or_default();
+
+        let state = build_status_state(server_id, status, error, stats, started_at);
         let _ = self
             .app_handle
             .emit("embedded-server-status-changed", &state);
+    }
+}
+
+/// Assemble the [`ServerState`] broadcast on `embedded-server-status-changed`.
+///
+/// Kept as a free function so the payload contract (real stats + `started_at`
+/// carried through, not zeroed — GAP G6, #1145) can be unit-tested without a
+/// live [`AppHandle`].
+fn build_status_state(
+    server_id: &str,
+    status: ServerStatus,
+    error: Option<String>,
+    stats: ServerStats,
+    started_at: Option<String>,
+) -> ServerState {
+    ServerState {
+        server_id: server_id.to_string(),
+        status,
+        error,
+        stats,
+        started_at,
     }
 }
 
