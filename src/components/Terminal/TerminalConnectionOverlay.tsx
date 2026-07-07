@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
-import { ServerCrash, RefreshCw, Loader2 } from "lucide-react";
+import { ServerCrash, RefreshCw, Loader2, Zap, Ban } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
 import {
@@ -61,6 +62,9 @@ export function TerminalConnectionOverlay({
 }: TerminalConnectionOverlayProps) {
   const closeTab = useAppStore((s) => s.closeTab);
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
+  const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
+  const abortTerminalConnect = useAppStore((s) => s.abortTerminalConnect);
+  const setTerminalWaitingForAgent = useAppStore((s) => s.setTerminalWaitingForAgent);
   const isConnecting = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
@@ -116,6 +120,25 @@ export function TerminalConnectionOverlay({
     retryTerminalSpawn(tabId);
   }, [tabId, retryTerminalSpawn]);
 
+  // Abort: stop the in-flight connect and land on a retryable Failed state,
+  // keeping the tab open — distinct from Cancel, which closes the tab (#1128).
+  const handleAbort = useCallback(() => {
+    abortTerminalConnect(tabId);
+  }, [tabId, abortTerminalConnect]);
+
+  // Retry now (waiting-for-agent): stop parking on the agent and re-run the
+  // spawn immediately, mirroring the wake path when the agent comes online.
+  const handleRetryNowWaiting = useCallback(() => {
+    setTerminalWaitingForAgent(tabId, null);
+    retryTerminalSpawn(tabId);
+  }, [tabId, setTerminalWaitingForAgent, retryTerminalSpawn]);
+
+  // Retry now (auto-retrying): cancel the pending retry-delay loop and kick a
+  // fresh attempt at once, mirroring the agent-reconnect restart path.
+  const handleRetryNowAutoRetry = useCallback(() => {
+    reconnectTerminal(tabId);
+  }, [tabId, reconnectTerminal]);
+
   const isSerial = sessionType === "serial";
   const isAgentAuth = error.includes(SSH_AGENT_PATTERN);
   const isTimeout = error.includes(TIMEOUT_PATTERN) && !isAgentAuth;
@@ -162,13 +185,32 @@ export function TerminalConnectionOverlay({
             Times out in {remainingSeconds}s
           </p>
           <div className="terminal-connection-overlay__actions">
-            <button
-              className="terminal-connection-overlay__cancel-btn"
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Zap size={14} />}
+              onClick={handleRetryNowWaiting}
+              data-testid="terminal-connection-retry-now-btn"
+            >
+              Retry now
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Ban size={14} />}
+              onClick={handleAbort}
+              data-testid="terminal-connection-abort-btn"
+            >
+              Abort
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -199,13 +241,32 @@ export function TerminalConnectionOverlay({
             </p>
           )}
           <div className="terminal-connection-overlay__actions">
-            <button
-              className="terminal-connection-overlay__cancel-btn"
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Zap size={14} />}
+              onClick={handleRetryNowAutoRetry}
+              data-testid="terminal-connection-retry-now-btn"
+            >
+              Retry now
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Ban size={14} />}
+              onClick={handleAbort}
+              data-testid="terminal-connection-abort-btn"
+            >
+              Abort
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -234,13 +295,23 @@ export function TerminalConnectionOverlay({
             </p>
           )}
           <div className="terminal-connection-overlay__actions">
-            <button
-              className="terminal-connection-overlay__cancel-btn"
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Ban size={14} />}
+              onClick={handleAbort}
+              data-testid="terminal-connection-abort-btn"
+            >
+              Abort
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -303,21 +374,23 @@ export function TerminalConnectionOverlay({
         )}
 
         <div className="terminal-connection-overlay__actions">
-          <button
-            className="terminal-connection-overlay__retry-btn"
+          <Button
+            size="sm"
+            variant="primary"
+            icon={<RefreshCw size={14} />}
             onClick={handleRetry}
             data-testid="terminal-connection-retry-btn"
           >
-            <RefreshCw size={14} />
             Retry
-          </button>
-          <button
-            className="terminal-connection-overlay__cancel-btn"
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={handleCancel}
             data-testid="terminal-connection-cancel-btn"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </div>

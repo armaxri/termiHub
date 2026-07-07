@@ -13,6 +13,8 @@ vi.mock("lucide-react", () => ({
   ServerCrash: () => null,
   RefreshCw: () => null,
   Loader2: () => null,
+  Zap: () => null,
+  Ban: () => null,
 }));
 
 const TAB_ID = "tab-timeout";
