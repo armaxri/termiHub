@@ -27,6 +27,7 @@ import {
   FolderSync,
   Globe,
   Terminal,
+  X,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { Button, Tooltip } from "@/components/ui";
@@ -699,6 +700,8 @@ export function FileBrowser() {
   const { isDragOver } = useOsFileDrop(containerRef, handleOsDrop);
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
+  const retrySftp = useAppStore((s) => s.retrySftp);
+  const dismissSftpError = useAppStore((s) => s.dismissSftpError);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const fileClipboard = useAppStore((s) => s.fileClipboard);
   const quickShareServer = useAppStore((s) => s.quickShareServer);
@@ -948,6 +951,27 @@ export function FileBrowser() {
             <>
               <AlertCircle size={20} />
               <span>{error}</span>
+              {/* Recovery controls for a failed connect (audit gap S1). */}
+              <div className="file-browser__error-actions">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<RefreshCw size={14} />}
+                  onClick={() => retrySftp()}
+                  data-testid="file-browser-sftp-retry"
+                >
+                  Retry
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<X size={14} />}
+                  onClick={dismissSftpError}
+                  data-testid="file-browser-sftp-dismiss"
+                >
+                  Dismiss
+                </Button>
+              </div>
             </>
           ) : (
             <span>Waiting for SFTP connection...</span>

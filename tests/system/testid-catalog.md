@@ -168,6 +168,8 @@ Fixed strings — match exactly.
 | `file-browser-refresh` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-session-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-sftp-dismiss` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-sftp-retry` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-up` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-upload` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
