@@ -221,7 +221,9 @@ describe("LayoutDesigner", () => {
     });
 
     act(() => {
-      root.render(withTooltip(<LayoutDesigner layout={leaf(tab("a"), tab("b"))} onChange={onChange} />));
+      root.render(
+        withTooltip(<LayoutDesigner layout={leaf(tab("a"), tab("b"))} onChange={onChange} />)
+      );
     });
 
     act(() => {
