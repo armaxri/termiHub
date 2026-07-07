@@ -1,6 +1,15 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Activity, RefreshCw, Unplug, Loader2, Server, Route, RotateCw } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  RefreshCw,
+  Unplug,
+  Loader2,
+  Server,
+  Route,
+  RotateCw,
+} from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
@@ -241,6 +250,7 @@ function MonitoringStatus() {
   const monitoringSampleCount = useAppStore((s) => s.monitoringSampleCount);
   const monitoringLoading = useAppStore((s) => s.monitoringLoading);
   const monitoringError = useAppStore((s) => s.monitoringError);
+  const monitoringStatus = useAppStore((s) => s.monitoringStatus);
   const monitoringCancelled = useAppStore((s) => s.monitoringCancelled);
   const connectMonitoring = useAppStore((s) => s.connectMonitoring);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
@@ -539,7 +549,11 @@ function MonitoringStatus() {
     );
   }
 
-  // Connected (or reconnecting with cached stats): show compact stats
+  // Connected (or reconnecting with cached stats): show compact stats.
+  // A "stale" status (mid-stream drop) dims the numbers and shows a warning
+  // badge so frozen data is never rendered as live (#1229, audit gap G1).
+  const isStale = monitoringStatus === "stale";
+  const staleModifier = isStale ? " monitoring-status__stat--stale" : "";
   return (
     <>
       <MonitoringDetailDropdown
@@ -552,6 +566,22 @@ function MonitoringStatus() {
       {monitoringStats && (
         <>
           {/*
+            A mid-stream transport drop moves the collector loop to "stale"
+            (#1229, audit gap G1). The last-known numbers are kept but dimmed and
+            prefixed with a warning badge so frozen data is never shown as live.
+            Recovery flips the status back to "live" and un-dims them.
+          */}
+          {isStale && (
+            <span
+              className="status-bar__item monitoring-status__stale-badge"
+              title="Monitoring data is stale — the connection dropped and the numbers below are frozen at their last-known values."
+              data-testid="monitoring-stale"
+            >
+              <AlertTriangle size={12} />
+              Stale
+            </span>
+          )}
+          {/*
             The remote collectors report CPU 0% on the first sample because there
             is no prior delta to compute a rate from (audit gap G10). Until the
             second sample arrives, show a priming indicator so the placeholder is
@@ -560,7 +590,7 @@ function MonitoringStatus() {
           */}
           {monitoringSampleCount < 2 ? (
             <span
-              className="status-bar__item monitoring-status__stat monitoring-status__stat--priming"
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--priming${staleModifier}`}
               title="CPU: priming (waiting for second sample)"
               data-testid="monitoring-cpu"
             >
@@ -568,7 +598,7 @@ function MonitoringStatus() {
             </span>
           ) : (
             <span
-              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.cpuUsagePercent)}`}
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.cpuUsagePercent)}${staleModifier}`}
               title={`CPU: ${monitoringStats.cpuUsagePercent.toFixed(1)}%`}
               data-testid="monitoring-cpu"
             >
@@ -576,14 +606,14 @@ function MonitoringStatus() {
             </span>
           )}
           <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}`}
+            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}${staleModifier}`}
             title={`Memory: ${formatKb(monitoringStats.memoryTotalKb - monitoringStats.memoryAvailableKb)} / ${formatKb(monitoringStats.memoryTotalKb)}`}
             data-testid="monitoring-mem"
           >
             Mem {monitoringStats.memoryUsedPercent.toFixed(0)}%
           </span>
           <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.diskUsedPercent)}`}
+            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.diskUsedPercent)}${staleModifier}`}
             title={`Disk: ${formatKb(monitoringStats.diskUsedKb)} / ${formatKb(monitoringStats.diskTotalKb)}`}
             data-testid="monitoring-disk"
           >

@@ -20,7 +20,7 @@ use tracing::debug;
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::{FileBrowser, FileEntry};
-use termihub_core::monitoring::{MonitoringProvider, MonitoringReceiver};
+use termihub_core::monitoring::{MonitorStatus, MonitoringProvider, MonitoringSubscription};
 
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
@@ -647,7 +647,7 @@ impl RemoteMonitoringProxy {
 
 #[async_trait::async_trait]
 impl MonitoringProvider for RemoteMonitoringProxy {
-    async fn subscribe(&self) -> Result<MonitoringReceiver, CoreError> {
+    async fn subscribe(&self) -> Result<MonitoringSubscription, CoreError> {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
         // Register monitoring channel so agent_manager routes notifications to it.
@@ -665,7 +665,19 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         )
         .await?;
 
-        Ok(rx)
+        // The agent-mediated path does not yet forward a status stream (that
+        // arrives in a later stage of the lifecycle redesign). Report an
+        // initial `Live` so the frontend renders live agent stats rather than
+        // staying stuck at `Connecting`. Agent-side Stale/Reconnecting will be
+        // wired through this same channel in a follow-up (#1229 is S2, desktop
+        // SSH only).
+        let (status_tx, status_rx) = tokio::sync::mpsc::channel(1);
+        let _ = status_tx.send(MonitorStatus::Live).await;
+
+        Ok(MonitoringSubscription {
+            stats: rx,
+            status: status_rx,
+        })
     }
 
     async fn unsubscribe(&self) -> Result<(), CoreError> {

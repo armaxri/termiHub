@@ -9,7 +9,9 @@ pub use parser::{
     cpu_percent_from_delta, parse_cpu_line, parse_df_output, parse_meminfo_value, parse_stats,
     MONITORING_COMMAND,
 };
-pub use provider::{MonitoringProvider, MonitoringReceiver, MonitoringSender};
+pub use provider::{
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+};
 pub use status::{
     CollectLoopState, MonitorStatus, MonitorStatusReceiver, MonitorStatusSender,
     DEFAULT_STALE_THRESHOLD,

@@ -206,6 +206,24 @@
   color: var(--text-secondary);
 }
 
+/*
+  Stale (#1229, audit gap G1): the transport dropped mid-stream, so the numbers
+  are frozen at their last-known values. Mute them (like the priming placeholder)
+  so they never read as live, overriding the severity colour. `!important` beats
+  the more specific severity classes on the same element.
+*/
+.monitoring-status__stat--stale {
+  color: var(--text-secondary) !important;
+}
+
+/* Warning badge shown alongside the frozen numbers while stale. */
+.monitoring-status__stale-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning);
+}
+
 .monitoring-status__loading {
   display: flex;
   align-items: center;
