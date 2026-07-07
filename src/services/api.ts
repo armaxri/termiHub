@@ -98,7 +98,10 @@ export async function cancelConnectionPathProbe(probeId: string): Promise<boolea
  * and forwards the rest as settings. For other types: passes config directly.
  *
  * `connectId` (when provided) lets the caller cancel a still-connecting session
- * via {@link cancelConnecting} — pass a stable per-attempt id such as the tab id.
+ * via {@link cancelConnecting}. Pass a UNIQUE per-attempt id (e.g.
+ * `${tabId}:${retryCount}`), not the bare tab id: overlapping retry/reconnect
+ * attempts for the same tab must not share an id, or a stale attempt's cancel
+ * would abort a newer in-flight connect (#1125).
  */
 export async function createTerminal(
   config: ConnectionConfig,

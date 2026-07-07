@@ -264,7 +264,7 @@ export function Terminal({
   }, [tabId]);
 
   const setupTerminal = useCallback(
-    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
+    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean, connectId: string) => {
       // Cancel any pending session close from a StrictMode unmount cycle
       if (pendingCloseTimerRef.current !== null) {
         clearTimeout(pendingCloseTimerRef.current);
@@ -422,11 +422,14 @@ export function Terminal({
               // createTerminal is awaiting if a container resize fires).
               ptyCols = xterm.cols;
               ptyRows = xterm.rows;
-              // Pass the tab id as the connect id so closing the tab while
-              // connecting can abort the in-flight handshake (#952).
+              // Pass a UNIQUE per-attempt connect id so closing the tab while
+              // connecting can abort the in-flight handshake (#952) — and so an
+              // overlapping retry/reconnect never shares the previous attempt's
+              // id. If it did, the old effect's cleanup would cancel the fresh
+              // attempt's token instead of its own (#1125).
               connectInFlightRef.current = true;
               try {
-                resolved = await createTerminal(sessionConfig, tabId);
+                resolved = await createTerminal(sessionConfig, connectId);
               } finally {
                 connectInFlightRef.current = false;
               }
@@ -739,6 +742,13 @@ export function Terminal({
     // second mount, which would send input to the wrong backend session.
     let canceled = false;
 
+    // Unique connect id for THIS effect run's connect attempt. Keyed by the
+    // retry generation so an overlapping retry/reconnect (which re-runs the
+    // effect via the retryCount dep) gets a distinct id. The cleanup below
+    // cancels only this id, so a stale cleanup can never abort a newer
+    // attempt's in-flight handshake (#1125).
+    const connectId = `${tabId}:${retryCount}`;
+
     // Create an imperative DOM element for xterm (not managed by React rendering)
     const el = document.createElement("div");
     el.style.position = "absolute";
@@ -912,7 +922,7 @@ export function Terminal({
     fitAddonRef.current = fitAddon;
 
     // Wire to backend
-    setupTerminal(xterm, fitAddon, () => canceled);
+    setupTerminal(xterm, fitAddon, () => canceled, connectId);
 
     // Re-fit once web fonts finish loading. The terminal font (Nerd Font
     // Mono) ships via @font-face with `font-display: swap`, so xterm's
@@ -1010,9 +1020,11 @@ export function Terminal({
       canceled = true;
       // If the tab is torn down while a connect is in flight (e.g. the user hit
       // Cancel on the connecting overlay), abort the backend's handshake instead
-      // of leaving it to run to completion (#952).
+      // of leaving it to run to completion (#952). Cancel only THIS effect run's
+      // connect id — never the bare tabId — so an overlapping newer attempt is
+      // not aborted by this stale cleanup (#1125).
       if (connectInFlightRef.current) {
-        void cancelConnecting(tabId).catch(() => {});
+        void cancelConnecting(connectId).catch(() => {});
       }
       resizeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);
