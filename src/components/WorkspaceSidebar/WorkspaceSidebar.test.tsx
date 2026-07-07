@@ -213,7 +213,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     // No confirm dialog before the delete button is pressed.
@@ -231,7 +231,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     act(() => (query("workspace-delete-ws-1") as HTMLButtonElement).click());
@@ -249,7 +249,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
 
     act(() => {
-      root.render(<WorkspaceSidebar />);
+      root.render(withTooltip(<WorkspaceSidebar />));
     });
 
     act(() => (query("workspace-delete-ws-1") as HTMLButtonElement).click());
