@@ -53,7 +53,7 @@ export function useFileSystem() {
   const fileEntries = useAppStore((s) => s.fileEntries);
   const currentPath = useAppStore((s) => s.currentPath);
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
-  const sftpLoading = useAppStore((s) => s.sftpLoading);
+  const sftpStatus = useAppStore((s) => s.sftpStatus);
   const sftpError = useAppStore((s) => s.sftpError);
   const navigateSftp = useAppStore((s) => s.navigateSftp);
   const refreshSftp = useAppStore((s) => s.refreshSftp);
@@ -246,7 +246,10 @@ export function useFileSystem() {
     fileEntries,
     currentPath,
     isConnected: sftpSessionId !== null,
-    isLoading: sftpLoading,
+    // Derived from the explicit status enum (audit gap A1): either the initial
+    // connect or a directory list is in flight. Callers that need to tell
+    // "connecting" apart from "listing" read `sftpStatus` from the store.
+    isLoading: sftpStatus === "connecting" || sftpStatus === "listing",
     error: sftpError,
     navigateTo,
     navigateUp,

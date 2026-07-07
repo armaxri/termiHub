@@ -24,6 +24,7 @@ import {
   SavedConnection,
   ConnectionFolder,
   FileEntry,
+  SftpStatus,
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
@@ -91,6 +92,8 @@ import {
   stopPersistentSession as apiStopPersistentSession,
   attachPersistentTab as apiAttachPersistentTab,
   adoptPersistentSession as apiAdoptPersistentSession,
+  closeTerminal as apiCloseTerminal,
+  detachPersistentTab as apiDetachPersistentTab,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -477,7 +480,12 @@ interface AppState {
   fileEntries: FileEntry[];
   currentPath: string;
   sftpSessionId: string | null;
-  sftpLoading: boolean;
+  /**
+   * Explicit SFTP session lifecycle status (audit gap A1). Replaces the
+   * overloaded `sftpLoading` boolean so the UI can tell "connecting" apart from
+   * "listing"/"refreshing" and "idle".
+   */
+  sftpStatus: SftpStatus;
   sftpError: string | null;
   sftpConnectedHost: string | null;
   /**
@@ -701,6 +709,8 @@ interface AppState {
   embeddedServers: EmbeddedServerConfig[];
   embeddedServerStates: Record<string, EmbeddedServerState>;
   loadEmbeddedServers: () => Promise<void>;
+  /** Refresh only the live runtime states (stats/uptime) without reloading the config list. */
+  refreshEmbeddedServerStates: () => Promise<void>;
   saveEmbeddedServer: (config: EmbeddedServerConfig) => Promise<void>;
   deleteEmbeddedServer: (serverId: string) => Promise<void>;
   startEmbeddedServer: (serverId: string) => Promise<void>;
@@ -820,6 +830,46 @@ function beginRestoreGuard(setState: (partial: Partial<AppState>) => void): void
     frontendLog("workspace", "restore settle window elapsed; auto-save re-enabled");
   }, RESTORE_SETTLE_MS);
 }
+
+/**
+ * Tear down every live backend session currently held by the store (GAP G1,
+ * #1146). `launchWorkspace` / `restoreLastSession` replace the whole layout with
+ * a single `set(...)`; without this, the prior tabs' PTY/SSH/agent sessions are
+ * dropped from the store and orphaned into the Open Connections panel with no
+ * tab to reach them. Call this BEFORE placing the new groups.
+ *
+ * The active group's live tree lives in `rootPanel`; every other group's tree
+ * lives in `group.rootPanel` (mirrors {@link captureAllTabGroups}). Persistent
+ * sessions are detached rather than killed so their background process survives
+ * and can be re-adopted — the same distinction the Terminal unmount cleanup
+ * makes. Failures are swallowed: a best-effort close must never block the
+ * launch/restore that follows.
+ */
+function teardownAllSessions(state: {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+}): void {
+  const trees = state.tabGroups.map((g) =>
+    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
+  );
+  const tabs = trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+  let closed = 0;
+  for (const tab of tabs) {
+    if (!tab.sessionId) continue;
+    closed++;
+    if (tab.persistentConnectionId) {
+      // Persistent session — detach so the background process keeps running.
+      apiDetachPersistentTab(tab.sessionId, tab.id).catch(() => {});
+    } else {
+      apiCloseTerminal(tab.sessionId).catch(() => {});
+    }
+  }
+  if (closed > 0) {
+    frontendLog("workspace", `tore down ${closed} live session(s) before restore/launch`);
+  }
+}
+
 /** Unlisten function for the active session-based monitoring event subscription. */
 let _monitoringUnlisten: (() => void) | null = null;
 
@@ -2801,7 +2851,7 @@ export const useAppStore = create<AppState>((set, get) => {
     fileEntries: [],
     currentPath: "/",
     sftpSessionId: null,
-    sftpLoading: false,
+    sftpStatus: "idle",
     sftpError: null,
     sftpConnectedHost: null,
     sftpLastConfig: null,
@@ -2811,7 +2861,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     connectSftp: async (config: Record<string, unknown>) => {
       // Retain the config so a failed connect can be retried (audit gap S1).
-      set({ sftpLoading: true, sftpError: null, sftpLastConfig: config });
+      set({ sftpStatus: "connecting", sftpError: null, sftpLastConfig: config });
       try {
         const sessionId = await sftpOpen(config);
         // Resolve the real remote home via SFTP realpath(".") instead of the
@@ -2835,14 +2885,14 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         set({
           sftpSessionId: sessionId,
-          sftpLoading: false,
+          sftpStatus: "connected",
           currentPath: activePath,
           fileEntries: entries,
           sftpConnectedHost: `${config.username as string}@${config.host as string}:${config.port as number}`,
         });
       } catch (err) {
         set({
-          sftpLoading: false,
+          sftpStatus: "error",
           sftpError: err instanceof Error ? err.message : String(err),
         });
       }
@@ -2859,6 +2909,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       set({
         sftpSessionId: null,
+        sftpStatus: "idle",
         fileEntries: [],
         currentPath: "/",
         sftpError: null,
@@ -2877,13 +2928,21 @@ export const useAppStore = create<AppState>((set, get) => {
       await useAppStore.getState().connectSftp(config);
     },
 
-    dismissSftpError: () => set({ sftpError: null }),
+    dismissSftpError: () =>
+      // Clearing the error must also leave a coherent status: fall back to
+      // `connected` when a live session survived the error (a recoverable
+      // listing error), otherwise `idle`. Leaving it on `error` would keep the
+      // failed-connect placeholder up even after the message is dismissed.
+      set((state) => ({
+        sftpError: null,
+        sftpStatus: state.sftpSessionId ? "connected" : "idle",
+      })),
 
     navigateSftp: async (path: string) => {
       const sessionId = useAppStore.getState().sftpSessionId;
       if (!sessionId) return;
       const seq = ++_sftpListSeq;
-      set({ sftpLoading: true, sftpError: null });
+      set({ sftpStatus: "listing", sftpError: null });
       try {
         const entries = await sftpListDir(sessionId, path);
         // Ignore a stale response: a newer navigate/refresh superseded this one.
@@ -2891,7 +2950,7 @@ export const useAppStore = create<AppState>((set, get) => {
           frontendLog("sftp", `navigateSftp: dropping stale list for ${path} (seq ${seq})`);
           return;
         }
-        set({ fileEntries: entries, currentPath: path, sftpLoading: false });
+        set({ fileEntries: entries, currentPath: path, sftpStatus: "connected" });
       } catch (err) {
         if (seq !== _sftpListSeq) return;
         const message = err instanceof Error ? err.message : String(err);
@@ -2902,7 +2961,7 @@ export const useAppStore = create<AppState>((set, get) => {
           frontendLog("sftp", `navigateSftp: session appears dead — clearing session (${message})`);
         }
         set({
-          sftpLoading: false,
+          sftpStatus: "error",
           sftpError: message,
           ...(sessionDead ? { sftpSessionId: null, sftpConnectedHost: null } : {}),
         });
@@ -2913,7 +2972,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const { sftpSessionId, currentPath } = useAppStore.getState();
       if (!sftpSessionId) return;
       const seq = ++_sftpListSeq;
-      set({ sftpLoading: true, sftpError: null });
+      set({ sftpStatus: "listing", sftpError: null });
       try {
         const entries = await sftpListDir(sftpSessionId, currentPath);
         // Ignore a stale response: a newer navigate/refresh superseded this one.
@@ -2921,7 +2980,7 @@ export const useAppStore = create<AppState>((set, get) => {
           frontendLog("sftp", `refreshSftp: dropping stale list for ${currentPath} (seq ${seq})`);
           return;
         }
-        set({ fileEntries: entries, sftpLoading: false });
+        set({ fileEntries: entries, sftpStatus: "connected" });
       } catch (err) {
         if (seq !== _sftpListSeq) return;
         const message = err instanceof Error ? err.message : String(err);
@@ -2930,7 +2989,7 @@ export const useAppStore = create<AppState>((set, get) => {
           frontendLog("sftp", `refreshSftp: session appears dead — clearing session (${message})`);
         }
         set({
-          sftpLoading: false,
+          sftpStatus: "error",
           sftpError: message,
           ...(sessionDead ? { sftpSessionId: null, sftpConnectedHost: null } : {}),
         });
@@ -3948,6 +4007,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    refreshEmbeddedServerStates: async () => {
+      try {
+        const stateList = await getEmbeddedServerStates();
+        const embeddedServerStates: Record<string, EmbeddedServerState> = {};
+        for (const s of stateList) {
+          embeddedServerStates[s.serverId] = s;
+        }
+        set({ embeddedServerStates });
+      } catch (err) {
+        frontendLog("embedded_server", `Failed to refresh embedded server states: ${err}`);
+      }
+    },
+
     saveEmbeddedServer: async (config) => {
       try {
         await apiSaveEmbeddedServer(config);
@@ -4252,6 +4324,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return;
         }
         const firstGroup = builtGroups[0];
+        // GAP G1 (#1146): tear down the currently-open live sessions BEFORE the
+        // `set` replaces the layout, otherwise their PTY/SSH/agent sessions are
+        // dropped from the store and orphaned into the Open Connections panel.
+        teardownAllSessions(get());
         // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
         // auto-save subscription that fires from this `set` — and the per-tab
         // connects that follow — do not persist a mid-launch snapshot over the
@@ -4389,6 +4465,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
         const activeGroup = builtGroups[idx];
+        // GAP G1 (#1146): tear down any currently-open live sessions BEFORE the
+        // `set` replaces the layout (e.g. a CLI-opened workspace at startup that
+        // runs before restore), otherwise those sessions are orphaned.
+        teardownAllSessions(get());
         // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
         // auto-save subscription that fires from this very `set` — and the
         // per-tab connects that follow — are skipped until the cohort settles.

@@ -1,0 +1,991 @@
+<!doctype html>
+<!--
+  Concept: Remote Agent Lifecycle Redesign (GitHub #1142)
+  Concept-first redesign of the remote-agent transport lifecycle. Single self-contained
+  HTML file: prose + Mermaid + Open Connections mockups + sync ledger.
+  Grounded in the #1131 audit: docs/audits/remote-agent-lifecycle-state-machine.md
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Remote Agent Lifecycle Redesign (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Copy only the symbols used. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-loader" viewBox="0 0 24 24">
+        <path d="M12 2v4" />
+        <path d="m16.2 7.8 2.9-2.9" />
+        <path d="M18 12h4" />
+        <path d="m16.2 16.2 2.9 2.9" />
+        <path d="M12 18v4" />
+        <path d="m4.9 19.1 2.9-2.9" />
+        <path d="M2 12h4" />
+        <path d="m4.9 4.9 2.9 2.9" />
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-power" viewBox="0 0 24 24">
+        <path d="M12 2v10" />
+        <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
+      </symbol>
+      <symbol id="i-unplug" viewBox="0 0 24 24">
+        <path d="m19 5 3-3" />
+        <path d="m2 22 3-3" />
+        <path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z" />
+        <path d="M7.5 13.5 10 11" />
+        <path d="M10.5 16.5 13 14" />
+        <path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <polyline points="4 17 10 11 4 5" />
+        <line x1="12" x2="20" y1="19" y2="19" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Remote Agent Lifecycle Redesign</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · concept authored, not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/1142">#1142</a></span
+          >
+          <span
+            >Audit:
+            <code>docs/audits/remote-agent-lifecycle-state-machine.md</code> (#1131)</span
+          >
+          <span><code>docs/concepts/backlog/remote-agent-lifecycle-redesign.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          The remote-agent transport lifecycle (deploy → setup → connect → reconnect → sessions on
+          agent) works on its happy path but breaks at the edges. The #1131 audit found eleven gaps
+          (G1–G11) that cluster into three failure families:
+        </p>
+        <ul>
+          <li>
+            <strong>Stuck</strong> — an in-flight <code>connecting</code> handshake to a slow or
+            unreachable host cannot be aborted (G1); deploy/setup have a Cancel button that only
+            closes the dialog while the SFTP upload keeps running (G10); after auto-reconnect
+            exhausts there is no first-class Retry (G3).
+          </li>
+          <li>
+            <strong>Leak / invisible</strong> — a <code>reconnecting</code> (or
+            <code>connecting</code>) agent owns a live SSH session plus a tokio task yet is filtered
+            out of the Open Connections panel (G2); a failed reconnect leaves a dead
+            <code>AgentConnection</code> in the backend map (G6); non-recovered session output
+            senders linger across reconnect (G7).
+          </li>
+          <li>
+            <strong>Race / ambiguous</strong> — <code>connectionState</code> has
+            <em>two writers</em> (the optimistic store action and the
+            <code>agent-state-change</code> event) that race and duplicate work (G4); the tab-strip
+            dot reads a third source that no agent transition updates (G5); Disconnect overloads
+            two intents — detach the transport vs. shut down remote sessions (G9).
+          </li>
+        </ul>
+        <p>
+          This concept redesigns the lifecycle into an
+          <strong>honest, cancellable, observable</strong> state machine. The core rule:
+          <strong
+            >the backend is the single writer of <code>connectionState</code></strong
+          >
+          via the <code>agent-state-change</code> event, and every long-running phase (connect,
+          deploy, setup, reconnect) carries a <code>CancellationToken</code> that the UI can fire.
+          Every transport-owning state — including <code>connecting</code> and
+          <code>reconnecting</code> — is visible and killable in the Open Connections panel.
+        </p>
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Single-writer <code>connectionState</code>: backend event is authoritative; the store
+            action never writes terminal states.
+          </li>
+          <li>Cancellable connect, deploy, and setup; Cancel actually aborts the network work.</li>
+          <li>
+            <code>connecting</code> and <code>reconnecting</code> agents visible in Open Connections
+            with a Cancel/Kill action.
+          </li>
+          <li>
+            First-class <strong>Reconnect</strong> affordance on the agent header after reconnect
+            exhaustion, carrying the stored last error.
+          </li>
+          <li>
+            Clear <strong>Disconnect (detach)</strong> vs. <strong>Shutdown (stop remote)</strong>
+            distinction, with a detached-session count as feedback.
+          </li>
+          <li>Zombie backend entries reaped; a manual <strong>Prune dead agents</strong> escape hatch.</li>
+          <li>
+            Session/monitoring output keys reconciled against the freshly-listed session ids on
+            reconnect.
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>Changing the remote agent JSON-RPC wire protocol or the daemon frame format.</li>
+          <li>
+            Redesigning agent deploy/update strategy (see the separate
+            <code>remote-agent-update-strategy</code> concept).
+          </li>
+          <li>Persistent-session semantics on the host (daemon survival is unchanged).</li>
+          <li>New backoff policy — the 10-attempt / 2ⁿ-capped-30s schedule stays as is.</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The redesign touches four user-facing surfaces: the
+          <strong>Open Connections panel</strong> (now shows connecting/reconnecting agents with
+          Cancel/Kill), the <strong>agent header</strong> in the sidebar (Cancel-connect,
+          Reconnect-with-error, Disconnect-vs-Shutdown), the
+          <strong>connect / deploy / setup progress</strong> (Cancel that aborts), and a
+          <strong>Prune dead agents</strong> action. The mockups below use the real termiHub BEM
+          classes and lucide icons; they are authoritative for layout.
+        </p>
+
+        <!-- Mockup 1: Open Connections panel -->
+        <div class="mockup-section">
+          <h3>Mockup — Open Connections: connecting &amp; reconnecting agents (G2, G1, G6)</h3>
+          <div class="mockup-note">
+            The Open Connections modal, opened from the Settings wheel. Today it iterates only
+            <code>connectionState === "connected"</code> agents; the redesign adds an
+            <strong>Establishing / recovering</strong> section for <code>connecting</code> and
+            <code>reconnecting</code> agents, each with a Cancel/Kill button, plus a footer
+            <strong>Prune dead agents</strong> action.
+          </div>
+          <div class="app" style="height: 460px; position: relative">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <div
+                class="terminal-view"
+                style="align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.4)"
+              >
+                <!-- Open Connections modal, rendered as a .menu panel -->
+                <div class="menu" style="width: 460px">
+                  <div class="menu__title" style="display: flex; align-items: center; gap: 8px">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    Open Connections
+                    <button class="tab__close" style="margin-left: auto" title="Close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+
+                  <!-- Section: Establishing / recovering (NEW) -->
+                  <div
+                    class="menu__row"
+                    style="opacity: 0.7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px"
+                  >
+                    Establishing / recovering
+                    <span class="count">2</span>
+                  </div>
+
+                  <!-- connecting agent -->
+                  <div class="menu__row">
+                    <span class="state-dot state-dot--connecting"></span>
+                    <svg class="li"><use href="#i-server" /></svg>
+                    build-box
+                    <span class="state-label" style="margin-left: 6px">connecting…</span>
+                    <button
+                      class="btn"
+                      style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px"
+                    >
+                      <svg class="li"><use href="#i-x" /></svg> Cancel
+                    </button>
+                  </div>
+
+                  <!-- reconnecting agent -->
+                  <div class="menu__row">
+                    <span class="state-dot state-dot--connecting"></span>
+                    <svg class="li"><use href="#i-server" /></svg>
+                    prod-gw
+                    <span class="state-label" style="margin-left: 6px">reconnecting… (3/10)</span>
+                    <button
+                      class="btn"
+                      style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px"
+                    >
+                      <svg class="li"><use href="#i-unplug" /></svg> Kill
+                    </button>
+                  </div>
+
+                  <!-- Section: Connected agents -->
+                  <div
+                    class="menu__row"
+                    style="opacity: 0.7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px"
+                  >
+                    Agents
+                    <span class="count">1</span>
+                  </div>
+                  <div class="menu__row">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-server" /></svg>
+                    ci-runner-1
+                    <span class="count">3 sessions</span>
+                  </div>
+                  <div class="menu__row" style="padding-left: 34px">
+                    <svg class="li"><use href="#i-terminal" /></svg>
+                    bash — /home/ci
+                    <button class="btn" style="margin-left: auto">Kill</button>
+                  </div>
+
+                  <div class="menu__footer">
+                    <button class="btn" style="display: inline-flex; align-items: center; gap: 6px">
+                      <svg class="li"><use href="#i-trash" /></svg> Prune dead agents
+                    </button>
+                    <button class="btn" style="margin-left: auto">Close all</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">2 establishing · 1 connected</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> The new <strong>Establishing / recovering</strong>
+                section lists <code>connecting</code> and <code>reconnecting</code> agents — the
+                resources the panel previously hid (G2). Each is killable.
+              </li>
+              <li>
+                <span class="callout">B</span> A <code>connecting</code> row's
+                <strong>Cancel</strong> fires <code>cancel_connect_agent</code> (G1); a
+                <code>reconnecting</code> row's <strong>Kill</strong> calls
+                <code>disconnect_agent</code> (sets <code>alive=false</code>, ends the backoff loop).
+              </li>
+              <li>
+                <span class="callout">C</span> The footer <strong>Prune dead agents</strong> reaps
+                zombie backend map entries left by exhausted reconnects (G6).
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Mockup 2: Agent header states -->
+        <div class="mockup-section">
+          <h3>Mockup — Agent header: Cancel · Reconnect · Disconnect / Shutdown (G1, G3, G9)</h3>
+          <div class="mockup-note">
+            The agent node in the Connections sidebar renders different actions per state. Shown are
+            three snapshots stacked as sidebar items: connecting (Cancel), disconnected-after-error
+            (Reconnect + tooltip), connected (Disconnect vs. Shutdown).
+          </div>
+          <div class="app" style="height: 320px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar" style="width: 300px">
+                <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+                <div class="sidebar__content">
+                  <!-- connecting -->
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connecting"></span>
+                    <svg class="li"><use href="#i-loader" /></svg>
+                    build-box
+                    <button
+                      class="btn"
+                      style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px"
+                    >
+                      <svg class="li"><use href="#i-x" /></svg> Cancel
+                    </button>
+                  </div>
+
+                  <!-- disconnected after reconnect exhaustion -->
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--disconnected"></span>
+                    <svg class="li"><use href="#i-alert" /></svg>
+                    prod-gw
+                    <button
+                      class="btn btn--primary"
+                      style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px"
+                      title="Reconnect failed: connection timed out after 10 attempts"
+                    >
+                      <svg class="li"><use href="#i-refresh" /></svg> Reconnect
+                    </button>
+                  </div>
+
+                  <!-- connected -->
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-server" /></svg>
+                    ci-runner-1
+                    <button
+                      class="btn"
+                      style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px"
+                      title="Detach transport — keep persistent remote sessions running"
+                    >
+                      <svg class="li"><use href="#i-unplug" /></svg> Disconnect
+                    </button>
+                    <button
+                      class="btn"
+                      style="margin-left: 6px; display: inline-flex; align-items: center; gap: 6px"
+                      title="Stop remote sessions and disconnect"
+                    >
+                      <svg class="li"><use href="#i-power" /></svg> Shutdown
+                    </button>
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">ci@ci-runner-1 $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">1 connecting · 1 disconnected · 1 connected</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> <code>connecting</code> shows an inline
+                <strong>Cancel</strong> (G1) — the sidebar was previously a dead-end while the
+                handshake blocked.
+              </li>
+              <li>
+                <span class="callout">B</span> After reconnect exhaustion, a
+                <strong>Reconnect</strong> primary button appears with the stored last error as its
+                tooltip (G3) — no more silent grey dot.
+              </li>
+              <li>
+                <span class="callout">C</span> <strong>Disconnect</strong> (detach, keep remote
+                sessions) is now visibly distinct from <strong>Shutdown</strong> (stop remote
+                sessions) (G9); Shutdown reports the detached/killed session count as a toast.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Mockup 3: Setup / deploy progress with a real Cancel -->
+        <div class="mockup-section">
+          <h3>Mockup — Deploy / Setup progress: Cancel that actually aborts (G10)</h3>
+          <div class="mockup-note">
+            The setup/deploy dialog runs a multi-step network operation. Today Cancel only closes the
+            dialog while the SFTP upload continues; the redesign wires Cancel to a
+            <code>CancellationToken</code> checked before each network step.
+          </div>
+          <div class="app" style="height: 300px; position: relative">
+            <div class="app__body">
+              <div
+                class="terminal-view"
+                style="align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.4)"
+              >
+                <div class="menu" style="width: 420px">
+                  <div class="menu__title" style="display: flex; align-items: center; gap: 8px">
+                    <svg class="li"><use href="#i-server" /></svg>
+                    Setting up agent on prod-gw
+                  </div>
+                  <div class="menu__row">
+                    <svg class="li"><use href="#i-loader" /></svg>
+                    Uploading agent binary (12.4 / 18.0 MiB)…
+                    <span class="count">step 3 / 5</span>
+                  </div>
+                  <div class="menu__row" style="opacity: 0.6; font-size: 12px">
+                    Cancel stops before the next network step and rolls back the partial upload.
+                  </div>
+                  <div class="menu__footer">
+                    <button
+                      class="btn"
+                      style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px"
+                    >
+                      <svg class="li"><use href="#i-x" /></svg> Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">setup: uploading…</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> A live progress row with a real
+                <strong>Cancel</strong> that fires the token — the background SFTP thread checks it
+                between steps and aborts (G10), instead of the current dialog-only close.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Cancel mid-handshake (G1)</h3>
+        <p>
+          When the user fires <strong>Cancel</strong> on a <code>connecting</code> agent (sidebar or
+          Open Connections), the frontend calls a new <code>cancel_connect_agent</code> command,
+          which triggers the per-connect <code>CancellationToken</code>. The blocking
+          <code>connect_and_authenticate</code> + initialize handshake is wrapped in a
+          <code>tokio::select!</code> against the token; on cancel it drops the russh channel and the
+          backend emits <code>disconnected</code>. Because the backend is the single writer of
+          <code>connectionState</code>, the sidebar returns to <code>disconnected</code> only when the
+          event lands — no optimistic clobber.
+        </p>
+
+        <h3>Reconnect exhaustion &amp; manual retry (G3)</h3>
+        <p>
+          After 10 failed backoff attempts the io-task emits <code>disconnected</code> carrying the
+          last error. The redesign stores that error on the <code>RemoteAgentDefinition</code>
+          (<code>lastError</code>), so the agent header can render a <strong>Reconnect</strong>
+          button with the reason as a tooltip. Reconnect just re-invokes the normal connect path
+          (<code>disconnected → connecting</code>). No automatic infinite retry is added.
+        </p>
+
+        <h3>Zombie reap &amp; Prune (G6)</h3>
+        <p>
+          On exhausted reconnect the io-task currently sets <code>alive=false</code> and returns
+          <em>without</em> removing its <code>AgentConnection</code> from the manager map. The
+          redesign has the task remove its own entry on terminal failure (via a self-reference to the
+          manager), and adds a <strong>Prune dead agents</strong> action in Open Connections that
+          sweeps any <code>alive=false</code> entries as a manual escape hatch. Routing is already
+          safe (<code>is_connected()</code> returns false), so this is pure resource hygiene.
+        </p>
+
+        <h3>Detach vs. shutdown (G9)</h3>
+        <p>
+          <strong>Disconnect</strong> maps to <code>disconnect_agent</code> — it drops the transport
+          and leaves persistent daemon-backed remote sessions running on the host (they re-list on the
+          next connect). <strong>Shutdown</strong> maps to the existing <code>shutdown_agent</code>
+          path, which stops remote sessions and reports <code>detached_sessions</code>; the UI shows
+          that count as a success toast. The two intents are no longer collapsed into one control.
+        </p>
+
+        <h3>Session / monitoring key reconciliation on reconnect (G7)</h3>
+        <p>
+          The io-task's <code>session_outputs</code> / <code>monitoring_outputs</code> maps survive a
+          reconnect so surviving sessions re-link by id. On a <em>successful</em> reconnect, the
+          redesign reconciles those maps against the freshly-listed session ids and drops senders for
+          sessions that did not recover — closing the minor leak of stale senders keyed by dead ids.
+        </p>
+
+        <h3>Spawning-tab feedback during a drop (G8)</h3>
+        <p>
+          A tab still mid-<code>connection.create</code> (no <code>sessionId</code> yet) is today
+          skipped by the reconnecting overlay and lands ambiguously. The redesign routes such tabs to
+          the waiting/retry path (<code>terminalWaitingForAgent</code>) on <code>reconnecting</code>
+          rather than skipping them, so every agent tab gets honest feedback during a drop.
+        </p>
+
+        <h3>Single-writer &amp; tab-dot agreement (G4, G5)</h3>
+        <p>
+          The store action <code>connectRemoteAgent</code> no longer writes
+          <code>connecting</code>/<code>connected</code>/<code>disconnected</code>; it only kicks off
+          the request and consumes returned <code>capabilities</code>. All terminal-state writes flow
+          through the <code>agent-state-change</code> event (single writer). The
+          <code>agent-state-change</code> handler additionally calls
+          <code>setRemoteState(tab.sessionId, state)</code> for each agent tab so the compact
+          tab-strip dot agrees with the terminal overlay. The redundant duplicate refreshes are
+          de-duped.
+        </p>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Agent connectionState — single writer via <code>agent-state-change</code></span
+          >
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> disconnected
+
+    disconnected --> connecting : connectRemoteAgent() / backend emits connecting
+    connecting --> connected : handshake ok / emit connected + capabilities
+    connecting --> disconnected : SSH/handshake error / emit disconnected + lastError
+    connecting --> disconnected : Cancel (cancel_connect_agent) token fires
+
+    connected --> reconnecting : channel EOF/Exit / emit reconnecting
+    connected --> disconnected : Disconnect (detach) or Shutdown (stop remote)
+
+    reconnecting --> connected : reconnect ok / emit connected + reconcile keys
+    reconnecting --> disconnected : Kill (disconnect_agent) alive=false
+    reconnecting --> disconnected : exhausted (10) / emit disconnected + lastError + self-reap
+
+    disconnected --> connecting : Reconnect button (manual retry)
+    connected --> [*] : deleteRemoteAgent
+    disconnected --> [*] : deleteRemoteAgent
+
+    note right of connecting
+        Single writer: only the backend
+        agent-state-change event writes
+        connectionState. The store action
+        no longer sets terminal states (G4).
+    end note
+    note right of disconnected
+        lastError stored on the agent def
+        so the header can show Reconnect
+        with the reason as tooltip (G3).
+    end note
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Backend map hygiene — no lingering zombie (G6)</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    state "map present + alive=true" as Alive
+    state "map present + alive=false" as Dead
+    state "map absent" as Gone
+
+    [*] --> Alive : connect_agent inserts
+    Alive --> Gone : disconnect_agent or shutdown_agent removes
+    Alive --> Dead : reconnect exhausted (transient)
+    Dead --> Gone : io-task self-reaps on terminal failure (NEW)
+    Dead --> Gone : Prune dead agents (manual, NEW)
+    note right of Dead
+        Previously lingered until the next
+        connect_agent lazily evicted it.
+        Now reaped immediately; Prune is
+        the manual escape hatch.
+    end note
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Connect + Cancel (G1)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant UI as Agent header / Open Connections
+    participant Store as Zustand store
+    participant Cmd as connect_agent / cancel_connect_agent
+    participant Mgr as AgentConnectionManager
+    participant Tok as CancellationToken
+
+    UI->>Store: connectRemoteAgent(id)
+    Store->>Cmd: apiConnectAgent (no optimistic state write)
+    Cmd->>Mgr: connect_agent(id, token)
+    Mgr->>Tok: register token for id
+    Mgr-->>Store: emit connecting (single writer)
+    Mgr->>Mgr: select! connect_and_authenticate + initialize vs token.cancelled()
+    alt user cancels
+        UI->>Cmd: cancel_connect_agent(id)
+        Cmd->>Tok: token.cancel()
+        Mgr->>Mgr: drop russh channel
+        Mgr-->>Store: emit disconnected
+    else handshake ok
+        Mgr->>Mgr: spawn agent_io_task
+        Mgr-->>Store: emit connected + capabilities
+        Store->>Store: refreshAgentSessions (once, de-duped)
+    else handshake error
+        Mgr-->>Store: emit disconnected + lastError
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Reconnect + reconcile (G5, G7, G8)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant Agent as remote agent
+    participant IO as agent_io_task
+    participant App as agent-state-change
+    participant TV as agent-state handler
+    participant Tabs as agent tabs
+
+    Agent--xIO: channel EOF / ExitStatus
+    IO->>App: emit reconnecting (+error)
+    App->>TV: agent-state-change reconnecting
+    TV->>Tabs: setTerminalReconnecting(true) for tabs WITH sessionId
+    TV->>Tabs: terminalWaitingForAgent for tabs WITHOUT sessionId (G8)
+    TV->>Tabs: setRemoteState(sessionId, reconnecting) tab dot agrees (G5)
+    loop up to 10 attempts (backoff, alive-gated)
+        IO->>Agent: SSH connect + exec + initialize
+        alt success
+            IO->>IO: reconcile session_outputs vs listed ids, drop missing (G7)
+            IO->>App: emit connected
+            App->>TV: listAgentSessions()
+            TV->>Tabs: recovered? clear overlay : setTerminalExited
+            TV->>Tabs: setRemoteState(sessionId, connected) (G5)
+        else exhausted
+            IO->>App: emit disconnected (+lastError)
+            IO->>IO: self-reap map entry (G6)
+        end
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Deploy / Setup + Cancel (G10)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant UI as Setup / Deploy dialog
+    participant Cmd as deploy_agent / setup_remote_agent
+    participant Bg as run_setup_background thread
+    participant Tok as CancellationToken
+    participant Net as SFTP / SSH exec
+
+    UI->>Cmd: start(id, token)
+    Cmd->>Bg: spawn with token
+    loop each step (resolve binary, upload, inject, verify)
+        Bg->>Tok: is_cancelled?
+        alt cancelled
+            Bg->>Net: abort in-flight transfer + rollback partial
+            Bg-->>UI: emit progress cancelled
+        else continue
+            Bg->>Net: perform step
+            Bg-->>UI: emit agent-deploy-progress
+        end
+    end
+    UI->>Cmd: Cancel button -> token.cancel()
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Grounded in the current code cited by the audit. Two cross-cutting rules anchor the whole
+          redesign:
+        </p>
+        <ul>
+          <li>
+            <strong>Single-writer <code>connectionState</code>:</strong> the backend
+            <code>agent-state-change</code> event (<code>emit_agent_state</code>,
+            <code>agent_manager.rs:1319</code>) becomes the <em>only</em> writer.
+            <code>connectRemoteAgent</code> (<code>appStore.ts:3002/3018/3032/3047</code>) stops
+            setting <code>connecting</code>/<code>connected</code>/<code>disconnected</code> and only
+            kicks off the request + consumes <code>capabilities</code>.
+            <code>setAgentConnectionState</code> (<code>appStore.ts:3054</code>) is driven solely by
+            the event listener in <code>TerminalView.tsx</code>.
+          </li>
+          <li>
+            <strong>CancellationToken threading:</strong> mirror the existing pattern from
+            <code>commands/connection_path.rs</code> (<code>cancel_connection_path_probe</code>,
+            <code>:206</code>) and <code>commands/session.rs</code> (<code>cancel_connecting</code>,
+            <code>:60</code>) — a per-operation token registry in the manager, keyed by agent id.
+          </li>
+        </ul>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Gap</th>
+                <th>Current code (file:line)</th>
+                <th>Planned change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>G1</strong> — no Cancel on connecting</td>
+                <td>
+                  <code>agent_manager.rs:385-581</code> (blocking connect + handshake, no token);
+                  cmd <code>commands/agent.rs:24-39</code>; UI <code>AgentNode.tsx:596-672</code>
+                </td>
+                <td>
+                  Add a per-agent <code>CancellationToken</code> registry; wrap
+                  <code>connect_and_authenticate</code>+initialize in <code>tokio::select!</code>
+                  against it. New <code>cancel_connect_agent</code> Tauri command. Cancel control in
+                  the sidebar connecting state + Open Connections row.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G2</strong> — connecting/reconnecting invisible</td>
+                <td>
+                  <code>OpenConnectionsModal.tsx:89</code>
+                  (<code>filter(connectionState === "connected")</code>), sections
+                  <code>:274-338</code>
+                </td>
+                <td>
+                  Add an <em>Establishing / recovering</em> section iterating agents in
+                  <code>connecting</code> / <code>reconnecting</code>, each with Cancel/Kill wired to
+                  <code>cancel_connect_agent</code> / <code>disconnectRemoteAgent</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G3</strong> — no Retry after exhaustion</td>
+                <td>
+                  <code>agent_manager.rs:1538</code> emits <code>"disconnected"</code>+error;
+                  <code>TerminalView.tsx:199</code>; agent def
+                  <code>src/types/connection.ts:124</code>
+                </td>
+                <td>
+                  Store <code>lastError</code> on <code>RemoteAgentDefinition</code>; render a
+                  <strong>Reconnect</strong> button + tooltip in the disconnected agent header
+                  (re-invokes the normal connect path).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G4</strong> — two writers race</td>
+                <td>
+                  optimistic <code>appStore.ts:3002/3018/3032/3047</code>; event
+                  <code>TerminalView.tsx:68 → appStore.ts:3054</code>; backend emits
+                  <code>agent_manager.rs:409, :583</code>
+                </td>
+                <td>
+                  Make the event the single writer (above); drop optimistic terminal-state writes;
+                  de-dupe <code>refreshAgentSessions</code> (<code>appStore.ts:3027</code> vs
+                  <code>TerminalView.tsx:175</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G5</strong> — tab dot stale</td>
+                <td>
+                  dot reads <code>remoteStates[tab.id]</code> (<code>Tab.tsx:99</code>), written only
+                  by <code>remote-state-change</code> (<code>appStore.ts:2921</code>); agent path
+                  never calls <code>setRemoteState</code>
+                </td>
+                <td>
+                  In the <code>agent-state-change</code> handler, also
+                  <code>setRemoteState(tab.sessionId, state)</code> for each agent tab so dot and
+                  overlay agree.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G6</strong> — zombie map entry</td>
+                <td>
+                  <code>agent_manager.rs:1539-1544</code> (sets <code>alive=false</code>, returns
+                  without removing); lazy evict <code>:398-405</code>
+                </td>
+                <td>
+                  io-task self-reaps its <code>agents</code> entry on terminal failure (weak/self ref
+                  to manager); add a <strong>Prune dead agents</strong> command + Open Connections
+                  action.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G7</strong> — stale output senders</td>
+                <td>
+                  <code>agent_manager.rs:1345-1346</code> maps survive; not cleared at
+                  <code>:1526</code>; cleanup relies on <code>unregister_session_output</code>
+                  (<code>:913</code>)
+                </td>
+                <td>
+                  On successful reconnect, reconcile <code>session_outputs</code> /
+                  <code>monitoring_outputs</code> keys against freshly-listed session ids; drop
+                  missing.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G8</strong> — no feedback for spawning tabs</td>
+                <td><code>TerminalView.tsx:181</code> (<code>if (!tab.sessionId) continue;</code>)</td>
+                <td>
+                  Route sessionId-less agent tabs to <code>terminalWaitingForAgent</code> on
+                  <code>reconnecting</code> instead of skipping.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G9</strong> — Disconnect overloads two intents</td>
+                <td>
+                  <code>agent_manager.rs:606-623</code> (<code>disconnect_agent</code>);
+                  <code>shutdown_agent</code> exists (<code>:644</code>, reports
+                  <code>detached_sessions</code>) but is unsurfaced
+                </td>
+                <td>
+                  Surface both in the agent header: <strong>Disconnect</strong> (detach) vs.
+                  <strong>Shutdown</strong> (stop remote); show <code>detached_sessions</code> count
+                  as a success toast.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G10</strong> — Cancel doesn't abort deploy/setup</td>
+                <td>
+                  <code>agent_deploy.rs:148</code> / <code>agent_setup.rs:145</code> take no token;
+                  background thread <code>agent_setup.rs:219</code>; dialog Cancel only closes
+                  (<code>AgentSetupDialog.tsx:245</code>)
+                </td>
+                <td>
+                  Thread a <code>CancellationToken</code> through <code>deploy_agent</code> /
+                  <code>run_setup_background</code>, checked before each network step
+                  (<code>resolve_agent_binary</code>, upload, inject); wire the dialog Cancel to fire
+                  it + roll back partial upload.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G11</strong> — redundant "connecting" emit</td>
+                <td><code>agent_manager.rs:409</code></td>
+                <td>
+                  Harmless once the store no longer writes optimistically (subsumed by G4); keep the
+                  single backend emit as the authoritative <code>connecting</code> write.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Suggested implementation order</h3>
+        <p>
+          Per the audit's summary: fix <strong>G4</strong> (single writer) first — it collapses the
+          race and de-dupes work and is a prerequisite for clean state transitions. Then
+          <strong>G1</strong> + <strong>G2</strong> (cancellable + visible connect/reconnect), then
+          <strong>G5</strong> / <strong>G3</strong> / <strong>G9</strong> to make transitions
+          observable and reversible, and finally <strong>G6</strong>–<strong>G8</strong>,
+          <strong>G10</strong> hygiene/cancellation.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept &lt;name&gt;</code>. Records the last commit at which
+            the concept and code were reconciled, plus open divergences. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (concept authored, not implemented) ·
+          <strong>Status:</strong> diverged (planned)
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Backend is the single writer of <code>connectionState</code> (G4)</td>
+                <td>Two writers race (optimistic store + event)</td>
+                <td>Missing</td>
+                <td>Implement single-writer rule, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Cancel aborts connect / deploy / setup (G1, G10)</td>
+                <td>No CancellationToken on the agent path; Cancel only closes dialogs</td>
+                <td>Missing</td>
+                <td>Thread tokens + cancel commands, then re-sync</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Connecting/reconnecting agents visible + killable in Open Connections (G2)</td>
+                <td>Panel filters to <code>connected</code> only</td>
+                <td>Missing</td>
+                <td>Add Establishing/recovering section, then re-sync</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>
+                  Reconnect affordance + lastError, detach-vs-shutdown, prune, key reconcile (G3,
+                  G5–G9)
+                </td>
+                <td>Not implemented</td>
+                <td>Missing</td>
+                <td>Implement per Impl table, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
