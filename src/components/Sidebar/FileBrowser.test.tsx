@@ -1446,3 +1446,144 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     expect(useAppStore.getState().sftpSessionId).toBe("session-xyz");
   });
 });
+
+describe("FileBrowser – failed-connect recovery UI (S1)", () => {
+  /** An SSH connection type that supports the file browser (→ sftp mode). */
+  function seedSshCapability() {
+    useAppStore.setState({
+      sidebarView: "files",
+      connectionTypes: [
+        {
+          typeId: "ssh",
+          displayName: "SSH",
+          icon: "terminal",
+          schema: { groups: [] },
+          capabilities: {
+            monitoring: false,
+            fileBrowser: true,
+            resize: true,
+            persistent: false,
+          },
+        },
+      ],
+    });
+  }
+
+  function makeSshTab() {
+    return makeTab({
+      connectionType: "ssh",
+      config: {
+        type: "ssh",
+        config: {
+          host: "example.com",
+          port: 22,
+          username: "alice",
+          authMethod: "password",
+          password: "pw",
+        },
+      },
+    });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("shows Retry + Dismiss controls when the SFTP connect fails", async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "sftp_open") return Promise.reject(new Error("auth failed"));
+      return Promise.resolve(undefined);
+    });
+    seedSshCapability();
+    setActiveTab(makeSshTab());
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().sftpError).toBe("auth failed");
+    const retryBtn = container.querySelector('[data-testid="file-browser-sftp-retry"]');
+    const dismissBtn = container.querySelector('[data-testid="file-browser-sftp-dismiss"]');
+    expect(retryBtn).toBeTruthy();
+    expect(dismissBtn).toBeTruthy();
+  });
+
+  it("Retry re-invokes the SFTP connect", async () => {
+    let openCalls = 0;
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "sftp_open") {
+        openCalls += 1;
+        return Promise.reject(new Error("auth failed"));
+      }
+      return Promise.resolve(undefined);
+    });
+    seedSshCapability();
+    setActiveTab(makeSshTab());
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+
+    const callsAfterAutoConnect = openCalls;
+    expect(callsAfterAutoConnect).toBeGreaterThanOrEqual(1);
+
+    const retryBtn = container.querySelector(
+      '[data-testid="file-browser-sftp-retry"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      retryBtn.click();
+    });
+    await flushAsync();
+
+    expect(openCalls).toBeGreaterThan(callsAfterAutoConnect);
+  });
+
+  it("Dismiss clears the error", async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "sftp_open") return Promise.reject(new Error("auth failed"));
+      return Promise.resolve(undefined);
+    });
+    seedSshCapability();
+    setActiveTab(makeSshTab());
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+
+    const dismissBtn = container.querySelector(
+      '[data-testid="file-browser-sftp-dismiss"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      dismissBtn.click();
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().sftpError).toBeNull();
+  });
+});
