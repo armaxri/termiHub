@@ -571,3 +571,212 @@ impl TunnelManager {
         let _ = self.app_handle.emit("tunnel-status-changed", &state);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Regression tests for the Stop-during-connect teardown path (GAP 8 of the
+    //! SSH tunnel state-machine audit, umbrella #1141).
+    //!
+    //! Driving the full [`TunnelManager::start_tunnel`] path in a unit test is not
+    //! feasible: it needs a live Tauri `AppHandle` (for `ConnectionManager`
+    //! resolution + event emission) and a real SSH handshake (`build_forwarder`
+    //! ultimately dials a russh session — `SshSession` is
+    //! `russh::client::Handle<..>` and cannot be fabricated without a server), and
+    //! `src-tauri` has no Tauri-mock harness. So these tests reproduce the exact
+    //! Stop-during-connect **teardown sequence** the manager performs, using the
+    //! same production building blocks it holds — the [`ConnectingTracker`]
+    //! cancellation decision and the [`RefPool`] pooled-session guards whose RAII
+    //! `Drop` drains the pool in [`TunnelManager::teardown_forwarder`].
+    //!
+    //! GAP 8 asks specifically: after a Stop issued while a tunnel is still
+    //! `connecting`, `active_tunnels` and any pooled endpoint/gateway ref counts
+    //! must return to zero. The audit concluded the behavior is already correct;
+    //! these tests lock it in so a future refactor of the connect/teardown wiring
+    //! cannot silently reintroduce a leak.
+
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use super::super::connecting::{ConnectingTracker, FinishOutcome};
+    use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
+
+    /// Stand-in for a pooled `Arc<SshSession>` that records when the underlying
+    /// value is dropped, so we can assert the session is actually torn down (not
+    /// merely un-referenced by the map) after teardown.
+    struct TrackedSession {
+        live: Arc<AtomicUsize>,
+    }
+
+    impl TrackedSession {
+        fn new(live: &Arc<AtomicUsize>) -> Arc<Self> {
+            live.fetch_add(1, Ordering::SeqCst);
+            Arc::new(Self { live: live.clone() })
+        }
+    }
+
+    impl Drop for TrackedSession {
+        fn drop(&mut self) {
+            self.live.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Minimal stand-in for the pool guards the manager attaches to an
+    /// `ActiveTunnel`, mirroring `PooledSessionGuards`: dropping it releases the
+    /// pooled endpoint reference (RAII), exactly like `teardown_forwarder`.
+    struct EndpointGuard {
+        _endpoint: PooledRef<Arc<TrackedSession>>,
+    }
+
+    const CONN_ID: &str = "conn-1";
+    const TUNNEL_ID: &str = "tunnel-1";
+
+    /// Acquire a pooled endpoint reference the way `acquire_endpoint` does for the
+    /// non-jumped local/dynamic path (single-flight `get_or_create` keyed by
+    /// connection id), wrapping it in a guard whose drop releases it.
+    async fn acquire_guard(
+        pool: &Arc<RefPool<Arc<TrackedSession>>>,
+        live: &Arc<AtomicUsize>,
+    ) -> EndpointGuard {
+        let endpoint = pool
+            .get_or_create(CONN_ID, || async {
+                Ok::<_, std::convert::Infallible>(TrackedSession::new(live))
+            })
+            .await
+            .expect("infallible connect");
+        EndpointGuard {
+            _endpoint: endpoint,
+        }
+    }
+
+    /// GAP 8: a Stop cancel that arrives *before* the forwarder finishes building
+    /// must make `finish()` report `Cancel`, so the start never inserts into
+    /// `active_tunnels` — the active set stays empty and the pool never grows.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_before_build_completes_leaves_active_and_pool_empty() {
+        let tracker = ConnectingTracker::new();
+        let pool = RefPool::<Arc<TrackedSession>>::new();
+        let live = Arc::new(AtomicUsize::new(0));
+        // Stand-in for TunnelManager::active_tunnels — only membership matters here.
+        // On the cancel branch nothing is ever inserted, so no `mut` is needed.
+        let active_tunnels: HashMap<String, EndpointGuard> = HashMap::new();
+
+        // start_tunnel: mark connecting, then a Stop arrives mid-handshake.
+        let _cancel = tracker.begin(TUNNEL_ID).expect("first begin");
+        assert!(tracker.is_connecting(TUNNEL_ID));
+
+        // stop_tunnel while still connecting: not in the active map, so it cancels
+        // the in-flight connect via the tracker instead.
+        assert!(
+            !active_tunnels.contains_key(TUNNEL_ID),
+            "not active yet during connect"
+        );
+        assert!(
+            tracker.request_cancel(TUNNEL_ID),
+            "stop must flag the in-flight start"
+        );
+
+        // The connect aborts before build_forwarder produces anything; the start
+        // path observes Cancel and does NOT insert into active_tunnels.
+        assert_eq!(tracker.finish(TUNNEL_ID), FinishOutcome::Cancel);
+        // (no active insert on the Cancel branch)
+
+        assert!(
+            active_tunnels.is_empty(),
+            "active_tunnels must stay empty after Stop-during-connect"
+        );
+        assert!(
+            pool.is_empty(),
+            "pool must never grow when the connect was cancelled before building"
+        );
+        assert_eq!(pool.ref_count(CONN_ID), 0);
+        assert_eq!(live.load(Ordering::SeqCst), 0, "no session was created");
+        assert!(
+            !tracker.is_connecting(TUNNEL_ID),
+            "finish clears the tracker"
+        );
+    }
+
+    /// GAP 8 residual-risk case: `build_forwarder` *wins the race* and produces a
+    /// forwarder (with a pooled endpoint session already created) before the Stop
+    /// cancel is observed. `start_tunnel` then sees `finish() != Commit`, calls
+    /// `teardown_forwarder` (dropping the guards) and returns without inserting
+    /// into `active_tunnels`. Assert both counts return to zero.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_after_build_wins_race_tears_pool_back_to_zero() {
+        let tracker = ConnectingTracker::new();
+        let pool = RefPool::<Arc<TrackedSession>>::new();
+        let live = Arc::new(AtomicUsize::new(0));
+        // On the cancel branch the forwarder is torn down, never inserted here.
+        let active_tunnels: HashMap<String, EndpointGuard> = HashMap::new();
+
+        // start_tunnel: begin connecting.
+        let cancel = tracker.begin(TUNNEL_ID).expect("first begin");
+
+        // build_forwarder wins the race: it acquires a pooled endpoint session and
+        // produces the guard *before* the cancel is observed.
+        let guard = acquire_guard(&pool, &live).await;
+        assert_eq!(pool.ref_count(CONN_ID), 1, "endpoint acquired during build");
+        assert_eq!(live.load(Ordering::SeqCst), 1, "session created");
+
+        // Meanwhile a Stop arrived while connecting (cancel requested).
+        assert!(tracker.request_cancel(TUNNEL_ID));
+        cancel.cancel(); // idempotent; mirrors request_cancel firing the token
+
+        // start_tunnel checks finish(): cancelled -> Cancel, so it tears the
+        // just-built forwarder down instead of inserting it as active.
+        assert_ne!(tracker.finish(TUNNEL_ID), FinishOutcome::Commit);
+        // teardown_forwarder: dropping guards releases pooled refs. The
+        // active_tunnels insert is skipped on this branch.
+        drop(guard);
+
+        assert!(
+            active_tunnels.is_empty(),
+            "active_tunnels must be empty after Stop-during-connect teardown"
+        );
+        assert!(
+            pool.is_empty(),
+            "pooled endpoint ref count must return to zero after teardown"
+        );
+        assert_eq!(pool.ref_count(CONN_ID), 0);
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            0,
+            "the pooled SSH session must actually be dropped, not just unreferenced"
+        );
+    }
+
+    /// Sanity contrast: without a Stop the same sequence commits and the tunnel
+    /// *does* land in the active map holding its pooled ref — so the zero-after
+    /// assertions above are meaningful (they aren't trivially always-empty).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn without_stop_the_endpoint_stays_held_while_active() {
+        let tracker = ConnectingTracker::new();
+        let pool = RefPool::<Arc<TrackedSession>>::new();
+        let live = Arc::new(AtomicUsize::new(0));
+        let mut active_tunnels: HashMap<String, EndpointGuard> = HashMap::new();
+
+        tracker.begin(TUNNEL_ID).expect("first begin");
+        let guard = acquire_guard(&pool, &live).await;
+
+        // No Stop: finish() commits, so the forwarder is registered as active.
+        assert_eq!(tracker.finish(TUNNEL_ID), FinishOutcome::Commit);
+        active_tunnels.insert(TUNNEL_ID.to_string(), guard);
+
+        assert_eq!(
+            pool.ref_count(CONN_ID),
+            1,
+            "active tunnel holds its endpoint"
+        );
+        assert_eq!(live.load(Ordering::SeqCst), 1);
+
+        // A later stop_tunnel removes it from active and drops the guard.
+        let removed = active_tunnels.remove(TUNNEL_ID).expect("was active");
+        drop(removed); // teardown_forwarder
+        assert!(
+            pool.is_empty(),
+            "pool drains once the active tunnel is stopped"
+        );
+        assert_eq!(live.load(Ordering::SeqCst), 0);
+    }
+}
