@@ -692,7 +692,8 @@ interface AppState {
   disconnectRemoteAgent: (agentId: string) => Promise<void>;
   setAgentConnectionState: (
     agentId: string,
-    state: RemoteAgentDefinition["connectionState"]
+    state: RemoteAgentDefinition["connectionState"],
+    error?: string
   ) => void;
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
   clearAgentSessions: (agentId: string) => void;
@@ -3713,13 +3714,22 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
     },
 
-    setAgentConnectionState: (agentId, connectionState) => {
+    setAgentConnectionState: (agentId, connectionState, error) => {
       // Single writer for `connectionState` (G4/#1234): only the backend
       // `agent-state-change` event reaches this setter.
       const previous = get().remoteAgents.find((a) => a.id === agentId)?.connectionState;
+      // Track the terminal error across auto-reconnect exhaustion (G3/#1236):
+      // record it on `disconnected` so the header's Reconnect button can surface
+      // it, and clear it once a fresh attempt starts (`connecting`) or succeeds
+      // (`connected`). Other transitions leave the stored value untouched.
+      const nextLastError = (agent: RemoteAgentDefinition): string | undefined => {
+        if (connectionState === "disconnected") return error ?? agent.lastError;
+        if (connectionState === "connecting" || connectionState === "connected") return undefined;
+        return agent.lastError;
+      };
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState } : a
+          a.id === agentId ? { ...a, connectionState, lastError: nextLastError(a) } : a
         ),
       }));
 
