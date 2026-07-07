@@ -64,7 +64,6 @@ export function TerminalConnectionOverlay({
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const abortTerminalConnect = useAppStore((s) => s.abortTerminalConnect);
-  const setTerminalWaitingForAgent = useAppStore((s) => s.setTerminalWaitingForAgent);
   const isConnecting = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
@@ -128,10 +127,10 @@ export function TerminalConnectionOverlay({
 
   // Retry now (waiting-for-agent): stop parking on the agent and re-run the
   // spawn immediately, mirroring the wake path when the agent comes online.
+  // retryTerminalSpawn already clears the waiting flag as part of the retry.
   const handleRetryNowWaiting = useCallback(() => {
-    setTerminalWaitingForAgent(tabId, null);
     retryTerminalSpawn(tabId);
-  }, [tabId, setTerminalWaitingForAgent, retryTerminalSpawn]);
+  }, [tabId, retryTerminalSpawn]);
 
   // Retry now (auto-retrying): cancel the pending retry-delay loop and kick a
   // fresh attempt at once, mirroring the agent-reconnect restart path.

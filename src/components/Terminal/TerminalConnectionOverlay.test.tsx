@@ -189,11 +189,9 @@ describe("TerminalConnectionOverlay — Retry now (skip the wait)", () => {
 
   it("waiting-for-agent Retry now fires retryTerminalSpawn immediately", () => {
     const retryFn = vi.fn();
-    const wakeFn = vi.fn();
     useAppStore.setState({
       terminalWaitingForAgent: { [TAB_ID]: "agent-1" },
       retryTerminalSpawn: retryFn,
-      setTerminalWaitingForAgent: wakeFn,
     } as never);
     act(() => {
       root.render(
