@@ -593,6 +593,7 @@ pub fn run() {
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,
+            commands::credential::reset_credential_store,
             commands::credential::lock_credential_store,
             commands::credential::setup_master_password,
             commands::credential::change_master_password,

@@ -434,6 +434,7 @@ Fixed strings — match exactly.
 | `tunnel-type-remote` | `src/components/TunnelEditor/TunnelEditor.tsx` |
 | `unlock-dialog-error` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-input` | `src/components/UnlockDialog/UnlockDialog.tsx` |
+| `unlock-dialog-reset` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-skip` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-unlock` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unsaved-changes-cancel` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |

@@ -30,8 +30,6 @@ describe("appStore credential store state", () => {
     useAppStore.setState({
       credentialStoreStatus: null,
       unlockDialogOpen: false,
-      masterPasswordSetupOpen: false,
-      masterPasswordSetupMode: "setup",
     });
   });
 

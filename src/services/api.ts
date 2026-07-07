@@ -1019,9 +1019,29 @@ export async function getCredentialStoreStatus(): Promise<CredentialStoreStatusI
   return await invoke<CredentialStoreStatusInfo>("get_credential_store_status");
 }
 
+/**
+ * Error thrown by {@link unlockCredentialStore} when unlock fails.
+ *
+ * `corrupted` is `true` when the credentials file is unreadable/corrupt (G8,
+ * #1144), so the UI can offer a "reset store" recovery instead of an endless
+ * wrong-password loop.
+ */
+export interface UnlockCredentialStoreError {
+  message: string;
+  corrupted: boolean;
+}
+
 /** Unlock the master password credential store. */
 export async function unlockCredentialStore(password: string): Promise<void> {
   await invoke("unlock_credential_store", { password });
+}
+
+/**
+ * Reset (delete) a corrupt master password credential store so it can be set up
+ * again. Used to recover from an unreadable credentials file (G8, #1144).
+ */
+export async function resetCredentialStore(): Promise<void> {
+  await invoke("reset_credential_store");
 }
 
 /** Lock the master password credential store. */

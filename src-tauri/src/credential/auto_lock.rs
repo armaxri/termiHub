@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tracing::{info, warn};
 
@@ -11,6 +12,17 @@ use super::manager::CredentialManager;
 const EVENT_STORE_LOCKED: &str = "credential-store-locked";
 /// Event emitted when the credential store status changes.
 const EVENT_STORE_STATUS_CHANGED: &str = "credential-store-status-changed";
+
+/// Payload for the `credential-store-locked` event.
+///
+/// `auto` distinguishes an inactivity auto-lock (`true`) from a manual/mode-switch
+/// lock (`false`) so the frontend can toast on auto-lock only (G7, #1144) without
+/// double-toasting the manual lock, which the indicator already confirms.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LockedEventPayload {
+    pub auto: bool,
+}
 
 /// Mutable state protected by a `Mutex` and signalled via `Condvar`.
 struct TimerInner {
@@ -173,8 +185,11 @@ impl AutoLockTimer {
                     // Perform the lock outside of our mutex to avoid deadlock
                     credential_manager.with_master_password_store(|s| s.lock());
 
-                    // Emit events so the frontend can react
-                    if let Err(e) = app_handle.emit(EVENT_STORE_LOCKED, ()) {
+                    // Emit events so the frontend can react. `auto: true` tells
+                    // the frontend this was an inactivity lock, so it can toast.
+                    if let Err(e) =
+                        app_handle.emit(EVENT_STORE_LOCKED, LockedEventPayload { auto: true })
+                    {
                         warn!("Failed to emit {}: {}", EVENT_STORE_LOCKED, e);
                     }
 
