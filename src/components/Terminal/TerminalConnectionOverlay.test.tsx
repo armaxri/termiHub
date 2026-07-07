@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { TerminalConnectionOverlay } from "./TerminalConnectionOverlay";
+import {
+  TerminalConnectionOverlay,
+  CONNECT_TIMEOUT_SECONDS,
+  WAITING_FOR_AGENT_TIMEOUT_SECONDS,
+} from "./TerminalConnectionOverlay";
 import { useAppStore } from "@/store/appStore";
 
 vi.mock("lucide-react", () => ({
@@ -467,5 +471,123 @@ describe("TerminalConnectionOverlay — elapsed time", () => {
       vi.advanceTimersByTime(20000);
     });
     expect(container.textContent).toContain("Taking longer than usual");
+  });
+});
+
+describe("TerminalConnectionOverlay — connect timeouts (#1129)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  function render() {
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetStore();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
+  it("transitions waiting-for-agent to Failed with a cause hint after the bounded wait", () => {
+    useAppStore.setState({ terminalWaitingForAgent: { [TAB_ID]: "agent-1" } });
+    render();
+    expect(container.textContent).toContain("Waiting for agent");
+
+    // Just before the deadline: still parked, no failure recorded yet.
+    act(() => {
+      vi.advanceTimersByTime((WAITING_FOR_AGENT_TIMEOUT_SECONDS - 1) * 1000);
+    });
+    expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBeUndefined();
+    expect(useAppStore.getState().terminalWaitingForAgent[TAB_ID]).toBe("agent-1");
+
+    // Cross the deadline — the wait must settle as Failed with a hint.
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    const error = useAppStore.getState().terminalSpawnErrors[TAB_ID];
+    expect(error).toBeDefined();
+    expect(error).toContain(`${WAITING_FOR_AGENT_TIMEOUT_SECONDS}s`);
+    expect(error?.toLowerCase()).toContain("agent");
+    // Waiting state is cleared so the overlay renders the Failed view.
+    expect(useAppStore.getState().terminalWaitingForAgent[TAB_ID]).toBeUndefined();
+    expect(container.textContent).toContain("Connection failed");
+  });
+
+  it("does not fire the waiting-for-agent timeout when the connect settles first", () => {
+    useAppStore.setState({ terminalWaitingForAgent: { [TAB_ID]: "agent-1" } });
+    render();
+
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    // Agent came online / session went live — waiting cleared before the deadline.
+    act(() => {
+      useAppStore.setState({ terminalWaitingForAgent: {} });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(WAITING_FOR_AGENT_TIMEOUT_SECONDS * 1000 + 2000);
+    });
+    expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBeUndefined();
+  });
+
+  it("clears the waiting-for-agent timeout on unmount so it never fires against a torn-down attempt", () => {
+    useAppStore.setState({ terminalWaitingForAgent: { [TAB_ID]: "agent-1" } });
+    render();
+
+    act(() => root.unmount());
+
+    act(() => {
+      vi.advanceTimersByTime(WAITING_FOR_AGENT_TIMEOUT_SECONDS * 1000 + 2000);
+    });
+    expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBeUndefined();
+  });
+
+  it("transitions a plain connecting attempt to Failed after the connect timeout", () => {
+    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+    render();
+
+    act(() => {
+      vi.advanceTimersByTime((CONNECT_TIMEOUT_SECONDS - 1) * 1000);
+    });
+    expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBeUndefined();
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    const error = useAppStore.getState().terminalSpawnErrors[TAB_ID];
+    expect(error).toBeDefined();
+    expect(error).toContain(`${CONNECT_TIMEOUT_SECONDS}s`);
+    expect(useAppStore.getState().terminalConnecting[TAB_ID]).toBeUndefined();
+  });
+
+  it("does not apply the connect timeout during bounded auto-retries", () => {
+    useAppStore.setState({
+      terminalConnecting: { [TAB_ID]: true },
+      terminalAutoRetryCount: { [TAB_ID]: 2 },
+    });
+    render();
+
+    act(() => {
+      vi.advanceTimersByTime(CONNECT_TIMEOUT_SECONDS * 1000 + 2000);
+    });
+    expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBeUndefined();
   });
 });
