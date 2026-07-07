@@ -7,9 +7,10 @@ import {
   Activity,
   MonitorStop,
   MonitorCog,
+  Globe,
   Loader2,
 } from "lucide-react";
-import { Modal, Button, Tooltip } from "@/components/ui";
+import { Modal, Button, Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
@@ -23,6 +24,12 @@ import {
   LocalSessionInfo,
   AgentSessionInfo,
 } from "@/services/api";
+import {
+  networkHttpMonitorStop,
+  networkHttpMonitorStopAll,
+  networkHttpMonitorList,
+} from "@/services/networkApi";
+import { frontendLog } from "@/utils/frontendLog";
 import { XServerStatusReport } from "@/types/xserver";
 import { XServerSetupDialog } from "./XServerSetupDialog";
 import "./OpenConnectionsModal.css";
@@ -56,6 +63,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
+  // Live source of truth for HTTP monitors (kept current by the Network Tools
+  // sidebar / check events); the panel reads it directly so it stays in sync
+  // and this "kill everything" surface can see and stop the poll loops (#1147).
+  const httpMonitors = useAppStore((s) => s.httpMonitors);
+  const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
   const rootPanel = useAppStore((s) => s.rootPanel);
   const terminalConnecting = useAppStore((s) => s.terminalConnecting);
   const closeTab = useAppStore((s) => s.closeTab);
@@ -148,6 +160,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     activeTunnels.length +
     (sftpConnectedHost ? 1 : 0) +
     (monitoringHost ? 1 : 0) +
+    httpMonitors.length +
     (showXServer ? 1 : 0);
 
   const handleCancelConnecting = async (tabId: string, panelId: string) => {
@@ -230,6 +243,38 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleStopXServer = async () => {
     await xServerStop().catch(() => {});
     setXServer(null);
+  };
+
+  // Refresh the store's live monitor list after a stop so the section reflects
+  // the change immediately (the sidebar keeps it current the rest of the time).
+  const refreshHttpMonitors = async () => {
+    try {
+      setHttpMonitors(await networkHttpMonitorList());
+    } catch (err) {
+      frontendLog("open_connections", `Failed to refresh HTTP monitors: ${err}`);
+    }
+  };
+
+  const handleStopHttpMonitor = async (monitorId: string) => {
+    try {
+      await networkHttpMonitorStop(monitorId);
+      await refreshHttpMonitors();
+      toast.success("Monitor stopped");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to stop HTTP monitor: ${err}`);
+      toast.error(`Failed to stop monitor: ${err}`);
+    }
+  };
+
+  const handleStopAllHttpMonitors = async () => {
+    try {
+      await networkHttpMonitorStopAll();
+      await refreshHttpMonitors();
+      toast.success("All monitors stopped");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to stop all HTTP monitors: ${err}`);
+      toast.error(`Failed to stop monitors: ${err}`);
+    }
   };
 
   return (
@@ -417,6 +462,29 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           </Section>
         )}
 
+        {/* HTTP Monitors (backend-owned polling loops) */}
+        {httpMonitors.length > 0 && (
+          <Section
+            title="HTTP Monitors"
+            icon={<Globe size={14} />}
+            count={httpMonitors.length}
+            onKillAll={handleStopAllHttpMonitors}
+            killAllLabel="Stop All"
+            data-testid="open-connections-http-monitors-section"
+          >
+            {httpMonitors.map((m) => (
+              <ConnectionRow
+                key={m.config.id}
+                icon={<Globe size={14} />}
+                title={m.config.url}
+                badge={m.lastResult ? (m.lastResult.ok ? "up" : "down") : "connecting"}
+                onKill={() => handleStopHttpMonitor(m.config.id)}
+                killLabel="Stop"
+              />
+            ))}
+          </Section>
+        )}
+
         {/* X Servers (the single shared X server, or a Set up affordance) */}
         {(showXServer || showXServerSetup) && (
           <Section
@@ -513,7 +581,15 @@ function Section({
   );
 }
 
-type BadgeVariant = "alive" | "dead" | "connected" | "connecting" | "managed" | "external";
+type BadgeVariant =
+  | "alive"
+  | "dead"
+  | "connected"
+  | "connecting"
+  | "managed"
+  | "external"
+  | "up"
+  | "down";
 
 interface ConnectionRowProps {
   icon: React.ReactNode;

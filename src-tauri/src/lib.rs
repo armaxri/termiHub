@@ -496,6 +496,7 @@ pub fn run() {
             commands::files::sftp_open,
             commands::files::sftp_close,
             commands::files::sftp_list_dir,
+            commands::files::sftp_realpath,
             commands::files::sftp_download,
             commands::files::sftp_upload,
             commands::files::sftp_mkdir,
@@ -578,6 +579,7 @@ pub fn run() {
             commands::network::network_wol_device_delete,
             commands::network::network_http_monitor_start,
             commands::network::network_http_monitor_stop,
+            commands::network::network_http_monitor_stop_all,
             commands::network::network_http_monitor_list,
             // Embedded servers
             commands::embedded_servers::list_embedded_servers,

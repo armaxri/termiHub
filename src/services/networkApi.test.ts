@@ -28,6 +28,7 @@ import {
   networkWolDeviceDelete,
   networkHttpMonitorStart,
   networkHttpMonitorStop,
+  networkHttpMonitorStopAll,
   networkHttpMonitorList,
   onScanResult,
   onScanComplete,
@@ -281,6 +282,14 @@ describe("networkApi", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("network_http_monitor_stop", {
         monitorId: "monitor-1",
       });
+    });
+
+    it("networkHttpMonitorStopAll invokes stop-all command", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await networkHttpMonitorStopAll();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("network_http_monitor_stop_all");
     });
 
     it("networkHttpMonitorList returns all monitors", async () => {

@@ -56,6 +56,7 @@ import {
   sftpOpen,
   sftpClose,
   sftpListDir,
+  sftpRealpath,
   sessionListFiles,
   localListDir,
   vscodeAvailable as checkVscode,
@@ -736,6 +737,14 @@ interface AppState {
   ) => Promise<void>;
 
   // Last session (auto-saved layout restored on startup)
+  /**
+   * True while a restore/launch is settling (GAP G5, #1146). While set,
+   * {@link scheduleLastSessionSave} is a no-op so a mid-restore snapshot — where
+   * some tabs are still connecting or in agent-error — cannot be captured and
+   * persisted over the previously-good last session. Cleared once the restored
+   * cohort settles (a short settle window after the layout is placed).
+   */
+  restoreInProgress: boolean;
   /** Capture the current tab groups/layout and persist them as the last session. */
   saveLastSession: () => Promise<void>;
   /** Debounced wrapper around {@link saveLastSession} for high-frequency layout changes. */
@@ -751,15 +760,20 @@ interface AppState {
   loadCredentialStoreStatus: () => Promise<void>;
   unlockDialogOpen: boolean;
   setUnlockDialogOpen: (open: boolean) => void;
-  /** Pending resolver for requestUnlock(). Internal — resolved by resolveUnlock(). */
-  unlockResolve: ((unlocked: boolean) => void) | null;
+  /**
+   * Pending resolvers for in-flight requestUnlock() calls. Internal — settled by
+   * resolveUnlock(). Held as a list so that concurrent connect flows each awaiting
+   * requestUnlock() all settle on a single dialog exit; a single resolver would
+   * be overwritten by the second caller, wedging the first connect forever (G1).
+   */
+  unlockResolvers: ((unlocked: boolean) => void)[];
   /**
    * Opens the unlock dialog and returns a Promise that resolves to `true` when the
    * store is successfully unlocked, or `false` when the user cancels/skips.
    * Callers can `await` this before proceeding with a credential-dependent action.
    */
   requestUnlock: () => Promise<boolean>;
-  /** Resolves (and clears) any pending requestUnlock() promise. */
+  /** Settles (and clears) every pending requestUnlock() promise. Idempotent. */
   resolveUnlock: (unlocked: boolean) => void;
   masterPasswordSetupOpen: boolean;
   masterPasswordSetupMode: "setup" | "change";
@@ -786,6 +800,32 @@ let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 /** Debounce timer for auto-saving the last session on layout changes. */
 let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
 const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
+/**
+ * Settle timer for the restore-in-progress guard (GAP G5, #1146). After a
+ * restore/launch places its layout, per-tab connects keep mutating the tree for
+ * a moment; we hold {@link AppState.restoreInProgress} for this window so those
+ * transient (still-connecting / agent-error) states are not auto-saved over the
+ * good session. Comfortably larger than the auto-save debounce.
+ */
+let restoreSettleTimer: ReturnType<typeof setTimeout> | null = null;
+const RESTORE_SETTLE_MS = 2000;
+
+/**
+ * Raise the restore-in-progress guard (GAP G5, #1146) and (re)arm the settle
+ * timer that lowers it. Call immediately after a restore/launch has placed its
+ * layout so the auto-save subscription and any in-flight per-tab connects are
+ * skipped until the cohort settles. Safe to call repeatedly — the timer is
+ * reset each time so overlapping restores extend the window.
+ */
+function beginRestoreGuard(setState: (partial: Partial<AppState>) => void): void {
+  setState({ restoreInProgress: true });
+  if (restoreSettleTimer) clearTimeout(restoreSettleTimer);
+  restoreSettleTimer = setTimeout(() => {
+    restoreSettleTimer = null;
+    setState({ restoreInProgress: false });
+    frontendLog("workspace", "restore settle window elapsed; auto-save re-enabled");
+  }, RESTORE_SETTLE_MS);
+}
 /** Unlisten function for the active session-based monitoring event subscription. */
 let _monitoringUnlisten: (() => void) | null = null;
 
@@ -2780,14 +2820,23 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ sftpStatus: "connecting", sftpError: null, sftpLastConfig: config });
       try {
         const sessionId = await sftpOpen(config);
-        const homePath = `/home/${config.username as string}`;
+        // Resolve the real remote home via SFTP realpath(".") instead of the
+        // fragile /home/<user> guess, which is wrong for non-Linux layouts and
+        // custom home paths (audit GAP C2, issue #1143). Fall back to root if
+        // realpath is unsupported or the resolved home cannot be listed.
         let entries: FileEntry[];
-        let activePath = homePath;
+        let activePath = "/";
         try {
+          const homePath = await sftpRealpath(sessionId, ".");
           entries = await sftpListDir(sessionId, homePath);
-        } catch {
-          // Fall back to root if home dir doesn't exist
-          activePath = "/";
+          activePath = homePath;
+        } catch (homeErr) {
+          frontendLog(
+            "sftp",
+            `connectSftp: home resolution failed, falling back to root: ${
+              homeErr instanceof Error ? homeErr.message : String(homeErr)
+            }`
+          );
           entries = await sftpListDir(sessionId, "/");
         }
         set({
@@ -4218,6 +4267,11 @@ export const useAppStore = create<AppState>((set, get) => {
           return;
         }
         const firstGroup = builtGroups[0];
+        // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
+        // auto-save subscription that fires from this `set` — and the per-tab
+        // connects that follow — do not persist a mid-launch snapshot over the
+        // previously-good session.
+        beginRestoreGuard(set);
         set({
           tabGroups: builtGroups,
           activeTabGroupId: firstGroup.id,
@@ -4263,6 +4317,8 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    restoreInProgress: false,
+
     saveLastSession: async () => {
       const state = get();
       // Respect the setting at save time so toggling it takes effect immediately.
@@ -4295,6 +4351,12 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     scheduleLastSessionSave: () => {
+      // GAP G5 (#1146): while a restore/launch is settling, a manual tab action
+      // or an in-flight per-tab connect fires this via the layout subscription.
+      // Saving now would recapture the whole live tree — including tabs still
+      // connecting or in agent-error — over the previously-good session. Skip it
+      // until the restored cohort settles (see beginRestoreGuard).
+      if (get().restoreInProgress) return;
       if (lastSessionPersistTimer) clearTimeout(lastSessionPersistTimer);
       lastSessionPersistTimer = setTimeout(() => {
         lastSessionPersistTimer = null;
@@ -4342,6 +4404,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
         const activeGroup = builtGroups[idx];
+        // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
+        // auto-save subscription that fires from this very `set` — and the
+        // per-tab connects that follow — are skipped until the cohort settles.
+        beginRestoreGuard(set);
         set({
           tabGroups: builtGroups,
           activeTabGroupId: activeGroup.id,
@@ -4392,16 +4458,26 @@ export const useAppStore = create<AppState>((set, get) => {
         get().resolveUnlock(false);
       }
     },
-    unlockResolve: null,
+    unlockResolvers: [],
     requestUnlock: () =>
       new Promise<boolean>((resolve) => {
-        set({ unlockDialogOpen: true, unlockResolve: resolve });
+        // Append rather than replace: two concurrent connect flows may both await
+        // requestUnlock() before the dialog resolves. Every awaiting caller must
+        // settle on the single dialog exit (G1) — overwriting a single resolver
+        // would leave the earlier connect wedged forever.
+        set((state) => ({
+          unlockDialogOpen: true,
+          unlockResolvers: [...state.unlockResolvers, resolve],
+        }));
       }),
     resolveUnlock: (unlocked) => {
-      const { unlockResolve } = get();
-      if (unlockResolve) {
-        unlockResolve(unlocked);
-        set({ unlockResolve: null });
+      const { unlockResolvers } = get();
+      if (unlockResolvers.length === 0) return;
+      // Clear first so a re-entrant resolveUnlock() (e.g. the unlocked event and a
+      // dialog-close both firing) is a harmless no-op — every promise settles once.
+      set({ unlockResolvers: [] });
+      for (const resolve of unlockResolvers) {
+        resolve(unlocked);
       }
     },
     masterPasswordSetupOpen: false,

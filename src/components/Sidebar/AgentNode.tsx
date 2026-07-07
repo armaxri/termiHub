@@ -47,6 +47,7 @@ import {
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
 import { AgentSetupDialog } from "./AgentSetupDialog";
@@ -606,16 +607,11 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     // If the credential store is locked and this agent uses a stored credential,
     // prompt for unlock first and wait — on success the code continues and the
     // credential resolves automatically.
-    const needsStoredCredential =
-      agent.config.authMethod === "password" ||
-      (agent.config.authMethod === "key" && agent.config.savePassword);
-    if (needsStoredCredential) {
-      const credStatus = useAppStore.getState().credentialStoreStatus;
-      if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-        const unlocked = await useAppStore.getState().requestUnlock();
-        if (!unlocked) return;
-      }
-    }
+    const proceed = await ensureCredentialStoreUnlocked({
+      authMethod: agent.config.authMethod,
+      savePassword: agent.config.savePassword,
+    });
+    if (!proceed) return;
 
     setConnecting(true);
     try {

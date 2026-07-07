@@ -18,6 +18,7 @@ import {
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
   SavedConnection,
@@ -809,6 +810,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         let resolvedPassword: string | null = null;
         if (authMethod) {
           const savePasswordFlag = connSettings.savePassword as boolean | undefined;
+          // Unlock gate (G3, #1144): if the store is a locked master-password
+          // store, prompt for unlock first so the saved credential can be read —
+          // otherwise resolveCredential returns null and Save & Connect silently
+          // falls back to an interactive prompt, ignoring the stored secret. This
+          // matches the sidebar/agent/workspace connect paths.
+          const proceed = await ensureCredentialStoreUnlocked({
+            authMethod,
+            savePassword: savePasswordFlag,
+          });
+          if (!proceed) return;
+
           const resolution = await resolveConnectionCredential(
             saved.id,
             authMethod,
