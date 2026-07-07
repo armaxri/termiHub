@@ -85,10 +85,17 @@ fn ensure_x_server_impl(
     let dependency = dependency_available(platform);
 
     // macOS: if XQuartz is installed but idle, nudge it up so detection and the
-    // SSH `DISPLAY` handshake can succeed.
+    // SSH `DISPLAY` handshake can succeed. XQuartz takes a second or two to
+    // create its X socket, so wait a short, bounded time for it to become ready
+    // rather than re-probing once immediately and misclassifying a
+    // still-starting server as unreachable (#1088). This runs on the
+    // `spawn_blocking` thread the ensure call already uses, so the between-probe
+    // sleeps never touch the async reactor. No connect-abort token is threaded
+    // through `ensure_x_server` yet, so cancellation is a no-op for now; the
+    // wait is cancel-ready for when one is wired in.
     #[cfg(target_os = "macos")]
     if dependency && detect_local_x_server().is_none() {
-        super::macos::launch_xquartz();
+        super::macos::launch_xquartz_and_wait(|| false);
     }
 
     // 1. Let the manager adopt/reuse/spawn (TCP-based; covers Windows + managed).
