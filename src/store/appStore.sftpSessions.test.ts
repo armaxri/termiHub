@@ -159,6 +159,28 @@ describe("appStore — keyed SFTP session map (S1/L1)", () => {
       expect(useAppStore.getState().sftpSessionId).toBe("sess-b");
     });
 
+    it("keeps only one session per owning tab (revisit closes the tab's prior session)", async () => {
+      const tabA = addTabAndGetId("Tab A");
+
+      vi.mocked(sftpOpen).mockResolvedValueOnce("sess-a1");
+      await useAppStore.getState().connectSftp(SAMPLE_CONFIG, tabA);
+      expect(useAppStore.getState().sftpSessions["sess-a1"]).toBeDefined();
+
+      // Reconnect the same tab (e.g. revisiting it): the prior session it owned
+      // must be closed and replaced, not accumulated.
+      vi.mocked(sftpOpen).mockResolvedValueOnce("sess-a2");
+      await useAppStore.getState().connectSftp(SAMPLE_CONFIG, tabA);
+
+      expect(sftpClose).toHaveBeenCalledWith("sess-a1");
+      const sessions = useAppStore.getState().sftpSessions;
+      expect(sessions["sess-a1"]).toBeUndefined();
+      expect(sessions["sess-a2"]).toEqual({
+        hostLabel: "alice@example.com:22",
+        owningTabId: tabA,
+      });
+      expect(Object.keys(sessions)).toHaveLength(1);
+    });
+
     it("closes the previous active session when its owning tab is gone (orphan cleanup)", async () => {
       const tabB = addTabAndGetId("Tab B");
 
