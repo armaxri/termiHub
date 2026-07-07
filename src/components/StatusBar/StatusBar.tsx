@@ -237,6 +237,7 @@ function MonitoringStatus() {
   const monitoringSessionId = useAppStore((s) => s.monitoringSessionId);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
   const monitoringStats = useAppStore((s) => s.monitoringStats);
+  const monitoringSampleCount = useAppStore((s) => s.monitoringSampleCount);
   const monitoringLoading = useAppStore((s) => s.monitoringLoading);
   const monitoringError = useAppStore((s) => s.monitoringError);
   const connectMonitoring = useAppStore((s) => s.connectMonitoring);
@@ -487,13 +488,30 @@ function MonitoringStatus() {
       />
       {monitoringStats && (
         <>
-          <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.cpuUsagePercent)}`}
-            title={`CPU: ${monitoringStats.cpuUsagePercent.toFixed(1)}%`}
-            data-testid="monitoring-cpu"
-          >
-            CPU {monitoringStats.cpuUsagePercent.toFixed(0)}%
-          </span>
+          {/*
+            The remote collectors report CPU 0% on the first sample because there
+            is no prior delta to compute a rate from (audit gap G10). Until the
+            second sample arrives, show a priming indicator so the placeholder is
+            not mistaken for a real 0% reading. Memory and disk are correct on
+            the first sample and always render numerically.
+          */}
+          {monitoringSampleCount < 2 ? (
+            <span
+              className="status-bar__item monitoring-status__stat monitoring-status__stat--priming"
+              title="CPU: priming (waiting for second sample)"
+              data-testid="monitoring-cpu"
+            >
+              CPU —
+            </span>
+          ) : (
+            <span
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.cpuUsagePercent)}`}
+              title={`CPU: ${monitoringStats.cpuUsagePercent.toFixed(1)}%`}
+              data-testid="monitoring-cpu"
+            >
+              CPU {monitoringStats.cpuUsagePercent.toFixed(0)}%
+            </span>
+          )}
           <span
             className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}`}
             title={`Memory: ${formatKb(monitoringStats.memoryTotalKb - monitoringStats.memoryAvailableKb)} / ${formatKb(monitoringStats.memoryTotalKb)}`}

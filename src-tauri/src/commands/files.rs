@@ -4,7 +4,7 @@ use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
 use crate::connection::manager::ConnectionManager;
-use crate::files::sftp::SftpManager;
+use crate::files::sftp::{lock_session, SftpManager};
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
 use crate::utils::vscode;
@@ -53,7 +53,7 @@ pub async fn sftp_list_dir(
 ) -> Result<Vec<FileEntry>, TerminalError> {
     debug!(session_id, path, "SFTP list directory");
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().list_dir(&path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.list_dir(&path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
@@ -69,7 +69,7 @@ pub async fn sftp_download(
     debug!(session_id, remote_path, local_path, "SFTP download");
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
-        session.lock().unwrap().read_file(&remote_path, &local_path)
+        lock_session(&session)?.read_file(&remote_path, &local_path)
     })
     .await
     .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
@@ -86,10 +86,7 @@ pub async fn sftp_upload(
     debug!(session_id, local_path, remote_path, "SFTP upload");
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
-        session
-            .lock()
-            .unwrap()
-            .write_file(&local_path, &remote_path)
+        lock_session(&session)?.write_file(&local_path, &remote_path)
     })
     .await
     .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
@@ -103,7 +100,7 @@ pub async fn sftp_mkdir(
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().mkdir(&path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.mkdir(&path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
@@ -118,7 +115,7 @@ pub async fn sftp_delete(
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
-        let session = session.lock().unwrap();
+        let session = lock_session(&session)?;
         if is_directory {
             session.remove_dir(&path)
         } else {
@@ -138,7 +135,7 @@ pub async fn sftp_rename(
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().rename(&old_path, &new_path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.rename(&old_path, &new_path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
@@ -205,7 +202,7 @@ pub async fn sftp_read_file_content(
     manager: State<'_, SftpManager>,
 ) -> Result<String, TerminalError> {
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().read_file_content(&remote_path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.read_file_content(&remote_path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
@@ -220,10 +217,7 @@ pub async fn sftp_write_file_content(
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
-        session
-            .lock()
-            .unwrap()
-            .write_file_content(&remote_path, &content)
+        lock_session(&session)?.write_file_content(&remote_path, &content)
     })
     .await
     .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
@@ -289,10 +283,7 @@ pub async fn vscode_open_remote(
         let remote_path = remote_path.clone();
         let temp_path_str = temp_path_str.clone();
         tokio::task::spawn_blocking(move || {
-            session
-                .lock()
-                .unwrap()
-                .read_file(&remote_path, &temp_path_str)
+            lock_session(&session)?.read_file(&remote_path, &temp_path_str)
         })
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))??;
@@ -307,10 +298,8 @@ pub async fn vscode_open_remote(
         let event = match result {
             Ok(()) => {
                 // Re-upload the edited file
-                let upload_result = {
-                    let session = session_arc.lock().unwrap();
-                    session.write_file(&temp_path_str, &remote_path)
-                };
+                let upload_result = lock_session(&session_arc)
+                    .and_then(|session| session.write_file(&temp_path_str, &remote_path));
                 match upload_result {
                     Ok(_) => VscodeEditCompleteEvent {
                         remote_path,

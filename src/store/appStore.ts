@@ -645,6 +645,14 @@ interface AppState {
   monitoringStats: SystemStats | null;
   monitoringLoading: boolean;
   monitoringError: string | null;
+  /**
+   * Number of stats samples received on the current monitoring connection.
+   * The remote collectors report CPU 0% on the first sample (no prior delta),
+   * so the UI treats sample #1 as "priming" for the CPU field. Reset to 0 on
+   * connect/disconnect and incremented on every real stats update. See audit
+   * gap G10.
+   */
+  monitoringSampleCount: number;
   /** Last-known stats per host key, persisted across tab switches for instant display on reconnect. */
   monitoringStatsCache: Record<string, SystemStats>;
   connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
@@ -3461,6 +3469,7 @@ export const useAppStore = create<AppState>((set, get) => {
     monitoringStats: null,
     monitoringLoading: false,
     monitoringError: null,
+    monitoringSampleCount: 0,
     monitoringStatsCache: {},
     sessionCapabilities: {},
 
@@ -3482,6 +3491,9 @@ export const useAppStore = create<AppState>((set, get) => {
             monitoringError: null,
             monitoringStats: cachedStats,
             monitoringHost: cachedStats ? sessionId : null,
+            // Fresh connection: reset the sample counter so CPU shows the
+            // priming indicator until the second push arrives (audit gap G10).
+            monitoringSampleCount: 0,
           });
 
           const unlisten = await onSessionMonitoringStats((sid, stats) => {
@@ -3489,6 +3501,7 @@ export const useAppStore = create<AppState>((set, get) => {
               useAppStore.setState((state) => ({
                 monitoringStats: stats,
                 monitoringError: null,
+                monitoringSampleCount: state.monitoringSampleCount + 1,
                 monitoringStatsCache: { ...state.monitoringStatsCache, [sessionId]: stats },
               }));
             }
@@ -3513,6 +3526,9 @@ export const useAppStore = create<AppState>((set, get) => {
           monitoringError: null,
           monitoringStats: cachedStats,
           monitoringHost: cachedStats ? hostKey : null,
+          // Fresh connection: reset the sample counter so CPU shows the priming
+          // indicator until the second fetch arrives (audit gap G10).
+          monitoringSampleCount: 0,
         });
 
         const sessionId = await monitoringOpen(config);
@@ -3522,6 +3538,7 @@ export const useAppStore = create<AppState>((set, get) => {
           monitoringHost: hostKey,
           monitoringStats: stats,
           monitoringLoading: false,
+          monitoringSampleCount: state.monitoringSampleCount + 1,
           monitoringStatsCache: { ...state.monitoringStatsCache, [hostKey]: stats },
         }));
       } catch (err) {
@@ -3565,6 +3582,7 @@ export const useAppStore = create<AppState>((set, get) => {
         monitoringHost: null,
         monitoringStats: null,
         monitoringError: null,
+        monitoringSampleCount: 0,
         // Preserve last-known stats so the UI can show them instantly on reconnect.
         monitoringStatsCache:
           monitoringHost && monitoringStats
@@ -3583,6 +3601,7 @@ export const useAppStore = create<AppState>((set, get) => {
         set((state) => ({
           monitoringStats: stats,
           monitoringError: null,
+          monitoringSampleCount: state.monitoringSampleCount + 1,
           monitoringStatsCache: monitoringHost
             ? { ...state.monitoringStatsCache, [monitoringHost]: stats }
             : state.monitoringStatsCache,
