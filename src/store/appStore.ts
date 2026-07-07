@@ -187,6 +187,13 @@ function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
 }
 
 /**
+ * Failed-state message shown when the user aborts an in-flight connect from the
+ * connecting / waiting / auto-retry overlay. The tab stays open on a retryable
+ * Failed state rather than closing (#1128).
+ */
+export const ABORTED_CONNECT_MESSAGE = "Connection aborted.";
+
+/**
  * Strip password from connection configs so it is never persisted,
  * unless `savePassword` is true (password will be routed to the backend
  * credential store).
@@ -563,6 +570,12 @@ interface AppState {
    * stale timer that fires after the tab connected or was woken is a no-op.
    */
   failTerminalConnectTimeout: (tabId: string, kind: ConnectTimeoutKind) => void;
+  /**
+   * User-initiated abort of an in-flight connect (from the connecting, waiting,
+   * or auto-retry overlay). Transitions the tab to a retryable Failed state and
+   * keeps the tab open — distinct from Cancel, which closes the tab (#1128).
+   */
+  abortTerminalConnect: (tabId: string) => void;
 
   // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
   terminalExitedTabs: Record<string, boolean>;
@@ -3331,6 +3344,25 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalSpawnErrors: {
             ...state.terminalSpawnErrors,
             [tabId]: connectTimeoutMessage(kind),
+          },
+        };
+      }),
+    abortTerminalConnect: (tabId) =>
+      set((state) => {
+        frontendLog(
+          "disconnect",
+          `connect aborted by user for tab=${tabId} — transitioning to Failed`
+        );
+        // Clear every in-flight pre-connect flag and land on a retryable Failed
+        // state (spawn error set) so the overlay shows Retry and the tab stays
+        // open. Distinct from closeTab, which tears the tab down entirely.
+        return {
+          terminalConnecting: omitKey(state.terminalConnecting, tabId),
+          terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+          terminalSpawnErrors: {
+            ...state.terminalSpawnErrors,
+            [tabId]: ABORTED_CONNECT_MESSAGE,
           },
         };
       }),

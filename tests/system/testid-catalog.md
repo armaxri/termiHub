@@ -377,10 +377,12 @@ Fixed strings — match exactly.
 | `tab-group-chip-close` | `src/components/Terminal/TabGroupChips.tsx` |
 | `tab-group-ctx-close` | `src/components/Terminal/TabGroupChips.tsx` |
 | `tab-group-ctx-rename` | `src/components/Terminal/TabGroupChips.tsx` |
+| `terminal-connection-abort-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-cancel-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-elapsed` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-overlay` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-retry-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
+| `terminal-connection-retry-now-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-timeout` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-context-copy-all` | `src/components/SplitView/SplitView.tsx` |
 | `terminal-context-copy-selection` | `src/components/SplitView/SplitView.tsx` |
