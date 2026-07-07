@@ -97,6 +97,8 @@ export function WorkspaceSidebar() {
   const loadWorkspaces = useAppStore((s) => s.loadWorkspaces);
 
   const handleExport = useCallback(async () => {
+    // A cancelled file dialog returns null before any write happens — treat it
+    // as a no-op (no toast). Only a genuine failure surfaces an error (GAP G8).
     try {
       const json = await exportWorkspaces();
       const filePath = await save({
@@ -105,23 +107,30 @@ export function WorkspaceSidebar() {
       });
       if (!filePath) return;
       await writeTextFile(filePath, json);
-    } catch {
-      // Export cancelled or failed
+      toast.success("Exported workspaces");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to export workspaces: ${message}`);
     }
   }, []);
 
   const handleImport = useCallback(async () => {
+    // A cancelled file dialog returns null before any work happens — treat it as
+    // a no-op (no toast). A parse failure or duplicate-skip must be reported so
+    // the user can tell if 0, some, or all workspaces imported (GAP G8).
+    const filePath = await open({
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!filePath) return;
     try {
-      const filePath = await open({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
       const json = await readTextFile(filePath);
-      await importWorkspaces(json);
+      const count = await importWorkspaces(json);
       await loadWorkspaces();
-    } catch {
-      // Import cancelled or failed
+      toast.success(`Imported ${count} workspace${count === 1 ? "" : "s"}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to import workspaces: ${message}`);
     }
   }, [loadWorkspaces]);
 
