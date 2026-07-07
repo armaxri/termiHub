@@ -4,8 +4,26 @@ import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
+import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
+
+// jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches when it
+// mounts its trigger; shim them so the tooltip-wrapped controls render.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -104,7 +122,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(wslTab);
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("local");
@@ -118,7 +140,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(localWslTab);
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("local");
@@ -132,7 +158,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(localTab);
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("local");
@@ -162,7 +192,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("local");
@@ -176,7 +210,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(settingsTab);
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("none");
@@ -190,7 +228,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     setActiveTab(telnetTab);
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("none");
@@ -241,7 +283,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("session");
@@ -293,7 +339,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("none");
@@ -312,7 +362,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     useAppStore.setState({ remoteAgents: [] });
 
     act(() => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
 
     expect(useAppStore.getState().fileBrowserMode).toBe("none");
@@ -329,7 +383,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -348,7 +406,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -367,7 +429,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -386,7 +452,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -405,7 +475,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -426,7 +500,11 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -488,7 +566,11 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -524,7 +606,11 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -842,7 +928,11 @@ describe("FileBrowser – Multi-file selection", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -863,7 +953,11 @@ describe("FileBrowser – Multi-file selection", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -889,7 +983,11 @@ describe("FileBrowser – Multi-file selection", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -915,7 +1013,11 @@ describe("FileBrowser – Multi-file selection", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -941,7 +1043,11 @@ describe("FileBrowser – Multi-file selection", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1090,7 +1196,11 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1122,7 +1232,11 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1144,7 +1258,11 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1189,7 +1307,11 @@ describe("FileBrowser – session mode initial path (#630)", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1230,7 +1352,11 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     useAppStore.setState({ sidebarView: "files" });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1253,7 +1379,11 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1275,7 +1405,11 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 
@@ -1317,7 +1451,11 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     });
 
     await act(async () => {
-      root.render(<FileBrowser />);
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
     });
     await flushAsync();
 

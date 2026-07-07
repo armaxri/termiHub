@@ -34,6 +34,7 @@ import {
   Link,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import { Tooltip } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
@@ -196,44 +197,50 @@ function AgentConnectionItem({
           {definition.persistent ? (
             <span className="connection-tree__persistent-actions">
               {!runState || runState === "stopped" || runState === "error" ? (
-                <span
-                  className="connection-tree__action-btn"
-                  role="button"
-                  title="Start session"
-                  data-testid={`persistent-start-${definition.id}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onStartPersistent(agentId, definition);
-                  }}
-                >
-                  <Play size={12} />
-                </span>
+                <Tooltip content="Start session" side="top">
+                  <button
+                    type="button"
+                    className="connection-tree__action-btn"
+                    aria-label="Start session"
+                    data-testid={`persistent-start-${definition.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onStartPersistent(agentId, definition);
+                    }}
+                  >
+                    <Play size={12} />
+                  </button>
+                </Tooltip>
               ) : isRunning ? (
                 <>
-                  <span
-                    className="connection-tree__action-btn"
-                    role="button"
-                    title="Attach new tab"
-                    data-testid={`persistent-attach-${definition.id}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onAttachPersistent(agentId, definition);
-                    }}
-                  >
-                    <Link size={12} />
-                  </span>
-                  <span
-                    className="connection-tree__action-btn connection-tree__action-btn--danger"
-                    role="button"
-                    title="Stop session"
-                    data-testid={`persistent-stop-${definition.id}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStopPersistent(agentId, definition);
-                    }}
-                  >
-                    <Square size={12} />
-                  </span>
+                  <Tooltip content="Attach new tab" side="top">
+                    <button
+                      type="button"
+                      className="connection-tree__action-btn"
+                      aria-label="Attach new tab"
+                      data-testid={`persistent-attach-${definition.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAttachPersistent(agentId, definition);
+                      }}
+                    >
+                      <Link size={12} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="Stop session" side="top">
+                    <button
+                      type="button"
+                      className="connection-tree__action-btn connection-tree__action-btn--danger"
+                      aria-label="Stop session"
+                      data-testid={`persistent-stop-${definition.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onStopPersistent(agentId, definition);
+                      }}
+                    >
+                      <Square size={12} />
+                    </button>
+                  </Tooltip>
                 </>
               ) : null}
             </span>
@@ -864,20 +871,24 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
             </button>
             {isConnected && (
               <div className="connection-list__group-actions">
-                <button
-                  className="connection-list__add-btn"
-                  onClick={() => setCreatingFolder(true)}
-                  title="New Folder"
-                >
-                  <FolderPlus size={16} />
-                </button>
-                <button
-                  className="connection-list__add-btn"
-                  onClick={() => handleNewConnection(null)}
-                  title="New Connection"
-                >
-                  <Plus size={16} />
-                </button>
+                <Tooltip content="New Folder" side="top">
+                  <button
+                    className="connection-list__add-btn"
+                    onClick={() => setCreatingFolder(true)}
+                    aria-label="New Folder"
+                  >
+                    <FolderPlus size={16} />
+                  </button>
+                </Tooltip>
+                <Tooltip content="New Connection" side="top">
+                  <button
+                    className="connection-list__add-btn"
+                    onClick={() => handleNewConnection(null)}
+                    aria-label="New Connection"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </Tooltip>
               </div>
             )}
           </div>
