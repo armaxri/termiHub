@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { Search, X } from "lucide-react";
+import { Tooltip } from "@/components/ui";
 
 interface SettingsSearchProps {
   query: string;
@@ -37,14 +38,16 @@ export function SettingsSearch({ query, onQueryChange }: SettingsSearchProps) {
         placeholder="Search settings..."
       />
       {query && (
-        <button
-          className="settings-search__clear"
-          onClick={handleClear}
-          title="Clear search"
-          type="button"
-        >
-          <X size={14} />
-        </button>
+        <Tooltip content="Clear search">
+          <button
+            className="settings-search__clear"
+            onClick={handleClear}
+            aria-label="Clear search"
+            type="button"
+          >
+            <X size={14} />
+          </button>
+        </Tooltip>
       )}
     </div>
   );

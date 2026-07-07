@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { FileTypeSettings } from "./FileTypeSettings";
 import { KeyPathInput } from "./KeyPathInput";
+import { SerialPortSettings } from "./SerialPortSettings";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -127,6 +128,42 @@ describe("Settings icon controls tooltip adoption", () => {
         browse.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
       });
       expect(browse.getAttribute("aria-describedby")).toBeTruthy();
+    });
+  });
+
+  describe("SerialPortSettings remove-custom-prefix icon button", () => {
+    function renderWithCustomPrefix() {
+      act(() => {
+        useAppStore.setState({
+          settings: {
+            ...useAppStore.getState().settings,
+            serialPortScanPrefixes: [{ prefix: "ttyXYZ", enabled: true, builtIn: false }],
+          },
+        });
+      });
+      renderNode(<SerialPortSettings />);
+    }
+
+    function removeButton(): HTMLButtonElement | null {
+      return container.querySelector<HTMLButtonElement>(".settings-panel__file-remove");
+    }
+
+    it("gives the remove-prefix button an aria-label and no bare title", () => {
+      renderWithCustomPrefix();
+      const remove = removeButton();
+      expect(remove, "remove-prefix button should render").toBeTruthy();
+      expect(remove?.getAttribute("aria-label")).toBe("Remove custom prefix");
+      expect(remove?.hasAttribute("title")).toBe(false);
+    });
+
+    it("wires aria-describedby on focus of the remove-prefix button", () => {
+      renderWithCustomPrefix();
+      const remove = removeButton() as HTMLButtonElement;
+      act(() => {
+        remove.focus();
+        remove.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+      });
+      expect(remove.getAttribute("aria-describedby")).toBeTruthy();
     });
   });
 });

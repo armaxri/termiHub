@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import { SerialPortSettings } from "./SerialPortSettings";
 
 vi.mock("@/themes", () => ({
@@ -17,7 +18,11 @@ let root: Root;
 
 function render() {
   act(() => {
-    root.render(<SerialPortSettings />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <SerialPortSettings />
+      </TooltipProvider>
+    );
   });
 }
 
