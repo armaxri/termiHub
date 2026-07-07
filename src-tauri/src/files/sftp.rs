@@ -272,6 +272,23 @@ impl SftpSession {
         })
     }
 
+    /// Resolve a remote path to its canonical absolute form via SFTP realpath.
+    ///
+    /// Passing `"."` yields the session's home directory, avoiding the fragile
+    /// `/home/<user>` guess that breaks on non-Linux layouts (audit GAP C2,
+    /// issue #1143).
+    pub fn realpath(&self, path: &str) -> Result<String, TerminalError> {
+        let path = path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.sftp
+                    .canonicalize(&path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("realpath failed: {e}")))
+            })
+        })
+    }
+
     /// Read a remote file's contents as raw bytes.
     #[allow(dead_code)]
     pub fn read_bytes(&self, remote_path: &str) -> Result<Vec<u8>, TerminalError> {

@@ -502,6 +502,16 @@ export async function sftpListDir(sessionId: string, path: string): Promise<File
   return await invoke<FileEntry[]>("sftp_list_dir", { sessionId, path });
 }
 
+/**
+ * Resolve a remote path to its canonical absolute form via SFTP realpath.
+ *
+ * Pass `"."` to resolve the session's home directory instead of guessing
+ * `/home/<user>` (audit GAP C2).
+ */
+export async function sftpRealpath(sessionId: string, path: string): Promise<string> {
+  return await invoke<string>("sftp_realpath", { sessionId, path });
+}
+
 /** Download a remote file to a local path. Returns bytes transferred. */
 export async function sftpDownload(
   sessionId: string,

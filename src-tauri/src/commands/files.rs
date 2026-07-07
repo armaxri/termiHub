@@ -58,6 +58,23 @@ pub async fn sftp_list_dir(
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
+/// Resolve a remote path to its canonical absolute form via SFTP realpath.
+///
+/// Passing `"."` yields the session's home directory so the file browser can
+/// land there without guessing `/home/<user>` (audit GAP C2, issue #1143).
+#[tauri::command]
+pub async fn sftp_realpath(
+    session_id: String,
+    path: String,
+    manager: State<'_, SftpManager>,
+) -> Result<String, TerminalError> {
+    debug!(session_id, path, "SFTP realpath");
+    let session = manager.get_session(&session_id)?;
+    tokio::task::spawn_blocking(move || lock_session(&session)?.realpath(&path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+}
+
 /// Download a remote file to a local path. Returns bytes transferred.
 #[tauri::command]
 pub async fn sftp_download(
