@@ -21,6 +21,7 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
+import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
@@ -99,6 +100,7 @@ function App() {
   useTunnelEvents();
   useEmbeddedServerEvents();
   useCredentialStoreEvents();
+  useHttpMonitorNotifications();
   useWebviewZoom();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const checkForUpdates = useAppStore((s) => s.checkForUpdates);
