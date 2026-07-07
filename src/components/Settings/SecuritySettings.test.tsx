@@ -10,7 +10,28 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
+vi.mock("@/components/ui", async () => {
+  const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
+  return {
+    ...actual,
+    toast: { success: vi.fn(), error: vi.fn() },
+  };
+});
+
+import { toast } from "@/components/ui";
+
 const mockedInvoke = vi.mocked(invoke);
+const mockedToast = vi.mocked(toast);
+
+/** Sets a controlled input's value the way the harness does (React-friendly). */
+function setInputValue(input: HTMLInputElement, value: string) {
+  input.focus();
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(
+    input,
+    value
+  );
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -216,5 +237,130 @@ describe("SecuritySettings", () => {
     // switch_credential_store must have been called with the password
     const switchCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "switch_credential_store");
     expect(switchCalls.length).toBeGreaterThan(0);
+  });
+
+  it("shows a success toast after a successful store switch", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "switch_credential_store") {
+        return Promise.resolve({ migratedCount: 2, warnings: [] });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render();
+
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    const confirmBtn = query("confirm-switch-confirm-btn") as HTMLElement;
+    await act(async () => {
+      confirmBtn.click();
+    });
+
+    expect(mockedToast.success).toHaveBeenCalled();
+  });
+
+  it("shows an error toast when the store switch fails", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "switch_credential_store") {
+        return Promise.reject(new Error("switch boom"));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render();
+
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    const confirmBtn = query("confirm-switch-confirm-btn") as HTMLElement;
+    await act(async () => {
+      confirmBtn.click();
+    });
+
+    expect(mockedToast.error).toHaveBeenCalled();
+    expect(mockedToast.success).not.toHaveBeenCalled();
+  });
+
+  it("shows a success toast after changing the master password", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "change_master_password") {
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render();
+
+    const btn = query("change-master-password-btn") as HTMLElement;
+    await act(async () => {
+      btn.click();
+    });
+
+    await act(async () => {
+      setInputValue(query("change-master-password-current") as HTMLInputElement, "oldpass12");
+      setInputValue(query("change-master-password-new") as HTMLInputElement, "newpass123");
+      setInputValue(query("change-master-password-confirm") as HTMLInputElement, "newpass123");
+    });
+
+    const confirmBtn = query("change-master-password-confirm-btn") as HTMLElement;
+    await act(async () => {
+      confirmBtn.click();
+    });
+
+    expect(mockedToast.success).toHaveBeenCalled();
+  });
+
+  it("keeps the wrong-password change failure inline (no success toast, dialog stays open)", async () => {
+    // Per the audit, the wrong-current-password case stays an inline field error
+    // (not a toast); only the success path is promoted to a toast.
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "change_master_password") {
+        return Promise.reject(new Error("Current password is incorrect"));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render();
+
+    const btn = query("change-master-password-btn") as HTMLElement;
+    await act(async () => {
+      btn.click();
+    });
+
+    await act(async () => {
+      setInputValue(query("change-master-password-current") as HTMLInputElement, "wrongpass1");
+      setInputValue(query("change-master-password-new") as HTMLInputElement, "newpass123");
+      setInputValue(query("change-master-password-confirm") as HTMLInputElement, "newpass123");
+    });
+
+    const confirmBtn = query("change-master-password-confirm-btn") as HTMLElement;
+    await act(async () => {
+      confirmBtn.click();
+    });
+
+    expect(mockedToast.success).not.toHaveBeenCalled();
+    // The inline error still surfaces the wrong-password feedback; dialog stays open.
+    expect(query("change-password-dialog")).not.toBeNull();
   });
 });
