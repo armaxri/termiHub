@@ -81,6 +81,15 @@ async function clickCheckbox(checkbox: HTMLInputElement) {
 
 describe("SettingsPanel — dirty state on revert to default", () => {
   beforeEach(() => {
+    // Use fake timers so the panel's 300ms debounced save (SAVE_DEBOUNCE_MS)
+    // never fires on its own during a test. With real timers, a starved parallel
+    // worker can let the debounce elapse between the two clicks of a
+    // toggle-then-revert flow: the save would rewrite `savedSettings` to the
+    // intermediate value, shifting the dirty baseline, so the revert click would
+    // wrongly leave the tab dirty. Fake timers make the flow order-independent —
+    // the debounce only advances when a test explicitly asks it to.
+    vi.useFakeTimers();
+
     globalThis.ResizeObserver = class {
       observe() {}
       unobserve() {}
@@ -108,6 +117,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     });
     container.remove();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("clears dirty flag when setting is reverted to its last-saved value", async () => {
