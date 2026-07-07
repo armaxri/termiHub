@@ -105,15 +105,17 @@ export function StatusBar() {
               Ln {editorStatus.line}, Col {editorStatus.column}
             </span>
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="status-bar__item status-bar__item--interactive"
-                  title="Select indentation"
-                  data-testid="status-bar-tab-size"
-                >
-                  {indentLabel}
-                </button>
-              </DropdownMenu.Trigger>
+              <Tooltip content="Select indentation" side="top">
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    className="status-bar__item status-bar__item--interactive"
+                    aria-label="Select indentation"
+                    data-testid="status-bar-tab-size"
+                  >
+                    {indentLabel}
+                  </button>
+                </DropdownMenu.Trigger>
+              </Tooltip>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
                   className="indent-menu__content"
@@ -433,16 +435,18 @@ function MonitoringStatus() {
 
         {!monitoringLoading && (
           <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                className="status-bar__item status-bar__item--interactive"
-                title="Connect monitoring"
-                data-testid="monitoring-connect-btn"
-              >
-                <Activity size={12} />
-                Monitor
-              </button>
-            </DropdownMenu.Trigger>
+            <Tooltip content="Connect monitoring" side="top">
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="status-bar__item status-bar__item--interactive"
+                  aria-label="Connect monitoring"
+                  data-testid="monitoring-connect-btn"
+                >
+                  <Activity size={12} />
+                  Monitor
+                </button>
+              </DropdownMenu.Trigger>
+            </Tooltip>
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 className="monitoring-picker__content"
@@ -531,7 +535,11 @@ function MonitoringDetailDropdown({
       <DropdownMenu.Trigger asChild>
         <button
           className="status-bar__item status-bar__item--interactive monitoring-status__host"
-          title={loading ? `Reconnecting to ${host ?? "monitor"}…` : (host ?? "Monitoring")}
+          // Intentional no-tooltip (#1163): the visible label already shows the
+          // hostname, so a normal-state hover would only duplicate it. Keep a
+          // title only while reconnecting, where it conveys transient state the
+          // collapsed spinner label does not spell out.
+          title={loading ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
           data-testid="monitoring-host"
         >
           {loading ? (
@@ -632,15 +640,17 @@ function LanguageSelector({
         if (!isOpen) setSearch("");
       }}
     >
-      <DropdownMenu.Trigger asChild>
-        <button
-          className="status-bar__item status-bar__item--interactive"
-          title="Select language mode"
-          data-testid="status-bar-language"
-        >
-          {displayName}
-        </button>
-      </DropdownMenu.Trigger>
+      <Tooltip content="Select language mode" side="top">
+        <DropdownMenu.Trigger asChild>
+          <button
+            className="status-bar__item status-bar__item--interactive"
+            aria-label="Select language mode"
+            data-testid="status-bar-language"
+          >
+            {displayName}
+          </button>
+        </DropdownMenu.Trigger>
+      </Tooltip>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className="lang-menu__content"
