@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter};
@@ -16,6 +18,64 @@ use super::storage::EmbeddedServerStorage;
 use super::tftp_server::start_tftp_server;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
+
+/// How long the manager waits for a server thread to confirm its bind before
+/// treating the start as failed. Binding a local socket is near-instant, so a
+/// generous timeout only guards against a wedged thread (GAP G3, #1145).
+const BIND_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// One-shot handle a server thread uses to report whether its listening socket
+/// bound successfully.
+///
+/// The manager holds the receiving end and only emits `Running` once
+/// [`BindSignal::confirm`] arrives; a [`BindSignal::fail`] (or a dropped sender)
+/// keeps the server out of the `active` map so it never shows a stuck "Running"
+/// before flipping to `Error` (GAP G3, #1145).
+pub(super) struct BindSignal {
+    tx: SyncSender<Result<(), String>>,
+}
+
+impl BindSignal {
+    /// Report that the listening socket bound successfully.
+    pub(super) fn confirm(&self) {
+        // A full/closed channel means the manager already gave up waiting; the
+        // send failure is harmless because the thread will still shut down.
+        let _ = self.tx.send(Ok(()));
+    }
+
+    /// Report that binding failed, carrying the reason for the UI.
+    pub(super) fn fail(&self, reason: &str) {
+        let _ = self.tx.send(Err(reason.to_string()));
+    }
+}
+
+/// Decision the manager makes from a server thread's bind signal.
+#[derive(Debug)]
+enum BindOutcome {
+    /// The socket bound — keep the `active` entry and emit `Running`.
+    Running,
+    /// The bind failed (explicit error, dropped sender, or timeout) — drop the
+    /// `active` entry and emit `Error` with this reason.
+    Failed(String),
+}
+
+/// Map a server thread's bind signal (received over the confirm channel) to the
+/// manager's next action, so `Running` is only ever produced after a *confirmed*
+/// bind (GAP G3, #1145).
+///
+/// Pure and `AppHandle`-free so the start-flow decision can be unit-tested.
+fn decide_bind_outcome(signal: Result<Result<(), String>, RecvTimeoutError>) -> BindOutcome {
+    match signal {
+        Ok(Ok(())) => BindOutcome::Running,
+        Ok(Err(reason)) => BindOutcome::Failed(reason),
+        Err(RecvTimeoutError::Disconnected) => {
+            BindOutcome::Failed("server exited before confirming it was listening".to_string())
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            BindOutcome::Failed("server did not confirm it was listening in time".to_string())
+        }
+    }
+}
 
 /// A running server instance.
 struct ActiveServer {
@@ -191,7 +251,8 @@ impl EmbeddedServerManager {
             }
         }
 
-        // Pre-flight bind check so we can return an error immediately.
+        // Pre-flight bind check so we can return an error immediately for the
+        // common "port already in use" case.
         self.check_port(&config)?;
 
         self.emit_status(server_id, ServerStatus::Starting, None);
@@ -199,6 +260,11 @@ impl EmbeddedServerManager {
         let shutdown = Arc::new(AtomicBool::new(false));
         let stats = AtomicServerStats::new();
         let error_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+        // One-slot channel the server thread uses to confirm (or reject) its
+        // real bind. `Running` is only emitted after this confirmation, so a
+        // late bind failure never leaves the item stuck green (GAP G3, #1145).
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
         let cfg = config.clone();
         let shutdown_clone = Arc::clone(&shutdown);
@@ -208,10 +274,11 @@ impl EmbeddedServerManager {
         let id = server_id.to_string();
 
         let thread_handle = thread::spawn(move || {
+            let ready = BindSignal { tx: ready_tx };
             let result = match cfg.server_type {
-                ServerType::Http => start_http_server(&cfg, shutdown_clone, stats_clone),
-                ServerType::Ftp => start_ftp_server(&cfg, shutdown_clone, stats_clone),
-                ServerType::Tftp => start_tftp_server(&cfg, shutdown_clone, stats_clone),
+                ServerType::Http => start_http_server(&cfg, shutdown_clone, stats_clone, ready),
+                ServerType::Ftp => start_ftp_server(&cfg, shutdown_clone, stats_clone, ready),
+                ServerType::Tftp => start_tftp_server(&cfg, shutdown_clone, stats_clone, ready),
             };
 
             if let Err(e) = result {
@@ -231,28 +298,40 @@ impl EmbeddedServerManager {
             }
         });
 
-        let started_at = chrono::Utc::now().to_rfc3339();
+        // Wait for the thread to confirm its bind before declaring Running.
+        match decide_bind_outcome(ready_rx.recv_timeout(BIND_CONFIRM_TIMEOUT)) {
+            BindOutcome::Running => {
+                let started_at = chrono::Utc::now().to_rfc3339();
+                {
+                    let mut active = self.active.lock().map_err(|e| {
+                        TerminalError::EmbeddedServerError(format!("Lock error: {e}"))
+                    })?;
+                    active.insert(
+                        server_id.to_string(),
+                        ActiveServer {
+                            shutdown,
+                            thread_handle,
+                            stats,
+                            started_at,
+                            error: error_slot,
+                        },
+                    );
+                }
 
-        {
-            let mut active = self
-                .active
-                .lock()
-                .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))?;
-            active.insert(
-                server_id.to_string(),
-                ActiveServer {
-                    shutdown,
-                    thread_handle,
-                    stats,
-                    started_at,
-                    error: error_slot,
-                },
-            );
+                self.emit_status(server_id, ServerStatus::Running, None);
+                tracing::info!(%server_id, "Embedded server started");
+                Ok(())
+            }
+            BindOutcome::Failed(reason) => {
+                // Bind never confirmed. Signal the thread to unwind (in case it
+                // did bind but timed out) and leave nothing in `active`, so the
+                // server is reported as Error rather than a stuck Running.
+                shutdown.store(true, Ordering::Relaxed);
+                tracing::warn!(%server_id, "Embedded server failed to start: {reason}");
+                self.emit_status(server_id, ServerStatus::Error, Some(reason.clone()));
+                Err(TerminalError::EmbeddedServerError(reason))
+            }
         }
-
-        self.emit_status(server_id, ServerStatus::Running, None);
-        tracing::info!(%server_id, "Embedded server started");
-        Ok(())
     }
 
     /// Stop a running server by ID.
@@ -401,6 +480,79 @@ fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+
+    /// A successful bind signal must produce a `Running` outcome so the manager
+    /// keeps the `active` entry and emits `Running` (GAP G3, #1145).
+    #[test]
+    fn bind_success_signal_yields_running() {
+        let outcome = decide_bind_outcome(Ok(Ok(())));
+        assert!(
+            matches!(outcome, BindOutcome::Running),
+            "Ok(Ok(())) should map to Running, got {outcome:?}"
+        );
+    }
+
+    /// A late bind failure reported by the server thread must yield `Failed`
+    /// carrying the reason, so the manager emits `Error` and drops the `active`
+    /// entry instead of leaving the item stuck green (GAP G3, #1145).
+    #[test]
+    fn bind_failure_signal_yields_failed_with_reason() {
+        let outcome = decide_bind_outcome(Ok(Err("Port 8080 is already in use".to_string())));
+        match outcome {
+            BindOutcome::Failed(reason) => assert!(
+                reason.contains("already in use"),
+                "failure reason must be preserved, got: {reason}"
+            ),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    /// If the thread dies (panics / returns) before signalling, the sender is
+    /// dropped and `recv` reports `Disconnected` — this is a start failure, so
+    /// it must be `Failed`, never `Running` (GAP G3, #1145).
+    #[test]
+    fn bind_disconnected_signal_yields_failed() {
+        let outcome = decide_bind_outcome(Err(mpsc::RecvTimeoutError::Disconnected));
+        assert!(
+            matches!(outcome, BindOutcome::Failed(_)),
+            "a disconnected channel means the bind never confirmed, got {outcome:?}"
+        );
+    }
+
+    /// A bind that never confirms within the timeout must also be `Failed`, so
+    /// `Running` is only ever emitted after a *confirmed* bind (GAP G3, #1145).
+    #[test]
+    fn bind_timeout_signal_yields_failed() {
+        let outcome = decide_bind_outcome(Err(mpsc::RecvTimeoutError::Timeout));
+        assert!(
+            matches!(outcome, BindOutcome::Failed(_)),
+            "a timed-out bind is not a confirmed bind, got {outcome:?}"
+        );
+    }
+
+    /// End-to-end over the real channel: a thread that binds then signals success
+    /// must result in `Running`, while a thread that reports a bind error must
+    /// not — so no live `active` entry lingers on failure (GAP G3, #1145).
+    #[test]
+    fn real_channel_success_and_failure_paths() {
+        // Success path: sender reports Ok before the (simulated) serve loop.
+        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        std::thread::spawn(move || {
+            let _ = tx.send(Ok(()));
+        });
+        let outcome = decide_bind_outcome(rx.recv_timeout(BIND_CONFIRM_TIMEOUT));
+        assert!(matches!(outcome, BindOutcome::Running));
+
+        // Failure path: sender reports a bind error and the manager must not
+        // treat it as running.
+        let (tx, rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        std::thread::spawn(move || {
+            let _ = tx.send(Err("bind failed".to_string()));
+        });
+        let outcome = decide_bind_outcome(rx.recv_timeout(BIND_CONFIRM_TIMEOUT));
+        assert!(matches!(outcome, BindOutcome::Failed(_)));
+    }
 
     /// A freshly-spawned server whose error slot is still empty is live and must
     /// block a second, concurrent start with "already running".
