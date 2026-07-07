@@ -1,7 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { ServerCrash, RefreshCw, Loader2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
+import { frontendLog } from "@/utils/frontendLog";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -26,6 +27,28 @@ const SERIAL_BUSY_PATTERNS = ["busy", "in use", "Access is denied"];
 
 /** Seconds after which a still-pending connect is flagged as unusually slow. */
 const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
+
+/**
+ * Client-side deadline for a plain `Connecting` attempt (#1129).
+ *
+ * The backend connect itself is bounded (the default SSH connect timeout is
+ * 20 s, see `DEFAULT_SSH_CONNECT_TIMEOUT_SECS`), so this is a safety net set
+ * comfortably above it: it only fires if the backend hangs past its own
+ * timeout and never rejects, which would otherwise leave the overlay spinning
+ * forever. Auto-retry attempts are excluded — those are already bounded by
+ * `MAX_AGENT_SPAWN_ATTEMPTS`.
+ */
+export const CONNECT_TIMEOUT_SECONDS = 60;
+
+/**
+ * Client-side deadline for the `WaitingForAgent` park (#1129).
+ *
+ * A tab parked waiting for its agent transport to come online has no backend
+ * timeout at all — if the agent never connects it would wait indefinitely.
+ * After this bounded wait the tab settles as Failed with a hint so the user
+ * can retry or cancel instead of staring at a permanent spinner.
+ */
+export const WAITING_FOR_AGENT_TIMEOUT_SECONDS = 30;
 
 /** Formats whole seconds as a compact `mm:ss`-ish readout: `5s`, `1m 05s`. */
 function formatElapsed(seconds: number): string {
@@ -56,6 +79,9 @@ export function TerminalConnectionOverlay({
 }: TerminalConnectionOverlayProps) {
   const closeTab = useAppStore((s) => s.closeTab);
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
+  const setTerminalConnecting = useAppStore((s) => s.setTerminalConnecting);
+  const setTerminalWaitingForAgent = useAppStore((s) => s.setTerminalWaitingForAgent);
+  const setTerminalSpawnError = useAppStore((s) => s.setTerminalSpawnError);
   const isConnecting = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
@@ -68,6 +94,58 @@ export function TerminalConnectionOverlay({
   const elapsedSeconds = useElapsed(isActivelyConnecting);
   const elapsedLabel = formatElapsed(elapsedSeconds);
   const isSlowConnect = elapsedSeconds >= SLOW_CONNECT_THRESHOLD_SECONDS;
+
+  // Bound the pending states with a client-side deadline (#1129). Without this,
+  // `WaitingForAgent` parks forever if the agent never comes online, and a
+  // `Connecting` attempt whose backend hangs past its own timeout never
+  // settles. On the deadline the tab transitions to Failed with a hint that
+  // explains the cause, reusing the existing spawn-error → Failed overlay path.
+  //
+  // The effect re-runs whenever the phase changes, so the timer is inherently
+  // cleared on a successful connect, on cancel/unmount (React cleanup), and on
+  // any transition to another phase — it can only fire against an attempt that
+  // has stayed in the same pending phase for the full duration. Reattaching and
+  // bounded auto-retries (already capped by MAX_AGENT_SPAWN_ATTEMPTS) are
+  // excluded.
+  useEffect(() => {
+    if (isReattaching || autoRetryCount > 0) return;
+
+    let timeoutMs: number;
+    let hint: string;
+    let clearActivePhase: () => void;
+    if (waitingForAgent) {
+      timeoutMs = WAITING_FOR_AGENT_TIMEOUT_SECONDS * 1000;
+      hint = `Agent did not come online within ${WAITING_FOR_AGENT_TIMEOUT_SECONDS}s. The agent may be offline or unreachable — check the agent and retry.`;
+      clearActivePhase = () => setTerminalWaitingForAgent(tabId, null);
+    } else if (isConnecting) {
+      timeoutMs = CONNECT_TIMEOUT_SECONDS * 1000;
+      hint = `The connection did not complete within ${CONNECT_TIMEOUT_SECONDS}s. The host may be unreachable or unresponsive — check the connection and retry.`;
+      clearActivePhase = () => setTerminalConnecting(tabId, false);
+    } else {
+      return;
+    }
+
+    const id = setTimeout(() => {
+      frontendLog("terminal", `connect timeout fired for tab=${tabId} after ${timeoutMs}ms`);
+      clearActivePhase();
+      setTerminalSpawnError(tabId, hint);
+    }, timeoutMs);
+
+    return () => clearTimeout(id);
+  }, [
+    tabId,
+    isConnecting,
+    waitingForAgent,
+    isReattaching,
+    autoRetryCount,
+    setTerminalConnecting,
+    setTerminalWaitingForAgent,
+    setTerminalSpawnError,
+  ]);
+
+  // Remaining seconds before the active pending phase times out — surfaced in
+  // the overlay so the bounded wait is visible to the user (#1129, P7).
+  const waitingRemaining = Math.max(0, WAITING_FOR_AGENT_TIMEOUT_SECONDS - elapsedSeconds);
 
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
@@ -115,6 +193,12 @@ export function TerminalConnectionOverlay({
           <p className="terminal-connection-overlay__heading">Waiting for agent…</p>
           <p className="terminal-connection-overlay__subheading">
             Waiting for the agent to connect before starting the session.
+          </p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-timeout-remaining"
+          >
+            Times out in {waitingRemaining}s
           </p>
           <div className="terminal-connection-overlay__actions">
             <button
