@@ -134,7 +134,9 @@ describe("appStore — SFTP dropped-session recovery (S2)", () => {
     expect(state.sftpSessionId).toBeNull();
     expect(state.sftpConnectedHost).toBeNull();
     expect(state.sftpError).toContain("session not found");
-    expect(state.sftpLoading).toBe(false);
+    // The overloaded `sftpLoading` boolean was replaced by an explicit status
+    // enum (audit gap A1); a failed list settles on `error`, not a loading flag.
+    expect(state.sftpStatus).toBe("error");
   });
 
   it("refreshSftp clears sftpSessionId on a transport/channel error", async () => {
@@ -145,7 +147,7 @@ describe("appStore — SFTP dropped-session recovery (S2)", () => {
     const state = useAppStore.getState();
     expect(state.sftpSessionId).toBeNull();
     expect(state.sftpConnectedHost).toBeNull();
-    expect(state.sftpLoading).toBe(false);
+    expect(state.sftpStatus).toBe("error");
   });
 
   it("navigateSftp keeps sftpSessionId on an ordinary listing error (e.g. permission denied)", async () => {

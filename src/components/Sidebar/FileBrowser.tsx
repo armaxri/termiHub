@@ -702,6 +702,9 @@ export function FileBrowser() {
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const retrySftp = useAppStore((s) => s.retrySftp);
   const dismissSftpError = useAppStore((s) => s.dismissSftpError);
+  // Explicit SFTP lifecycle status (audit gap A1) — used to pick the SFTP
+  // placeholder label without inferring it from isConnected + isLoading.
+  const sftpStatus = useAppStore((s) => s.sftpStatus);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const fileClipboard = useAppStore((s) => s.fileClipboard);
   const quickShareServer = useAppStore((s) => s.quickShareServer);
@@ -942,7 +945,7 @@ export function FileBrowser() {
     return (
       <div className="file-browser">
         <div className="file-browser__placeholder" data-testid="file-browser-sftp-connecting">
-          {isLoading ? (
+          {sftpStatus === "connecting" ? (
             <>
               <Loader2 size={20} className="file-browser__spinner" />
               <span>Connecting SFTP...</span>
