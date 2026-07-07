@@ -91,6 +91,8 @@ import {
   stopPersistentSession as apiStopPersistentSession,
   attachPersistentTab as apiAttachPersistentTab,
   adoptPersistentSession as apiAdoptPersistentSession,
+  closeTerminal as apiCloseTerminal,
+  detachPersistentTab as apiDetachPersistentTab,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -820,6 +822,46 @@ function beginRestoreGuard(setState: (partial: Partial<AppState>) => void): void
     frontendLog("workspace", "restore settle window elapsed; auto-save re-enabled");
   }, RESTORE_SETTLE_MS);
 }
+
+/**
+ * Tear down every live backend session currently held by the store (GAP G1,
+ * #1146). `launchWorkspace` / `restoreLastSession` replace the whole layout with
+ * a single `set(...)`; without this, the prior tabs' PTY/SSH/agent sessions are
+ * dropped from the store and orphaned into the Open Connections panel with no
+ * tab to reach them. Call this BEFORE placing the new groups.
+ *
+ * The active group's live tree lives in `rootPanel`; every other group's tree
+ * lives in `group.rootPanel` (mirrors {@link captureAllTabGroups}). Persistent
+ * sessions are detached rather than killed so their background process survives
+ * and can be re-adopted — the same distinction the Terminal unmount cleanup
+ * makes. Failures are swallowed: a best-effort close must never block the
+ * launch/restore that follows.
+ */
+function teardownAllSessions(state: {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+}): void {
+  const trees = state.tabGroups.map((g) =>
+    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
+  );
+  const tabs = trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+  let closed = 0;
+  for (const tab of tabs) {
+    if (!tab.sessionId) continue;
+    closed++;
+    if (tab.persistentConnectionId) {
+      // Persistent session — detach so the background process keeps running.
+      apiDetachPersistentTab(tab.sessionId, tab.id).catch(() => {});
+    } else {
+      apiCloseTerminal(tab.sessionId).catch(() => {});
+    }
+  }
+  if (closed > 0) {
+    frontendLog("workspace", `tore down ${closed} live session(s) before restore/launch`);
+  }
+}
+
 /** Unlisten function for the active session-based monitoring event subscription. */
 let _monitoringUnlisten: (() => void) | null = null;
 
@@ -4252,6 +4294,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return;
         }
         const firstGroup = builtGroups[0];
+        // GAP G1 (#1146): tear down the currently-open live sessions BEFORE the
+        // `set` replaces the layout, otherwise their PTY/SSH/agent sessions are
+        // dropped from the store and orphaned into the Open Connections panel.
+        teardownAllSessions(get());
         // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
         // auto-save subscription that fires from this `set` — and the per-tab
         // connects that follow — do not persist a mid-launch snapshot over the
@@ -4389,6 +4435,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
         const activeGroup = builtGroups[idx];
+        // GAP G1 (#1146): tear down any currently-open live sessions BEFORE the
+        // `set` replaces the layout (e.g. a CLI-opened workspace at startup that
+        // runs before restore), otherwise those sessions are orphaned.
+        teardownAllSessions(get());
         // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
         // auto-save subscription that fires from this very `set` — and the
         // per-tab connects that follow — are skipped until the cohort settles.
