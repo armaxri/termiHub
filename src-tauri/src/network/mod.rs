@@ -67,6 +67,15 @@ impl NetworkManager {
                 error!("Failed to load WoL devices: {e}");
             }
         }
+        // Reload persisted HTTP monitor configs and auto-start a poll loop for
+        // each, so a monitor configured before the last shutdown resumes on
+        // launch instead of silently vanishing.
+        for config in self.load_persisted_monitor_configs() {
+            let id = config.id.clone();
+            if let Err(e) = self.spawn_http_monitor(config) {
+                error!(monitor_id = %id, "Failed to auto-start persisted HTTP monitor: {e}");
+            }
+        }
     }
 
     // ── Task lifecycle ──────────────────────────────────────────────────────
@@ -111,8 +120,23 @@ impl NetworkManager {
 
     // ── HTTP Monitors ───────────────────────────────────────────────────────
 
-    /// Start a new HTTP monitor. Returns its ID.
+    /// Start a new HTTP monitor and persist its config. Returns its ID.
+    ///
+    /// The config is written to disk (see [`http_monitor_storage`]) so the
+    /// monitor is auto-restarted on the next launch. Runtime state (last
+    /// result, running flag) is never persisted.
     pub fn start_http_monitor(&self, config: HttpMonitorConfig) -> Result<String, TerminalError> {
+        // Persist first so a monitor the user just created survives a restart
+        // even if it is stopped before the next save.
+        self.persist_monitor_config(config.clone())?;
+        self.spawn_http_monitor(config)
+    }
+
+    /// Spawn the poll loop for a config and track its handle, **without**
+    /// touching disk. Used both by [`start_http_monitor`](Self::start_http_monitor)
+    /// (after persisting) and by [`init`](Self::init) when auto-starting the
+    /// persisted monitors on launch.
+    fn spawn_http_monitor(&self, config: HttpMonitorConfig) -> Result<String, TerminalError> {
         let app = self
             .app_handle()
             .ok_or_else(|| TerminalError::InternalError("app handle not available".into()))?;
@@ -124,7 +148,7 @@ impl NetworkManager {
         Ok(id)
     }
 
-    /// Stop a running HTTP monitor.
+    /// Stop a running HTTP monitor and drop its persisted config.
     pub fn stop_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
         let mut monitors = self
             .http_monitors
@@ -133,10 +157,56 @@ impl NetworkManager {
         match monitors.remove(monitor_id) {
             Some(handle) => {
                 handle.cancel.cancel();
+                // Drop the config from disk too — stopping a monitor removes it
+                // (see audit Gap #6: Stop currently means delete). A best-effort
+                // remove; a persistence error must not leave the loop running.
+                drop(monitors);
+                if let Err(e) = self.remove_persisted_monitor_config(monitor_id) {
+                    error!(monitor_id, "Failed to remove persisted HTTP monitor: {e}");
+                }
                 Ok(())
             }
             None => Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
         }
+    }
+
+    // ── HTTP Monitor persistence ────────────────────────────────────────────
+
+    /// Load the persisted HTTP monitor configs from disk (empty on any error).
+    fn load_persisted_monitor_configs(&self) -> Vec<HttpMonitorConfig> {
+        match http_monitor_storage::load_http_monitors(&self.config_dir) {
+            Ok(configs) => configs,
+            Err(e) => {
+                error!("Failed to load persisted HTTP monitors: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Persist a single monitor config, replacing any existing entry with the
+    /// same ID.
+    fn persist_monitor_config(&self, config: HttpMonitorConfig) -> Result<(), TerminalError> {
+        let mut configs = self.load_persisted_monitor_configs();
+        if let Some(existing) = configs.iter_mut().find(|c| c.id == config.id) {
+            *existing = config;
+        } else {
+            configs.push(config);
+        }
+        http_monitor_storage::save_http_monitors(&self.config_dir, &configs)
+            .map_err(|e| TerminalError::InternalError(e.to_string()))
+    }
+
+    /// Remove the persisted config for a monitor. No-op if the file has no such
+    /// entry (the map removal already happened).
+    fn remove_persisted_monitor_config(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        let mut configs = self.load_persisted_monitor_configs();
+        let before = configs.len();
+        configs.retain(|c| c.id != monitor_id);
+        if configs.len() == before {
+            return Ok(());
+        }
+        http_monitor_storage::save_http_monitors(&self.config_dir, &configs)
+            .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
 
     /// Stop and remove **all** running HTTP monitors.
@@ -276,5 +346,80 @@ mod tests {
         assert!(mgr.list_http_monitors().is_empty());
         mgr.stop_all_http_monitors();
         assert!(mgr.list_http_monitors().is_empty());
+    }
+
+    /// A manager pointed at a temp config dir, so persistence can be exercised
+    /// without a live Tauri app.
+    fn manager_with_config_dir(dir: &std::path::Path) -> NetworkManager {
+        let mut mgr = NetworkManager::new();
+        mgr.config_dir = dir.to_path_buf();
+        mgr
+    }
+
+    #[test]
+    fn persist_and_reload_monitor_configs() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let id = cfg.id.clone();
+        mgr.persist_monitor_config(cfg).expect("persist config");
+
+        // A fresh manager over the same dir reloads the saved config.
+        let reloaded = manager_with_config_dir(dir.path());
+        let loaded = reloaded.load_persisted_monitor_configs();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, id);
+        assert_eq!(loaded[0].url, "https://example.com/health");
+    }
+
+    #[test]
+    fn removing_persisted_config_deletes_it_from_disk() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let id = cfg.id.clone();
+        mgr.persist_monitor_config(cfg).expect("persist config");
+        assert_eq!(mgr.load_persisted_monitor_configs().len(), 1);
+
+        mgr.remove_persisted_monitor_config(&id)
+            .expect("remove config");
+        assert!(mgr.load_persisted_monitor_configs().is_empty());
+    }
+
+    #[test]
+    fn persist_overwrites_config_with_same_id() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        let mut cfg = HttpMonitorConfig::new(
+            "https://old.example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        mgr.persist_monitor_config(cfg.clone()).expect("persist");
+        // Same id, different url.
+        cfg.url = "https://new.example.com".into();
+        mgr.persist_monitor_config(cfg.clone())
+            .expect("persist again");
+
+        let loaded = mgr.load_persisted_monitor_configs();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].url, "https://new.example.com");
     }
 }
