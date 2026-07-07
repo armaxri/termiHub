@@ -4,7 +4,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ExternalFileConfig } from "@/types/connection";
-import { Button } from "@/components/ui";
+import { Button, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 
 /**
@@ -187,13 +187,15 @@ export function ExternalFilesSettings() {
                 >
                   {file.path}
                 </span>
-                <button
-                  className="settings-panel__file-remove"
-                  onClick={() => handleRemoveFile(file.path)}
-                  title="Remove file"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <Tooltip content="Remove file">
+                  <button
+                    className="settings-panel__file-remove"
+                    onClick={() => handleRemoveFile(file.path)}
+                    aria-label="Remove file"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </Tooltip>
               </li>
             ))}
           </ul>

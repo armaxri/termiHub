@@ -12,6 +12,7 @@ import {
   getOverrides,
 } from "@/services/keybindings";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
+import { Tooltip } from "@/components/ui";
 import "./KeyboardSettings.css";
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
@@ -319,14 +320,16 @@ function KeybindingRow({
         {isRecording ? "Press a key combination..." : displayStr}
       </td>
       <td className="keyboard-settings__reset-cell">
-        <button
-          className="keyboard-settings__reset-btn"
-          onClick={onReset}
-          title="Reset to default"
-          data-testid={`keybinding-reset-${binding.action}`}
-        >
-          <RotateCcw size={12} />
-        </button>
+        <Tooltip content="Reset to default">
+          <button
+            className="keyboard-settings__reset-btn"
+            onClick={onReset}
+            aria-label="Reset to default"
+            data-testid={`keybinding-reset-${binding.action}`}
+          >
+            <RotateCcw size={12} />
+          </button>
+        </Tooltip>
       </td>
     </tr>
   );
