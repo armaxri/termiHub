@@ -26,12 +26,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::{AppHandle, Manager};
-use termihub_core::backends::ssh::x11::{ResolvedXServer, XServerProvisioner};
+use termihub_core::backends::ssh::x11::{XServerLease, XServerProvisioner};
 
 use crate::connection::manager::ConnectionManager;
 
 pub use manager::XServerManager;
-pub use orchestrator::{current_status, ensure_x_server, EnsureOutcome};
+pub use orchestrator::{
+    current_status, ensure_x_server, ensure_x_server_for_session, EnsureOutcome,
+};
 pub use types::{
     XServerError, XServerPlatform, XServerProgress, XServerStatusReport, X_SERVER_PROGRESS_EVENT,
 };
@@ -83,16 +85,22 @@ impl XServerProvisionerImpl {
 
 #[async_trait]
 impl XServerProvisioner for XServerProvisionerImpl {
-    async fn ensure(&self) -> Result<Option<ResolvedXServer>, String> {
-        // Run the orchestrator (adopt / spawn / launch XQuartz / typed error) and
-        // hand the connect path the server it resolved — managed or adopted —
-        // together with its cookie, so the forwarder performs no second probe.
-        // `Ok` always carries a resolved server; the "nothing usable" case is an
-        // `Err`, and the "no provisioner registered" case is handled in core.
-        ensure_off_reactor(&self.app, self.manager.clone())
+    async fn ensure(&self) -> Result<XServerLease, String> {
+        // Run the orchestrator (adopt / spawn / launch XQuartz / typed error),
+        // claiming a dependent session against the manager (#1107). The connect
+        // path gets the resolved server — managed or adopted, with its cookie, so
+        // the forwarder performs no second probe — plus an opaque
+        // [`SessionGuard`] it holds for the session lifetime; dropping the guard
+        // releases the session (respecting idle-shutdown). `Ok` always carries a
+        // resolved server; the "nothing usable" case is an `Err`, and the "no
+        // provisioner registered" case is handled in core.
+        let (outcome, guard) = ensure_session_off_reactor(&self.app, self.manager.clone())
             .await
-            .map(|outcome| Some(outcome.resolved))
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        Ok(XServerLease {
+            resolved: Some(outcome.resolved),
+            guard: Some(Box::new(guard)),
+        })
     }
 }
 
@@ -106,6 +114,22 @@ pub(crate) async fn ensure_off_reactor(
 ) -> Result<EnsureOutcome, XServerError> {
     let provide = resolve_provide_automatically(app);
     tokio::task::spawn_blocking(move || ensure_x_server(&manager, provide))
+        .await
+        .map_err(|e| XServerError::LaunchFailed {
+            message: format!("X server provisioning task failed: {e}"),
+        })?
+}
+
+/// Like [`ensure_off_reactor`] but claims a dependent session against the manager
+/// (#1107), returning the outcome plus a [`SessionGuard`](manager::SessionGuard)
+/// whose drop releases the session. Used by the SSH connect provisioner so the
+/// refcount tracks live X11-forwarding sessions.
+pub(crate) async fn ensure_session_off_reactor(
+    app: &AppHandle,
+    manager: Arc<XServerManager>,
+) -> Result<(EnsureOutcome, manager::SessionGuard), XServerError> {
+    let provide = resolve_provide_automatically(app);
+    tokio::task::spawn_blocking(move || ensure_x_server_for_session(&manager, provide))
         .await
         .map_err(|e| XServerError::LaunchFailed {
             message: format!("X server provisioning task failed: {e}"),

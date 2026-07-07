@@ -186,7 +186,17 @@ impl SshConnector for RusshSshConnector {
             use super::x11::x_server_provisioner;
             let resolved = match x_server_provisioner() {
                 Some(provisioner) => match provisioner.ensure().await {
-                    Ok(resolved) => resolved,
+                    Ok(lease) => {
+                        // Hold the desktop session-lifetime guard (dependent-session
+                        // refcount lease, #1107) for the whole session. Pushing it
+                        // into `extensions` now — before the forwarder even starts —
+                        // means it is released on session end *or* if the connect
+                        // fails afterwards, so the refcount matches acquire exactly.
+                        if let Some(guard) = lease.guard {
+                            extensions.push(guard);
+                        }
+                        lease.resolved
+                    }
                     Err(message) => {
                         tracing::warn!("X server provisioning failed: {message}");
                         None

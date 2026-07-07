@@ -91,6 +91,7 @@ describe("OpenConnectionsModal — X Servers section", () => {
       platform: "windows",
       displayNumber: 0,
       managed: true,
+      sessionCount: 0,
     });
     await renderModal();
 
@@ -170,6 +171,7 @@ describe("OpenConnectionsModal — X Servers section", () => {
       platform: "linux",
       displayNumber: 10,
       managed: false,
+      sessionCount: 0,
     });
     await renderModal();
 
@@ -190,6 +192,7 @@ describe("OpenConnectionsModal — X Servers section", () => {
       state: "absent",
       platform: "windows",
       managed: false,
+      sessionCount: 0,
     });
     await renderModal();
 
