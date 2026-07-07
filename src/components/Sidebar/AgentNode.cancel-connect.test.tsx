@@ -98,11 +98,10 @@ describe("AgentNode — cancel connect (G1)", () => {
   function renderAgent(agent: RemoteAgentDefinition) {
     act(() => {
       root.render(
-        React.createElement(
-          TooltipProvider,
-          { delayDuration: 0 },
-          React.createElement(AgentNode, { agent })
-        )
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(AgentNode, { agent }),
+        })
       );
     });
   }
