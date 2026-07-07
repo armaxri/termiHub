@@ -297,9 +297,14 @@ mod tests {
     use super::*;
     use http_monitor::HttpCheckResult;
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     /// Insert a bare monitor handle (no spawned task) so `stop_all_http_monitors`
-    /// can be exercised without a live Tauri `AppHandle`.
-    fn insert_dummy_monitor(mgr: &NetworkManager) -> (String, CancellationToken) {
+    /// can be exercised without a live Tauri `AppHandle`. Returns the id plus the
+    /// handle's cancellation token and `paused` flag so tests can assert on them.
+    fn insert_dummy_monitor(
+        mgr: &NetworkManager,
+    ) -> (String, CancellationToken, Arc<AtomicBool>) {
         let config = HttpMonitorConfig::new(
             "https://example.com".into(),
             30_000,
@@ -307,25 +312,36 @@ mod tests {
             200,
             5_000,
         );
+        insert_dummy_monitor_config(mgr, config)
+    }
+
+    /// Insert a dummy handle for a specific config (so persistence + map stay in
+    /// sync in tests that also persist the config).
+    fn insert_dummy_monitor_config(
+        mgr: &NetworkManager,
+        config: HttpMonitorConfig,
+    ) -> (String, CancellationToken, Arc<AtomicBool>) {
         let id = config.id.clone();
         let cancel = CancellationToken::new();
+        let paused = Arc::new(AtomicBool::new(false));
         let handle = HttpMonitorHandle {
             config,
             cancel: cancel.clone(),
+            paused: Arc::clone(&paused),
             last_result: Arc::new(Mutex::new(None::<HttpCheckResult>)),
         };
         mgr.http_monitors
             .lock()
             .expect("http monitor lock")
             .insert(id.clone(), handle);
-        (id, cancel)
+        (id, cancel, paused)
     }
 
     #[test]
     fn stop_all_http_monitors_cancels_and_clears() {
         let mgr = NetworkManager::new();
-        let (_id1, token1) = insert_dummy_monitor(&mgr);
-        let (_id2, token2) = insert_dummy_monitor(&mgr);
+        let (_id1, token1, _p1) = insert_dummy_monitor(&mgr);
+        let (_id2, token2, _p2) = insert_dummy_monitor(&mgr);
 
         assert_eq!(mgr.list_http_monitors().len(), 2);
         assert!(!token1.is_cancelled());
@@ -421,5 +437,140 @@ mod tests {
         let loaded = mgr.load_persisted_monitor_configs();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].url, "https://new.example.com");
+    }
+
+    // ── Stop vs. Remove (audit Gap #6) ────────────────────────────────────────
+
+    #[test]
+    fn stop_keeps_monitor_listed_as_not_running() {
+        // Gap #6: "Stop" must cancel the poll loop but KEEP the monitor listed
+        // (as running:false) so the user can resume it — it must NOT delete it.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let (id, token, _paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        mgr.persist_monitor_config(cfg).expect("persist");
+
+        mgr.stop_http_monitor(&id).expect("stop");
+
+        // The poll loop is cancelled...
+        assert!(token.is_cancelled());
+        // ...but the monitor stays listed as not running...
+        let listed = mgr.list_http_monitors();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].config.id, id);
+        assert!(!listed[0].running);
+        // ...and its persisted config survives so it resumes on restart.
+        assert_eq!(mgr.load_persisted_monitor_configs().len(), 1);
+    }
+
+    #[test]
+    fn remove_deletes_monitor_and_config() {
+        // Gap #6: "Remove" is the destructive action — it cancels, drops the
+        // handle from the map, and deletes the persisted config.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let (id, token, _paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        mgr.persist_monitor_config(cfg).expect("persist");
+
+        mgr.remove_http_monitor(&id).expect("remove");
+
+        assert!(token.is_cancelled());
+        assert!(mgr.list_http_monitors().is_empty());
+        assert!(mgr.load_persisted_monitor_configs().is_empty());
+    }
+
+    #[test]
+    fn remove_unknown_monitor_errors() {
+        let mgr = NetworkManager::new();
+        assert!(mgr.remove_http_monitor("does-not-exist").is_err());
+    }
+
+    // ── Pause / Resume (audit Gap #5) ─────────────────────────────────────────
+
+    #[test]
+    fn pause_suspends_and_keeps_monitor_running() {
+        // Gap #5: pausing suspends the poll body via the handle's `paused` flag
+        // while keeping the loop alive (running stays true) and the config intact.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let (id, token, paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        mgr.persist_monitor_config(cfg).expect("persist");
+
+        assert!(!paused.load(Ordering::SeqCst));
+
+        mgr.pause_http_monitor(&id).expect("pause");
+
+        // The poll body is suspended...
+        assert!(paused.load(Ordering::SeqCst));
+        // ...but the loop is not cancelled and the monitor is still listed as
+        // running and paused, with its config kept.
+        assert!(!token.is_cancelled());
+        let listed = mgr.list_http_monitors();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].running);
+        assert!(listed[0].paused);
+        assert_eq!(mgr.load_persisted_monitor_configs().len(), 1);
+    }
+
+    #[test]
+    fn resume_restarts_a_paused_monitor_with_same_config() {
+        // Resuming a paused monitor clears the flag and keeps the same config —
+        // no new id, no lost history binding.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let cfg_id = cfg.id.clone();
+        let (id, _token, paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        mgr.persist_monitor_config(cfg).expect("persist");
+
+        mgr.pause_http_monitor(&id).expect("pause");
+        assert!(paused.load(Ordering::SeqCst));
+
+        mgr.resume_http_monitor(&id).expect("resume");
+
+        assert!(!paused.load(Ordering::SeqCst));
+        let listed = mgr.list_http_monitors();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].config.id, cfg_id);
+        assert!(listed[0].running);
+        assert!(!listed[0].paused);
+    }
+
+    #[test]
+    fn pause_unknown_monitor_errors() {
+        let mgr = NetworkManager::new();
+        assert!(mgr.pause_http_monitor("does-not-exist").is_err());
+        assert!(mgr.resume_http_monitor("does-not-exist").is_err());
     }
 }
