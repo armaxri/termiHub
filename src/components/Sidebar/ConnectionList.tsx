@@ -44,6 +44,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Tooltip } from "@/components/ui";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
@@ -478,15 +479,8 @@ export function ConnectionList() {
         // is locked. If it is, we can't read the stored credential and SSH would fall
         // back to interactive password prompts. Prompt for unlock first and wait —
         // on success the code continues and the credential resolves automatically.
-        const needsStoredCredential =
-          authMethod === "password" || (authMethod === "key" && savePassword);
-        if (needsStoredCredential) {
-          const credStatus = useAppStore.getState().credentialStoreStatus;
-          if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-            const unlocked = await useAppStore.getState().requestUnlock();
-            if (!unlocked) return;
-          }
-        }
+        const proceed = await ensureCredentialStoreUnlocked({ authMethod, savePassword });
+        if (!proceed) return;
 
         // Try to resolve credential from the store first
         const resolution = await resolveConnectionCredential(

@@ -24,7 +24,7 @@ describe("appStore unlock gating — requestUnlock() settlement (G1)", () => {
   beforeEach(() => {
     useAppStore.setState({
       unlockDialogOpen: false,
-      unlockResolve: null,
+      unlockResolvers: [],
     });
   });
 
@@ -52,7 +52,7 @@ describe("appStore unlock gating — requestUnlock() settlement (G1)", () => {
     const promise = useAppStore.getState().requestUnlock();
     useAppStore.getState().resolveUnlock(true);
     await expect(promise).resolves.toBe(true);
-    expect(useAppStore.getState().unlockResolve).toBeNull();
+    expect(useAppStore.getState().unlockResolvers).toHaveLength(0);
 
     // A second resolveUnlock() must be a harmless no-op.
     expect(() => useAppStore.getState().resolveUnlock(false)).not.toThrow();
@@ -68,7 +68,7 @@ describe("appStore unlock gating — requestUnlock() settlement (G1)", () => {
     useAppStore.getState().resolveUnlock(true);
 
     await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
-    expect(useAppStore.getState().unlockResolve).toBeNull();
+    expect(useAppStore.getState().unlockResolvers).toHaveLength(0);
   });
 
   it("settles both concurrent promises when the dialog is dismissed", async () => {

@@ -3,6 +3,7 @@ import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { AgentErrorMeta } from "@/types/terminal";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import "./AgentErrorTab.css";
 
 interface AgentErrorTabProps {
@@ -33,26 +34,23 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
       let password: string | undefined;
 
       if (agent) {
-        const needsStoredCredential =
-          agent.config.authMethod === "password" ||
-          (agent.config.authMethod === "key" && agent.config.savePassword);
-        if (needsStoredCredential) {
-          const credStatus = storeState.credentialStoreStatus;
-          if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-            const unlocked = await useAppStore.getState().requestUnlock();
-            if (!unlocked) {
-              setIsReconnecting(false);
-              return;
-            }
-          }
-          const resolution = await resolveConnectionCredential(
-            meta.agentId,
-            agent.config.authMethod,
-            agent.config.savePassword
-          );
-          if (resolution.usedStoredCredential && resolution.password) {
-            password = resolution.password;
-          }
+        // Unlock the credential store first if it's a locked master-password
+        // store and this agent uses a stored credential (no-op otherwise).
+        const proceed = await ensureCredentialStoreUnlocked({
+          authMethod: agent.config.authMethod,
+          savePassword: agent.config.savePassword,
+        });
+        if (!proceed) {
+          setIsReconnecting(false);
+          return;
+        }
+        const resolution = await resolveConnectionCredential(
+          meta.agentId,
+          agent.config.authMethod,
+          agent.config.savePassword
+        );
+        if (resolution.usedStoredCredential && resolution.password) {
+          password = resolution.password;
         }
       }
 
