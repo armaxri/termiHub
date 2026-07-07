@@ -21,10 +21,20 @@ vi.mock("@/services/api", () => ({
   lockCredentialStore: vi.fn(),
 }));
 
+vi.mock("@/components/ui", async () => {
+  const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
+  return {
+    ...actual,
+    toast: { success: vi.fn(), error: vi.fn() },
+  };
+});
+
 import { lockCredentialStore } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "@/components/ui";
 
 const mockedLock = vi.mocked(lockCredentialStore);
+const mockedToast = vi.mocked(toast);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -175,5 +185,46 @@ describe("CredentialStoreIndicator", () => {
     });
 
     expect(mockedLock).toHaveBeenCalled();
+  });
+
+  it("shows a success toast after locking the store", async () => {
+    mockedLock.mockResolvedValueOnce(undefined);
+    const status: CredentialStoreStatusInfo = {
+      mode: "master_password",
+      status: "unlocked",
+    };
+    useAppStore.setState({ credentialStoreStatus: status });
+
+    act(() => {
+      root.render(<CredentialStoreIndicator />);
+    });
+
+    const indicator = query("credential-store-indicator") as HTMLButtonElement;
+    await act(async () => {
+      indicator.click();
+    });
+
+    expect(mockedToast.success).toHaveBeenCalledWith(expect.stringContaining("locked"));
+  });
+
+  it("shows an error toast when locking fails", async () => {
+    mockedLock.mockRejectedValueOnce(new Error("boom"));
+    const status: CredentialStoreStatusInfo = {
+      mode: "master_password",
+      status: "unlocked",
+    };
+    useAppStore.setState({ credentialStoreStatus: status });
+
+    act(() => {
+      root.render(<CredentialStoreIndicator />);
+    });
+
+    const indicator = query("credential-store-indicator") as HTMLButtonElement;
+    await act(async () => {
+      indicator.click();
+    });
+
+    expect(mockedToast.error).toHaveBeenCalledWith(expect.stringContaining("lock"));
+    expect(mockedToast.success).not.toHaveBeenCalled();
   });
 });

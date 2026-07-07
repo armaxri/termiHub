@@ -11,6 +11,40 @@ import {
   vscodeOpenRemote,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
+import { toast } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
+
+/** Extract a human-readable message from an unknown transfer error. */
+function transferErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return String(error);
+}
+
+/**
+ * Run an SFTP transfer with user feedback: a pending toast that resolves in
+ * place into success or a persistent error (audit gap D2 — transfers must
+ * never fail silently). The rejection is surfaced via `toast.error` and logged
+ * to the LogViewer, then swallowed so callers do not produce an unhandled
+ * rejection. Returns whether the transfer succeeded.
+ */
+async function runTransfer(
+  label: string,
+  action: () => Promise<unknown>,
+  messages: { loading: string; success: string }
+): Promise<boolean> {
+  const toastId = toast.loading(messages.loading);
+  try {
+    await action();
+    toast.success(messages.success, { id: toastId });
+    return true;
+  } catch (error) {
+    const message = transferErrorMessage(error);
+    frontendLog("sftp_transfer", `${label} failed: ${message}`);
+    toast.error(`${label} failed: ${message}`, { id: toastId });
+    return false;
+  }
+}
 
 /**
  * Hook for SFTP file system operations.
@@ -46,7 +80,10 @@ export function useFileSystem() {
       if (!sftpSessionId) return;
       const localPath = await save({ title: "Save file as...", defaultPath: fileName });
       if (!localPath) return;
-      await sftpDownload(sftpSessionId, remotePath, localPath);
+      await runTransfer("Download", () => sftpDownload(sftpSessionId, remotePath, localPath), {
+        loading: `Downloading ${fileName}…`,
+        success: `Downloaded ${fileName}`,
+      });
     },
     [sftpSessionId]
   );
@@ -57,8 +94,11 @@ export function useFileSystem() {
     if (!localPath) return;
     const fileName = localPath.split("/").pop() ?? localPath.split("\\").pop() ?? "upload";
     const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
-    await sftpUpload(sftpSessionId, localPath, remotePath);
-    refreshSftp();
+    const ok = await runTransfer("Upload", () => sftpUpload(sftpSessionId, localPath, remotePath), {
+      loading: `Uploading ${fileName}…`,
+      success: `Uploaded ${fileName}`,
+    });
+    if (ok) refreshSftp();
   }, [sftpSessionId, currentPath, refreshSftp]);
 
   const uploadFileFromPath = useCallback(
@@ -67,8 +107,12 @@ export function useFileSystem() {
       const parts = localPath.replace(/\\/g, "/").split("/");
       const fileName = parts[parts.length - 1] || "upload";
       const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
-      await sftpUpload(sftpSessionId, localPath, remotePath);
-      refreshSftp();
+      const ok = await runTransfer(
+        "Upload",
+        () => sftpUpload(sftpSessionId, localPath, remotePath),
+        { loading: `Uploading ${fileName}…`, success: `Uploaded ${fileName}` }
+      );
+      if (ok) refreshSftp();
     },
     [sftpSessionId, currentPath, refreshSftp]
   );
@@ -153,7 +197,7 @@ export function useFileSystem() {
 
     const destDir = currentPath;
 
-    for (const clipEntry of clipboard.entries) {
+    const pasteOne = async (clipEntry: FileEntry): Promise<void> => {
       const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
 
       if (clipboard.sourceMode === "sftp") {
@@ -179,6 +223,16 @@ export function useFileSystem() {
         // local→sftp: upload local file to remote destination
         await sftpUpload(sftpSessionId, clipEntry.path, destPath);
       }
+    };
+
+    for (const clipEntry of clipboard.entries) {
+      const ok = await runTransfer("Paste", () => pasteOne(clipEntry), {
+        loading: `Pasting ${clipEntry.name}…`,
+        success: `Pasted ${clipEntry.name}`,
+      });
+      // Abort on first failure so a cut clipboard is not cleared and the user
+      // is not left with a partial, silently-incomplete paste.
+      if (!ok) return;
     }
 
     if (clipboard.operation === "cut") {

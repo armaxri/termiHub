@@ -4,15 +4,19 @@ import { createRoot, Root } from "react-dom/client";
 
 const toastError = vi.fn();
 
-vi.mock("@/components/ui", () => ({
-  toast: {
-    error: (...args: unknown[]) => toastError(...args),
-    success: vi.fn(),
-    info: vi.fn(),
-    loading: vi.fn(),
-    dismiss: vi.fn(),
-  },
-}));
+vi.mock("@/components/ui", async () => {
+  const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
+  return {
+    ...actual,
+    toast: {
+      error: (...args: unknown[]) => toastError(...args),
+      success: vi.fn(),
+      info: vi.fn(),
+      loading: vi.fn(),
+      dismiss: vi.fn(),
+    },
+  };
+});
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: vi.fn(() => Promise.resolve()),
@@ -23,7 +27,25 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
+import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
+
+// jsdom lacks the observers/pointer-capture APIs Radix Tooltip touches when it
+// measures its content; shim them so the item's tooltip triggers can mount.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -63,7 +85,7 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof EmbeddedServer
 
 function render(ui: React.ReactElement) {
   act(() => {
-    root.render(ui);
+    root.render(<TooltipProvider delayDuration={0}>{ui}</TooltipProvider>);
   });
 }
 

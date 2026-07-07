@@ -9,7 +9,7 @@ import {
   MonitorCog,
   Loader2,
 } from "lucide-react";
-import { Modal, Button } from "@/components/ui";
+import { Modal, Button, Tooltip } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
@@ -493,15 +493,17 @@ function Section({
         <span className="oc-section__title">{title}</span>
         {count > 0 && <span className="oc-section__count">{count}</span>}
         {onKillAll && (
-          <Button
-            variant="danger"
-            size="sm"
-            className="oc-section__kill-all"
-            onClick={() => onKillAll()}
-            title={`${killAllLabel} ${title}`}
-          >
-            {killAllLabel}
-          </Button>
+          <Tooltip content={`${killAllLabel} ${title}`} side="top">
+            <Button
+              variant="danger"
+              size="sm"
+              className="oc-section__kill-all"
+              onClick={() => onKillAll()}
+              aria-label={`${killAllLabel} ${title}`}
+            >
+              {killAllLabel}
+            </Button>
+          </Tooltip>
         )}
       </div>
       {children}

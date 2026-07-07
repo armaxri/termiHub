@@ -4,7 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button } from "@/components/ui";
+import { Button, toast } from "@/components/ui";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -122,6 +122,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
   const handleConfirmSwitch = useCallback(async () => {
     if (!confirmSwitch) return;
+    const targetMode = confirmSwitch;
 
     if (confirmSwitch === "master_password") {
       if (!newPassword) {
@@ -151,8 +152,17 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       setNewPassword("");
       setConfirmPassword("");
       await loadCredentialStoreStatus();
+      toast.success(
+        result.migratedCount > 0
+          ? `Switched to ${modeLabel(targetMode)} — ${result.migratedCount} credential${
+              result.migratedCount !== 1 ? "s" : ""
+            } migrated`
+          : `Switched to ${modeLabel(targetMode)}`
+      );
     } catch (err) {
-      setPasswordError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setPasswordError(message);
+      toast.error(`Failed to switch credential store: ${message}`);
     } finally {
       setSwitching(false);
     }
@@ -179,6 +189,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     try {
       await changeMasterPassword(currentPasswordInput, changeNewPassword);
       resetChangePasswordDialog();
+      toast.success("Master password changed");
     } catch (err) {
       setChangePasswordError(err instanceof Error ? err.message : String(err));
     }

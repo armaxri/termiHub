@@ -3,6 +3,8 @@ import { Plus, Save, Download, Upload } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
@@ -53,9 +55,19 @@ export function WorkspaceSidebar() {
   );
 
   const handleSaveCurrent = useCallback(
-    (name: string, scope: SaveWorkspaceScope, description?: string) => {
-      saveCurrentAsWorkspace(name, scope, description);
-      setShowSaveDialog(false);
+    async (name: string, scope: SaveWorkspaceScope, description?: string) => {
+      try {
+        await saveCurrentAsWorkspace(name, scope, description);
+        setShowSaveDialog(false);
+        toast.success(`Saved workspace ${name}`);
+      } catch (err) {
+        // Keep the dialog open so the user does not falsely believe the save
+        // succeeded (disk full / permission / lock poisoned would otherwise
+        // vanish silently — GAP G2).
+        const message = err instanceof Error ? err.message : String(err);
+        frontendLog("workspace", `Failed to save workspace "${name}": ${message}`);
+        toast.error(`Failed to save workspace: ${message}`);
+      }
     },
     [saveCurrentAsWorkspace]
   );
