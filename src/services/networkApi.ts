@@ -163,6 +163,11 @@ export async function networkHttpMonitorStop(monitorId: string): Promise<void> {
   await invoke("network_http_monitor_stop", { monitorId });
 }
 
+/** Stop every running HTTP monitor at once (Kill All). */
+export async function networkHttpMonitorStopAll(): Promise<void> {
+  await invoke("network_http_monitor_stop_all");
+}
+
 /** List all HTTP monitors and their current state. */
 export async function networkHttpMonitorList(): Promise<HttpMonitorState[]> {
   return await invoke<HttpMonitorState[]>("network_http_monitor_list");
