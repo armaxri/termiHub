@@ -26,12 +26,13 @@ vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
   sftpClose: vi.fn(),
   sftpListDir: vi.fn(),
+  sftpRealpath: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
 import { useAppStore, _resetSftpListSeq } from "./appStore";
-import { sftpOpen, sftpListDir } from "@/services/api";
+import { sftpOpen, sftpListDir, sftpRealpath } from "@/services/api";
 import type { FileEntry } from "@/types/connection";
 
 function makeEntry(name: string): FileEntry {
@@ -67,6 +68,9 @@ describe("appStore — sftpStatus enum transitions (A1)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     _resetSftpListSeq();
     vi.clearAllMocks();
+    // connectSftp resolves the remote home via realpath(".") (audit gap C2);
+    // default it so the connect path does not fall back to root.
+    vi.mocked(sftpRealpath).mockResolvedValue("/home/alice");
   });
 
   it("starts in the 'idle' status", () => {
