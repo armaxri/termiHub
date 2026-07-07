@@ -701,6 +701,8 @@ interface AppState {
   embeddedServers: EmbeddedServerConfig[];
   embeddedServerStates: Record<string, EmbeddedServerState>;
   loadEmbeddedServers: () => Promise<void>;
+  /** Refresh only the live runtime states (stats/uptime) without reloading the config list. */
+  refreshEmbeddedServerStates: () => Promise<void>;
   saveEmbeddedServer: (config: EmbeddedServerConfig) => Promise<void>;
   deleteEmbeddedServer: (serverId: string) => Promise<void>;
   startEmbeddedServer: (serverId: string) => Promise<void>;
@@ -3945,6 +3947,19 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ embeddedServers: servers, embeddedServerStates });
       } catch (err) {
         console.error("Failed to load embedded servers:", err);
+      }
+    },
+
+    refreshEmbeddedServerStates: async () => {
+      try {
+        const stateList = await getEmbeddedServerStates();
+        const embeddedServerStates: Record<string, EmbeddedServerState> = {};
+        for (const s of stateList) {
+          embeddedServerStates[s.serverId] = s;
+        }
+        set({ embeddedServerStates });
+      } catch (err) {
+        frontendLog("embedded_server", `Failed to refresh embedded server states: ${err}`);
       }
     },
 
