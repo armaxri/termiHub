@@ -123,6 +123,17 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     xServer !== null && (xServer.state === "running" || xServer.state === "adopted");
   const xServerManaged = xServer?.state === "running" && xServer.managed === true;
 
+  // "display :N" plus, when any sessions depend on the server, "· N sessions"
+  // (singular for one). Omitted entirely when there is no display to show.
+  const xServerDetail = (() => {
+    if (!xServer || xServer.displayNumber === undefined) return undefined;
+    const base = `display :${xServer.displayNumber}`;
+    const count = xServer.sessionCount ?? 0;
+    if (count <= 0) return base;
+    const noun = count === 1 ? "session" : "sessions";
+    return `${base} · ${count} ${noun}`;
+  })();
+
   // When no live server exists (absent/failed/unknown), offer a Set up affordance
   // instead. Suppressed while loading so the row doesn't flash before status
   // arrives. This affordance is not counted as an active connection.
@@ -420,11 +431,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
               <ConnectionRow
                 icon={<MonitorCog size={14} />}
                 title={xServerManaged ? "VcXsrv" : "External X server"}
-                detail={
-                  xServer.displayNumber !== undefined
-                    ? `display :${xServer.displayNumber}`
-                    : undefined
-                }
+                detail={xServerDetail}
                 badge={xServerManaged ? "managed" : "external"}
                 onKill={xServerManaged ? handleStopXServer : undefined}
                 killLabel="Stop"

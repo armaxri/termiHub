@@ -74,6 +74,7 @@ describe("OpenConnectionsModal — X Servers section", () => {
       platform: "windows",
       displayNumber: 0,
       managed: true,
+      sessionCount: 0,
     });
     await renderModal();
 
@@ -102,12 +103,58 @@ describe("OpenConnectionsModal — X Servers section", () => {
     expect(document.querySelector('[data-testid="open-connections-x-server-row"]')).toBeNull();
   });
 
+  it("shows the dependent session count next to the display", async () => {
+    xServerStatus.mockResolvedValue({
+      state: "running",
+      platform: "windows",
+      displayNumber: 0,
+      managed: true,
+      sessionCount: 2,
+    });
+    await renderModal();
+
+    const row = document.querySelector('[data-testid="open-connections-x-server-row"]');
+    expect(row?.textContent).toContain("display :0");
+    expect(row?.textContent).toContain("2 sessions");
+  });
+
+  it("uses the singular form for a single dependent session", async () => {
+    xServerStatus.mockResolvedValue({
+      state: "adopted",
+      platform: "linux",
+      displayNumber: 0,
+      managed: false,
+      sessionCount: 1,
+    });
+    await renderModal();
+
+    const row = document.querySelector('[data-testid="open-connections-x-server-row"]');
+    expect(row?.textContent).toContain("1 session");
+    expect(row?.textContent).not.toContain("1 sessions");
+  });
+
+  it("omits the session count when zero sessions depend on the server", async () => {
+    xServerStatus.mockResolvedValue({
+      state: "running",
+      platform: "windows",
+      displayNumber: 0,
+      managed: true,
+      sessionCount: 0,
+    });
+    await renderModal();
+
+    const row = document.querySelector('[data-testid="open-connections-x-server-row"]');
+    expect(row?.textContent).toContain("display :0");
+    expect(row?.textContent).not.toContain("session");
+  });
+
   it("lists an adopted external X server with no Stop or Kill All control", async () => {
     xServerStatus.mockResolvedValue({
       state: "adopted",
       platform: "linux",
       displayNumber: 10,
       managed: false,
+      sessionCount: 0,
     });
     await renderModal();
 
@@ -128,6 +175,7 @@ describe("OpenConnectionsModal — X Servers section", () => {
       state: "absent",
       platform: "windows",
       managed: false,
+      sessionCount: 0,
     });
     await renderModal();
 

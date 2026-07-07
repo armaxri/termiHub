@@ -111,6 +111,7 @@ describe("XServerSetupDialog", () => {
       platform: "windows",
       displayNumber: 0,
       managed: true,
+      sessionCount: 0,
     };
     await act(async () => {
       ensure.resolve(report);

@@ -71,6 +71,11 @@ pub struct XServerStatusReport {
     /// Whether the platform's X dependency is installed (XQuartz / Xorg / VcXsrv).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dependency_available: Option<bool>,
+    /// Number of live X11 sessions currently depending on this server (#1107).
+    ///
+    /// Drives the Open Connections "X Servers" row's "· N sessions" detail. Zero
+    /// when the server is idle, adopted-but-unused, or absent.
+    pub session_count: usize,
     /// Human-readable detail (adoption source, or why the server is absent).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -299,12 +304,14 @@ mod tests {
             display_number: Some(0),
             managed: false,
             dependency_available: Some(true),
+            session_count: 2,
             message: None,
         };
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"state\":\"adopted\""));
         assert!(json.contains("\"displayNumber\":0"));
         assert!(json.contains("\"dependencyAvailable\":true"));
+        assert!(json.contains("\"sessionCount\":2"));
         assert!(!json.contains("message"));
     }
 

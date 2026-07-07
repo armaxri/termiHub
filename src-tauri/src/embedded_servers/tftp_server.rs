@@ -11,6 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig};
+use super::server_manager::BindSignal;
 
 // ─── TFTP opcodes (RFC 1350 §5) ──────────────────────────────────────────────
 
@@ -32,17 +33,36 @@ const ERR_ILLEGAL_OP: u16 = 4;
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 /// Start the TFTP server in the current thread, blocking until the shutdown flag is set.
+///
+/// `ready` is signalled exactly once as soon as the listening UDP socket is
+/// bound (or if binding fails), so the manager only reports `Running` after the
+/// bind is confirmed (GAP G3, #1145).
 pub fn start_tftp_server(
     config: &EmbeddedServerConfig,
     shutdown: Arc<AtomicBool>,
     stats: Arc<AtomicServerStats>,
+    ready: BindSignal,
 ) -> Result<()> {
     let addr = format!("{}:{}", config.bind_host, config.port);
-    let socket =
-        UdpSocket::bind(&addr).with_context(|| format!("Failed to bind TFTP server to {addr}"))?;
-    socket
+    let socket = match UdpSocket::bind(&addr)
+        .with_context(|| format!("Failed to bind TFTP server to {addr}"))
+    {
+        Ok(socket) => socket,
+        Err(e) => {
+            ready.fail(&e.to_string());
+            return Err(e);
+        }
+    };
+    if let Err(e) = socket
         .set_read_timeout(Some(std::time::Duration::from_millis(100)))
-        .context("Failed to set UDP read timeout")?;
+        .context("Failed to set UDP read timeout")
+    {
+        ready.fail(&e.to_string());
+        return Err(e);
+    }
+
+    // Bind confirmed — tell the manager it is safe to report Running.
+    ready.confirm();
 
     let root = PathBuf::from(&config.root_directory);
     let read_only = config.read_only;
