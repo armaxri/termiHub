@@ -37,8 +37,8 @@ vi.mock("@dnd-kit/utilities", () => ({
   CSS: { Transform: { toString: () => "" } },
 }));
 
-const disconnectAgentMock = vi.fn(() => Promise.resolve());
-const shutdownAgentMock = vi.fn(() => Promise.resolve(3));
+const disconnectAgentMock = vi.fn((..._args: unknown[]) => Promise.resolve());
+const shutdownAgentMock = vi.fn((..._args: unknown[]) => Promise.resolve(3));
 
 vi.mock("@/services/api", () => ({
   removeCredential: vi.fn(() => Promise.resolve()),
@@ -201,7 +201,9 @@ describe("appStore — shutdownRemoteAgent (#1237)", () => {
     useAppStore.setState({
       remoteAgents: [makeAgent()],
       agentSessions: {
-        [AGENT_ID]: [{ sessionId: "s1", title: "s", type: "shell", status: "running" }],
+        [AGENT_ID]: [
+          { sessionId: "s1", title: "s", type: "shell", status: "running", attached: false },
+        ],
       },
     });
     disconnectAgentMock.mockClear();
