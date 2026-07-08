@@ -15,7 +15,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
-import type { SystemStats } from "@/types/monitoring";
+import type { SystemStats, MonitoringEntry } from "@/types/monitoring";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 
@@ -56,7 +56,7 @@ function primeMonitoringTab() {
     title: "ssh-host",
     connectionType: "ssh",
     contentType: "terminal",
-    config: { type: "ssh", config: {} },
+    config: { type: "ssh", config: { host: "host", port: 22, username: "user" } },
     panelId: "leaf-1",
     isActive: true,
   };
@@ -73,6 +73,31 @@ function primeMonitoringTab() {
     settings: { ...state.settings, powerMonitoringEnabled: true },
     rootPanel: leaf,
     activePanelId: "leaf-1",
+  }));
+}
+
+/** MonitorKey for the primed SSH tab (`user@host:port`). */
+const MONITOR_KEY = "user@host:22";
+
+/** Install a keyed monitor entry for the primed tab (#1231, per-host slice). */
+function setActiveMonitor(patch: Partial<MonitoringEntry>) {
+  useAppStore.setState((s) => ({
+    monitors: {
+      ...s.monitors,
+      [MONITOR_KEY]: {
+        key: MONITOR_KEY,
+        host: MONITOR_KEY,
+        sessionBased: false,
+        monitorSessionId: null,
+        stats: null,
+        loading: false,
+        error: null,
+        status: null,
+        sampleCount: 0,
+        cancelled: false,
+        ...patch,
+      },
+    },
   }));
 }
 
@@ -100,12 +125,11 @@ describe("StatusBar — monitoring Stale indicator (#1229, G1)", () => {
   }
 
   it("shows a Stale badge and dims the stats when status is 'stale'", () => {
-    useAppStore.setState({
-      monitoringSessionId: "sess-1",
-      monitoringHost: "user@host:22",
-      monitoringStats: makeStats(),
-      monitoringSampleCount: 3,
-      monitoringStatus: "stale",
+    setActiveMonitor({
+      monitorSessionId: "sess-1",
+      stats: makeStats(),
+      sampleCount: 3,
+      status: "stale",
     });
     renderStatusBar();
 
@@ -121,12 +145,11 @@ describe("StatusBar — monitoring Stale indicator (#1229, G1)", () => {
   });
 
   it("does not show the Stale badge when status is 'live'", () => {
-    useAppStore.setState({
-      monitoringSessionId: "sess-1",
-      monitoringHost: "user@host:22",
-      monitoringStats: makeStats(),
-      monitoringSampleCount: 3,
-      monitoringStatus: "live",
+    setActiveMonitor({
+      monitorSessionId: "sess-1",
+      stats: makeStats(),
+      sampleCount: 3,
+      status: "live",
     });
     renderStatusBar();
 

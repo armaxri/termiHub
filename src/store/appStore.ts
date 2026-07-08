@@ -141,7 +141,7 @@ import {
 } from "@/services/lastSessionApi";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { connectTimeoutMessage, type ConnectTimeoutKind } from "@/utils/connectTimeout";
-import { MonitorStatus, SystemStats } from "@/types/monitoring";
+import { MonitoringEntry, SystemStats } from "@/types/monitoring";
 import {
   onSessionMonitoringStats,
   onSessionMonitoringStatus,
@@ -784,44 +784,25 @@ interface AppState {
   setEditorActions: (actions: EditorActions | null) => void;
 
   // Monitoring
-  monitoringSessionId: string | null;
-  monitoringHost: string | null;
-  monitoringStats: SystemStats | null;
-  monitoringLoading: boolean;
-  monitoringError: string | null;
   /**
-   * Observable lifecycle state of the active monitoring collector loop.
-   *
-   * `null` when no monitor is connected. Set to `"live"` on connect and driven
-   * by `session-monitoring-status` push events for session-based tabs: a
-   * mid-stream drop flips it to `"stale"` so the status bar stops rendering
-   * frozen stats as live (#1229, audit gap G1).
+   * Per-host/session monitoring state, keyed by {@link MonitoringEntry.key}
+   * (audit gap G6, #1231). Replaces the former global singleton so multiple
+   * hosts can be monitored at once: the status bar renders the active tab's
+   * entry (see {@link selectActiveMonitor}) while Open Connections iterates
+   * every entry.
    */
-  monitoringStatus: MonitorStatus | null;
-  /**
-   * Number of stats samples received on the current monitoring connection.
-   * The remote collectors report CPU 0% on the first sample (no prior delta),
-   * so the UI treats sample #1 as "priming" for the CPU field. Reset to 0 on
-   * connect/disconnect and incremented on every real stats update. See audit
-   * gap G10.
-   */
-  monitoringSampleCount: number;
-  /**
-   * True when auto-connect was aborted because the user cancelled the password
-   * prompt. The status bar renders a subtle "Monitoring not connected"
-   * affordance (with a reachable Retry) instead of failing silently. Reset on
-   * connect start, disconnect, and retry. See audit gap G8.
-   */
-  monitoringCancelled: boolean;
-  /** Last-known stats per host key, persisted across tab switches for instant display on reconnect. */
+  monitors: Record<string, MonitoringEntry>;
+  /** Last-known stats per MonitorKey, persisted across tab switches for instant display on reconnect. */
   monitoringStatsCache: Record<string, SystemStats>;
   connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
-  disconnectMonitoring: () => Promise<void>;
-  refreshMonitoring: () => Promise<void>;
-  /** Clear a lingering monitoringError so a stale tooltip cannot persist across hosts (audit gap G9). */
-  clearMonitoringError: () => void;
-  /** Set/reset the "connect was cancelled" affordance flag (audit gap G8). */
-  setMonitoringCancelled: (cancelled: boolean) => void;
+  /** Disconnect one monitor by key, or every monitor when `key` is omitted. */
+  disconnectMonitoring: (key?: string) => Promise<void>;
+  /** Poll fresh stats for one SSH monitor (session-based monitors are push-driven). */
+  refreshMonitoring: (key: string) => Promise<void>;
+  /** Clear a lingering error on one entry so a stale tooltip cannot persist (audit gap G9). */
+  clearMonitoringError: (key: string) => void;
+  /** Set/reset the "connect was cancelled" affordance flag on one entry (audit gap G8). */
+  setMonitoringCancelled: (key: string, cancelled: boolean) => void;
   /** Per-session capabilities fetched after session creation (keyed by sessionId). */
   sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
   setSessionCapabilities: (
@@ -1037,11 +1018,88 @@ function collectLiveTabs(state: {
   return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
 }
 
-/** Unlisten function for the active session-based monitoring stats subscription. */
-let _monitoringUnlisten: (() => void) | null = null;
+/**
+ * Per-key unlisten functions for session-based monitoring subscriptions, keyed
+ * by MonitorKey. Since multiple hosts can be monitored simultaneously (#1231),
+ * each session monitor owns its own stats + status subscription that must be
+ * detached individually when that host is disconnected (or its open fails).
+ */
+const _monitoringStatsUnlisten = new Map<string, () => void>();
+const _monitoringStatusUnlisten = new Map<string, () => void>();
 
-/** Unlisten function for the active session-based monitoring status subscription. */
-let _monitoringStatusUnlisten: (() => void) | null = null;
+/** Detach and forget both subscriptions for one session-based monitor key. */
+function detachMonitorListeners(key: string): void {
+  _monitoringStatsUnlisten.get(key)?.();
+  _monitoringStatsUnlisten.delete(key);
+  _monitoringStatusUnlisten.get(key)?.();
+  _monitoringStatusUnlisten.delete(key);
+}
+
+/** Build a fresh, idle {@link MonitoringEntry} for a key. */
+function emptyMonitor(key: string, host: string | null, sessionBased: boolean): MonitoringEntry {
+  return {
+    key,
+    host,
+    sessionBased,
+    monitorSessionId: null,
+    stats: null,
+    loading: false,
+    error: null,
+    status: null,
+    sampleCount: 0,
+    cancelled: false,
+  };
+}
+
+/** Merge a partial patch into the entry for `key`, creating it if absent. */
+function upsertMonitor(key: string, patch: Partial<MonitoringEntry>): void {
+  useAppStore.setState((state) => {
+    const entry =
+      state.monitors[key] ?? emptyMonitor(key, patch.host ?? key, patch.sessionBased ?? false);
+    return { monitors: { ...state.monitors, [key]: { ...entry, ...patch } } };
+  });
+}
+
+/**
+ * Derive the {@link MonitoringEntry} key for a tab: the session id for
+ * `remote-session` (session-based) tabs, or the `user@host:port` host key for
+ * desktop-direct SSH tabs. Returns `null` when the tab cannot be monitored
+ * (e.g. missing host/username). Kept in sync with the key `connectMonitoring`
+ * computes so the status bar and auto-connect address the same entry.
+ */
+export function monitorKeyForTab(tab: TerminalTab | null | undefined): string | null {
+  if (!tab) return null;
+  if (tab.connectionType === "remote-session") {
+    return tab.sessionId ?? null;
+  }
+  const cfg = (tab.config?.config ?? {}) as Record<string, unknown>;
+  const host = cfg.host as string | undefined;
+  const username = cfg.username as string | undefined;
+  if (!host || !username) return null;
+  const port = cfg.port as number | undefined;
+  return `${username}@${host}:${port}`;
+}
+
+/** Select one monitor entry by key, or `null` when none exists. */
+export function selectMonitor(state: AppState, key: string | null): MonitoringEntry | null {
+  if (!key) return null;
+  return state.monitors[key] ?? null;
+}
+
+/** Select the monitor entry for the currently active tab, or `null`. */
+export function selectActiveMonitor(state: AppState): MonitoringEntry | null {
+  return selectMonitor(state, monitorKeyForTab(getActiveTab(state)));
+}
+
+/**
+ * Select every monitor with a live backend subscription (a non-null
+ * `monitorSessionId`) — the set Open Connections lists and can kill. Entries
+ * that only carry a transient error/cancelled state (never connected) are
+ * excluded so nothing unkillable-yet-invisible is shown.
+ */
+export function selectOpenMonitors(state: AppState): MonitoringEntry[] {
+  return Object.values(state.monitors).filter((m) => m.monitorSessionId !== null);
+}
 
 function createTab(
   title: string,
@@ -3493,10 +3551,11 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
         terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
       }));
-      // Stop monitoring when the terminal session dies — the stats are no
-      // longer being updated and the overlay hides the terminal anyway.
-      if (get().monitoringSessionId) {
-        get().disconnectMonitoring();
+      // Stop monitoring the dying tab's host — its stats are no longer updated
+      // and the overlay hides the terminal anyway. Other hosts keep monitoring.
+      const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
+      if (deadKey && get().monitors[deadKey]) {
+        get().disconnectMonitoring(deadKey);
       }
     },
     markSessionKilled: (sessionId) =>
@@ -3524,8 +3583,9 @@ export const useAppStore = create<AppState>((set, get) => {
       // A failed (re)connect settles this tab as failed in any in-flight
       // restore/launch cohort so the aggregate summary reflects it (#1146).
       get().settleRestoreTab(tabId, "failed");
-      if (get().monitoringSessionId) {
-        get().disconnectMonitoring();
+      const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
+      if (deadKey && get().monitors[deadKey]) {
+        get().disconnectMonitoring(deadKey);
       }
     },
 
@@ -4201,20 +4261,25 @@ export const useAppStore = create<AppState>((set, get) => {
     editorActions: null,
     setEditorActions: (actions) => set({ editorActions: actions }),
 
-    // Monitoring
-    monitoringSessionId: null,
-    monitoringHost: null,
-    monitoringStats: null,
-    monitoringLoading: false,
-    monitoringError: null,
-    monitoringStatus: null,
-    monitoringSampleCount: 0,
-    monitoringCancelled: false,
+    // Monitoring — per-host/session keyed slice (audit gap G6, #1231).
+    monitors: {},
     monitoringStatsCache: {},
     sessionCapabilities: {},
 
-    clearMonitoringError: () => set({ monitoringError: null }),
-    setMonitoringCancelled: (cancelled) => set({ monitoringCancelled: cancelled }),
+    clearMonitoringError: (key) =>
+      set((state) => {
+        const entry = state.monitors[key];
+        if (!entry || entry.error === null) return {};
+        return { monitors: { ...state.monitors, [key]: { ...entry, error: null } } };
+      }),
+
+    setMonitoringCancelled: (key, cancelled) =>
+      set((state) => {
+        // Auto-connect may cancel at the password prompt before any entry
+        // exists, so create a placeholder entry to carry the affordance (G8).
+        const entry = state.monitors[key] ?? emptyMonitor(key, key, false);
+        return { monitors: { ...state.monitors, [key]: { ...entry, cancelled } } };
+      }),
 
     setSessionCapabilities: (sessionId, caps) =>
       set((state) => ({
@@ -4223,169 +4288,178 @@ export const useAppStore = create<AppState>((set, get) => {
 
     connectMonitoring: async (config: Record<string, unknown>) => {
       const { monitoringStatsCache } = useAppStore.getState();
-      try {
-        // Session-based monitoring: config carries sessionId for "remote-session" tabs.
-        // The agent pushes stats via "session-monitoring-stats" Tauri events.
-        if (config._sessionBased) {
-          const sessionId = config._sessionId as string;
-          const cachedStats = monitoringStatsCache[sessionId] ?? null;
-          set({
-            monitoringLoading: true,
-            monitoringError: null,
-            monitoringStats: cachedStats,
-            monitoringHost: cachedStats ? sessionId : null,
-            monitoringStatus: "connecting",
-            // Fresh connection: reset the sample counter so CPU shows the
-            // priming indicator until the second push arrives (audit gap G10).
-            monitoringSampleCount: 0,
-            // Clear any stale cancel affordance from a previous attempt (G8).
-            monitoringCancelled: false,
-          });
 
-          const unlisten = await onSessionMonitoringStats((sid, stats) => {
-            if (sid === sessionId) {
-              useAppStore.setState((state) => ({
-                monitoringStats: stats,
-                monitoringError: null,
-                monitoringSampleCount: state.monitoringSampleCount + 1,
-                monitoringStatsCache: { ...state.monitoringStatsCache, [sessionId]: stats },
-              }));
-            }
+      // Session-based monitoring: config carries sessionId for "remote-session"
+      // tabs. The agent pushes stats via "session-monitoring-stats" events.
+      const sessionBased = !!config._sessionBased;
+      const key = sessionBased
+        ? (config._sessionId as string)
+        : `${config.username as string}@${config.host as string}:${config.port as number}`;
+      const cachedStats = monitoringStatsCache[key] ?? null;
+
+      // Upsert a fresh loading entry keyed by MonitorKey. monitorSessionId stays
+      // null until the backend connection is established, which the UI reads as
+      // "not yet connected" (matching the former singleton semantics).
+      upsertMonitor(key, {
+        ...emptyMonitor(key, key, sessionBased),
+        stats: cachedStats,
+        loading: true,
+        status: "connecting",
+      });
+
+      try {
+        if (sessionBased) {
+          // Attach the stats listener; it filters by sessionId and folds fresh
+          // samples into this entry + the shared cache.
+          const statsUnlisten = await onSessionMonitoringStats((sid, stats) => {
+            if (sid !== key) return;
+            useAppStore.setState((state) => {
+              const entry = state.monitors[key];
+              if (!entry) return {};
+              return {
+                monitors: {
+                  ...state.monitors,
+                  [key]: { ...entry, stats, error: null, sampleCount: entry.sampleCount + 1 },
+                },
+                monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
+              };
+            });
           });
-          // Store unlisten in a module-level variable so disconnectMonitoring can call it.
-          _monitoringUnlisten = unlisten;
+          _monitoringStatsUnlisten.set(key, statsUnlisten);
 
           // The status stream flips the indicator to `stale` on a mid-stream
           // drop (and back to `live` on recovery) so frozen stats are never
           // shown as live (#1229, audit gap G1).
           const statusUnlisten = await onSessionMonitoringStatus((sid, status) => {
-            if (sid === sessionId) {
-              useAppStore.setState({ monitoringStatus: status });
-            }
+            if (sid !== key) return;
+            useAppStore.setState((state) => {
+              const entry = state.monitors[key];
+              if (!entry) return {};
+              return { monitors: { ...state.monitors, [key]: { ...entry, status } } };
+            });
           });
-          _monitoringStatusUnlisten = statusUnlisten;
+          _monitoringStatusUnlisten.set(key, statusUnlisten);
 
-          await sessionMonitoringOpen(sessionId);
-          set({
-            monitoringSessionId: sessionId,
-            monitoringHost: sessionId,
-            monitoringLoading: false,
-            monitoringStatus: "live",
-          });
+          await sessionMonitoringOpen(key);
+          upsertMonitor(key, { monitorSessionId: key, loading: false, status: "live" });
           return;
         }
 
         // Standard SSH-based monitoring (direct connection from desktop).
-        const hostKey = `${config.username as string}@${config.host as string}:${config.port as number}`;
-        const cachedStats = monitoringStatsCache[hostKey] ?? null;
-        set({
-          monitoringLoading: true,
-          monitoringError: null,
-          monitoringStats: cachedStats,
-          monitoringHost: cachedStats ? hostKey : null,
-          monitoringStatus: "connecting",
-          // Fresh connection: reset the sample counter so CPU shows the priming
-          // indicator until the second fetch arrives (audit gap G10).
-          monitoringSampleCount: 0,
-          // Clear any stale cancel affordance from a previous attempt (G8).
-          monitoringCancelled: false,
-        });
-
         const sessionId = await monitoringOpen(config);
         const stats = await monitoringFetchStats(sessionId);
-        set((state) => ({
-          monitoringSessionId: sessionId,
-          monitoringHost: hostKey,
-          monitoringStats: stats,
-          monitoringLoading: false,
-          monitoringStatus: "live",
-          monitoringSampleCount: state.monitoringSampleCount + 1,
-          monitoringStatsCache: { ...state.monitoringStatsCache, [hostKey]: stats },
-        }));
+        set((state) => {
+          const entry = state.monitors[key] ?? emptyMonitor(key, key, false);
+          return {
+            monitors: {
+              ...state.monitors,
+              [key]: {
+                ...entry,
+                monitorSessionId: sessionId,
+                stats,
+                loading: false,
+                error: null,
+                status: "live",
+                sampleCount: entry.sampleCount + 1,
+              },
+            },
+            monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
+          };
+        });
       } catch (err) {
         // The session-based branch attaches the stats listener before the open
         // that may throw here. Detach it so a failed open never leaks a dangling
-        // Tauri listener (monitoringSessionId stays null, so disconnectMonitoring
+        // Tauri listener (monitorSessionId stays null, so disconnectMonitoring
         // would not clean it up either). See audit gap G5.
-        if (_monitoringUnlisten) {
+        if (sessionBased) {
           frontendLog("monitoring", "detaching stats listener after failed monitoring open");
-          _monitoringUnlisten();
-          _monitoringUnlisten = null;
+          detachMonitorListeners(key);
         }
-        if (_monitoringStatusUnlisten) {
-          _monitoringStatusUnlisten();
-          _monitoringStatusUnlisten = null;
-        }
-        set({
-          monitoringLoading: false,
-          monitoringError: err instanceof Error ? err.message : String(err),
-          monitoringStatus: null,
+        upsertMonitor(key, {
+          monitorSessionId: null,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+          status: null,
         });
       }
     },
 
-    disconnectMonitoring: async () => {
-      const { monitoringSessionId, monitoringHost, monitoringStats, sessionCapabilities } =
-        useAppStore.getState();
-      if (monitoringSessionId) {
-        try {
-          // If this was a session-based monitoring, stop it; otherwise close SSH session.
-          if (sessionCapabilities[monitoringSessionId] !== undefined) {
-            await sessionMonitoringClose(monitoringSessionId);
-          } else {
-            await monitoringClose(monitoringSessionId);
+    disconnectMonitoring: async (key) => {
+      // Kill exactly one entry when a key is given, or every entry otherwise
+      // (Open Connections "Kill All", global toggle-off).
+      const { monitors } = useAppStore.getState();
+      const keys = key !== undefined ? [key] : Object.keys(monitors);
+
+      for (const k of keys) {
+        const entry = monitors[k];
+        if (entry?.monitorSessionId) {
+          try {
+            if (entry.sessionBased) {
+              await sessionMonitoringClose(entry.monitorSessionId);
+            } else {
+              await monitoringClose(entry.monitorSessionId);
+            }
+          } catch {
+            // Ignore close errors — the entry is torn down regardless.
           }
-        } catch {
-          // Ignore close errors
         }
+        detachMonitorListeners(k);
       }
-      if (_monitoringUnlisten) {
-        _monitoringUnlisten();
-        _monitoringUnlisten = null;
-      }
-      if (_monitoringStatusUnlisten) {
-        _monitoringStatusUnlisten();
-        _monitoringStatusUnlisten = null;
-      }
-      set((state) => ({
-        monitoringSessionId: null,
-        monitoringHost: null,
-        monitoringStats: null,
-        monitoringError: null,
-        monitoringStatus: null,
-        monitoringSampleCount: 0,
-        monitoringCancelled: false,
-        // Preserve last-known stats so the UI can show them instantly on reconnect.
-        monitoringStatsCache:
-          monitoringHost && monitoringStats
-            ? { ...state.monitoringStatsCache, [monitoringHost]: monitoringStats }
-            : state.monitoringStatsCache,
-      }));
+
+      set((state) => {
+        const nextMonitors = { ...state.monitors };
+        const nextCache = { ...state.monitoringStatsCache };
+        for (const k of keys) {
+          const entry = state.monitors[k];
+          // Preserve last-known stats so the UI can show them instantly on reconnect.
+          if (entry?.stats) nextCache[k] = entry.stats;
+          delete nextMonitors[k];
+        }
+        return { monitors: nextMonitors, monitoringStatsCache: nextCache };
+      });
     },
 
-    refreshMonitoring: async () => {
-      const { monitoringSessionId, monitoringHost, sessionCapabilities } = useAppStore.getState();
-      if (!monitoringSessionId) return;
-      // Session-based monitoring is push-based; no explicit refresh needed.
-      if (sessionCapabilities[monitoringSessionId] !== undefined) return;
+    refreshMonitoring: async (key) => {
+      const entry = useAppStore.getState().monitors[key];
+      // Only SSH monitors poll; session-based monitoring is push-driven.
+      if (!entry || !entry.monitorSessionId || entry.sessionBased) return;
+      const monitorSessionId = entry.monitorSessionId;
       try {
-        const stats = await monitoringFetchStats(monitoringSessionId);
-        set((state) => ({
-          monitoringStats: stats,
-          monitoringError: null,
-          // A successful poll recovers the indicator to live (audit gap G1).
-          monitoringStatus: "live",
-          monitoringSampleCount: state.monitoringSampleCount + 1,
-          monitoringStatsCache: monitoringHost
-            ? { ...state.monitoringStatsCache, [monitoringHost]: stats }
-            : state.monitoringStatsCache,
-        }));
+        const stats = await monitoringFetchStats(monitorSessionId);
+        set((state) => {
+          const current = state.monitors[key];
+          if (!current) return {};
+          return {
+            monitors: {
+              ...state.monitors,
+              [key]: {
+                ...current,
+                stats,
+                error: null,
+                // A successful poll recovers the indicator to live (audit gap G1).
+                status: "live",
+                sampleCount: current.sampleCount + 1,
+              },
+            },
+            monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
+          };
+        });
       } catch (err) {
         // A failed poll while still "connected" flips to stale so the last-good
         // numbers are dimmed rather than shown as live (audit gap G1).
-        set({
-          monitoringError: err instanceof Error ? err.message : String(err),
-          monitoringStatus: "stale",
+        set((state) => {
+          const current = state.monitors[key];
+          if (!current) return {};
+          return {
+            monitors: {
+              ...state.monitors,
+              [key]: {
+                ...current,
+                error: err instanceof Error ? err.message : String(err),
+                status: "stale",
+              },
+            },
+          };
         });
       }
     },
