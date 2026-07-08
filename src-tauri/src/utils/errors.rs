@@ -40,6 +40,9 @@ pub enum TerminalError {
     #[error("Remote agent error: {0}")]
     RemoteError(String),
 
+    #[error("Operation cancelled")]
+    Cancelled,
+
     #[error("SFTP session not found: {0}")]
     SftpSessionNotFound(String),
 
