@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Button } from "./Button";
+import { frontendLog } from "@/utils/frontendLog";
+
+vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -114,6 +117,51 @@ describe("Button", () => {
     );
     expect(ref.current).toBeInstanceOf(HTMLButtonElement);
     expect(ref.current).toBe(document.querySelector('[data-testid="btn"]'));
+  });
+
+  it("applies the icon-only modifier when iconOnly is set and omits it otherwise", () => {
+    render(
+      <Button data-testid="icon" iconOnly aria-label="Play">
+        <span />
+      </Button>
+    );
+    expect(
+      document.querySelector('[data-testid="icon"]')!.classList.contains("ui-btn--icon-only")
+    ).toBe(true);
+
+    render(
+      <Button data-testid="plain" aria-label="Play">
+        <span />
+      </Button>
+    );
+    expect(
+      document.querySelector('[data-testid="plain"]')!.classList.contains("ui-btn--icon-only")
+    ).toBe(false);
+  });
+
+  it("warns via frontendLog when an icon-only Button has no accessible name", () => {
+    render(
+      <Button data-testid="anon" iconOnly>
+        <span />
+      </Button>
+    );
+    expect(frontendLog).toHaveBeenCalledWith("ui_button", expect.stringContaining("accessible"));
+  });
+
+  it("does not warn when the icon-only Button has an accessible name", () => {
+    render(
+      <Button data-testid="named" iconOnly aria-label="Play">
+        <span />
+      </Button>
+    );
+    expect(frontendLog).not.toHaveBeenCalled();
+
+    render(
+      <Button data-testid="titled" iconOnly title="Play">
+        <span />
+      </Button>
+    );
+    expect(frontendLog).not.toHaveBeenCalled();
   });
 
   it("spreads native button props such as type and aria-label", () => {
