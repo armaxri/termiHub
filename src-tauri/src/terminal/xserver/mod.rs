@@ -27,6 +27,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tauri::{AppHandle, Manager};
 use termihub_core::backends::ssh::x11::{XServerLease, XServerProvisioner};
+use tokio_util::sync::CancellationToken;
 
 use crate::connection::manager::ConnectionManager;
 
@@ -86,16 +87,18 @@ impl XServerProvisionerImpl {
 
 #[async_trait]
 impl XServerProvisioner for XServerProvisionerImpl {
-    async fn ensure(&self) -> Result<XServerLease, String> {
+    async fn ensure(&self, cancel: Option<CancellationToken>) -> Result<XServerLease, String> {
         // Run the orchestrator (adopt / spawn / launch XQuartz / typed error),
         // claiming a dependent session against the manager (#1107). The connect
         // path gets the resolved server — managed or adopted, with its cookie, so
         // the forwarder performs no second probe — plus an opaque
         // [`SessionGuard`] it holds for the session lifetime; dropping the guard
-        // releases the session (respecting idle-shutdown). `Ok` always carries a
-        // resolved server; the "nothing usable" case is an `Err`, and the "no
-        // provisioner registered" case is handled in core.
-        let (outcome, guard) = ensure_session_off_reactor(&self.app, self.manager.clone())
+        // releases the session (respecting idle-shutdown). `cancel` is the SSH
+        // connect-abort token so aborting the connect short-cuts the macOS
+        // XQuartz readiness wait (#1260). `Ok` always carries a resolved server;
+        // the "nothing usable" case is an `Err`, and the "no provisioner
+        // registered" case is handled in core.
+        let (outcome, guard) = ensure_session_off_reactor(&self.app, self.manager.clone(), cancel)
             .await
             .map_err(|e| e.to_string())?;
         Ok(XServerLease {
@@ -128,13 +131,16 @@ pub(crate) async fn ensure_off_reactor(
 pub(crate) async fn ensure_session_off_reactor(
     app: &AppHandle,
     manager: Arc<XServerManager>,
+    cancel: Option<CancellationToken>,
 ) -> Result<(EnsureOutcome, manager::SessionGuard), XServerError> {
     let provide = resolve_provide_automatically(app);
-    tokio::task::spawn_blocking(move || ensure_x_server_for_session(&manager, provide))
-        .await
-        .map_err(|e| XServerError::LaunchFailed {
-            message: format!("X server provisioning task failed: {e}"),
-        })?
+    tokio::task::spawn_blocking(move || {
+        ensure_x_server_for_session(&manager, provide, cancel.as_ref())
+    })
+    .await
+    .map_err(|e| XServerError::LaunchFailed {
+        message: format!("X server provisioning task failed: {e}"),
+    })?
 }
 
 /// Install the X server provisioner into core so the SSH connect path can reach

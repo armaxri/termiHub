@@ -11,6 +11,9 @@ use std::path::Path;
 #[cfg(any(target_os = "macos", test))]
 use std::time::Duration;
 
+#[cfg(any(target_os = "macos", test))]
+use tokio_util::sync::CancellationToken;
+
 use super::types::XServerError;
 
 /// How long to wait between readiness probes after launching XQuartz.
@@ -114,6 +117,22 @@ fn poll_until_ready(
     }
 }
 
+/// Whether an SSH connect-abort token has been tripped, mapping the connect
+/// path's optional [`CancellationToken`] into the boolean predicate
+/// [`poll_until_ready`] consumes.
+///
+/// `None` is the status/probe path (the `x_server_ensure` command), which has no
+/// connect to abort, so it never reports cancelled. `Some(token)` is the SSH
+/// connect path (#1260): when the user aborts the connect the token trips and the
+/// readiness wait short-cuts instead of running out its budget.
+///
+/// Gated to macOS (plus `test`): the only production caller is the macOS
+/// launch-and-wait path.
+#[cfg(any(target_os = "macos", test))]
+fn token_cancelled(cancel: Option<&CancellationToken>) -> bool {
+    cancel.is_some_and(CancellationToken::is_cancelled)
+}
+
 /// Launch XQuartz (best-effort) and wait a short, bounded time for it to become
 /// ready before returning, so the connect path doesn't classify a
 /// still-starting server as unreachable (#1088).
@@ -121,10 +140,13 @@ fn poll_until_ready(
 /// Called from the orchestrator's macOS path in place of a bare launch +
 /// single immediate re-probe. Runs on the `spawn_blocking` thread the ensure
 /// call already uses, so the `std::thread::sleep` between probes never blocks
-/// the async reactor. `cancelled` lets an in-flight connect abort short-cut the
-/// wait; readiness is re-checked via `detect_local_x_server` each attempt.
+/// the async reactor. `cancel` is the SSH connect-abort token threaded from the
+/// connect path (#1260): when the user aborts the connect it short-cuts the wait
+/// promptly instead of running out the readiness budget. `None` (the
+/// status/probe path) is never cancelled. Readiness is re-checked via
+/// `detect_local_x_server` each attempt.
 #[cfg(target_os = "macos")]
-pub(super) fn launch_xquartz_and_wait(cancelled: impl Fn() -> bool) {
+pub(super) fn launch_xquartz_and_wait(cancel: Option<&CancellationToken>) {
     use termihub_core::backends::ssh::x11::detect_local_x_server;
 
     launch_xquartz();
@@ -132,7 +154,7 @@ pub(super) fn launch_xquartz_and_wait(cancelled: impl Fn() -> bool) {
         READINESS_POLL_INTERVAL,
         READINESS_TOTAL_BUDGET,
         || detect_local_x_server().is_some(),
-        cancelled,
+        || token_cancelled(cancel),
         std::thread::sleep,
     );
 }
