@@ -33,6 +33,8 @@ import {
   Copy,
   Link,
   XCircle,
+  Unplug,
+  Power,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Button, Tooltip, toast } from "@/components/ui";
@@ -548,6 +550,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const toggleRemoteAgent = useAppStore((s) => s.toggleRemoteAgent);
   const connectRemoteAgent = useAppStore((s) => s.connectRemoteAgent);
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
+  const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const deleteRemoteAgent = useAppStore((s) => s.deleteRemoteAgent);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
@@ -688,9 +691,23 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     void handleConnect();
   }, [agent.id, disconnectRemoteAgent, handleConnect]);
 
+  // Disconnect (detach) — drop the transport but leave persistent daemon-backed
+  // remote sessions running so they re-list on the next connect (G9, #1237).
   const handleDisconnect = useCallback(() => {
     disconnectRemoteAgent(agent.id);
   }, [agent.id, disconnectRemoteAgent]);
+
+  // Shutdown (stop remote) — stop the remote sessions and disconnect, reporting
+  // how many sessions the agent detached/killed as a success toast (G9, #1237).
+  // Returns the promise so the async Button surfaces pending/error feedback.
+  const handleShutdown = useCallback(async () => {
+    const detached = await shutdownRemoteAgent(agent.id);
+    toast.success(
+      detached > 0
+        ? `Agent shut down — ${detached} session${detached === 1 ? "" : "s"} stopped`
+        : "Agent shut down"
+    );
+  }, [agent.id, shutdownRemoteAgent]);
 
   // Cancel an in-flight connect (G1, #1235). Fires cancel_connect_agent, which
   // aborts the blocking SSH + initialize handshake; the backend then emits
@@ -904,6 +921,30 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                     <Plus size={16} />
                   </button>
                 </Tooltip>
+                {/* Two distinct teardown intents (G9, #1237). Detach keeps the
+                    remote sessions running; Shutdown stops them. Both go through
+                    the async Button so every action gives pending/error feedback;
+                    Shutdown adds a success toast with the stopped-session count. */}
+                <Tooltip content="Detach transport — keep persistent remote sessions" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Unplug size={14} />}
+                    onClick={handleDisconnect}
+                    aria-label="Disconnect (detach)"
+                    data-testid={`agent-disconnect-${agent.id}`}
+                  />
+                </Tooltip>
+                <Tooltip content="Stop remote sessions and disconnect" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Power size={14} />}
+                    onClick={handleShutdown}
+                    aria-label="Shutdown (stop remote)"
+                    data-testid={`agent-shutdown-${agent.id}`}
+                  />
+                </Tooltip>
               </div>
             )}
             {isConnecting && (
@@ -985,8 +1026,16 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   onSelect={handleDisconnect}
                   data-testid="context-agent-disconnect"
                 >
-                  <Square size={14} />
-                  Disconnect
+                  <Unplug size={14} />
+                  Disconnect (detach)
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => void handleShutdown()}
+                  data-testid="context-agent-shutdown"
+                >
+                  <Power size={14} />
+                  Shutdown (stop remote)
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   className="context-menu__item"
