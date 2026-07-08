@@ -49,6 +49,19 @@ pub fn disconnect_agent(
         .map_err(|e| e.to_string())
 }
 
+/// Sweep every agent whose I/O task has already died (`alive == false`).
+///
+/// Manual resource-hygiene escape hatch surfaced in the Open Connections panel
+/// (G6, #1239). Returns the ids that were pruned.
+#[tauri::command]
+pub fn prune_dead_agents(
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<Vec<String>, String> {
+    let pruned = agent_manager.prune_dead_agents();
+    info!(count = pruned.len(), "Pruned dead remote agents");
+    Ok(pruned)
+}
+
 /// Cancel an in-flight (still connecting) agent connect.
 ///
 /// Fires the per-agent cancellation token registered by [`connect_agent`] so a

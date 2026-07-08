@@ -268,6 +268,7 @@ Fixed strings — match exactly.
 | `network-tools-sidebar` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `open-connections-establishing-agents-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-http-monitors-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-prune-dead-agents` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-sftp-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-transfer` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-transfers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |

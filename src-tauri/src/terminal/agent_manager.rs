@@ -228,6 +228,12 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Check if an agent is connected.
     fn is_connected(&self, agent_id: &str) -> bool;
 
+    /// Sweep every agent whose I/O task has already died (`alive == false`),
+    /// returning the swept ids. Manual resource-hygiene escape hatch (G6, #1239).
+    fn prune_dead_agents(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Get the capabilities of a connected agent.
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities>;
 
@@ -436,12 +442,53 @@ impl Drop for ConnectingGuard {
     }
 }
 
+/// Shared, reference-countable map of connected agents keyed by `agent_id`.
+///
+/// Held in an `Arc` so the async I/O task can hold a [`Weak`] back-reference and
+/// self-reap its own entry on an exhausted reconnect (G6, #1239) instead of
+/// leaving a zombie behind for lazy eviction on the next `connect_agent`.
+type AgentMap = Arc<Mutex<HashMap<String, AgentConnection>>>;
+
+/// Weak back-reference to the [`AgentMap`], held by the async I/O task so it can
+/// self-reap its own entry without keeping the manager alive (G6, #1239).
+type WeakAgentMap = std::sync::Weak<Mutex<HashMap<String, AgentConnection>>>;
+
+/// Reap an agent's own entry from the manager map via a weak back-reference.
+///
+/// Called by the I/O task when its reconnect budget is exhausted. A dropped
+/// manager (dead `Weak`) or poisoned lock is treated as a no-op — there is
+/// nothing left to clean up.
+fn reap_agent(agents: &WeakAgentMap, agent_id: &str) {
+    // `upgrade()` must be bound so the strong `Arc` outlives the guard it lends.
+    if let Some(agents) = agents.upgrade() {
+        if let Ok(mut guard) = agents.lock() {
+            guard.remove(agent_id);
+        }
+    }
+}
+
+/// Remove every `alive == false` entry from the agent map, returning the
+/// removed ids. Backs the **Prune dead agents** escape hatch (G6, #1239).
+fn prune_dead_agents_from_map(agents: &Mutex<HashMap<String, AgentConnection>>) -> Vec<String> {
+    let mut removed = Vec::new();
+    if let Ok(mut guard) = agents.lock() {
+        guard.retain(|id, conn| {
+            let alive = conn.alive.load(Ordering::SeqCst);
+            if !alive {
+                removed.push(id.clone());
+            }
+            alive
+        });
+    }
+    removed
+}
+
 /// Manages connections to remote agents.
 ///
 /// Each agent is identified by its `agent_id` string. Multiple sessions
 /// can be multiplexed over a single SSH connection.
 pub struct AgentConnectionManager {
-    agents: Mutex<HashMap<String, AgentConnection>>,
+    agents: AgentMap,
     /// Cancellation tokens for in-flight connects, keyed by agent id (G1, #1235).
     connecting: ConnectingRegistry,
     app_handle: AppHandle,
@@ -450,10 +497,18 @@ pub struct AgentConnectionManager {
 impl AgentConnectionManager {
     pub fn new(app_handle: AppHandle) -> Self {
         Self {
-            agents: Mutex::new(HashMap::new()),
+            agents: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(Mutex::new(HashMap::new())),
             app_handle,
         }
+    }
+
+    /// Prune every agent whose I/O task has already died (`alive == false`),
+    /// returning the ids that were swept. Pure resource hygiene — routing is
+    /// already safe because `is_connected()` reports `false` for such entries
+    /// (G6, #1239).
+    pub fn prune_dead_agents(&self) -> Vec<String> {
+        prune_dead_agents_from_map(&self.agents)
     }
 
     /// Cancel an in-flight (still connecting) agent by its `agent_id`.
@@ -520,6 +575,9 @@ impl AgentConnectionManager {
         let agent_id_str = agent_id.to_string();
         let config_clone = config.clone();
         let settings_clone = settings_ref.clone();
+        // Weak back-reference so the spawned I/O task can self-reap its own map
+        // entry on an exhausted reconnect without keeping the manager alive (G6).
+        let agents_weak = Arc::downgrade(&self.agents);
 
         // Run the async connect+handshake on the current tokio runtime, wrapped
         // in a `tokio::select!` against the cancellation token so a Cancel aborts
@@ -657,6 +715,7 @@ impl AgentConnectionManager {
             let agent_id_task = agent_id_str.clone();
             let config_task = config_clone.clone();
             let settings_task = settings_clone.clone();
+            let agents_weak_task = agents_weak.clone();
 
             tokio::spawn(async move {
                 agent_io_task(
@@ -669,6 +728,7 @@ impl AgentConnectionManager {
                     config_task,
                     settings_task,
                     request_id,
+                    agents_weak_task,
                 )
                 .await;
             });
@@ -1169,6 +1229,10 @@ impl AgentRpcClient for AgentConnectionManager {
         AgentConnectionManager::is_connected(self, agent_id)
     }
 
+    fn prune_dead_agents(&self) -> Vec<String> {
+        AgentConnectionManager::prune_dead_agents(self)
+    }
+
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         AgentConnectionManager::get_capabilities(self, agent_id)
     }
@@ -1459,6 +1523,7 @@ async fn agent_io_task(
     config: RemoteAgentConfig,
     agent_settings: AgentSettings,
     mut request_id: u64,
+    agents: WeakAgentMap,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
@@ -1645,6 +1710,24 @@ async fn agent_io_task(
                 channel = new_channel;
                 line_buf.clear();
                 connection_error = None;
+
+                // G7 (#1239): reconcile the output/monitoring senders against the
+                // sessions the agent actually recovered. Senders keyed by ids that
+                // did not come back are stale — drop them so the maps don't leak.
+                // Skip the extra round-trip entirely when there is nothing to
+                // reconcile (no registered senders).
+                if !session_outputs.is_empty() || !monitoring_outputs.is_empty() {
+                    if let Some(live_ids) =
+                        list_recovered_session_ids(&mut channel, &agent_id, &mut request_id).await
+                    {
+                        reconcile_output_senders(
+                            &mut session_outputs,
+                            &mut monitoring_outputs,
+                            &live_ids,
+                        );
+                    }
+                }
+
                 emit_agent_state(&app_handle, &agent_id, "connected");
                 info!("Agent {}: reconnected successfully", agent_id);
                 // Notify all pending requests that the connection was lost
@@ -1657,11 +1740,78 @@ async fn agent_io_task(
                 error!("Agent {}: reconnection failed: {}", agent_id, e);
                 emit_agent_state_with_error(&app_handle, &agent_id, "disconnected", Some(&e));
                 alive.store(false, Ordering::SeqCst);
+                // G6 (#1239): self-reap our own map entry instead of leaving a
+                // zombie for lazy eviction on the next `connect_agent`.
+                reap_agent(&agents, &agent_id);
                 // Notify all pending requests
                 for (_, tx) in pending_responses.drain() {
                     let _ = tx.send(Err("Agent disconnected".to_string()));
                 }
                 return;
+            }
+        }
+    }
+}
+
+/// Drop output/monitoring senders whose session id is not in `live_ids`.
+///
+/// Used after a successful reconnect to reconcile the I/O task's per-session
+/// sender maps against the sessions the agent actually recovered, so senders
+/// for sessions that did not survive the reconnect are released (G7, #1239).
+fn reconcile_output_senders(
+    session_outputs: &mut HashMap<String, OutputSender>,
+    monitoring_outputs: &mut HashMap<String, MonitoringSender>,
+    live_ids: &std::collections::HashSet<String>,
+) {
+    session_outputs.retain(|id, _| live_ids.contains(id));
+    monitoring_outputs.retain(|id, _| live_ids.contains(id));
+}
+
+/// List the session ids the agent currently reports over the (freshly
+/// reconnected) channel, for post-reconnect reconciliation (G7, #1239).
+///
+/// Sends `connection.list` and reads until the matching response arrives,
+/// skipping any interleaved notifications. Returns `None` on any I/O or parse
+/// failure so the caller leaves the sender maps untouched rather than dropping
+/// senders it could not confirm as dead.
+async fn list_recovered_session_ids(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    agent_id: &str,
+    request_id: &mut u64,
+) -> Option<std::collections::HashSet<String>> {
+    *request_id += 1;
+    let req_id = *request_id;
+    let line = serialize_request(req_id, "connection.list", serde_json::json!({})).ok()?;
+    channel.data(line.as_bytes()).await.ok()?;
+
+    const MAX_SKIPPED: u32 = 1000;
+    let mut buf = String::new();
+    let mut skipped: u32 = 0;
+    loop {
+        let resp = read_handshake_line(channel, agent_id, &mut buf).await?;
+        if resp.is_empty() {
+            continue;
+        }
+        match jsonrpc::parse_message(&resp) {
+            Ok(jsonrpc::JsonRpcMessage::Response { id, result }) if id == req_id => {
+                let ids = result["sessions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s["session_id"].as_str().map(|s| s.to_string()))
+                    .collect();
+                return Some(ids);
+            }
+            Ok(jsonrpc::JsonRpcMessage::Error { id, .. }) if id == req_id => return None,
+            _ => {
+                skipped += 1;
+                if skipped > MAX_SKIPPED {
+                    warn!(
+                        "Agent {}: too many messages before connection.list response",
+                        agent_id
+                    );
+                    return None;
+                }
             }
         }
     }
@@ -2342,6 +2492,119 @@ mod tests {
         assert_eq!(parsed["id"], 42);
         assert_eq!(parsed["method"], "connection.create");
         assert_eq!(parsed["jsonrpc"], "2.0");
+    }
+
+    // ── Resource-hygiene helpers (#1239: G6 reap / prune, G7 reconcile) ──
+
+    /// Build a placeholder [`AgentConnection`] for map-manipulation tests.
+    ///
+    /// The command channel receiver is dropped immediately — none of the
+    /// hygiene helpers send over it — so only `alive` is meaningful here.
+    fn make_agent_connection(alive: bool) -> AgentConnection {
+        let (command_tx, _command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+        AgentConnection {
+            command_tx,
+            alive: Arc::new(AtomicBool::new(alive)),
+            capabilities: AgentCapabilities {
+                connection_types: vec![],
+                max_sessions: 0,
+                available_shells: vec![],
+                available_serial_ports: vec![],
+                docker_available: false,
+                available_docker_images: vec![],
+                monitoring_supported: false,
+                agent_version: String::new(),
+            },
+            agent_version: String::new(),
+            protocol_version: String::new(),
+        }
+    }
+
+    /// G6: an exhausted reconnect self-reaps its own entry from the manager map
+    /// (via a weak reference) instead of leaving a zombie behind for lazy
+    /// eviction on the next `connect_agent`.
+    #[test]
+    fn reap_agent_removes_its_own_map_entry() {
+        let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut guard = agents.lock().unwrap();
+            guard.insert("agent-1".to_string(), make_agent_connection(false));
+            guard.insert("agent-2".to_string(), make_agent_connection(true));
+        }
+
+        let weak = Arc::downgrade(&agents);
+        reap_agent(&weak, "agent-1");
+
+        let guard = agents.lock().unwrap();
+        assert!(
+            !guard.contains_key("agent-1"),
+            "reaped agent must be removed from the map"
+        );
+        assert!(
+            guard.contains_key("agent-2"),
+            "unrelated agents must be left untouched"
+        );
+    }
+
+    /// A dead weak reference (manager already dropped) must not panic.
+    #[test]
+    fn reap_agent_tolerates_dropped_manager() {
+        let weak = {
+            let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
+            Arc::downgrade(&agents)
+        };
+        // Should be a no-op, not a panic.
+        reap_agent(&weak, "agent-1");
+    }
+
+    /// Prune sweeps every `alive == false` entry and returns the removed ids,
+    /// while surviving (alive) entries remain.
+    #[test]
+    fn prune_dead_agents_removes_only_dead_entries() {
+        let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut guard = agents.lock().unwrap();
+            guard.insert("dead-1".to_string(), make_agent_connection(false));
+            guard.insert("alive-1".to_string(), make_agent_connection(true));
+            guard.insert("dead-2".to_string(), make_agent_connection(false));
+        }
+
+        let mut removed = prune_dead_agents_from_map(&agents);
+        removed.sort();
+        assert_eq!(removed, vec!["dead-1".to_string(), "dead-2".to_string()]);
+
+        let guard = agents.lock().unwrap();
+        assert_eq!(guard.len(), 1);
+        assert!(guard.contains_key("alive-1"));
+    }
+
+    /// G7: after a successful reconnect, output/monitoring senders keyed by
+    /// session ids that did *not* recover are dropped, while senders for
+    /// surviving session ids remain.
+    #[test]
+    fn reconcile_output_senders_drops_non_recovered_sessions() {
+        let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
+        let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+
+        let (out_survivor, _r1) = std::sync::mpsc::sync_channel(1);
+        let (out_gone, _r2) = std::sync::mpsc::sync_channel(1);
+        session_outputs.insert("survivor".to_string(), out_survivor);
+        session_outputs.insert("gone".to_string(), out_gone);
+
+        let (mon_survivor, _r3) = tokio::sync::mpsc::channel(1);
+        let (mon_gone, _r4) = tokio::sync::mpsc::channel(1);
+        monitoring_outputs.insert("survivor".to_string(), mon_survivor);
+        monitoring_outputs.insert("gone".to_string(), mon_gone);
+
+        let mut live_ids = std::collections::HashSet::new();
+        live_ids.insert("survivor".to_string());
+
+        reconcile_output_senders(&mut session_outputs, &mut monitoring_outputs, &live_ids);
+
+        assert!(session_outputs.contains_key("survivor"));
+        assert!(!session_outputs.contains_key("gone"));
+        assert!(monitoring_outputs.contains_key("survivor"));
+        assert!(!monitoring_outputs.contains_key("gone"));
     }
 
     // ── Cancellable connect (G1, #1235) ──────────────────────────────────
