@@ -34,8 +34,7 @@ use self::collector::{LocalCollector, SshCollector, StatsCollector};
 /// connect and for each bounded reconnect attempt after a sustained drop
 /// (#1230, gap G2). Each call runs on a blocking thread (SSH connect is
 /// blocking).
-type CollectorFactory =
-    Arc<dyn Fn() -> Result<Box<dyn StatsCollector>> + Send + Sync + 'static>;
+type CollectorFactory = Arc<dyn Fn() -> Result<Box<dyn StatsCollector>> + Send + Sync + 'static>;
 
 /// Default collection interval in milliseconds.
 const DEFAULT_INTERVAL_MS: u64 = 2000;

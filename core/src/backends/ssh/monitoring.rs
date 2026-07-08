@@ -385,13 +385,9 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     }
                 }
 
-                // Sleep in 100ms increments to allow quick shutdown.
-                let mut remaining = MONITORING_INTERVAL;
-                let tick = Duration::from_millis(100);
-                while remaining > Duration::ZERO && alive_clone.load(Ordering::SeqCst) {
-                    tokio::time::sleep(tick.min(remaining)).await;
-                    remaining = remaining.saturating_sub(tick);
-                }
+                // Wait the poll interval in small increments so a torn-down
+                // subscription (or cancel) aborts the wait promptly.
+                interruptible_sleep(MONITORING_INTERVAL, &alive_clone, &loop_cancel).await;
             }
             debug!("Monitoring task stopped");
         });
@@ -465,22 +461,6 @@ Linux 5.15.0";
             }
         }
 
-        /// A transport whose collects return parseable stats and whose failure
-        /// mode is controlled by the returned flag (`true` = fail).
-        fn with_failure_flag() -> (Self, Arc<AtomicBool>) {
-            let flag = Arc::new(AtomicBool::new(false));
-            let transport = Self {
-                connect_ok: true,
-                collect_delay: Duration::ZERO,
-                collect_calls: Arc::new(AtomicUsize::new(0)),
-                connect_calls: Arc::new(AtomicUsize::new(0)),
-                collect_should_fail: flag.clone(),
-                connect_should_fail: Arc::new(AtomicBool::new(false)),
-                collect_output: SAMPLE_STATS.to_string(),
-            };
-            (transport, flag)
-        }
-
         /// A transport wired for reconnect tests: collects fail/succeed via the
         /// first flag, re-dials fail/succeed via the second.
         fn with_collect_and_connect_flags() -> (Self, Arc<AtomicBool>, Arc<AtomicBool>) {
@@ -524,7 +504,11 @@ Linux 5.15.0";
 
     /// A backoff schedule with near-zero delays so reconnect tests stay fast.
     fn fast_backoff(max_attempts: u32) -> BackoffSchedule {
-        BackoffSchedule::new(Duration::from_millis(5), Duration::from_millis(20), max_attempts)
+        BackoffSchedule::new(
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+            max_attempts,
+        )
     }
 
     /// Wait for the next status transition, failing if none arrives in time.

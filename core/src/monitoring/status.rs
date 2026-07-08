@@ -108,14 +108,11 @@ impl BackoffSchedule {
         if self.attempt >= self.max_attempts {
             return None;
         }
-        // Double `base` `attempt` times, saturating so a large shift cannot
-        // overflow; clamp the result to `cap`.
-        let factor = 1u64.checked_shl(self.attempt).unwrap_or(u64::MAX);
-        let delay = self
-            .base
-            .checked_mul(factor.min(u32::MAX as u64) as u32)
-            .unwrap_or(self.cap)
-            .min(self.cap);
+        // Double `base` `attempt` times, then clamp to `cap`. Saturating
+        // arithmetic keeps a large attempt count from overflowing; once the
+        // delay exceeds `cap` the exact pre-clamp value is irrelevant anyway.
+        let factor = 2u32.saturating_pow(self.attempt);
+        let delay = self.base.saturating_mul(factor).min(self.cap);
         self.attempt = self.attempt.saturating_add(1);
         Some(delay)
     }
