@@ -138,7 +138,11 @@ import {
   clearLastSession as apiClearLastSession,
 } from "@/services/lastSessionApi";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
-import { connectTimeoutMessage, type ConnectTimeoutKind } from "@/utils/connectTimeout";
+import {
+  connectTimeoutMessage,
+  connectTimeoutMs,
+  type ConnectTimeoutKind,
+} from "@/utils/connectTimeout";
 import { MonitoringEntry, SystemStats } from "@/types/monitoring";
 import {
   onSessionMonitoringStats,
@@ -189,6 +193,30 @@ export interface FileClipboard {
 function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
   const { [key]: _, ...rest } = rec;
   return rest;
+}
+
+/**
+ * A per-tab wall-clock deadline for a timed pre-connect state. Stored so the
+ * connect/waiting timeout survives an overlay remount (tab drag, split re-key):
+ * the deadline is set once on entry and the overlay only reads it, so
+ * unmounting/remounting the overlay can never restart the countdown (#1263).
+ */
+type ConnectDeadline = { kind: ConnectTimeoutKind; at: number };
+
+/**
+ * Arm the connect deadline for `tabId`, idempotently: if a deadline for the
+ * same kind already exists it is kept (so re-entering the state — or the
+ * overlay remounting and the effect re-running — does not push the deadline
+ * out). A different kind (connecting -> waiting-for-agent) arms a fresh one.
+ */
+function armConnectDeadline(
+  deadlines: Record<string, ConnectDeadline>,
+  tabId: string,
+  kind: ConnectTimeoutKind
+): Record<string, ConnectDeadline> {
+  const current = deadlines[tabId];
+  if (current && current.kind === kind) return deadlines;
+  return { ...deadlines, [tabId]: { kind, at: Date.now() + connectTimeoutMs(kind) } };
 }
 
 /**
@@ -560,6 +588,13 @@ interface AppState {
   terminalRetryCounters: Record<string, number>;
   /** True while a createTerminal call is in-flight — drives the "Connecting…" overlay. */
   terminalConnecting: Record<string, boolean>;
+  /**
+   * Per-tab wall-clock deadline (epoch ms + kind) for the active timed
+   * pre-connect state. Set on entry to `Connecting` / `WaitingForAgent` and
+   * cleared on every exit; the overlay reads it so the timeout survives a
+   * remount instead of restarting the countdown (#1263).
+   */
+  terminalConnectDeadline: Record<string, ConnectDeadline>;
   setTerminalSpawnError: (tabId: string, error: string | null) => void;
   retryTerminalSpawn: (tabId: string) => void;
   setTerminalConnecting: (tabId: string, connecting: boolean) => void;
@@ -2283,6 +2318,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const remainingSpawnErrors = omitKey(state.terminalSpawnErrors, tabId);
         const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
         const remainingConnecting = omitKey(state.terminalConnecting, tabId);
+        const remainingConnectDeadline = omitKey(state.terminalConnectDeadline, tabId);
         const remainingExited = omitKey(state.terminalExitedTabs, tabId);
         const remainingExitInfo = omitKey(state.terminalExitInfo, tabId);
         const remainingDiscErr = omitKey(state.terminalDisconnectErrors, tabId);
@@ -2353,6 +2389,7 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalSpawnErrors: remainingSpawnErrors,
             terminalRetryCounters: remainingRetryCounters,
             terminalConnecting: remainingConnecting,
+            terminalConnectDeadline: remainingConnectDeadline,
             terminalExitedTabs: remainingExited,
             terminalExitInfo: remainingExitInfo,
             terminalDisconnectErrors: remainingDiscErr,
@@ -2380,6 +2417,7 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalSpawnErrors: remainingSpawnErrors,
           terminalRetryCounters: remainingRetryCounters,
           terminalConnecting: remainingConnecting,
+          terminalConnectDeadline: remainingConnectDeadline,
           terminalExitedTabs: remainingExited,
           terminalExitInfo: remainingExitInfo,
           terminalDisconnectErrors: remainingDiscErr,
@@ -3360,6 +3398,7 @@ export const useAppStore = create<AppState>((set, get) => {
     terminalSpawnErrors: {},
     terminalRetryCounters: {},
     terminalConnecting: {},
+    terminalConnectDeadline: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
     setTerminalSpawnError: (tabId, error) =>
@@ -3374,6 +3413,7 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+        terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalRetryCounters: {
           ...state.terminalRetryCounters,
           [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
@@ -3384,10 +3424,14 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalConnecting: connecting
           ? { ...state.terminalConnecting, [tabId]: true }
           : omitKey(state.terminalConnecting, tabId),
+        terminalConnectDeadline: connecting
+          ? armConnectDeadline(state.terminalConnectDeadline, tabId, "connecting")
+          : omitKey(state.terminalConnectDeadline, tabId),
       })),
     setTerminalAutoRetrying: (tabId, count) =>
       set((state) => ({
         terminalConnecting: omitKey(state.terminalConnecting, tabId),
+        terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalAutoRetryCount:
           count === 0
             ? omitKey(state.terminalAutoRetryCount, tabId)
@@ -3400,6 +3444,10 @@ export const useAppStore = create<AppState>((set, get) => {
           agentId === null
             ? omitKey(state.terminalWaitingForAgent, tabId)
             : { ...state.terminalWaitingForAgent, [tabId]: agentId },
+        terminalConnectDeadline:
+          agentId === null
+            ? omitKey(state.terminalConnectDeadline, tabId)
+            : armConnectDeadline(state.terminalConnectDeadline, tabId, "waiting-for-agent"),
       })),
     failTerminalConnectTimeout: (tabId, kind) =>
       set((state) => {
@@ -3421,6 +3469,7 @@ export const useAppStore = create<AppState>((set, get) => {
         return {
           terminalConnecting: omitKey(state.terminalConnecting, tabId),
           terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
           terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
           terminalSpawnErrors: {
             ...state.terminalSpawnErrors,
@@ -3440,6 +3489,7 @@ export const useAppStore = create<AppState>((set, get) => {
         return {
           terminalConnecting: omitKey(state.terminalConnecting, tabId),
           terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
           terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
           terminalSpawnErrors: {
             ...state.terminalSpawnErrors,
@@ -3654,6 +3704,12 @@ export const useAppStore = create<AppState>((set, get) => {
         // without a gap between the disconnect overlay disappearing and the effect
         // re-running to call setTerminalConnecting().
         terminalConnecting: { ...state.terminalConnecting, [tabId]: true },
+        // Fresh reconnect attempt: arm a new connecting deadline (any prior one
+        // was cleared on disconnect) so the wall-clock timeout starts now.
+        terminalConnectDeadline: {
+          ...state.terminalConnectDeadline,
+          [tabId]: { kind: "connecting" as const, at: Date.now() + connectTimeoutMs("connecting") },
+        },
         terminalRetryCounters: {
           ...state.terminalRetryCounters,
           [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
