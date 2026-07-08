@@ -53,7 +53,25 @@ export interface MonitoringEntry {
    * reachable Retry instead of failing silently (audit gap G8).
    */
   cancelled: boolean;
+  /**
+   * True while the user has paused collection (#1233). The transport stays open;
+   * the loop simply stops collecting. A paused monitor shows a neutral badge and,
+   * for SSH polling, suspends the frontend refresh timer.
+   */
+  paused: boolean;
+  /**
+   * Per-entry refresh interval in milliseconds (#1233). Drives the frontend poll
+   * cadence for SSH monitors and the backend loop cadence for session monitors,
+   * replacing the previously hardcoded intervals.
+   */
+  intervalMs: number;
 }
+
+/** Selectable monitoring refresh intervals, in milliseconds (#1233). */
+export const MONITORING_INTERVAL_OPTIONS = [1000, 2000, 5000, 10000] as const;
+
+/** Default monitoring refresh interval in milliseconds (#1233). */
+export const DEFAULT_MONITORING_INTERVAL_MS = 2000;
 
 /** System statistics retrieved from a remote Linux host. */
 export interface SystemStats {

@@ -28,6 +28,9 @@ const mockMonitoringClose = vi.fn();
 const mockMonitoringFetchStats = vi.fn();
 const mockSessionMonitoringOpen = vi.fn();
 const mockSessionMonitoringClose = vi.fn();
+const mockSessionMonitoringSetPaused = vi.fn();
+const mockSessionMonitoringSetInterval = vi.fn();
+const mockSessionMonitoringCancel = vi.fn();
 
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
@@ -40,6 +43,9 @@ vi.mock("@/services/api", () => ({
   monitoringFetchStats: (...args: unknown[]) => mockMonitoringFetchStats(...args),
   sessionMonitoringOpen: (...args: unknown[]) => mockSessionMonitoringOpen(...args),
   sessionMonitoringClose: (...args: unknown[]) => mockSessionMonitoringClose(...args),
+  sessionMonitoringSetPaused: (...args: unknown[]) => mockSessionMonitoringSetPaused(...args),
+  sessionMonitoringSetInterval: (...args: unknown[]) => mockSessionMonitoringSetInterval(...args),
+  sessionMonitoringCancel: (...args: unknown[]) => mockSessionMonitoringCancel(...args),
 }));
 
 // Session-based monitoring subscribes to Tauri events and stores the returned
@@ -463,6 +469,132 @@ describe("appStore — monitoring (per-host keyed slice, G6)", () => {
 
       useAppStore.getState().setMonitoringCancelled(HOST_A_KEY, false);
       expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.cancelled).toBe(false);
+    });
+  });
+
+  // ── Controls: Pause / Resume, Interval, Cancel (#1233) ───────────────
+  describe("setMonitoringPaused(key) (#1233)", () => {
+    it("pauses an SSH monitor locally without a backend call", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+
+      await useAppStore.getState().setMonitoringPaused(HOST_A_KEY, true);
+
+      const entry = selectMonitor(useAppStore.getState(), HOST_A_KEY)!;
+      expect(entry.paused).toBe(true);
+      expect(entry.status).toBe("paused");
+      // SSH monitors are frontend-polled: no backend pause RPC.
+      expect(mockSessionMonitoringSetPaused).not.toHaveBeenCalled();
+    });
+
+    it("resume flips paused back to false and status to live", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+
+      await useAppStore.getState().setMonitoringPaused(HOST_A_KEY, true);
+      await useAppStore.getState().setMonitoringPaused(HOST_A_KEY, false);
+
+      const entry = selectMonitor(useAppStore.getState(), HOST_A_KEY)!;
+      expect(entry.paused).toBe(false);
+      expect(entry.status).toBe("live");
+    });
+
+    it("signals the backend for a session monitor", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+      mockSessionMonitoringSetPaused.mockResolvedValue(undefined);
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-p" });
+
+      await useAppStore.getState().setMonitoringPaused("sess-p", true);
+
+      expect(mockSessionMonitoringSetPaused).toHaveBeenCalledWith("sess-p", true);
+      expect(selectMonitor(useAppStore.getState(), "sess-p")!.paused).toBe(true);
+    });
+
+    it("rolls back the optimistic flag when the backend pause fails", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+      mockSessionMonitoringSetPaused.mockRejectedValue(new Error("no session"));
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-p" });
+
+      await expect(useAppStore.getState().setMonitoringPaused("sess-p", true)).rejects.toThrow(
+        "no session"
+      );
+      expect(selectMonitor(useAppStore.getState(), "sess-p")!.paused).toBe(false);
+    });
+  });
+
+  describe("refreshMonitoring skips paused SSH monitors (#1233)", () => {
+    it("does not fetch stats while paused", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      await useAppStore.getState().setMonitoringPaused(HOST_A_KEY, true);
+
+      mockMonitoringFetchStats.mockClear();
+      await useAppStore.getState().refreshMonitoring(HOST_A_KEY);
+
+      expect(mockMonitoringFetchStats).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("setMonitoringInterval(key) (#1233)", () => {
+    it("updates the entry interval for an SSH monitor without a backend call", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+
+      await useAppStore.getState().setMonitoringInterval(HOST_A_KEY, 5000);
+
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.intervalMs).toBe(5000);
+      expect(mockSessionMonitoringSetInterval).not.toHaveBeenCalled();
+    });
+
+    it("reconfigures the backend loop for a session monitor", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+      mockSessionMonitoringSetInterval.mockResolvedValue(undefined);
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-i" });
+
+      await useAppStore.getState().setMonitoringInterval("sess-i", 10000);
+
+      expect(mockSessionMonitoringSetInterval).toHaveBeenCalledWith("sess-i", 10000);
+      expect(selectMonitor(useAppStore.getState(), "sess-i")!.intervalMs).toBe(10000);
+    });
+
+    it("carries a chosen interval into session_monitoring_open on connect", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+      // Seed an interval on a placeholder entry, then connect that key.
+      useAppStore.getState().setMonitoringCancelled("sess-i", false);
+      await useAppStore.getState().setMonitoringInterval("sess-i", 5000);
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-i" });
+
+      expect(mockSessionMonitoringOpen).toHaveBeenCalledWith("sess-i", 5000);
+    });
+  });
+
+  describe("cancelMonitoring(key) (#1233)", () => {
+    it("aborts the backend connect and tears the session entry down", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+      mockSessionMonitoringClose.mockResolvedValue(undefined);
+      mockSessionMonitoringCancel.mockResolvedValue(undefined);
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-c" });
+
+      await useAppStore.getState().cancelMonitoring("sess-c");
+
+      expect(mockSessionMonitoringCancel).toHaveBeenCalledWith("sess-c");
+      expect(selectMonitor(useAppStore.getState(), "sess-c")).toBeNull();
+    });
+
+    it("tears down an SSH monitor entry without a cancel RPC", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      mockMonitoringClose.mockResolvedValue(undefined);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+
+      await useAppStore.getState().cancelMonitoring(HOST_A_KEY);
+
+      expect(mockSessionMonitoringCancel).not.toHaveBeenCalled();
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)).toBeNull();
     });
   });
 });

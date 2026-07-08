@@ -1083,14 +1083,39 @@ export async function sessionGetCapabilities(
   });
 }
 
-/** Start session-based monitoring; stats arrive as `session-monitoring-stats` Tauri events. */
-export async function sessionMonitoringOpen(sessionId: string): Promise<void> {
-  await invoke("session_monitoring_open", { sessionId });
+/**
+ * Start session-based monitoring; stats arrive as `session-monitoring-stats` Tauri events.
+ *
+ * `intervalMs` sets the collection cadence; when omitted the backend default is used (#1233).
+ */
+export async function sessionMonitoringOpen(sessionId: string, intervalMs?: number): Promise<void> {
+  await invoke("session_monitoring_open", { sessionId, intervalMs });
 }
 
 /** Stop session-based monitoring. */
 export async function sessionMonitoringClose(sessionId: string): Promise<void> {
   await invoke("session_monitoring_close", { sessionId });
+}
+
+/** Pause or resume a session monitor's collection loop (#1233). */
+export async function sessionMonitoringSetPaused(
+  sessionId: string,
+  paused: boolean
+): Promise<void> {
+  await invoke("session_monitoring_set_paused", { sessionId, paused });
+}
+
+/** Change a session monitor's refresh interval in milliseconds (#1233). */
+export async function sessionMonitoringSetInterval(
+  sessionId: string,
+  intervalMs: number
+): Promise<void> {
+  await invoke("session_monitoring_set_interval", { sessionId, intervalMs });
+}
+
+/** Cancel a session monitor's in-flight connect / collect (#1233). */
+export async function sessionMonitoringCancel(sessionId: string): Promise<void> {
+  await invoke("session_monitoring_cancel", { sessionId });
 }
 
 // --- Log commands ---
