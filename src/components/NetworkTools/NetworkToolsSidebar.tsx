@@ -136,6 +136,7 @@ function MonitorRow({
           <Button
             variant="ghost"
             size="sm"
+            iconOnly
             aria-label="Pause monitor"
             icon={<Pause size={12} />}
             onClick={() => onPause(config.id)}
@@ -147,6 +148,7 @@ function MonitorRow({
           <Button
             variant="ghost"
             size="sm"
+            iconOnly
             aria-label="Resume monitor"
             icon={<Play size={12} />}
             onClick={() => onResume(config.id)}
@@ -158,6 +160,7 @@ function MonitorRow({
           <Button
             variant="ghost"
             size="sm"
+            iconOnly
             aria-label="Stop monitor"
             icon={<StopCircle size={12} />}
             onClick={() => onStop(config.id)}
@@ -168,6 +171,7 @@ function MonitorRow({
         <Button
           variant="ghost"
           size="sm"
+          iconOnly
           aria-label="Remove monitor"
           icon={<Trash2 size={12} />}
           onClick={() => onRemove(config.id)}
@@ -321,6 +325,7 @@ export function NetworkToolsSidebar() {
             <Button
               variant="ghost"
               size="sm"
+              iconOnly
               aria-label="Refresh monitors"
               icon={<RefreshCw size={11} />}
               onClick={refreshMonitors}

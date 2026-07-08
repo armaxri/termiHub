@@ -53,6 +53,21 @@
   width: 100%;
 }
 
+/*
+ * Icon-only / dense affordance: squares the control to its current height and
+ * drops the label padding, for dense action rows (tunnel rows, network-monitor
+ * rows). Geometry only — color, hover, radius, focus ring, and the async
+ * pending/success affordances all come from the variant + base classes.
+ * `aspect-ratio: 1` keeps it square at either size (32px for md, 28px for sm).
+ * Icon-only buttons require an accessible name (aria-label/tooltip); the
+ * primitive warns in the LogViewer when one is missing (issue 1284).
+ */
+.ui-btn--icon-only {
+  aspect-ratio: 1;
+  padding: 0;
+  flex-shrink: 0;
+}
+
 .ui-btn--primary {
   background: var(--accent-color);
   color: var(--text-on-accent);

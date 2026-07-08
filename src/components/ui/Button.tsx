@@ -1,4 +1,5 @@
 import React, { forwardRef, useCallback, useEffect, useRef, useState } from "react";
+import { frontendLog } from "@/utils/frontendLog";
 import { toast } from "./Toast";
 import "./ui.css";
 
@@ -39,6 +40,16 @@ export interface ButtonProps extends Omit<
   size?: ButtonSize;
   /** Stretch the button to fill the width of its container. */
   fullWidth?: boolean;
+  /**
+   * Render as a compact icon-only square (a dense action-row affordance — e.g.
+   * a tunnel row or a network-monitor row). Drops the label padding and squares
+   * the control to its height; the ghost skin (color/hover/radius/focus/pending/
+   * success) still comes from the primitive. Icon-only buttons carry no visible
+   * text, so an accessible name is required: pass `aria-label` (or `title`, or
+   * wrap in a `Tooltip` and set `aria-label`). The primitive warns in the
+   * LogViewer when one is missing.
+   */
+  iconOnly?: boolean;
   /** Optional leading icon rendered before the label (typically a lucide icon). */
   icon?: React.ReactNode;
   /**
@@ -83,6 +94,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     variant = "primary",
     size = "md",
     fullWidth = false,
+    iconOnly = false,
     icon,
     type,
     className,
@@ -106,6 +118,21 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       if (successTimer.current) clearTimeout(successTimer.current);
     };
   }, []);
+
+  // Icon-only buttons carry no visible label, so an accessible name is
+  // mandatory. Surface a misuse (no aria-label / aria-labelledby / title) in the
+  // LogViewer rather than shipping a silently unlabeled control (issue 1284).
+  const ariaLabel = rest["aria-label"];
+  const ariaLabelledby = rest["aria-labelledby"];
+  const title = rest.title;
+  useEffect(() => {
+    if (iconOnly && !ariaLabel && !ariaLabelledby && !title) {
+      frontendLog(
+        "ui_button",
+        "icon-only Button is missing an accessible name — add aria-label, aria-labelledby, or title"
+      );
+    }
+  }, [iconOnly, ariaLabel, ariaLabelledby, title]);
 
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -142,6 +169,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     "ui-btn",
     VARIANT_CLASS[variant],
     size === "sm" ? "ui-btn--sm" : "",
+    iconOnly ? "ui-btn--icon-only" : "",
     fullWidth ? "ui-btn--full" : "",
     pending ? "ui-btn--pending" : "",
     success ? "ui-btn--success" : "",
