@@ -124,6 +124,34 @@
   color: var(--text-secondary);
 }
 
+/* Transfer row (issue 1247): the icon + Cancel button flank a stacked body that
+   holds the file name, an inline progress bar, and a byte/percentage meta line. */
+.oc-transfer {
+  align-items: flex-start;
+}
+
+.oc-transfer .oc-row__icon {
+  margin-top: 2px;
+}
+
+.oc-transfer__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.oc-transfer__progress {
+  height: 4px;
+}
+
+.oc-transfer__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* termiHub-managed X server: accent to signal termiHub ownership. */
 .oc-row__badge--managed {
   background: color-mix(in srgb, var(--accent-color) 18%, transparent);

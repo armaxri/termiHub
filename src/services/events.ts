@@ -8,6 +8,7 @@ import { TunnelState, TunnelStats } from "@/types/tunnel";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerProgress } from "@/types/xserver";
+import type { TransferProgress } from "@/services/api";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -533,6 +534,21 @@ export async function onJumpHostProbeComplete(
   callback: (payload: ProbeCompletePayload) => void
 ): Promise<UnlistenFn> {
   return await listen<ProbeCompletePayload>("jump-host-probe-complete", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to per-transfer SFTP progress (#1245). Each in-flight transfer
+ * emits `transferring` updates (with `transferred`/`total`; `total = 0` means
+ * indeterminate) then one terminal `done` / `cancelled` / `error` event. The
+ * store folds these into its `transfers` map (#1247). Returns the unlisten
+ * handle.
+ */
+export async function onTransferProgress(
+  callback: (progress: TransferProgress) => void
+): Promise<UnlistenFn> {
+  return await listen<TransferProgress>("transfer-progress", (event) => {
     callback(event.payload);
   });
 }

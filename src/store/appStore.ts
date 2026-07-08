@@ -26,6 +26,7 @@ import {
   FileEntry,
   SftpStatus,
   SftpSessionEntry,
+  TransferState,
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
@@ -56,6 +57,7 @@ import {
 import {
   sftpOpen,
   sftpClose,
+  sftpCancelTransfer,
   sftpListDir,
   sftpRealpath,
   sessionListFiles,
@@ -564,6 +566,24 @@ interface AppState {
    * to idle. Drives the per-session Kill in the Open Connections panel (#1241).
    */
   closeSftpSession: (sessionId: string) => Promise<void>;
+
+  /**
+   * Live in-flight SFTP transfers keyed by `transferId` (concept "SFTP session
+   * tracking + transfers", issue #1247). Fed purely by `transfer-progress`
+   * events (#1245) through {@link applyTransferProgress}; a terminal phase
+   * clears the row. Rendered as the Open Connections "Transfers" section, the
+   * file-browser footer, and the status-bar aggregate.
+   */
+  transfers: Record<string, TransferState>;
+  /**
+   * Apply a `transfer-progress` event to the {@link transfers} map: a
+   * `transferring` phase upserts the row; a terminal phase
+   * (`done`/`cancelled`/`error`) removes it (D2 done/error toasts are handled
+   * separately).
+   */
+  applyTransferProgress: (progress: TransferState) => void;
+  /** Request cancellation of an in-flight transfer (`sftp_cancel_transfer`). */
+  cancelTransfer: (transferId: string) => Promise<void>;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -3139,6 +3159,7 @@ export const useAppStore = create<AppState>((set, get) => {
     sftpConnectedHost: null,
     sftpSessions: {},
     sftpLastConfig: null,
+    transfers: {},
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
@@ -3242,6 +3263,33 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     closeSftpSession: async (sessionId: string) => {
+      // Kill-cascade (concept "Edge cases"): cancel every in-flight transfer
+      // owned by this session *before* closing it, so no transfer keeps a dead
+      // session's channel alive. The `cancelled` events D1 emits back clear the
+      // rows; we also drop them optimistically below.
+      const owned = Object.values(useAppStore.getState().transfers).filter(
+        (t) => t.sessionId === sessionId
+      );
+      await Promise.all(
+        owned.map((t) =>
+          sftpCancelTransfer(t.transferId).catch((err) => {
+            frontendLog(
+              "sftp_transfer",
+              `closeSftpSession: cancel of ${t.transferId} failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+          })
+        )
+      );
+      if (owned.length > 0) {
+        const cancelledIds = new Set(owned.map((t) => t.transferId));
+        set((state) => ({
+          transfers: Object.fromEntries(
+            Object.entries(state.transfers).filter(([id]) => !cancelledIds.has(id))
+          ),
+        }));
+      }
       try {
         await sftpClose(sessionId);
       } catch {
@@ -3265,6 +3313,33 @@ export const useAppStore = create<AppState>((set, get) => {
             : {}),
         };
       });
+    },
+
+    applyTransferProgress: (progress: TransferState) =>
+      set((state) => {
+        // A terminal phase clears the row (D1 already removed any partial local
+        // file on cancel/error). done/error toasts are the D2 follow-up.
+        if (progress.phase !== "transferring") {
+          if (!(progress.transferId in state.transfers)) return {};
+          return { transfers: omitKey(state.transfers, progress.transferId) };
+        }
+        return {
+          transfers: { ...state.transfers, [progress.transferId]: progress },
+        };
+      }),
+
+    cancelTransfer: async (transferId: string) => {
+      try {
+        await sftpCancelTransfer(transferId);
+      } catch (err) {
+        frontendLog(
+          "sftp_transfer",
+          `cancelTransfer: cancel of ${transferId} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        throw err;
+      }
     },
 
     retrySftp: async () => {

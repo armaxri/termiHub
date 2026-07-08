@@ -32,6 +32,27 @@ export interface SftpSessionEntry {
   owningTabId: string;
 }
 
+/**
+ * Live state of a single in-flight SFTP transfer, keyed by its `transferId` in
+ * the store's `transfers` map (concept "SFTP session tracking + transfers",
+ * issue #1247). Built purely from `transfer-progress` events (#1245): a
+ * `transferring` phase upserts the row; a terminal phase
+ * (`done`/`cancelled`/`error`) clears it.
+ *
+ * - `sessionId`   — the owning SFTP session, used by the kill-cascade to cancel
+ *   a session's transfers before closing it
+ * - `total = 0`   — indeterminate size (render a spinner instead of a bar)
+ */
+export interface TransferState {
+  transferId: string;
+  sessionId: string;
+  direction: "download" | "upload";
+  fileName: string;
+  transferred: number;
+  total: number;
+  phase: "transferring" | "done" | "cancelled" | "error";
+}
+
 export interface SavedConnection {
   id: string;
   name: string;
