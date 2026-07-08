@@ -594,6 +594,8 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `monitor-stale-*` | `monitor-stale-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `monitoring-connect-*` | `monitoring-connect-${conn.id}` | `src/components/StatusBar/StatusBar.tsx` |
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `oc-agent-disconnect-*` | `oc-agent-disconnect-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `oc-agent-shutdown-*` | `oc-agent-shutdown-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `persistent-attach-*` | `persistent-attach-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-start-*` | `persistent-start-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-stop-*` | `persistent-stop-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
