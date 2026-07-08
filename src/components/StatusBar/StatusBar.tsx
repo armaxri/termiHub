@@ -10,7 +10,7 @@ import {
   Route,
   RotateCw,
 } from "lucide-react";
-import { useAppStore, getActiveTab } from "@/store/appStore";
+import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
 import { ConnectionConfig } from "@/types/terminal";
@@ -244,14 +244,6 @@ function ServicesIndicator() {
  */
 function MonitoringStatus() {
   const globalMonitoringEnabled = useAppStore((s) => s.settings.powerMonitoringEnabled);
-  const monitoringSessionId = useAppStore((s) => s.monitoringSessionId);
-  const monitoringHost = useAppStore((s) => s.monitoringHost);
-  const monitoringStats = useAppStore((s) => s.monitoringStats);
-  const monitoringSampleCount = useAppStore((s) => s.monitoringSampleCount);
-  const monitoringLoading = useAppStore((s) => s.monitoringLoading);
-  const monitoringError = useAppStore((s) => s.monitoringError);
-  const monitoringStatus = useAppStore((s) => s.monitoringStatus);
-  const monitoringCancelled = useAppStore((s) => s.monitoringCancelled);
   const connectMonitoring = useAppStore((s) => s.connectMonitoring);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
   const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
@@ -264,6 +256,20 @@ function MonitoringStatus() {
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
   const activeTabExited = useAppStore((s) => !!(activeTabId && s.terminalExitedTabs[activeTabId]));
+
+  // Per-host keying (#1231, audit gap G6): the status bar renders the entry for
+  // the active tab's monitor key. Switching tabs just changes which entry we
+  // show — other hosts keep monitoring independently.
+  const activeMonitorKey = useAppStore((s) => monitorKeyForTab(getActiveTab(s)));
+  const activeMonitor = useAppStore((s) => selectMonitor(s, monitorKeyForTab(getActiveTab(s))));
+  const monitoringConnected = !!activeMonitor?.monitorSessionId;
+  const monitoringHost = activeMonitor?.host ?? null;
+  const monitoringStats = activeMonitor?.stats ?? null;
+  const monitoringSampleCount = activeMonitor?.sampleCount ?? 0;
+  const monitoringLoading = activeMonitor?.loading ?? false;
+  const monitoringError = activeMonitor?.error ?? null;
+  const monitoringStatus = activeMonitor?.status ?? null;
+  const monitoringCancelled = activeMonitor?.cancelled ?? false;
 
   const activeTabSupportsMonitoring = typeSupportsMonitoring(
     connectionTypes,
@@ -297,9 +303,10 @@ function MonitoringStatus() {
 
   // Auto-refresh polling (SSH-based monitoring only; session-based is push).
   useEffect(() => {
-    if (monitoringSessionId && !isRemoteSession) {
+    if (monitoringConnected && !isRemoteSession && activeMonitorKey) {
+      const key = activeMonitorKey;
       intervalRef.current = setInterval(() => {
-        refreshMonitoring();
+        refreshMonitoring(key);
       }, REFRESH_INTERVAL_MS);
     }
     return () => {
@@ -308,7 +315,7 @@ function MonitoringStatus() {
         intervalRef.current = null;
       }
     };
-  }, [monitoringSessionId, isRemoteSession, refreshMonitoring]);
+  }, [monitoringConnected, isRemoteSession, activeMonitorKey, refreshMonitoring]);
 
   // Auto-connect monitoring when active tab supports monitoring
   useEffect(() => {
@@ -323,24 +330,25 @@ function MonitoringStatus() {
     const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab) return;
 
+    const key = monitorKeyForTab(activeTab);
+    if (!key) return;
+
+    // Already monitoring this host (connected or in flight) → nothing to do.
+    // Switching tabs no longer tears down other hosts (#1231, audit gap G6).
+    const existing = useAppStore.getState().monitors[key];
+    if (existing && (existing.monitorSessionId || existing.loading)) return;
+    if (autoConnectFailedRef.current === key) return;
+    autoConnectFailedRef.current = key;
+
     // ── Remote-session: use session-based (push) monitoring ───────────
     if (activeTab.connectionType === "remote-session") {
       const sessionId = activeTab.sessionId;
       if (!sessionId) return;
-
-      // Already monitoring this session
-      if (monitoringSessionId === sessionId) return;
-      if (autoConnectFailedRef.current === sessionId) return;
-      autoConnectFailedRef.current = sessionId;
-
       const doConnect = async () => {
-        const { disconnectMonitoring: disconnect, connectMonitoring: connect } =
-          useAppStore.getState();
-        if (monitoringSessionId && monitoringSessionId !== sessionId) {
-          await disconnect();
-        }
-        await connect({ _sessionBased: true, _sessionId: sessionId });
-        if (useAppStore.getState().monitoringSessionId) {
+        await useAppStore
+          .getState()
+          .connectMonitoring({ _sessionBased: true, _sessionId: sessionId });
+        if (useAppStore.getState().monitors[key]?.monitorSessionId) {
           autoConnectFailedRef.current = null;
         }
       };
@@ -356,23 +364,13 @@ function MonitoringStatus() {
     const host = (cfg.host as string) ?? "";
     const port = (cfg.port as number) ?? 0;
     const username = (cfg.username as string) ?? "";
-    const hostKey = `${username}@${host}:${port}`;
-
-    if (monitoringSessionId && monitoringHost === hostKey) return;
-    if (autoConnectFailedRef.current === hostKey) return;
-    autoConnectFailedRef.current = hostKey;
 
     const doConnect = async () => {
       const {
         connections: conns,
-        disconnectMonitoring: disconnect,
         connectMonitoring: connect,
         requestPassword,
       } = useAppStore.getState();
-
-      if (monitoringSessionId && monitoringHost !== hostKey) {
-        await disconnect();
-      }
 
       let configToUse = cfg;
       const authMethod = cfg.authMethod as string | undefined;
@@ -388,7 +386,7 @@ function MonitoringStatus() {
           // "Monitoring not connected" affordance instead of returning silently,
           // and keep the Retry/picker reachable (audit gap G8).
           frontendLog("monitoring", "auto-connect cancelled at password prompt");
-          useAppStore.getState().setMonitoringCancelled(true);
+          useAppStore.getState().setMonitoringCancelled(key, true);
           return;
         }
         configToUse = { ...baseConfig, password };
@@ -396,7 +394,7 @@ function MonitoringStatus() {
 
       await connect(configToUse);
 
-      if (useAppStore.getState().monitoringSessionId) {
+      if (useAppStore.getState().monitors[key]?.monitorSessionId) {
         autoConnectFailedRef.current = null;
       }
     };
@@ -405,8 +403,8 @@ function MonitoringStatus() {
   }, [
     activeTabId,
     activeTabSessionId,
-    monitoringSessionId,
-    monitoringHost,
+    activeMonitorKey,
+    monitoringConnected,
     monitoringEnabled,
     activeTabExited,
     // Re-run auto-connect when the user hits Retry (audit gaps G7 + G8).
@@ -432,11 +430,13 @@ function MonitoringStatus() {
   const handleRetry = useCallback(() => {
     frontendLog("monitoring", "user retrying monitoring auto-connect");
     autoConnectFailedRef.current = null;
-    const { clearMonitoringError, setMonitoringCancelled } = useAppStore.getState();
-    clearMonitoringError();
-    setMonitoringCancelled(false);
+    if (activeMonitorKey) {
+      const { clearMonitoringError, setMonitoringCancelled } = useAppStore.getState();
+      clearMonitoringError(activeMonitorKey);
+      setMonitoringCancelled(activeMonitorKey, false);
+    }
     setRetryNonce((n) => n + 1);
-  }, []);
+  }, [activeMonitorKey]);
 
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
@@ -444,10 +444,10 @@ function MonitoringStatus() {
   // While reconnecting we already have cached stats — skip the "Connecting" block
   // so the last-known data is shown immediately instead of a blank loading state.
   const isReconnectingWithCache =
-    !monitoringSessionId && monitoringLoading && monitoringStats !== null;
+    !monitoringConnected && monitoringLoading && monitoringStats !== null;
 
   // Not connected: show connect button (or loading/error/cancelled state)
-  if (!monitoringSessionId && !isReconnectingWithCache) {
+  if (!monitoringConnected && !isReconnectingWithCache) {
     // Remote-session tabs auto-connect; show loading/error/cancelled feedback.
     if (isRemoteSession) {
       if (!monitoringLoading && !monitoringError && !monitoringCancelled) return null;
@@ -560,8 +560,8 @@ function MonitoringStatus() {
         host={monitoringHost}
         stats={monitoringStats}
         loading={monitoringLoading}
-        onRefresh={refreshMonitoring}
-        onDisconnect={disconnectMonitoring}
+        onRefresh={() => activeMonitorKey && refreshMonitoring(activeMonitorKey)}
+        onDisconnect={() => activeMonitorKey && disconnectMonitoring(activeMonitorKey)}
       />
       {monitoringStats && (
         <>

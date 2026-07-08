@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Terminal,
   Server,
@@ -64,7 +64,13 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const closeSftpSession = useAppStore((s) => s.closeSftpSession);
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
-  const monitoringHost = useAppStore((s) => s.monitoringHost);
+  // Every monitored host with a live backend subscription (#1231, audit gap G6);
+  // each renders its own killable row. Derived from the keyed `monitors` map.
+  const monitors = useAppStore((s) => s.monitors);
+  const openMonitors = useMemo(
+    () => Object.values(monitors).filter((m) => m.monitorSessionId !== null),
+    [monitors]
+  );
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
   // Live source of truth for HTTP monitors (kept current by the Network Tools
   // sidebar / check events); the panel reads it directly so it stays in sync
@@ -199,7 +205,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     Object.values(agentSessions).reduce((s, arr) => s + arr.length, 0) +
     activeTunnels.length +
     sftpSessionEntries.length +
-    (monitoringHost ? 1 : 0) +
+    openMonitors.length +
     httpMonitors.length +
     (showXServer ? 1 : 0);
 
@@ -585,20 +591,24 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           </Section>
         )}
 
-        {/* Monitoring */}
-        {monitoringHost && (
+        {/* Monitoring — one row per monitored host (#1231, audit gap G6). */}
+        {openMonitors.length > 0 && (
           <Section
             title="Monitoring"
             icon={<Activity size={14} />}
-            count={1}
-            onKillAll={disconnectMonitoring}
+            count={openMonitors.length}
+            onKillAll={() => disconnectMonitoring()}
           >
-            <ConnectionRow
-              icon={<MonitorStop size={14} />}
-              title={monitoringHost}
-              badge="connected"
-              onKill={disconnectMonitoring}
-            />
+            {openMonitors.map((m) => (
+              <ConnectionRow
+                key={m.key}
+                icon={<MonitorStop size={14} />}
+                title={m.host ?? m.key}
+                detail={m.status === "stale" ? "stale — connection dropped" : undefined}
+                badge={m.status === "stale" ? "reconnecting" : "connected"}
+                onKill={() => disconnectMonitoring(m.key)}
+              />
+            ))}
           </Section>
         )}
 
