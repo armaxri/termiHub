@@ -821,6 +821,16 @@ export async function disconnectAgent(agentId: string): Promise<void> {
 }
 
 /**
+ * Sweep every agent whose backend I/O task has already died (`alive=false`).
+ *
+ * Manual resource-hygiene escape hatch for the Open Connections panel. Returns
+ * the ids that were pruned.
+ */
+export async function pruneDeadAgents(): Promise<string[]> {
+  return await invoke<string[]>("prune_dead_agents");
+}
+
+/**
  * Cancel an in-flight (still connecting) agent connect. Aborts the blocking
  * SSH + initialize handshake promptly instead of waiting out the connect
  * timeout; the backend then emits `disconnected` (single writer). No-op if the

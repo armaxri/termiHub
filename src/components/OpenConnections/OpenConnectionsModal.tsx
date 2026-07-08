@@ -20,6 +20,7 @@ import {
   closeAgentSession,
   cancelConnecting,
   cancelConnectAgent,
+  pruneDeadAgents,
   xServerStatus,
   xServerStop,
   LocalSessionInfo,
@@ -272,6 +273,26 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     await Promise.all(connectedAgents.map((a) => disconnectRemoteAgent(a.id)));
   };
 
+  /**
+   * Sweep any backend agent whose I/O task has already died (`alive=false`) but
+   * whose entry lingered in the manager map. Pure resource hygiene — routing is
+   * already safe (G6, #1239).
+   */
+  const handlePruneDeadAgents = async () => {
+    try {
+      const pruned = await pruneDeadAgents();
+      await loadData();
+      if (pruned.length === 0) {
+        toast.success("No dead agents to prune");
+      } else {
+        toast.success(`Pruned ${pruned.length} dead agent${pruned.length === 1 ? "" : "s"}`);
+      }
+    } catch (err) {
+      frontendLog("open_connections", `Failed to prune dead agents: ${err}`);
+      toast.error(`Failed to prune dead agents: ${err}`);
+    }
+  };
+
   const handleKillProxy = async (agentId: string, id: string) => {
     markSessionKilled(id);
     await closeTerminal(id).catch(() => {});
@@ -379,6 +400,21 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           Open Connections
           {totalCount > 0 && <span className="oc-section__count">{totalCount}</span>}
         </span>
+      }
+      footer={
+        <Tooltip
+          content="Remove backend agent entries whose connection has already died"
+          side="top"
+        >
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handlePruneDeadAgents}
+            data-testid="open-connections-prune-dead-agents"
+          >
+            Prune dead agents
+          </Button>
+        </Tooltip>
       }
     >
       <div className="open-connections__body">

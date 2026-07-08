@@ -228,6 +228,12 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Check if an agent is connected.
     fn is_connected(&self, agent_id: &str) -> bool;
 
+    /// Sweep every agent whose I/O task has already died (`alive == false`),
+    /// returning the swept ids. Manual resource-hygiene escape hatch (G6, #1239).
+    fn prune_dead_agents(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Get the capabilities of a connected agent.
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities>;
 
@@ -494,6 +500,14 @@ impl AgentConnectionManager {
         }
     }
 
+    /// Prune every agent whose I/O task has already died (`alive == false`),
+    /// returning the ids that were swept. Pure resource hygiene — routing is
+    /// already safe because `is_connected()` reports `false` for such entries
+    /// (G6, #1239).
+    pub fn prune_dead_agents(&self) -> Vec<String> {
+        prune_dead_agents_from_map(&self.agents)
+    }
+
     /// Cancel an in-flight (still connecting) agent by its `agent_id`.
     ///
     /// Fires the registered cancellation token so a blocking connect+handshake
@@ -558,6 +572,9 @@ impl AgentConnectionManager {
         let agent_id_str = agent_id.to_string();
         let config_clone = config.clone();
         let settings_clone = settings_ref.clone();
+        // Weak back-reference so the spawned I/O task can self-reap its own map
+        // entry on an exhausted reconnect without keeping the manager alive (G6).
+        let agents_weak = Arc::downgrade(&self.agents);
 
         // Run the async connect+handshake on the current tokio runtime, wrapped
         // in a `tokio::select!` against the cancellation token so a Cancel aborts
@@ -695,6 +712,7 @@ impl AgentConnectionManager {
             let agent_id_task = agent_id_str.clone();
             let config_task = config_clone.clone();
             let settings_task = settings_clone.clone();
+            let agents_weak_task = agents_weak.clone();
 
             tokio::spawn(async move {
                 agent_io_task(
@@ -707,6 +725,7 @@ impl AgentConnectionManager {
                     config_task,
                     settings_task,
                     request_id,
+                    agents_weak_task,
                 )
                 .await;
             });
@@ -1207,6 +1226,10 @@ impl AgentRpcClient for AgentConnectionManager {
         AgentConnectionManager::is_connected(self, agent_id)
     }
 
+    fn prune_dead_agents(&self) -> Vec<String> {
+        AgentConnectionManager::prune_dead_agents(self)
+    }
+
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         AgentConnectionManager::get_capabilities(self, agent_id)
     }
@@ -1497,6 +1520,7 @@ async fn agent_io_task(
     config: RemoteAgentConfig,
     agent_settings: AgentSettings,
     mut request_id: u64,
+    agents: std::sync::Weak<Mutex<HashMap<String, AgentConnection>>>,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
@@ -1683,6 +1707,20 @@ async fn agent_io_task(
                 channel = new_channel;
                 line_buf.clear();
                 connection_error = None;
+
+                // G7 (#1239): reconcile the output/monitoring senders against the
+                // sessions the agent actually recovered. Senders keyed by ids that
+                // did not come back are stale — drop them so the maps don't leak.
+                if let Some(live_ids) =
+                    list_recovered_session_ids(&mut channel, &agent_id, &mut request_id).await
+                {
+                    reconcile_output_senders(
+                        &mut session_outputs,
+                        &mut monitoring_outputs,
+                        &live_ids,
+                    );
+                }
+
                 emit_agent_state(&app_handle, &agent_id, "connected");
                 info!("Agent {}: reconnected successfully", agent_id);
                 // Notify all pending requests that the connection was lost
@@ -1695,6 +1733,9 @@ async fn agent_io_task(
                 error!("Agent {}: reconnection failed: {}", agent_id, e);
                 emit_agent_state_with_error(&app_handle, &agent_id, "disconnected", Some(&e));
                 alive.store(false, Ordering::SeqCst);
+                // G6 (#1239): self-reap our own map entry instead of leaving a
+                // zombie for lazy eviction on the next `connect_agent`.
+                reap_agent(&agents, &agent_id);
                 // Notify all pending requests
                 for (_, tx) in pending_responses.drain() {
                     let _ = tx.send(Err("Agent disconnected".to_string()));
@@ -1717,6 +1758,56 @@ fn reconcile_output_senders(
 ) {
     session_outputs.retain(|id, _| live_ids.contains(id));
     monitoring_outputs.retain(|id, _| live_ids.contains(id));
+}
+
+/// List the session ids the agent currently reports over the (freshly
+/// reconnected) channel, for post-reconnect reconciliation (G7, #1239).
+///
+/// Sends `connection.list` and reads until the matching response arrives,
+/// skipping any interleaved notifications. Returns `None` on any I/O or parse
+/// failure so the caller leaves the sender maps untouched rather than dropping
+/// senders it could not confirm as dead.
+async fn list_recovered_session_ids(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    agent_id: &str,
+    request_id: &mut u64,
+) -> Option<std::collections::HashSet<String>> {
+    *request_id += 1;
+    let req_id = *request_id;
+    let line = serialize_request(req_id, "connection.list", serde_json::json!({})).ok()?;
+    channel.data(line.as_bytes()).await.ok()?;
+
+    const MAX_SKIPPED: u32 = 1000;
+    let mut buf = String::new();
+    let mut skipped: u32 = 0;
+    loop {
+        let resp = read_handshake_line(channel, agent_id, &mut buf).await?;
+        if resp.is_empty() {
+            continue;
+        }
+        match jsonrpc::parse_message(&resp) {
+            Ok(jsonrpc::JsonRpcMessage::Response { id, result }) if id == req_id => {
+                let ids = result["sessions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s["session_id"].as_str().map(|s| s.to_string()))
+                    .collect();
+                return Some(ids);
+            }
+            Ok(jsonrpc::JsonRpcMessage::Error { id, .. }) if id == req_id => return None,
+            _ => {
+                skipped += 1;
+                if skipped > MAX_SKIPPED {
+                    warn!(
+                        "Agent {}: too many messages before connection.list response",
+                        agent_id
+                    );
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// Handle a notification from the agent.
