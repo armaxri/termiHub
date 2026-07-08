@@ -43,34 +43,61 @@ vi.mock("@/services/api", () => ({
 }));
 
 // Session-based monitoring subscribes to Tauri events and stores the returned
-// unlisten fns; the tests below assert those listeners are not leaked on a
-// failed open. Status callbacks are captured so a test can push a transition.
-const mockUnlisten = vi.fn();
-const mockStatusUnlisten = vi.fn();
+// unlisten fns. Each connect registers its own stats+status callbacks that
+// filter by sessionId. The mocks below capture every registered callback so a
+// test can fan a push event out to all of them (mirroring the real event bus,
+// where every listener receives every event and filters by sessionId).
+type StatsCallback = (sessionId: string, stats: SystemStats) => void;
 type StatusCallback = (sessionId: string, status: MonitorStatus) => void;
-let capturedStatusCallback: StatusCallback | null = null;
-const mockOnSessionMonitoringStats = vi.fn((..._args: unknown[]) => Promise.resolve(mockUnlisten));
+let statsCallbacks: StatsCallback[] = [];
+let statusCallbacks: StatusCallback[] = [];
+const mockStatsUnlisten = vi.fn();
+const mockStatusUnlisten = vi.fn();
+const mockOnSessionMonitoringStats = vi.fn((cb: StatsCallback) => {
+  statsCallbacks.push(cb);
+  return Promise.resolve(mockStatsUnlisten);
+});
 const mockOnSessionMonitoringStatus = vi.fn((cb: StatusCallback) => {
-  capturedStatusCallback = cb;
+  statusCallbacks.push(cb);
   return Promise.resolve(mockStatusUnlisten);
 });
 
+/** Fan a stats push out to every registered listener (they filter by sessionId). */
+function pushStats(sessionId: string, stats: SystemStats) {
+  statsCallbacks.forEach((cb) => cb(sessionId, stats));
+}
+/** Fan a status push out to every registered listener (they filter by sessionId). */
+function pushStatus(sessionId: string, status: MonitorStatus) {
+  statusCallbacks.forEach((cb) => cb(sessionId, status));
+}
+
 vi.mock("@/services/events", () => ({
-  onSessionMonitoringStats: (...args: unknown[]) => mockOnSessionMonitoringStats(...args),
+  onSessionMonitoringStats: (cb: StatsCallback) => mockOnSessionMonitoringStats(cb),
   onSessionMonitoringStatus: (cb: StatusCallback) => mockOnSessionMonitoringStatus(cb),
   onPersistentSessionStateChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 
-import { useAppStore } from "./appStore";
+import { useAppStore, selectMonitor, selectActiveMonitor, monitorKeyForTab } from "./appStore";
 import type { MonitorStatus, SystemStats } from "@/types/monitoring";
+import type { LeafPanel, TerminalTab } from "@/types/terminal";
 
-const TEST_SSH_CONFIG = {
+const HOST_A_CONFIG = {
   host: "pi.local",
   port: 22,
   username: "pi",
   authMethod: "key" as const,
   keyPath: "/home/.ssh/id_rsa",
 };
+const HOST_A_KEY = "pi@pi.local:22";
+
+const HOST_B_CONFIG = {
+  host: "server.local",
+  port: 2222,
+  username: "admin",
+  authMethod: "key" as const,
+  keyPath: "/home/.ssh/id_rsa",
+};
+const HOST_B_KEY = "admin@server.local:2222";
 
 const TEST_STATS: SystemStats = {
   hostname: "pi",
@@ -86,52 +113,72 @@ const TEST_STATS: SystemStats = {
   osInfo: "Linux 6.1",
 };
 
-describe("appStore — monitoring", () => {
+/** Makes the given monitor key the active tab by installing a matching SSH tab. */
+function setActiveSshTab(host: string, port: number, username: string) {
+  const tab: TerminalTab = {
+    id: "tab-active",
+    sessionId: "term-sess",
+    title: "ssh",
+    connectionType: "ssh",
+    contentType: "terminal",
+    config: { type: "ssh", config: { host, port, username } },
+    panelId: "leaf-1",
+    isActive: true,
+  };
+  const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: "tab-active" };
+  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+}
+
+describe("appStore — monitoring (per-host keyed slice, G6)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
-    capturedStatusCallback = null;
+    statsCallbacks = [];
+    statusCallbacks = [];
   });
 
-  describe("connectMonitoring", () => {
-    it("sets session, host, and stats on success", async () => {
+  describe("connectMonitoring — SSH", () => {
+    it("creates a keyed entry with session, host, and stats on success", async () => {
       mockMonitoringOpen.mockResolvedValue("session-123");
       mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
 
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
 
-      const state = useAppStore.getState();
-      expect(state.monitoringSessionId).toBe("session-123");
-      expect(state.monitoringHost).toBe("pi@pi.local:22");
-      expect(state.monitoringStats).toEqual(TEST_STATS);
-      expect(state.monitoringLoading).toBe(false);
-      expect(state.monitoringError).toBeNull();
+      const entry = selectMonitor(useAppStore.getState(), HOST_A_KEY);
+      expect(entry).not.toBeNull();
+      expect(entry!.monitorSessionId).toBe("session-123");
+      expect(entry!.host).toBe(HOST_A_KEY);
+      expect(entry!.sessionBased).toBe(false);
+      expect(entry!.stats).toEqual(TEST_STATS);
+      expect(entry!.loading).toBe(false);
+      expect(entry!.error).toBeNull();
+      expect(entry!.status).toBe("live");
     });
 
-    it("sets error without throwing on connection failure", async () => {
+    it("sets error on the entry without throwing on connection failure", async () => {
       mockMonitoringOpen.mockRejectedValue(new Error("Connection refused"));
 
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
 
-      const state = useAppStore.getState();
-      expect(state.monitoringSessionId).toBeNull();
-      expect(state.monitoringLoading).toBe(false);
-      expect(state.monitoringError).toBe("Connection refused");
+      const entry = selectMonitor(useAppStore.getState(), HOST_A_KEY);
+      expect(entry!.monitorSessionId).toBeNull();
+      expect(entry!.loading).toBe(false);
+      expect(entry!.error).toBe("Connection refused");
     });
 
-    it("sets error without throwing on stats fetch failure", async () => {
+    it("sets error on stats fetch failure", async () => {
       mockMonitoringOpen.mockResolvedValue("session-123");
       mockMonitoringFetchStats.mockRejectedValue(new Error("Stats timeout"));
 
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
 
-      const state = useAppStore.getState();
-      expect(state.monitoringSessionId).toBeNull();
-      expect(state.monitoringLoading).toBe(false);
-      expect(state.monitoringError).toBe("Stats timeout");
+      const entry = selectMonitor(useAppStore.getState(), HOST_A_KEY);
+      expect(entry!.monitorSessionId).toBeNull();
+      expect(entry!.loading).toBe(false);
+      expect(entry!.error).toBe("Stats timeout");
     });
 
-    it("sets monitoringLoading to true while connecting", async () => {
+    it("marks the entry loading while connecting", async () => {
       let resolveOpen: (v: string) => void;
       mockMonitoringOpen.mockReturnValue(
         new Promise<string>((r) => {
@@ -140,495 +187,282 @@ describe("appStore — monitoring", () => {
       );
       mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
 
-      const promise = useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-      expect(useAppStore.getState().monitoringLoading).toBe(true);
+      const promise = useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.loading).toBe(true);
 
       resolveOpen!("session-123");
       await promise;
-      expect(useAppStore.getState().monitoringLoading).toBe(false);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.loading).toBe(false);
+    });
+  });
+
+  describe("multi-host — two entries coexist (G6)", () => {
+    it("keeps both hosts as independent entries (no clobber)", async () => {
+      mockMonitoringOpen.mockResolvedValueOnce("session-A").mockResolvedValueOnce("session-B");
+      mockMonitoringFetchStats
+        .mockResolvedValueOnce({ ...TEST_STATS, hostname: "A" })
+        .mockResolvedValueOnce({ ...TEST_STATS, hostname: "B" });
+
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      await useAppStore.getState().connectMonitoring(HOST_B_CONFIG);
+
+      const state = useAppStore.getState();
+      expect(Object.keys(state.monitors).sort()).toEqual([HOST_B_KEY, HOST_A_KEY].sort());
+      expect(selectMonitor(state, HOST_A_KEY)!.monitorSessionId).toBe("session-A");
+      expect(selectMonitor(state, HOST_A_KEY)!.stats!.hostname).toBe("A");
+      expect(selectMonitor(state, HOST_B_KEY)!.monitorSessionId).toBe("session-B");
+      expect(selectMonitor(state, HOST_B_KEY)!.stats!.hostname).toBe("B");
+    });
+
+    it("disconnecting one host leaves the other intact", async () => {
+      mockMonitoringOpen.mockResolvedValueOnce("session-A").mockResolvedValueOnce("session-B");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      mockMonitoringClose.mockResolvedValue(undefined);
+
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      await useAppStore.getState().connectMonitoring(HOST_B_CONFIG);
+
+      await useAppStore.getState().disconnectMonitoring(HOST_A_KEY);
+
+      const state = useAppStore.getState();
+      expect(selectMonitor(state, HOST_A_KEY)).toBeNull();
+      expect(selectMonitor(state, HOST_B_KEY)).not.toBeNull();
+      expect(selectMonitor(state, HOST_B_KEY)!.monitorSessionId).toBe("session-B");
+      // Only host A's backend session was closed.
+      expect(mockMonitoringClose).toHaveBeenCalledTimes(1);
+      expect(mockMonitoringClose).toHaveBeenCalledWith("session-A");
+    });
+
+    it("disconnectMonitoring() with no key tears down every entry", async () => {
+      mockMonitoringOpen.mockResolvedValueOnce("session-A").mockResolvedValueOnce("session-B");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      mockMonitoringClose.mockResolvedValue(undefined);
+
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      await useAppStore.getState().connectMonitoring(HOST_B_CONFIG);
+
+      await useAppStore.getState().disconnectMonitoring();
+
+      expect(useAppStore.getState().monitors).toEqual({});
+      expect(mockMonitoringClose).toHaveBeenCalledTimes(2);
     });
   });
 
   describe("connectMonitoring — session-based (push)", () => {
-    const SESSION_CONFIG = { _sessionBased: true, _sessionId: "sess-abc" };
-
-    it("sets session and clears loading on successful open", async () => {
+    it("creates a session-keyed entry on successful open", async () => {
       mockSessionMonitoringOpen.mockResolvedValue(undefined);
 
-      await useAppStore.getState().connectMonitoring(SESSION_CONFIG);
+      await useAppStore
+        .getState()
+        .connectMonitoring({ _sessionBased: true, _sessionId: "sess-abc" });
 
-      const state = useAppStore.getState();
-      expect(state.monitoringSessionId).toBe("sess-abc");
-      expect(state.monitoringHost).toBe("sess-abc");
-      expect(state.monitoringLoading).toBe(false);
+      const entry = selectMonitor(useAppStore.getState(), "sess-abc");
+      expect(entry).not.toBeNull();
+      expect(entry!.sessionBased).toBe(true);
+      expect(entry!.monitorSessionId).toBe("sess-abc");
+      expect(entry!.host).toBe("sess-abc");
+      expect(entry!.loading).toBe(false);
+      expect(entry!.status).toBe("live");
       expect(mockOnSessionMonitoringStats).toHaveBeenCalledTimes(1);
     });
 
     it("unlistens the stats listener when session_monitoring_open fails (no leak)", async () => {
       mockSessionMonitoringOpen.mockRejectedValue(new Error("open refused"));
 
-      await useAppStore.getState().connectMonitoring(SESSION_CONFIG);
+      await useAppStore
+        .getState()
+        .connectMonitoring({ _sessionBased: true, _sessionId: "sess-abc" });
 
-      // The event listener was attached before the failing open, so it must be
-      // detached in the catch — otherwise a dangling listener could later update
-      // the wrong host (audit G5).
       expect(mockOnSessionMonitoringStats).toHaveBeenCalledTimes(1);
-      expect(mockUnlisten).toHaveBeenCalledTimes(1);
+      expect(mockStatsUnlisten).toHaveBeenCalledTimes(1);
 
-      const state = useAppStore.getState();
-      expect(state.monitoringSessionId).toBeNull();
-      expect(state.monitoringLoading).toBe(false);
-      expect(state.monitoringError).toBe("open refused");
+      const entry = selectMonitor(useAppStore.getState(), "sess-abc");
+      expect(entry!.monitorSessionId).toBeNull();
+      expect(entry!.loading).toBe(false);
+      expect(entry!.error).toBe("open refused");
     });
 
-    it("does not re-invoke the leaked listener on a later disconnect", async () => {
-      mockSessionMonitoringOpen.mockRejectedValue(new Error("open refused"));
+    it("routes stats push events to the matching entry only", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-a" });
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-b" });
 
-      await useAppStore.getState().connectMonitoring(SESSION_CONFIG);
-      expect(mockUnlisten).toHaveBeenCalledTimes(1);
+      pushStats("sess-a", { ...TEST_STATS, hostname: "A-updated" });
 
-      // A subsequent disconnect must not call the (already-detached) listener again,
-      // proving _monitoringUnlisten was nulled in the catch.
-      await useAppStore.getState().disconnectMonitoring();
-      expect(mockUnlisten).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("disconnectMonitoring", () => {
-    it("clears all monitoring state", async () => {
-      mockMonitoringClose.mockResolvedValue(undefined);
-
-      // Set up connected state
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-        monitoringError: null,
-      });
-
-      await useAppStore.getState().disconnectMonitoring();
-
-      const state = useAppStore.getState();
-      expect(state.monitoringSessionId).toBeNull();
-      expect(state.monitoringHost).toBeNull();
-      expect(state.monitoringStats).toBeNull();
-      expect(state.monitoringError).toBeNull();
+      expect(selectMonitor(useAppStore.getState(), "sess-a")!.stats!.hostname).toBe("A-updated");
+      // sess-b never received a push → still no stats.
+      expect(selectMonitor(useAppStore.getState(), "sess-b")!.stats).toBeNull();
     });
 
-    it("clears state even if close command fails", async () => {
-      mockMonitoringClose.mockRejectedValue(new Error("network down"));
+    it("routes status push events to the matching entry only", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-a" });
+      await useAppStore.getState().connectMonitoring({ _sessionBased: true, _sessionId: "sess-b" });
 
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-      });
+      pushStatus("sess-a", "stale");
 
-      await useAppStore.getState().disconnectMonitoring();
-
-      const state = useAppStore.getState();
-      expect(state.monitoringSessionId).toBeNull();
-      expect(state.monitoringHost).toBeNull();
-      expect(state.monitoringStats).toBeNull();
-    });
-
-    it("does not call monitoringClose when no session exists", async () => {
-      await useAppStore.getState().disconnectMonitoring();
-      expect(mockMonitoringClose).not.toHaveBeenCalled();
+      expect(selectMonitor(useAppStore.getState(), "sess-a")!.status).toBe("stale");
+      // sess-b is untouched.
+      expect(selectMonitor(useAppStore.getState(), "sess-b")!.status).toBe("live");
     });
   });
 
-  describe("refreshMonitoring", () => {
-    it("does NOT toggle monitoringLoading", async () => {
+  describe("selectActiveMonitor / monitorKeyForTab", () => {
+    it("monitorKeyForTab derives the SSH host key", () => {
+      const tab = {
+        connectionType: "ssh",
+        sessionId: "s",
+        config: { type: "ssh", config: { host: "pi.local", port: 22, username: "pi" } },
+      } as unknown as TerminalTab;
+      expect(monitorKeyForTab(tab)).toBe(HOST_A_KEY);
+    });
+
+    it("monitorKeyForTab uses sessionId for remote-session tabs", () => {
+      const tab = {
+        connectionType: "remote-session",
+        sessionId: "sess-xyz",
+        config: { type: "remote-session", config: {} },
+      } as unknown as TerminalTab;
+      expect(monitorKeyForTab(tab)).toBe("sess-xyz");
+    });
+
+    it("returns the active tab's entry", async () => {
+      mockMonitoringOpen.mockResolvedValueOnce("session-A").mockResolvedValueOnce("session-B");
+      mockMonitoringFetchStats
+        .mockResolvedValueOnce({ ...TEST_STATS, hostname: "A" })
+        .mockResolvedValueOnce({ ...TEST_STATS, hostname: "B" });
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      await useAppStore.getState().connectMonitoring(HOST_B_CONFIG);
+
+      setActiveSshTab("server.local", 2222, "admin");
+      const active = selectActiveMonitor(useAppStore.getState());
+      expect(active).not.toBeNull();
+      expect(active!.key).toBe(HOST_B_KEY);
+      expect(active!.stats!.hostname).toBe("B");
+    });
+
+    it("returns null when the active tab has no monitor", () => {
+      setActiveSshTab("nowhere.local", 22, "nobody");
+      expect(selectActiveMonitor(useAppStore.getState())).toBeNull();
+    });
+  });
+
+  describe("refreshMonitoring(key)", () => {
+    it("does NOT toggle the entry's loading flag", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
       mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringLoading: false,
-      });
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
 
       const loadingStates: boolean[] = [];
       const unsub = useAppStore.subscribe((state) => {
-        loadingStates.push(state.monitoringLoading);
+        const e = state.monitors[HOST_A_KEY];
+        if (e) loadingStates.push(e.loading);
       });
 
-      await useAppStore.getState().refreshMonitoring();
-
+      await useAppStore.getState().refreshMonitoring(HOST_A_KEY);
       unsub();
-      // monitoringLoading should never have been set to true during refresh
       expect(loadingStates.every((v) => v === false)).toBe(true);
     });
 
-    it("updates stats on success", async () => {
-      const updatedStats = { ...TEST_STATS, cpuUsagePercent: 75.0 };
-      mockMonitoringFetchStats.mockResolvedValue(updatedStats);
+    it("updates stats and recovers status to live on success", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      useAppStore.setState((s) => ({
+        monitors: { ...s.monitors, [HOST_A_KEY]: { ...s.monitors[HOST_A_KEY], status: "stale" } },
+      }));
 
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringStats: TEST_STATS,
-      });
+      const updated = { ...TEST_STATS, cpuUsagePercent: 75 };
+      mockMonitoringFetchStats.mockResolvedValue(updated);
+      await useAppStore.getState().refreshMonitoring(HOST_A_KEY);
 
-      await useAppStore.getState().refreshMonitoring();
-
-      expect(useAppStore.getState().monitoringStats).toEqual(updatedStats);
-      expect(useAppStore.getState().monitoringError).toBeNull();
+      const entry = selectMonitor(useAppStore.getState(), HOST_A_KEY)!;
+      expect(entry.stats).toEqual(updated);
+      expect(entry.status).toBe("live");
+      expect(entry.error).toBeNull();
     });
 
-    it("sets error on failure", async () => {
+    it("flips the entry to stale on a failed poll", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+
       mockMonitoringFetchStats.mockRejectedValue(new Error("timeout"));
+      await useAppStore.getState().refreshMonitoring(HOST_A_KEY);
 
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringStats: TEST_STATS,
-      });
-
-      await useAppStore.getState().refreshMonitoring();
-
-      expect(useAppStore.getState().monitoringError).toBe("timeout");
+      const entry = selectMonitor(useAppStore.getState(), HOST_A_KEY)!;
+      expect(entry.status).toBe("stale");
+      expect(entry.error).toBe("timeout");
     });
 
-    it("no-ops when not connected", async () => {
-      await useAppStore.getState().refreshMonitoring();
+    it("no-ops for an unknown key", async () => {
+      await useAppStore.getState().refreshMonitoring("no-such-key");
       expect(mockMonitoringFetchStats).not.toHaveBeenCalled();
-    });
-
-    it("updates the stats cache with fresh stats", async () => {
-      const updatedStats = { ...TEST_STATS, cpuUsagePercent: 80.0 };
-      mockMonitoringFetchStats.mockResolvedValue(updatedStats);
-
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-      });
-
-      await useAppStore.getState().refreshMonitoring();
-
-      expect(useAppStore.getState().monitoringStatsCache["pi@pi.local:22"]).toEqual(updatedStats);
     });
   });
 
-  // Audit gap G10: the first sample reports CPU 0% (no prior delta), so the
-  // status bar shows a priming indicator until the second sample. The store
-  // tracks progress via monitoringSampleCount.
-  describe("monitoringSampleCount (CPU priming)", () => {
+  describe("stats cache (folded, keyed by MonitorKey)", () => {
+    it("connect pre-populates the entry stats from cache while loading", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-456");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      useAppStore.setState({ monitoringStatsCache: { [HOST_A_KEY]: TEST_STATS } });
+
+      let capturedStats: SystemStats | null = null;
+      const unsub = useAppStore.subscribe((state) => {
+        const e = state.monitors[HOST_A_KEY];
+        if (e && e.loading && e.stats !== null) capturedStats = e.stats;
+      });
+
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      unsub();
+      expect(capturedStats).toEqual(TEST_STATS);
+    });
+
+    it("disconnect saves the entry's last stats back to the cache", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+      mockMonitoringClose.mockResolvedValue(undefined);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+
+      await useAppStore.getState().disconnectMonitoring(HOST_A_KEY);
+
+      expect(useAppStore.getState().monitoringStatsCache[HOST_A_KEY]).toEqual(TEST_STATS);
+    });
+  });
+
+  describe("sampleCount priming (per entry, G10)", () => {
     it("is 1 after the first SSH connect fetch", async () => {
       mockMonitoringOpen.mockResolvedValue("session-123");
       mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-
-      expect(useAppStore.getState().monitoringSampleCount).toBe(1);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.sampleCount).toBe(1);
     });
 
-    it("increments to 2 after a subsequent refresh", async () => {
+    it("increments to 2 after a refresh", async () => {
       mockMonitoringOpen.mockResolvedValue("session-123");
       mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-
-      mockMonitoringFetchStats.mockResolvedValue({ ...TEST_STATS, cpuUsagePercent: 40 });
-      await useAppStore.getState().refreshMonitoring();
-
-      expect(useAppStore.getState().monitoringSampleCount).toBe(2);
-    });
-
-    it("resets to 0 on disconnect", async () => {
-      mockMonitoringClose.mockResolvedValue(undefined);
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-        monitoringSampleCount: 5,
-      });
-
-      await useAppStore.getState().disconnectMonitoring();
-
-      expect(useAppStore.getState().monitoringSampleCount).toBe(0);
-    });
-
-    it("resets to 0 at the start of a fresh connect", async () => {
-      // Simulate a stale counter from a previous session.
-      useAppStore.setState({ monitoringSampleCount: 7 });
-      mockMonitoringOpen.mockResolvedValue("session-456");
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-
-      // Reset to 0, then +1 for the initial fetch = 1.
-      expect(useAppStore.getState().monitoringSampleCount).toBe(1);
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      await useAppStore.getState().refreshMonitoring(HOST_A_KEY);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.sampleCount).toBe(2);
     });
   });
 
-  describe("stats cache", () => {
-    it("disconnectMonitoring saves stats to cache keyed by host", async () => {
-      mockMonitoringClose.mockResolvedValue(undefined);
+  describe("clearMonitoringError(key) / setMonitoringCancelled(key) (G8/G9)", () => {
+    it("clears a lingering error on a specific entry", async () => {
+      mockMonitoringOpen.mockRejectedValue(new Error("boom"));
+      await useAppStore.getState().connectMonitoring(HOST_A_CONFIG);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.error).toBe("boom");
 
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-      });
-
-      await useAppStore.getState().disconnectMonitoring();
-
-      expect(useAppStore.getState().monitoringStatsCache["pi@pi.local:22"]).toEqual(TEST_STATS);
+      useAppStore.getState().clearMonitoringError(HOST_A_KEY);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.error).toBeNull();
     });
 
-    it("disconnectMonitoring does not update cache when there are no stats", async () => {
-      mockMonitoringClose.mockResolvedValue(undefined);
+    it("setMonitoringCancelled toggles the flag on a keyed entry", () => {
+      useAppStore.getState().setMonitoringCancelled(HOST_A_KEY, true);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.cancelled).toBe(true);
 
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: null,
-        monitoringStatsCache: {},
-      });
-
-      await useAppStore.getState().disconnectMonitoring();
-
-      expect(useAppStore.getState().monitoringStatsCache).toEqual({});
-    });
-
-    it("connectMonitoring pre-populates stats from cache on reconnect", async () => {
-      mockMonitoringOpen.mockResolvedValue("session-456");
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      useAppStore.setState({
-        monitoringStatsCache: { "pi@pi.local:22": TEST_STATS },
-      });
-
-      let capturedStats: SystemStats | null = null;
-      let capturedHost: string | null = null;
-      const unsub = useAppStore.subscribe((state) => {
-        if (state.monitoringLoading && state.monitoringStats !== null) {
-          capturedStats = state.monitoringStats;
-          capturedHost = state.monitoringHost;
-        }
-      });
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-      unsub();
-
-      // Stats and host should have been set from cache while loading
-      expect(capturedStats).toEqual(TEST_STATS);
-      expect(capturedHost).toBe("pi@pi.local:22");
-    });
-
-    it("connectMonitoring starts with null stats when no cache entry exists", async () => {
-      mockMonitoringOpen.mockResolvedValue("session-789");
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      let statsWhileLoading: SystemStats | null | undefined = undefined;
-      const unsub = useAppStore.subscribe((state) => {
-        if (state.monitoringLoading && statsWhileLoading === undefined) {
-          statsWhileLoading = state.monitoringStats;
-        }
-      });
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-      unsub();
-
-      expect(statsWhileLoading).toBeNull();
-    });
-
-    it("connectMonitoring updates cache after successful connect", async () => {
-      mockMonitoringOpen.mockResolvedValue("session-123");
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-
-      expect(useAppStore.getState().monitoringStatsCache["pi@pi.local:22"]).toEqual(TEST_STATS);
-    });
-  });
-
-  // Audit gap G9: a stale monitoringError must not linger across hosts. The
-  // store clears it on every successful stat update and exposes an explicit
-  // clearMonitoringError() so the status bar can reset it when switching hosts.
-  describe("clearMonitoringError (G9)", () => {
-    it("clears a lingering monitoringError", () => {
-      useAppStore.setState({ monitoringError: "stale error from previous host" });
-
-      useAppStore.getState().clearMonitoringError();
-
-      expect(useAppStore.getState().monitoringError).toBeNull();
-    });
-
-    it("is a no-op when there is no error", () => {
-      useAppStore.setState({ monitoringError: null });
-
-      useAppStore.getState().clearMonitoringError();
-
-      expect(useAppStore.getState().monitoringError).toBeNull();
-    });
-
-    it("refreshMonitoring success clears a pre-existing error (does not linger)", async () => {
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-        monitoringError: "old timeout error",
-      });
-
-      await useAppStore.getState().refreshMonitoring();
-
-      expect(useAppStore.getState().monitoringError).toBeNull();
-    });
-
-    it("connectMonitoring start clears a stale error before connecting", async () => {
-      mockMonitoringOpen.mockResolvedValue("session-123");
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      useAppStore.setState({ monitoringError: "error from a previous host" });
-
-      let errorWhileLoading: string | null | undefined = undefined;
-      const unsub = useAppStore.subscribe((state) => {
-        if (state.monitoringLoading && errorWhileLoading === undefined) {
-          errorWhileLoading = state.monitoringError;
-        }
-      });
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-      unsub();
-
-      expect(errorWhileLoading).toBeNull();
-    });
-  });
-
-  // Audit gap G8: cancelling the password prompt during auto-connect must leave
-  // a visible "not connected" affordance instead of silently returning. The
-  // store tracks this via monitoringCancelled.
-  describe("monitoringCancelled (G8)", () => {
-    it("defaults to false", () => {
-      expect(useAppStore.getState().monitoringCancelled).toBe(false);
-    });
-
-    it("setMonitoringCancelled toggles the flag", () => {
-      useAppStore.getState().setMonitoringCancelled(true);
-      expect(useAppStore.getState().monitoringCancelled).toBe(true);
-
-      useAppStore.getState().setMonitoringCancelled(false);
-      expect(useAppStore.getState().monitoringCancelled).toBe(false);
-    });
-
-    it("connectMonitoring start clears a stale cancelled flag", async () => {
-      mockMonitoringOpen.mockResolvedValue("session-123");
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      useAppStore.setState({ monitoringCancelled: true });
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-
-      expect(useAppStore.getState().monitoringCancelled).toBe(false);
-    });
-
-    it("disconnectMonitoring clears the cancelled flag", async () => {
-      mockMonitoringClose.mockResolvedValue(undefined);
-
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-        monitoringCancelled: true,
-      });
-
-      await useAppStore.getState().disconnectMonitoring();
-
-      expect(useAppStore.getState().monitoringCancelled).toBe(false);
-    });
-  });
-
-  // Issue #1229 (audit gap G1): a mid-stream drop must surface as an explicit
-  // "stale" status so frozen stats are not shown as live.
-  describe("monitoringStatus (Stale — G1)", () => {
-    it("defaults to null when nothing is monitored", () => {
-      expect(useAppStore.getState().monitoringStatus).toBeNull();
-    });
-
-    it("is 'live' after a successful SSH connect", async () => {
-      mockMonitoringOpen.mockResolvedValue("session-123");
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
-
-      expect(useAppStore.getState().monitoringStatus).toBe("live");
-    });
-
-    it("flips to 'stale' when an SSH refresh poll fails", async () => {
-      mockMonitoringFetchStats.mockRejectedValue(new Error("timeout"));
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-        monitoringStatus: "live",
-      });
-
-      await useAppStore.getState().refreshMonitoring();
-
-      expect(useAppStore.getState().monitoringStatus).toBe("stale");
-    });
-
-    it("recovers to 'live' when a later SSH refresh poll succeeds", async () => {
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-        monitoringStatus: "stale",
-      });
-      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
-
-      await useAppStore.getState().refreshMonitoring();
-
-      expect(useAppStore.getState().monitoringStatus).toBe("live");
-    });
-
-    it("is 'live' after a session-based open, then follows status push events", async () => {
-      mockSessionMonitoringOpen.mockResolvedValue(undefined);
-
-      await useAppStore.getState().connectMonitoring({
-        _sessionBased: true,
-        _sessionId: "sess-abc",
-      });
-      expect(useAppStore.getState().monitoringStatus).toBe("live");
-      expect(mockOnSessionMonitoringStatus).toHaveBeenCalledTimes(1);
-      expect(capturedStatusCallback).not.toBeNull();
-
-      // A mid-stream drop pushes "stale" for the active session.
-      capturedStatusCallback?.("sess-abc", "stale" as MonitorStatus);
-      expect(useAppStore.getState().monitoringStatus).toBe("stale");
-
-      // Recovery pushes "live" again.
-      capturedStatusCallback?.("sess-abc", "live" as MonitorStatus);
-      expect(useAppStore.getState().monitoringStatus).toBe("live");
-    });
-
-    it("ignores status events for a different session", async () => {
-      mockSessionMonitoringOpen.mockResolvedValue(undefined);
-
-      await useAppStore.getState().connectMonitoring({
-        _sessionBased: true,
-        _sessionId: "sess-abc",
-      });
-
-      capturedStatusCallback?.("some-other-session", "stale" as MonitorStatus);
-
-      // Unrelated session must not change our status.
-      expect(useAppStore.getState().monitoringStatus).toBe("live");
-    });
-
-    it("resets to null on disconnect", async () => {
-      mockMonitoringClose.mockResolvedValue(undefined);
-      useAppStore.setState({
-        monitoringSessionId: "session-123",
-        monitoringHost: "pi@pi.local:22",
-        monitoringStats: TEST_STATS,
-        monitoringStatus: "stale",
-      });
-
-      await useAppStore.getState().disconnectMonitoring();
-
-      expect(useAppStore.getState().monitoringStatus).toBeNull();
+      useAppStore.getState().setMonitoringCancelled(HOST_A_KEY, false);
+      expect(selectMonitor(useAppStore.getState(), HOST_A_KEY)!.cancelled).toBe(false);
     });
   });
 });
