@@ -658,6 +658,7 @@ impl SessionManager {
     pub async fn start_session_monitoring<R: tauri::Runtime>(
         &self,
         session_id: &str,
+        interval_ms: Option<u64>,
         app_handle: tauri::AppHandle<R>,
     ) -> Result<(), TerminalError> {
         let subscription = {
@@ -673,6 +674,14 @@ impl SessionManager {
                 .await
                 .map_err(|e| TerminalError::RemoteError(e.to_string()))?
         };
+
+        // Apply the caller's chosen refresh interval to the now-running loop
+        // (#1233). Done after the subscribe block so the provider reference is
+        // not held across this await. Takes effect on the next tick; omitted →
+        // provider default.
+        if let Some(ms) = interval_ms {
+            self.set_session_monitoring_interval(session_id, ms).await?;
+        }
 
         let sid = session_id.to_string();
         let join_handle = tokio::spawn(async move {
@@ -740,6 +749,60 @@ impl SessionManager {
                 if let Err(e) = provider.unsubscribe().await {
                     warn!(session_id, error = %e, "Session monitoring unsubscribe error");
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Pause or resume a session's monitoring loop (#1233).
+    ///
+    /// A paused loop keeps its transport open but stops collecting, emitting a
+    /// `Paused` status event; resuming emits `Live`.
+    pub async fn set_session_monitoring_paused(
+        &self,
+        session_id: &str,
+        paused: bool,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let provider = entry
+            .connection
+            .monitoring()
+            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
+        provider.set_paused(paused).await;
+        Ok(())
+    }
+
+    /// Change a session monitoring loop's refresh interval (#1233).
+    pub async fn set_session_monitoring_interval(
+        &self,
+        session_id: &str,
+        interval_ms: u64,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let provider = entry
+            .connection
+            .monitoring()
+            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
+        provider
+            .set_interval(std::time::Duration::from_millis(interval_ms.max(1)))
+            .await;
+        Ok(())
+    }
+
+    /// Abort a session monitoring loop's in-flight connect / collect (#1233).
+    ///
+    /// Best-effort: a missing session or provider is treated as already gone.
+    pub async fn cancel_session_monitoring(&self, session_id: &str) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        if let Some(entry) = sessions.get(session_id) {
+            if let Some(provider) = entry.connection.monitoring() {
+                provider.cancel_connect().await;
             }
         }
         Ok(())
