@@ -512,22 +512,94 @@ export async function sftpRealpath(sessionId: string, path: string): Promise<str
   return await invoke<string>("sftp_realpath", { sessionId, path });
 }
 
-/** Download a remote file to a local path. Returns bytes transferred. */
+/** Lifecycle phase of an SFTP transfer (see `transfer-progress` event). */
+export type TransferPhase = "transferring" | "done" | "cancelled" | "error";
+
+/** Payload of the `transfer-progress` event emitted per SFTP transfer (#1245). */
+export interface TransferProgress {
+  transferId: string;
+  sessionId: string;
+  direction: "download" | "upload";
+  fileName: string;
+  transferred: number;
+  total: number;
+  phase: TransferPhase;
+  message?: string;
+}
+
+/**
+ * Await the terminal `transfer-progress` event for `transferId`.
+ *
+ * The backend now runs transfers in the background on a dedicated channel and
+ * returns a `transferId` synchronously (#1245). This bridges that fire-and-return
+ * command to the existing await-completion callers: it resolves with the bytes
+ * transferred on `done`, and rejects on `cancelled` / `error`. The D3 UI can
+ * instead subscribe to `transfer-progress` directly for live progress.
+ */
+async function awaitTransfer(transferId: string): Promise<number> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return await new Promise<number>((resolve, reject) => {
+    let unlisten: (() => void) | undefined;
+    void listen<TransferProgress>("transfer-progress", (event) => {
+      const p = event.payload;
+      if (p.transferId !== transferId) return;
+      if (p.phase === "done") {
+        unlisten?.();
+        resolve(p.transferred);
+      } else if (p.phase === "cancelled") {
+        unlisten?.();
+        reject(new Error("Transfer cancelled"));
+      } else if (p.phase === "error") {
+        unlisten?.();
+        reject(new Error(p.message ?? "Transfer failed"));
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+  });
+}
+
+/**
+ * Download a remote file to a local path.
+ *
+ * Registers a background transfer on a dedicated channel and resolves with the
+ * bytes transferred once it completes (#1245).
+ */
 export async function sftpDownload(
   sessionId: string,
   remotePath: string,
   localPath: string
 ): Promise<number> {
-  return await invoke<number>("sftp_download", { sessionId, remotePath, localPath });
+  const transferId = await invoke<string>("sftp_download", {
+    sessionId,
+    remotePath,
+    localPath,
+  });
+  return await awaitTransfer(transferId);
 }
 
-/** Upload a local file to a remote path. Returns bytes transferred. */
+/**
+ * Upload a local file to a remote path.
+ *
+ * Registers a background transfer on a dedicated channel and resolves with the
+ * bytes transferred once it completes (#1245).
+ */
 export async function sftpUpload(
   sessionId: string,
   localPath: string,
   remotePath: string
 ): Promise<number> {
-  return await invoke<number>("sftp_upload", { sessionId, localPath, remotePath });
+  const transferId = await invoke<string>("sftp_upload", {
+    sessionId,
+    localPath,
+    remotePath,
+  });
+  return await awaitTransfer(transferId);
+}
+
+/** Cancel an in-flight SFTP transfer. Unknown/finished ids are a no-op (#1245). */
+export async function sftpCancelTransfer(transferId: string): Promise<void> {
+  await invoke("sftp_cancel_transfer", { transferId });
 }
 
 /** Create a directory on the remote host. */

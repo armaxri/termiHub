@@ -112,6 +112,7 @@ Fixed strings — match exactly.
 | `context-agent-new-shell` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-refresh` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-setup` | `src/components/Sidebar/AgentNode.tsx` |
+| `context-agent-shutdown` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-bg-new-file` | `src/components/Sidebar/FileBrowser.tsx` |
 | `context-bg-new-folder` | `src/components/Sidebar/FileBrowser.tsx` |
 | `context-bg-paste` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -520,9 +521,11 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `activity-bar-*` | `activity-bar-${label.toLowerCase().replace(/\s+/g, "-")}` | `src/components/ActivityBar/ActivityBarItem.tsx` |
 | `activity-bar-context-toggle-*` | `activity-bar-context-toggle-${item.view}` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `agent-cancel-connect-*` | `agent-cancel-connect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-disconnect-*` | `agent-disconnect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-header-*` | `agent-header-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-node-*` | `agent-node-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-reconnect-*` | `agent-reconnect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-shutdown-*` | `agent-shutdown-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
