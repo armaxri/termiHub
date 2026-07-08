@@ -110,23 +110,17 @@
   opacity: 1;
 }
 
-.tunnel-item__action {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
+/*
+ * Geometry-only override for the shared ghost Button primitive in the dense
+ * tunnel row (issue #1259). All visual styling — color, hover, radius, focus
+ * ring, and the async pending/success affordances — comes from `.ui-btn--ghost`;
+ * this only makes each icon-only action a compact square so the error-state row
+ * (up to five actions) stays tidy in the narrow sidebar.
+ */
+.tunnel-item__action.ui-btn {
+  width: var(--control-height-md);
   padding: 0;
-}
-
-.tunnel-item__action:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  flex-shrink: 0;
 }
 
 .tunnel-item__details {
