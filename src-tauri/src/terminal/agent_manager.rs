@@ -449,12 +449,17 @@ impl Drop for ConnectingGuard {
 /// leaving a zombie behind for lazy eviction on the next `connect_agent`.
 type AgentMap = Arc<Mutex<HashMap<String, AgentConnection>>>;
 
+/// Weak back-reference to the [`AgentMap`], held by the async I/O task so it can
+/// self-reap its own entry without keeping the manager alive (G6, #1239).
+type WeakAgentMap = std::sync::Weak<Mutex<HashMap<String, AgentConnection>>>;
+
 /// Reap an agent's own entry from the manager map via a weak back-reference.
 ///
 /// Called by the I/O task when its reconnect budget is exhausted. A dropped
 /// manager (dead `Weak`) or poisoned lock is treated as a no-op — there is
 /// nothing left to clean up.
-fn reap_agent(agents: &std::sync::Weak<Mutex<HashMap<String, AgentConnection>>>, agent_id: &str) {
+fn reap_agent(agents: &WeakAgentMap, agent_id: &str) {
+    // `upgrade()` must be bound so the strong `Arc` outlives the guard it lends.
     if let Some(agents) = agents.upgrade() {
         if let Ok(mut guard) = agents.lock() {
             guard.remove(agent_id);
@@ -467,15 +472,13 @@ fn reap_agent(agents: &std::sync::Weak<Mutex<HashMap<String, AgentConnection>>>,
 fn prune_dead_agents_from_map(agents: &Mutex<HashMap<String, AgentConnection>>) -> Vec<String> {
     let mut removed = Vec::new();
     if let Ok(mut guard) = agents.lock() {
-        let dead: Vec<String> = guard
-            .iter()
-            .filter(|(_, conn)| !conn.alive.load(Ordering::SeqCst))
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in dead {
-            guard.remove(&id);
-            removed.push(id);
-        }
+        guard.retain(|id, conn| {
+            let alive = conn.alive.load(Ordering::SeqCst);
+            if !alive {
+                removed.push(id.clone());
+            }
+            alive
+        });
     }
     removed
 }
@@ -1520,7 +1523,7 @@ async fn agent_io_task(
     config: RemoteAgentConfig,
     agent_settings: AgentSettings,
     mut request_id: u64,
-    agents: std::sync::Weak<Mutex<HashMap<String, AgentConnection>>>,
+    agents: WeakAgentMap,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
@@ -1711,14 +1714,18 @@ async fn agent_io_task(
                 // G7 (#1239): reconcile the output/monitoring senders against the
                 // sessions the agent actually recovered. Senders keyed by ids that
                 // did not come back are stale — drop them so the maps don't leak.
-                if let Some(live_ids) =
-                    list_recovered_session_ids(&mut channel, &agent_id, &mut request_id).await
-                {
-                    reconcile_output_senders(
-                        &mut session_outputs,
-                        &mut monitoring_outputs,
-                        &live_ids,
-                    );
+                // Skip the extra round-trip entirely when there is nothing to
+                // reconcile (no registered senders).
+                if !session_outputs.is_empty() || !monitoring_outputs.is_empty() {
+                    if let Some(live_ids) =
+                        list_recovered_session_ids(&mut channel, &agent_id, &mut request_id).await
+                    {
+                        reconcile_output_senders(
+                            &mut session_outputs,
+                            &mut monitoring_outputs,
+                            &live_ids,
+                        );
+                    }
                 }
 
                 emit_agent_state(&app_handle, &agent_id, "connected");
