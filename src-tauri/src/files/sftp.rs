@@ -82,6 +82,39 @@ impl SftpSession {
         })
     }
 
+    /// Open a **dedicated** SFTP session on a fresh channel off the same
+    /// authenticated SSH connection.
+    ///
+    /// Used by the cancellable transfer subsystem (#1245): the returned
+    /// [`RusshSftp`] owns its own channel, so a chunked copy can run on it
+    /// without holding this session's `Mutex` — keeping directory listing /
+    /// navigation live on the browsing channel during a transfer.
+    pub async fn open_dedicated_sftp(&self) -> Result<RusshSftp, TerminalError> {
+        let channel = self
+            ._session
+            .channel_open_session()
+            .await
+            .map_err(|e| TerminalError::SshError(format!("transfer channel open: {e}")))?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| TerminalError::SshError(format!("transfer subsystem request: {e}")))?;
+        RusshSftp::new(channel.into_stream())
+            .await
+            .map_err(|e| TerminalError::SshError(format!("transfer SFTP init: {e}")))
+    }
+
+    /// Best-effort size (in bytes) of a remote file via SFTP `stat`.
+    ///
+    /// Returns `0` when the size is unavailable — the UI treats `total == 0` as
+    /// indeterminate and shows a spinner rather than a percentage.
+    pub async fn remote_size(&self, remote_path: &str) -> u64 {
+        match self.sftp.metadata(remote_path).await {
+            Ok(meta) => meta.size.unwrap_or(0),
+            Err(_) => 0,
+        }
+    }
+
     /// List directory contents, filtering out `.` and `..`.
     pub fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, TerminalError> {
         debug!(path, "SFTP listing directory");
@@ -481,6 +514,12 @@ impl FileBackend for SftpFileBackend {
 #[derive(Clone)]
 pub struct SftpManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SftpSession>>>>>,
+}
+
+impl Default for SftpManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SftpManager {
