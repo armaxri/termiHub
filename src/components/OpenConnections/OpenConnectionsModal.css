@@ -97,6 +97,15 @@
   flex-shrink: 0;
 }
 
+/* Trailing action cluster for rows that expose more than one intent
+   (e.g. an agent's Disconnect vs Shutdown). */
+.oc-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
 .oc-row__badge--alive,
 .oc-row__badge--connected,
 .oc-row__badge--up {
