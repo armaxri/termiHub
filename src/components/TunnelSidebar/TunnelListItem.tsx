@@ -78,7 +78,7 @@ export function TunnelListItem({
               <Button
                 variant="ghost"
                 size="sm"
-                className="tunnel-item__action"
+                iconOnly
                 aria-label="Stop"
                 data-testid={`tunnel-stop-${tunnel.id}`}
                 icon={<Square size={12} />}
@@ -98,7 +98,7 @@ export function TunnelListItem({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="tunnel-item__action"
+                  iconOnly
                   aria-label="View last error"
                   data-testid={`tunnel-view-error-${tunnel.id}`}
                   icon={<Info size={12} />}
@@ -112,7 +112,7 @@ export function TunnelListItem({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="tunnel-item__action"
+                  iconOnly
                   aria-label="Retry"
                   data-testid={`tunnel-retry-${tunnel.id}`}
                   icon={<RotateCw size={12} />}
@@ -130,7 +130,7 @@ export function TunnelListItem({
               <Button
                 variant="ghost"
                 size="sm"
-                className="tunnel-item__action"
+                iconOnly
                 aria-label="Start"
                 data-testid={`tunnel-start-${tunnel.id}`}
                 icon={<Play size={12} />}
@@ -146,7 +146,7 @@ export function TunnelListItem({
             <Button
               variant="ghost"
               size="sm"
-              className="tunnel-item__action"
+              iconOnly
               aria-label="Edit"
               data-testid={`tunnel-edit-${tunnel.id}`}
               icon={<Pencil size={12} />}
@@ -160,7 +160,7 @@ export function TunnelListItem({
             <Button
               variant="ghost"
               size="sm"
-              className="tunnel-item__action"
+              iconOnly
               aria-label="Duplicate"
               data-testid={`tunnel-duplicate-${tunnel.id}`}
               icon={<Copy size={12} />}
@@ -174,7 +174,7 @@ export function TunnelListItem({
             <Button
               variant="ghost"
               size="sm"
-              className="tunnel-item__action"
+              iconOnly
               aria-label="Delete"
               data-testid={`tunnel-delete-${tunnel.id}`}
               icon={<Trash2 size={12} />}
