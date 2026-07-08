@@ -3,11 +3,6 @@ import { ServerCrash, RefreshCw, Loader2, Zap, Ban } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
-import {
-  connectTimeoutMs,
-  connectTimeoutSeconds,
-  type ConnectTimeoutKind,
-} from "@/utils/connectTimeout";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -84,32 +79,30 @@ export function TerminalConnectionOverlay({
   // contextual hint (#1129). auto-retry manages its own visible-failure cadence,
   // so it is intentionally not timed here.
   const failTerminalConnectTimeout = useAppStore((s) => s.failTerminalConnectTimeout);
-  const timeoutKind: ConnectTimeoutKind | null = waitingForAgent
-    ? "waiting-for-agent"
-    : isConnecting
-      ? "connecting"
-      : null;
+  // The timeout is anchored to a wall-clock deadline held in the store (set on
+  // entry to the timed state), not to this component's lifetime. The overlay
+  // only reads it, so unmounting and remounting mid-connect (dragging the tab to
+  // another panel/split, a zoom re-key) re-arms the timer for the REMAINING time
+  // rather than restarting the countdown from zero (#1263).
+  const connectDeadline = useAppStore((s) => s.terminalConnectDeadline[tabId]);
+  const deadlineAt = connectDeadline?.at;
+  const deadlineKind = connectDeadline?.kind;
 
-  // The timer is armed once per state transition (deps exclude the per-second
-  // elapsed tick), so it is not re-armed every second. Note: because it is tied
-  // to this component's lifetime, unmounting and remounting the overlay while
-  // still connecting (e.g. dragging the tab to another panel) restarts the
-  // countdown — a wall-clock deadline in the store would make it survive
-  // remounts (tracked as a follow-up).
   useEffect(() => {
-    if (!timeoutKind) return;
+    if (deadlineAt === undefined || !deadlineKind) return;
     const id = setTimeout(
-      () => failTerminalConnectTimeout(tabId, timeoutKind),
-      connectTimeoutMs(timeoutKind)
+      () => failTerminalConnectTimeout(tabId, deadlineKind),
+      Math.max(0, deadlineAt - Date.now())
     );
     return () => clearTimeout(id);
-  }, [tabId, timeoutKind, failTerminalConnectTimeout]);
+  }, [tabId, deadlineAt, deadlineKind, failTerminalConnectTimeout]);
 
-  // Whole seconds remaining before the client-side timeout fires (>= 0), for the
-  // visible countdown. Derived from the per-second elapsed tick.
-  const remainingSeconds = timeoutKind
-    ? Math.max(0, connectTimeoutSeconds(timeoutKind) - elapsedSeconds)
-    : 0;
+  // Whole seconds remaining before the timeout fires (>= 0), for the visible
+  // countdown. Derived from the same stored deadline as the timer above and
+  // recomputed on the per-second elapsed tick (elapsedSeconds), so the display
+  // and the actual fire share one clock and both survive a remount.
+  const remainingSeconds =
+    deadlineAt !== undefined ? Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)) : 0;
 
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
