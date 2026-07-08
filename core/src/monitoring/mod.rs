@@ -13,8 +13,8 @@ pub use provider::{
     MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
 };
 pub use status::{
-    CollectLoopState, MonitorStatus, MonitorStatusReceiver, MonitorStatusSender,
-    DEFAULT_STALE_THRESHOLD,
+    BackoffSchedule, CollectLoopState, MonitorStatus, MonitorStatusReceiver, MonitorStatusSender,
+    BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_STALE_THRESHOLD,
 };
 pub use types::{CpuCounters, SystemStats};
 
