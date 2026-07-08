@@ -26,5 +26,8 @@ export type { ToggleProps } from "./Toggle";
 export { Tooltip, TooltipProvider } from "./Tooltip";
 export type { TooltipProps, TooltipProviderProps } from "./Tooltip";
 
+export { Progress } from "./Progress";
+export type { ProgressProps } from "./Progress";
+
 export { ToastProvider, toast } from "./Toast";
 export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";

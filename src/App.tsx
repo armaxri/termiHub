@@ -18,6 +18,7 @@ import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotifi
 import { ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
+import { useTransferEvents } from "@/hooks/useTransferEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
@@ -97,6 +98,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 function App() {
   useKeyboardShortcuts();
   useTunnelEvents();
+  useTransferEvents();
   useEmbeddedServerEvents();
   useCredentialStoreEvents();
   useHttpMonitorNotifications();

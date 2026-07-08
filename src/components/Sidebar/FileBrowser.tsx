@@ -28,9 +28,10 @@ import {
   Globe,
   Terminal,
   X,
+  Ban,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Tooltip, Progress, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
@@ -704,6 +705,10 @@ export function FileBrowser() {
   // Explicit SFTP lifecycle status (audit gap A1) — used to pick the SFTP
   // placeholder label without inferring it from isConnected + isLoading.
   const sftpStatus = useAppStore((s) => s.sftpStatus);
+  // In-flight SFTP transfers (#1247); the footer shows those owned by the
+  // active browser session, and Cancel fires sftp_cancel_transfer.
+  const transfers = useAppStore((s) => s.transfers);
+  const cancelTransfer = useAppStore((s) => s.cancelTransfer);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const fileClipboard = useAppStore((s) => s.fileClipboard);
   const quickShareServer = useAppStore((s) => s.quickShareServer);
@@ -990,6 +995,22 @@ export function FileBrowser() {
 
   const selectedEntries = sortedEntries.filter((e) => selectedPaths.has(e.path));
 
+  // In-flight transfers owned by the SFTP session this browser is showing
+  // (#1247). Only these belong in the footer; other sessions' transfers live in
+  // the Open Connections panel. The list above stays live regardless.
+  const activeTransfers = sftpSessionId
+    ? Object.values(transfers).filter((t) => t.sessionId === sftpSessionId)
+    : [];
+
+  const handleCancelTransfer = async (transferId: string) => {
+    try {
+      await cancelTransfer(transferId);
+      toast.success("Transfer cancelled");
+    } catch (err) {
+      toast.error(`Failed to cancel transfer: ${err}`);
+    }
+  };
+
   return (
     <div
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
@@ -1249,6 +1270,48 @@ export function FileBrowser() {
         }}
         onCancel={() => setDeleteConfirm(null)}
       />
+      {activeTransfers.length > 0 && (
+        <div className="file-browser__transfers" data-testid="file-browser-transfers">
+          {activeTransfers.map((t) => {
+            const indeterminate = t.total <= 0;
+            const pct = indeterminate ? 0 : Math.round((t.transferred / t.total) * 100);
+            const verb = t.direction === "download" ? "Downloading" : "Uploading";
+            return (
+              <div
+                key={t.transferId}
+                className="file-browser__transfer"
+                data-testid="file-browser-transfer"
+              >
+                <div className="file-browser__transfer-head">
+                  {t.direction === "download" ? <Download size={12} /> : <Upload size={12} />}
+                  <span className="file-browser__transfer-name" title={t.fileName}>
+                    {t.fileName}
+                  </span>
+                  <span className="file-browser__transfer-pct">
+                    {indeterminate ? formatBytes(t.transferred) : `${pct}%`}
+                  </span>
+                  <Tooltip content="Cancel transfer" side="top">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={<Ban size={12} />}
+                      className="file-browser__transfer-cancel"
+                      onClick={() => handleCancelTransfer(t.transferId)}
+                      aria-label={`Cancel transfer of ${t.fileName}`}
+                    />
+                  </Tooltip>
+                </div>
+                <Progress
+                  value={t.transferred}
+                  max={t.total}
+                  indeterminate={indeterminate}
+                  label={`${verb} ${t.fileName}`}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

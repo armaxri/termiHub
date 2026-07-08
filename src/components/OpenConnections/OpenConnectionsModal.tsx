@@ -9,8 +9,14 @@ import {
   MonitorCog,
   Globe,
   Loader2,
+  ArrowDownUp,
+  Download,
+  Upload,
+  Ban,
 } from "lucide-react";
-import { Modal, Button, Tooltip, toast } from "@/components/ui";
+import { Modal, Button, Tooltip, Progress, toast } from "@/components/ui";
+import { formatBytes } from "@/utils/formatters";
+import type { TransferState } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
@@ -62,6 +68,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const tunnelStates = useAppStore((s) => s.tunnelStates);
   const sftpSessions = useAppStore((s) => s.sftpSessions);
   const closeSftpSession = useAppStore((s) => s.closeSftpSession);
+  const transfers = useAppStore((s) => s.transfers);
+  const cancelTransfer = useAppStore((s) => s.cancelTransfer);
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
@@ -98,6 +106,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     hostLabel: entry.hostLabel,
     orphaned: !liveTabIds.has(entry.owningTabId),
   }));
+
+  // Live in-flight SFTP transfers (#1247). The store keeps only `transferring`
+  // rows; terminal-phase transfers are auto-removed, so every value here is live.
+  const transferList = Object.values(transfers);
 
   const [localSessions, setLocalSessions] = useState<LocalSessionInfo[]>([]);
   const [proxySessions, setProxySessions] = useState<ProxySessionsState>({});
@@ -198,6 +210,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     Object.values(proxySessions).reduce((s, arr) => s + arr.length, 0) +
     Object.values(agentSessions).reduce((s, arr) => s + arr.length, 0) +
     activeTunnels.length +
+    transferList.length +
     sftpSessionEntries.length +
     (monitoringHost ? 1 : 0) +
     httpMonitors.length +
@@ -329,6 +342,26 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     } catch (err) {
       frontendLog("open_connections", `Failed to close SFTP sessions: ${err}`);
       toast.error(`Failed to close SFTP sessions: ${err}`);
+    }
+  };
+
+  const handleCancelTransfer = async (transferId: string) => {
+    try {
+      await cancelTransfer(transferId);
+      toast.success("Transfer cancelled");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to cancel transfer: ${err}`);
+      toast.error(`Failed to cancel transfer: ${err}`);
+    }
+  };
+
+  const handleCancelAllTransfers = async () => {
+    try {
+      await Promise.all(transferList.map((t) => cancelTransfer(t.transferId)));
+      toast.success("All transfers cancelled");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to cancel transfers: ${err}`);
+      toast.error(`Failed to cancel transfers: ${err}`);
     }
   };
 
@@ -561,6 +594,27 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           </Section>
         )}
 
+        {/* Transfers — live in-flight SFTP transfers (#1247), each with an
+            inline progress bar and a Cancel action. */}
+        {transferList.length > 0 && (
+          <Section
+            title="Transfers"
+            icon={<ArrowDownUp size={14} />}
+            count={transferList.length}
+            onKillAll={handleCancelAllTransfers}
+            killAllLabel="Cancel All"
+            data-testid="open-connections-transfers-section"
+          >
+            {transferList.map((t) => (
+              <TransferRow
+                key={t.transferId}
+                transfer={t}
+                onCancel={() => handleCancelTransfer(t.transferId)}
+              />
+            ))}
+          </Section>
+        )}
+
         {/* SFTP — one row per live backend session (#1241). Orphaned sessions
             (owning tab gone) surface with a warning badge so nothing is ever
             invisible/unkillable. */}
@@ -745,6 +799,57 @@ type BadgeVariant =
   | "stopped"
   | "orphaned"
   | "error";
+
+interface TransferRowProps {
+  transfer: TransferState;
+  onCancel: () => void | Promise<void>;
+}
+
+/**
+ * A single in-flight SFTP transfer row: a direction icon, the file name, an
+ * inline {@link Progress} bar, a live byte/percentage label, and a Cancel
+ * action. `total === 0` means an unknown size — render an indeterminate bar and
+ * show only the transferred bytes (no percentage or denominator).
+ */
+function TransferRow({ transfer, onCancel }: TransferRowProps) {
+  const { direction, fileName, transferred, total } = transfer;
+  const indeterminate = total <= 0;
+  const pct = indeterminate ? 0 : Math.round((transferred / total) * 100);
+  const label = indeterminate
+    ? formatBytes(transferred)
+    : `${pct}% · ${formatBytes(transferred)} / ${formatBytes(total)}`;
+
+  return (
+    <div className="oc-row oc-transfer" data-testid="open-connections-transfer">
+      <span className="oc-row__icon">
+        {direction === "download" ? <Download size={14} /> : <Upload size={14} />}
+      </span>
+      <div className="oc-transfer__body">
+        <span className="oc-row__title" title={fileName}>
+          {fileName}
+        </span>
+        <Progress
+          className="oc-transfer__progress"
+          value={transferred}
+          max={total}
+          indeterminate={indeterminate}
+          label={`${direction === "download" ? "Downloading" : "Uploading"} ${fileName}`}
+        />
+        <span className="oc-transfer__meta">{label}</span>
+      </div>
+      <Button
+        variant="danger"
+        size="sm"
+        className="oc-row__kill"
+        icon={<Ban size={14} />}
+        onClick={() => onCancel()}
+        aria-label={`Cancel transfer of ${fileName}`}
+      >
+        Cancel
+      </Button>
+    </div>
+  );
+}
 
 interface ConnectionRowProps {
   icon: React.ReactNode;

@@ -172,6 +172,8 @@ Fixed strings — match exactly.
 | `file-browser-sftp-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-dismiss` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-retry` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-transfer` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-transfers` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-up` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-upload` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
@@ -267,6 +269,8 @@ Fixed strings — match exactly.
 | `open-connections-establishing-agents-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-http-monitors-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-sftp-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-transfer` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-transfers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-server-empty` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-server-row` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-server-setup` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
@@ -368,6 +372,7 @@ Fixed strings — match exactly.
 | `status-bar-jump-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-language` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-tab-size` | `src/components/StatusBar/StatusBar.tsx` |
+| `status-bar-transfers` | `src/components/StatusBar/StatusBar.tsx` |
 | `tab-context-clear` | `src/components/Terminal/Tab.tsx` |
 | `tab-context-copy` | `src/components/Terminal/Tab.tsx` |
 | `tab-context-horizontal-scroll` | `src/components/Terminal/Tab.tsx` |

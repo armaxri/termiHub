@@ -9,6 +9,7 @@ import {
   Server,
   Route,
   RotateCw,
+  ArrowDownUp,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
@@ -98,6 +99,7 @@ export function StatusBar() {
         <JumpHostStatus />
         <MonitoringStatus />
         <ServicesIndicator />
+        <TransfersIndicator />
         <CredentialStoreIndicator />
       </div>
       <div className="status-bar__section status-bar__section--center">
@@ -234,6 +236,38 @@ function ServicesIndicator() {
         <Server size={12} />
         {runningCount}
       </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * Aggregate SFTP transfer indicator (#1247). Shows `N transfers · P%` where P is
+ * the aggregate percentage across sized transfers; when every transfer is
+ * indeterminate (unknown total), the percentage is omitted. Renders nothing
+ * when no transfers are in flight.
+ */
+function TransfersIndicator() {
+  const transfers = useAppStore((s) => s.transfers);
+
+  const list = Object.values(transfers);
+  const count = list.length;
+  if (count === 0) return null;
+
+  const sized = list.filter((t) => t.total > 0);
+  const totalBytes = sized.reduce((sum, t) => sum + t.total, 0);
+  const doneBytes = sized.reduce((sum, t) => sum + t.transferred, 0);
+  const pct = totalBytes > 0 ? Math.round((doneBytes / totalBytes) * 100) : null;
+
+  const noun = count === 1 ? "transfer" : "transfers";
+  const label = pct !== null ? `${count} ${noun} · ${pct}%` : `${count} ${noun}`;
+  const tooltip = `${count} active SFTP ${count === 1 ? "transfer" : "transfers"}`;
+
+  return (
+    <Tooltip content={tooltip} side="top">
+      <span className="status-bar__item" data-testid="status-bar-transfers" aria-label={tooltip}>
+        <ArrowDownUp size={12} />
+        {label}
+      </span>
     </Tooltip>
   );
 }
