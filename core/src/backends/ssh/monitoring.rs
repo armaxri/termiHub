@@ -22,8 +22,9 @@ use tracing::debug;
 use crate::config::SshConfig;
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, CollectLoopState, CpuDeltaTracker, MonitorStatus, MonitorStatusSender,
-    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
+    MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
+    MonitoringSubscription, BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS,
     DEFAULT_STALE_THRESHOLD, MONITORING_COMMAND,
 };
 
@@ -133,6 +134,8 @@ pub(crate) struct SshMonitoringProviderImpl<T: MonitoringTransport> {
     collect_timeout: Duration,
     /// Consecutive collect failures tolerated before the loop reports `Stale`.
     stale_threshold: u32,
+    /// Backoff schedule template for the bounded reconnect campaign (#1230, G2).
+    reconnect_backoff: BackoffSchedule,
     task: Arc<Mutex<Option<MonitoringTask>>>,
 }
 
@@ -146,6 +149,11 @@ impl<T: MonitoringTransport> SshMonitoringProviderImpl<T> {
             transport: Arc::new(transport),
             collect_timeout,
             stale_threshold: DEFAULT_STALE_THRESHOLD,
+            reconnect_backoff: BackoffSchedule::new(
+                DEFAULT_BACKOFF_BASE,
+                BACKOFF_CAP,
+                DEFAULT_MAX_RECONNECT_ATTEMPTS,
+            ),
             task: Arc::new(Mutex::new(None)),
         }
     }
@@ -213,6 +221,66 @@ async fn emit_status(status_tx: &MonitorStatusSender, status: MonitorStatus) {
     let _ = status_tx.send(status).await;
 }
 
+/// Sleep `delay` in small increments, returning early if the loop is asked to
+/// stop (either `alive` cleared or `cancel` fired).
+///
+/// Returns `true` if the full delay elapsed, `false` if interrupted — mirrors
+/// the incremental sleep the collect loop uses between ticks so a torn-down
+/// subscription aborts a long backoff promptly.
+async fn interruptible_sleep(
+    mut delay: Duration,
+    alive: &AtomicBool,
+    cancel: &CancellationToken,
+) -> bool {
+    let tick = Duration::from_millis(100);
+    while delay > Duration::ZERO {
+        if !alive.load(Ordering::SeqCst) || cancel.is_cancelled() {
+            return false;
+        }
+        let step = tick.min(delay);
+        tokio::time::sleep(step).await;
+        delay = delay.saturating_sub(step);
+    }
+    true
+}
+
+/// Re-dial the transport under a bounded exponential backoff (#1230, gap G2).
+///
+/// Called once the collect loop has gone `Stale`. Emits `Reconnecting`, then
+/// for each attempt sleeps the next backoff delay and re-runs
+/// [`MonitoringTransport::connect`]. On the first successful re-dial it returns
+/// the fresh session (the caller resets loop state so the next collect emits
+/// `Live`). When the [`BackoffSchedule`] budget is exhausted — or the loop is
+/// asked to stop mid-backoff — it returns `None`; the caller then emits
+/// `Offline`.
+async fn reconnect_with_backoff<T: MonitoringTransport>(
+    transport: &T,
+    mut backoff: BackoffSchedule,
+    loop_state: &mut CollectLoopState,
+    status_tx: &MonitorStatusSender,
+    alive: &AtomicBool,
+    cancel: &CancellationToken,
+) -> Option<T::Session> {
+    if let Some(status) = loop_state.begin_reconnect() {
+        emit_status(status_tx, status).await;
+    }
+
+    while let Some(delay) = backoff.next_delay() {
+        if !interruptible_sleep(delay, alive, cancel).await {
+            return None;
+        }
+        match transport.connect(cancel.clone()).await {
+            Ok(session) => {
+                debug!("Monitoring transport reconnected");
+                return Some(session);
+            }
+            Err(e) => debug!("Monitoring reconnect attempt failed: {e}"),
+        }
+    }
+
+    None
+}
+
 #[async_trait::async_trait]
 impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T> {
     async fn subscribe(&self) -> Result<MonitoringSubscription, CoreError> {
@@ -237,13 +305,17 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
         let transport = self.transport.clone();
         let collect_timeout = self.collect_timeout;
         let stale_threshold = self.stale_threshold;
+        let reconnect_backoff = self.reconnect_backoff.clone();
+        let loop_cancel = cancel.clone();
 
-        // The loop owns the already-open session; it never reconnects. It
-        // tracks its own status via `CollectLoopState`: the first successful
-        // collect emits `Live`; `stale_threshold` consecutive failures emit
-        // `Stale`; a later success emits `Live` again (#1229, gap G1).
+        // The loop owns the session and re-dials it in place. It tracks its own
+        // status via `CollectLoopState`: the first successful collect emits
+        // `Live`; `stale_threshold` consecutive failures emit `Stale` (#1229,
+        // gap G1); once `Stale`, a bounded exponential backoff re-runs
+        // `connect`, emitting `Reconnecting` then `Live` (recovered) or
+        // `Offline` (exhausted) (#1230, gap G2).
         tokio::spawn(async move {
-            let session = session;
+            let mut session = session;
             let mut cpu_tracker = CpuDeltaTracker::new();
             let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
@@ -281,13 +353,41 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     emit_status(&status_tx, status).await;
                 }
 
-                // Sleep in 100ms increments to allow quick shutdown.
-                let mut remaining = MONITORING_INTERVAL;
-                let tick = Duration::from_millis(100);
-                while remaining > Duration::ZERO && alive_clone.load(Ordering::SeqCst) {
-                    tokio::time::sleep(tick.min(remaining)).await;
-                    remaining = remaining.saturating_sub(tick);
+                // A sustained drop (now `Stale`) triggers a bounded reconnect
+                // campaign that re-dials the transport in place (#1230, G2).
+                if loop_state.should_begin_reconnect() {
+                    match reconnect_with_backoff(
+                        &*transport,
+                        reconnect_backoff.clone(),
+                        &mut loop_state,
+                        &status_tx,
+                        &alive_clone,
+                        &loop_cancel,
+                    )
+                    .await
+                    {
+                        Some(new_session) => {
+                            // Fresh transport: drop the stale CPU baseline and
+                            // let the next collect emit `Live` on success.
+                            session = new_session;
+                            cpu_tracker = CpuDeltaTracker::new();
+                            continue;
+                        }
+                        None => {
+                            // Budget exhausted (or told to stop): resolve to
+                            // Offline and end the loop — monitoring is dead
+                            // until manually re-picked.
+                            if let Some(status) = loop_state.exhaust_reconnect() {
+                                emit_status(&status_tx, status).await;
+                            }
+                            break;
+                        }
+                    }
                 }
+
+                // Wait the poll interval in small increments so a torn-down
+                // subscription (or cancel) aborts the wait promptly.
+                interruptible_sleep(MONITORING_INTERVAL, &alive_clone, &loop_cancel).await;
             }
             debug!("Monitoring task stopped");
         });
@@ -335,11 +435,16 @@ Linux 5.15.0";
     ///
     /// `collect_should_fail` lets a test flip collects between success and
     /// failure at runtime to exercise the Live↔Stale status transitions.
+    /// `connect_should_fail` does the same for re-dials, so a test can hold a
+    /// reconnect campaign in `Reconnecting` (and drive it to `Offline`) or let
+    /// it recover to `Live` (#1230, gap G2).
     struct FakeTransport {
         connect_ok: bool,
         collect_delay: Duration,
         collect_calls: Arc<AtomicUsize>,
+        connect_calls: Arc<AtomicUsize>,
         collect_should_fail: Arc<AtomicBool>,
+        connect_should_fail: Arc<AtomicBool>,
         collect_output: String,
     }
 
@@ -349,23 +454,28 @@ Linux 5.15.0";
                 connect_ok,
                 collect_delay,
                 collect_calls: Arc::new(AtomicUsize::new(0)),
+                connect_calls: Arc::new(AtomicUsize::new(0)),
                 collect_should_fail: Arc::new(AtomicBool::new(false)),
+                connect_should_fail: Arc::new(AtomicBool::new(false)),
                 collect_output: "collected".to_string(),
             }
         }
 
-        /// A transport whose collects return parseable stats and whose failure
-        /// mode is controlled by the returned flag (`true` = fail).
-        fn with_failure_flag() -> (Self, Arc<AtomicBool>) {
-            let flag = Arc::new(AtomicBool::new(false));
+        /// A transport wired for reconnect tests: collects fail/succeed via the
+        /// first flag, re-dials fail/succeed via the second.
+        fn with_collect_and_connect_flags() -> (Self, Arc<AtomicBool>, Arc<AtomicBool>) {
+            let collect_fail = Arc::new(AtomicBool::new(false));
+            let connect_fail = Arc::new(AtomicBool::new(false));
             let transport = Self {
                 connect_ok: true,
                 collect_delay: Duration::ZERO,
                 collect_calls: Arc::new(AtomicUsize::new(0)),
-                collect_should_fail: flag.clone(),
+                connect_calls: Arc::new(AtomicUsize::new(0)),
+                collect_should_fail: collect_fail.clone(),
+                connect_should_fail: connect_fail.clone(),
                 collect_output: SAMPLE_STATS.to_string(),
             };
-            (transport, flag)
+            (transport, collect_fail, connect_fail)
         }
     }
 
@@ -374,7 +484,8 @@ Linux 5.15.0";
         type Session = ();
 
         async fn connect(&self, _cancel: CancellationToken) -> Result<Self::Session, CoreError> {
-            if self.connect_ok {
+            self.connect_calls.fetch_add(1, Ordering::SeqCst);
+            if self.connect_ok && !self.connect_should_fail.load(Ordering::SeqCst) {
                 Ok(())
             } else {
                 Err(CoreError::Other("connect refused".to_string()))
@@ -389,6 +500,15 @@ Linux 5.15.0";
             }
             Ok(self.collect_output.clone())
         }
+    }
+
+    /// A backoff schedule with near-zero delays so reconnect tests stay fast.
+    fn fast_backoff(max_attempts: u32) -> BackoffSchedule {
+        BackoffSchedule::new(
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+            max_attempts,
+        )
     }
 
     /// Wait for the next status transition, failing if none arrives in time.
@@ -429,15 +549,18 @@ Linux 5.15.0";
         provider.unsubscribe().await.expect("unsubscribe");
     }
 
-    /// G1: a mid-stream collect drop flips the status channel to `Stale`, and a
-    /// recovery flips it back to `Live` — the loop-state transitions observed
-    /// through the real collect loop.
+    /// G1/G2: a mid-stream collect drop flips the status channel to `Stale`,
+    /// the loop enters `Reconnecting`, and a successful re-dial + collect flips
+    /// it back to `Live` — all observed through the real collect loop.
     #[tokio::test]
-    async fn collect_loop_emits_stale_on_drop_and_live_on_recovery() {
-        let (transport, fail) = FakeTransport::with_failure_flag();
+    async fn collect_loop_emits_stale_reconnecting_then_live_on_recovery() {
+        let (transport, collect_fail, connect_fail) =
+            FakeTransport::with_collect_and_connect_flags();
+        let connect_calls = transport.connect_calls.clone();
         // Threshold 1 so a single failure is enough to go Stale in the test.
         let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
         provider.stale_threshold = 1;
+        provider.reconnect_backoff = fast_backoff(8);
 
         let mut sub = provider.subscribe().await.expect("subscribe");
 
@@ -449,19 +572,66 @@ Linux 5.15.0";
         );
 
         // Simulate a mid-stream drop: subsequent collects fail → Stale.
-        fail.store(true, Ordering::SeqCst);
+        collect_fail.store(true, Ordering::SeqCst);
         assert_eq!(
             next_status(&mut sub.status).await,
             MonitorStatus::Stale,
             "a mid-stream collect drop must emit Stale"
         );
 
-        // Recover: collects succeed again → Live.
-        fail.store(false, Ordering::SeqCst);
+        // The loop then begins a reconnect campaign → Reconnecting.
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Reconnecting,
+            "a sustained drop must emit Reconnecting"
+        );
+
+        // Recovery: allow collects to succeed again; the re-dial (connect_ok)
+        // succeeds and the next collect emits Live.
+        let _ = connect_fail; // re-dials succeed by default here
+        collect_fail.store(false, Ordering::SeqCst);
         assert_eq!(
             next_status(&mut sub.status).await,
             MonitorStatus::Live,
-            "recovery must emit Live again"
+            "a recovered re-dial + collect must emit Live again"
+        );
+        assert!(
+            connect_calls.load(Ordering::SeqCst) >= 2,
+            "the loop must have re-dialed the transport in place"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// G2: when every re-dial fails, the bounded backoff is exhausted and the
+    /// loop resolves to `Offline`.
+    #[tokio::test]
+    async fn collect_loop_emits_offline_when_reconnect_exhausted() {
+        let (transport, collect_fail, connect_fail) =
+            FakeTransport::with_collect_and_connect_flags();
+        let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+        provider.stale_threshold = 1;
+        provider.reconnect_backoff = fast_backoff(3);
+
+        // The initial connect succeeds; every *re-dial* fails.
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+
+        // Drop the stream: collects fail → Stale → Reconnecting.
+        connect_fail.store(true, Ordering::SeqCst);
+        collect_fail.store(true, Ordering::SeqCst);
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Stale);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Reconnecting
+        );
+
+        // All re-dials fail → backoff exhausted → Offline.
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "an exhausted reconnect budget must emit Offline"
         );
 
         provider.unsubscribe().await.expect("unsubscribe");

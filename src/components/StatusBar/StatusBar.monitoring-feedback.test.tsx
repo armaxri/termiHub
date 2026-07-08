@@ -19,6 +19,7 @@ import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
+import type { MonitoringEntry } from "@/types/monitoring";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -71,6 +72,31 @@ function primeMonitoringTab() {
   }));
 }
 
+/** MonitorKey for the primed SSH tab (`user@host:port`). */
+const MONITOR_KEY = "pi@pi.local:22";
+
+/** Install a keyed monitor entry for the primed tab (#1231, per-host slice). */
+function setActiveMonitor(patch: Partial<MonitoringEntry>) {
+  useAppStore.setState((s) => ({
+    monitors: {
+      ...s.monitors,
+      [MONITOR_KEY]: {
+        key: MONITOR_KEY,
+        host: MONITOR_KEY,
+        sessionBased: false,
+        monitorSessionId: null,
+        stats: null,
+        loading: false,
+        error: null,
+        status: null,
+        sampleCount: 0,
+        cancelled: false,
+        ...patch,
+      },
+    },
+  }));
+}
+
 describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -97,10 +123,8 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
   it("(G7) shows a Retry control when monitoring is in the error state", () => {
     // A no-op connect prevents the mount auto-connect effect from mutating the
     // error/cancelled state we set up for the render assertions.
-    useAppStore.setState({
-      monitoringError: "Connection refused",
-      connectMonitoring: vi.fn(() => Promise.resolve()),
-    });
+    setActiveMonitor({ error: "Connection refused" });
+    useAppStore.setState({ connectMonitoring: vi.fn(() => Promise.resolve()) });
     renderStatusBar();
 
     const err = container.querySelector('[data-testid="monitoring-error"]');
@@ -112,7 +136,8 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
 
   it("(G7 + G9) Retry clears the lingering error and re-invokes connect", async () => {
     const connectSpy = vi.fn(() => Promise.resolve());
-    useAppStore.setState({ monitoringError: "Connection refused", connectMonitoring: connectSpy });
+    setActiveMonitor({ error: "Connection refused" });
+    useAppStore.setState({ connectMonitoring: connectSpy });
     renderStatusBar();
     // Let any mount auto-connect microtasks settle before counting.
     await act(async () => {
@@ -133,16 +158,14 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
     });
 
     // The stale error must be cleared so it does not linger (G9)…
-    expect(useAppStore.getState().monitoringError).toBeNull();
+    expect(useAppStore.getState().monitors[MONITOR_KEY].error).toBeNull();
     // …and a fresh connect attempt must be made (G7).
     expect(connectSpy.mock.calls.length).toBe(before + 1);
   });
 
   it("(G8) shows a 'not connected' affordance with Retry when the password prompt was cancelled", () => {
-    useAppStore.setState({
-      monitoringCancelled: true,
-      connectMonitoring: vi.fn(() => Promise.resolve()),
-    });
+    setActiveMonitor({ cancelled: true });
+    useAppStore.setState({ connectMonitoring: vi.fn(() => Promise.resolve()) });
     renderStatusBar();
 
     const notConnected = container.querySelector('[data-testid="monitoring-not-connected"]');
@@ -155,7 +178,8 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
 
   it("(G8) Retry from the cancelled affordance clears the flag and re-invokes connect", async () => {
     const connectSpy = vi.fn(() => Promise.resolve());
-    useAppStore.setState({ monitoringCancelled: true, connectMonitoring: connectSpy });
+    setActiveMonitor({ cancelled: true });
+    useAppStore.setState({ connectMonitoring: connectSpy });
     renderStatusBar();
     await act(async () => {
       await Promise.resolve();
@@ -170,7 +194,7 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
       await Promise.resolve();
     });
 
-    expect(useAppStore.getState().monitoringCancelled).toBe(false);
+    expect(useAppStore.getState().monitors[MONITOR_KEY].cancelled).toBe(false);
     expect(connectSpy.mock.calls.length).toBe(before + 1);
   });
 });

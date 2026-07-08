@@ -8,6 +8,53 @@
  */
 export type MonitorStatus = "connecting" | "live" | "stale" | "reconnecting" | "offline" | "paused";
 
+/**
+ * One monitored host/session, keyed by a stable {@link MonitorKey} in the store
+ * (`monitors: Record<MonitorKey, MonitoringEntry>`). Replaces the former global
+ * singleton so multiple hosts can be monitored simultaneously (#1231, audit gap
+ * G6). The status bar renders the entry for the active tab; Open Connections
+ * iterates every entry.
+ *
+ * `MonitorKey` is the session id for session-based (`remote-session`) tabs and
+ * the `user@host:port` host key for desktop-direct SSH monitoring — matching the
+ * keying that `monitoringStatsCache` already used.
+ */
+export interface MonitoringEntry {
+  /** Stable key identifying this monitor (sessionId or `user@host:port`). */
+  key: string;
+  /** Human-readable host label shown in the UI. */
+  host: string | null;
+  /** True for push-based session monitoring; false for desktop-direct SSH polling. */
+  sessionBased: boolean;
+  /**
+   * Backend session id used for close/refresh RPCs. Equals `key` for
+   * session-based monitors; for SSH it is the id returned by `monitoringOpen`.
+   * `null` until the backend connection is established (or after a failed open),
+   * which the UI reads as "not yet connected".
+   */
+  monitorSessionId: string | null;
+  /** Last-known stats for this host, or `null` before the first sample. */
+  stats: SystemStats | null;
+  /** True while the initial connect (or a cache-primed reconnect) is in flight. */
+  loading: boolean;
+  /** Last error message for this host, or `null`. */
+  error: string | null;
+  /** Observable collector-loop status (`live`/`stale`/…), or `null` when idle. */
+  status: MonitorStatus | null;
+  /**
+   * Number of stats samples received on this connection. The remote collectors
+   * report CPU 0% on the first sample (no prior delta), so the UI treats sample
+   * #1 as "priming" for the CPU field (audit gap G10).
+   */
+  sampleCount: number;
+  /**
+   * True when auto-connect was aborted because the user cancelled the password
+   * prompt. The status bar renders a "Monitoring not connected" affordance with a
+   * reachable Retry instead of failing silently (audit gap G8).
+   */
+  cancelled: boolean;
+}
+
 /** System statistics retrieved from a remote Linux host. */
 export interface SystemStats {
   hostname: string;
