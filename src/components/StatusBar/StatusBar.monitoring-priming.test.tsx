@@ -16,7 +16,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
-import type { SystemStats } from "@/types/monitoring";
+import type { SystemStats, MonitoringEntry } from "@/types/monitoring";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 
@@ -57,7 +57,7 @@ function primeMonitoringTab() {
     title: "ssh-host",
     connectionType: "ssh",
     contentType: "terminal",
-    config: { type: "ssh", config: {} },
+    config: { type: "ssh", config: { host: "host", port: 22, username: "user" } },
     panelId: "leaf-1",
     isActive: true,
   };
@@ -74,6 +74,31 @@ function primeMonitoringTab() {
     settings: { ...state.settings, powerMonitoringEnabled: true },
     rootPanel: leaf,
     activePanelId: "leaf-1",
+  }));
+}
+
+/** MonitorKey for the primed SSH tab (`user@host:port`). */
+const MONITOR_KEY = "user@host:22";
+
+/** Install a keyed monitor entry for the primed tab (#1231, per-host slice). */
+function setActiveMonitor(patch: Partial<MonitoringEntry>) {
+  useAppStore.setState((s) => ({
+    monitors: {
+      ...s.monitors,
+      [MONITOR_KEY]: {
+        key: MONITOR_KEY,
+        host: MONITOR_KEY,
+        sessionBased: false,
+        monitorSessionId: null,
+        stats: null,
+        loading: false,
+        error: null,
+        status: null,
+        sampleCount: 0,
+        cancelled: false,
+        ...patch,
+      },
+    },
   }));
 }
 
@@ -101,11 +126,11 @@ describe("StatusBar — CPU first-sample priming (#1148, G10)", () => {
   }
 
   it("shows a priming indicator (not '0%') for CPU on the first sample", () => {
-    useAppStore.setState({
-      monitoringSessionId: "sess-1",
-      monitoringHost: "user@host:22",
-      monitoringStats: makeStats({ cpuUsagePercent: 0 }),
-      monitoringSampleCount: 1,
+    setActiveMonitor({
+      monitorSessionId: "sess-1",
+      stats: makeStats({ cpuUsagePercent: 0 }),
+      sampleCount: 1,
+      status: "live",
     });
     renderStatusBar();
 
@@ -119,11 +144,11 @@ describe("StatusBar — CPU first-sample priming (#1148, G10)", () => {
   });
 
   it("shows the real CPU value from the second sample onward", () => {
-    useAppStore.setState({
-      monitoringSessionId: "sess-1",
-      monitoringHost: "user@host:22",
-      monitoringStats: makeStats({ cpuUsagePercent: 42 }),
-      monitoringSampleCount: 2,
+    setActiveMonitor({
+      monitorSessionId: "sess-1",
+      stats: makeStats({ cpuUsagePercent: 42 }),
+      sampleCount: 2,
+      status: "live",
     });
     renderStatusBar();
 
