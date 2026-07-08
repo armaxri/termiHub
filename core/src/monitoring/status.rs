@@ -145,6 +145,10 @@ impl Default for BackoffSchedule {
 /// Transitions owned here:
 /// - `* → Live` on the first success after any non-live state.
 /// - `Live → Stale` once `stale_threshold` consecutive failures accumulate.
+/// - `* → Paused` on [`pause`](CollectLoopState::pause); `Paused → Live` on
+///   [`resume`](CollectLoopState::resume). Pausing keeps the transport open and
+///   only stops collection, so a paused monitor shows a neutral badge rather
+///   than stale/live numbers (#1233).
 ///
 /// Once `Stale`, the loop enters a bounded reconnect phase driven by
 /// [`begin_reconnect`](CollectLoopState::begin_reconnect) (→ `Reconnecting`),
@@ -183,8 +187,12 @@ impl CollectLoopState {
     ///
     /// Resets the failure run and, if the loop was not already `Live`,
     /// transitions to [`MonitorStatus::Live`] and returns it. Returns `None`
-    /// when already `Live` (no change to emit).
+    /// when already `Live` (no change to emit). A `Paused` loop ignores this —
+    /// resuming is driven explicitly via [`resume`](CollectLoopState::resume).
     pub fn on_success(&mut self) -> Option<MonitorStatus> {
+        if self.status == MonitorStatus::Paused {
+            return None;
+        }
         self.consecutive_failures = 0;
         if self.status != MonitorStatus::Live {
             self.status = MonitorStatus::Live;
@@ -192,6 +200,41 @@ impl CollectLoopState {
         } else {
             None
         }
+    }
+
+    /// Pause collection while keeping the transport open (#1233).
+    ///
+    /// Transitions to [`MonitorStatus::Paused`] and returns it, unless already
+    /// `Paused` (returns `None`). The failure run is reset so resuming starts
+    /// from a clean slate.
+    pub fn pause(&mut self) -> Option<MonitorStatus> {
+        if self.status != MonitorStatus::Paused {
+            self.status = MonitorStatus::Paused;
+            self.consecutive_failures = 0;
+            Some(MonitorStatus::Paused)
+        } else {
+            None
+        }
+    }
+
+    /// Resume collection after a pause (#1233).
+    ///
+    /// Transitions back to [`MonitorStatus::Live`] and returns it, but only when
+    /// currently `Paused` (returns `None` otherwise). The next successful
+    /// collect then keeps the loop `Live`.
+    pub fn resume(&mut self) -> Option<MonitorStatus> {
+        if self.status == MonitorStatus::Paused {
+            self.status = MonitorStatus::Live;
+            self.consecutive_failures = 0;
+            Some(MonitorStatus::Live)
+        } else {
+            None
+        }
+    }
+
+    /// Whether the loop is currently paused (transport open, collection halted).
+    pub fn is_paused(&self) -> bool {
+        self.status == MonitorStatus::Paused
     }
 
     /// Record a failed collect.
@@ -429,6 +472,52 @@ mod tests {
             Some(MonitorStatus::Live),
             "a later successful collect recovers from Offline to Live"
         );
+    }
+
+    // ── Pause / Resume (#1233) ─────────────────────────────────────────
+
+    #[test]
+    fn pause_from_live_emits_paused_once() {
+        let mut state = CollectLoopState::new();
+        state.on_success(); // → Live
+        assert_eq!(state.pause(), Some(MonitorStatus::Paused));
+        assert_eq!(state.status(), MonitorStatus::Paused);
+        assert!(state.is_paused());
+        // Already paused: no repeat emit.
+        assert_eq!(state.pause(), None);
+    }
+
+    #[test]
+    fn resume_from_paused_emits_live_once() {
+        let mut state = CollectLoopState::new();
+        state.on_success(); // → Live
+        state.pause(); // → Paused
+        assert_eq!(state.resume(), Some(MonitorStatus::Live));
+        assert_eq!(state.status(), MonitorStatus::Live);
+        assert!(!state.is_paused());
+        // Already live: resume is a no-op.
+        assert_eq!(state.resume(), None);
+    }
+
+    #[test]
+    fn while_paused_collect_results_do_not_change_status() {
+        let mut state = CollectLoopState::new();
+        state.on_success(); // → Live
+        state.pause(); // → Paused
+                       // A stray success or failure while paused must not flip the status:
+                       // pausing means "stop collecting", not "collect and ignore".
+        assert_eq!(state.on_success(), None);
+        assert_eq!(state.status(), MonitorStatus::Paused);
+        assert_eq!(state.on_failure(), None);
+        assert_eq!(state.status(), MonitorStatus::Paused);
+    }
+
+    #[test]
+    fn resume_does_nothing_when_not_paused() {
+        let mut state = CollectLoopState::new();
+        state.on_success(); // → Live
+        assert_eq!(state.resume(), None, "resume only acts on a paused loop");
+        assert_eq!(state.status(), MonitorStatus::Live);
     }
 
     // ── BackoffSchedule ────────────────────────────────────────────────
