@@ -292,6 +292,71 @@ mod tests {
         );
     }
 
+    // ── Connect-abort token wiring (#1260) ───────────────────────────────────
+    //
+    // The readiness wait is driven by a `cancelled` predicate. `token_cancelled`
+    // is the bridge from the SSH connect path's `CancellationToken` (threaded
+    // through `ensure_x_server_for_session`) into that predicate, so an aborted
+    // connect short-cuts the wait instead of running out the budget. These cover
+    // the end-to-end wiring (the pure poll-loop cancellation path is already
+    // covered above).
+
+    #[test]
+    fn token_cancelled_maps_absent_live_and_tripped() {
+        // No token (the status/probe path with no connect abort) is never
+        // cancelled; a live token isn't cancelled; a tripped one is.
+        assert!(
+            !token_cancelled(None),
+            "the probe path (no token) must never report cancelled"
+        );
+        let token = tokio_util::sync::CancellationToken::new();
+        assert!(
+            !token_cancelled(Some(&token)),
+            "a live connect token must not report cancelled"
+        );
+        token.cancel();
+        assert!(
+            token_cancelled(Some(&token)),
+            "a tripped connect token must report cancelled"
+        );
+    }
+
+    #[test]
+    fn readiness_wait_bails_on_tripped_token() {
+        // End-to-end wiring: a connect-abort token threaded into the readiness
+        // wait short-cuts it before any sleep, rather than running out the
+        // ~4s budget while the aborted connect waits.
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let cancel = Some(&token);
+        let probes = Cell::new(0u32);
+        let slept = Cell::new(Duration::ZERO);
+        let ready = poll_until_ready(
+            READINESS_POLL_INTERVAL,
+            READINESS_TOTAL_BUDGET,
+            || {
+                probes.set(probes.get() + 1);
+                false
+            },
+            || token_cancelled(cancel),
+            |d| slept.set(slept.get() + d),
+        );
+        assert!(
+            !ready,
+            "an aborted connect must not report the server ready"
+        );
+        assert_eq!(
+            slept.get(),
+            Duration::ZERO,
+            "an already-tripped token must bail before any sleep"
+        );
+        assert_eq!(
+            probes.get(),
+            0,
+            "cancellation is honored before the first readiness probe"
+        );
+    }
+
     #[test]
     fn final_attempt_does_not_overshoot_budget() {
         // With an interval that doesn't divide the budget evenly, the last sleep
