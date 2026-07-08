@@ -9,6 +9,7 @@ import {
   sftpRename,
   sftpWriteFileContent,
   vscodeOpenRemote,
+  TransferTerminalError,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { toast } from "@/components/ui";
@@ -22,23 +23,44 @@ function transferErrorMessage(error: unknown): string {
 }
 
 /**
- * Run an SFTP transfer with user feedback: a pending toast that resolves in
- * place into success or a persistent error (audit gap D2 — transfers must
- * never fail silently). The rejection is surfaced via `toast.error` and logged
- * to the LogViewer, then swallowed so callers do not produce an unhandled
- * rejection. Returns whether the transfer succeeded.
+ * Run an SFTP transfer with user feedback: a pending toast shown while the
+ * transfer runs (audit gap D2 — transfers must never fail silently).
+ *
+ * The **terminal** success/error toast is owned exclusively by the
+ * `transfer-progress` event path (`useTransferEvents`, #1286) so a single
+ * transfer produces exactly one terminal toast. This helper therefore does not
+ * emit its own success/error toast for a transfer that reached the backend:
+ *   - success → dismiss the pending toast (the event path raises the "Downloaded
+ *     …/Uploaded …" success toast);
+ *   - a {@link TransferTerminalError} (`done`/`cancelled`/`error` from the
+ *     transfer channel) → dismiss the pending toast; the event path already
+ *     surfaced the outcome (and stays quiet on cancel).
+ *
+ * An **early** failure that never produced a transfer event (invalid session,
+ * permission error thrown before the transfer starts, an sftp→sftp temp-file
+ * paste leg that fails synchronously) is still surfaced here via `toast.error`,
+ * since no `transfer-progress` event will cover it. The rejection is always
+ * swallowed so callers never produce an unhandled rejection. Returns whether
+ * the transfer succeeded.
  */
 async function runTransfer(
   label: string,
   action: () => Promise<unknown>,
-  messages: { loading: string; success: string }
+  messages: { loading: string }
 ): Promise<boolean> {
   const toastId = toast.loading(messages.loading);
   try {
     await action();
-    toast.success(messages.success, { id: toastId });
+    // Success toast is raised by the transfer-progress event path (#1286).
+    toast.dismiss(toastId);
     return true;
   } catch (error) {
+    if (error instanceof TransferTerminalError) {
+      // The event path already surfaced this (success/error toast) or is
+      // intentionally quiet (cancel) — just clear the pending toast.
+      toast.dismiss(toastId);
+      return false;
+    }
     const message = transferErrorMessage(error);
     frontendLog("sftp_transfer", `${label} failed: ${message}`);
     toast.error(`${label} failed: ${message}`, { id: toastId });
@@ -82,7 +104,6 @@ export function useFileSystem() {
       if (!localPath) return;
       await runTransfer("Download", () => sftpDownload(sftpSessionId, remotePath, localPath), {
         loading: `Downloading ${fileName}…`,
-        success: `Downloaded ${fileName}`,
       });
     },
     [sftpSessionId]
@@ -96,7 +117,6 @@ export function useFileSystem() {
     const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
     const ok = await runTransfer("Upload", () => sftpUpload(sftpSessionId, localPath, remotePath), {
       loading: `Uploading ${fileName}…`,
-      success: `Uploaded ${fileName}`,
     });
     if (ok) refreshSftp();
   }, [sftpSessionId, currentPath, refreshSftp]);
@@ -110,7 +130,7 @@ export function useFileSystem() {
       const ok = await runTransfer(
         "Upload",
         () => sftpUpload(sftpSessionId, localPath, remotePath),
-        { loading: `Uploading ${fileName}…`, success: `Uploaded ${fileName}` }
+        { loading: `Uploading ${fileName}…` }
       );
       if (ok) refreshSftp();
     },
@@ -228,7 +248,6 @@ export function useFileSystem() {
     for (const clipEntry of clipboard.entries) {
       const ok = await runTransfer("Paste", () => pasteOne(clipEntry), {
         loading: `Pasting ${clipEntry.name}…`,
-        success: `Pasted ${clipEntry.name}`,
       });
       // Abort on first failure so a cut clipboard is not cleared and the user
       // is not left with a partial, silently-incomplete paste.
