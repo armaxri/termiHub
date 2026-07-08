@@ -2,7 +2,10 @@ mod commands;
 mod connection;
 mod credential;
 mod embedded_servers;
-mod files;
+/// File-system access: local FS, SFTP sessions, and the cancellable transfer
+/// subsystem (public so integration tests can drive `SftpSession` /
+/// `TransferRegistry` directly — issue #1245).
+pub mod files;
 mod monitoring;
 mod network;
 mod session;
@@ -23,6 +26,7 @@ use connection::recovery::RecoveryWarning;
 use connection::settings::{AppSettings, SettingsStorage};
 use credential::{AutoLockTimer, CredentialManager, StorageMode};
 use files::sftp::SftpManager;
+use files::transfer::TransferRegistry;
 use monitoring::MonitoringManager;
 use network::NetworkManager;
 use session::manager::SessionManager;
@@ -89,6 +93,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_cli::init())
         .manage(SftpManager::new())
+        .manage(TransferRegistry::new())
         .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
         .manage(x_server_manager.clone())
@@ -499,6 +504,7 @@ pub fn run() {
             commands::files::sftp_realpath,
             commands::files::sftp_download,
             commands::files::sftp_upload,
+            commands::files::sftp_cancel_transfer,
             commands::files::sftp_mkdir,
             commands::files::sftp_delete,
             commands::files::sftp_rename,
@@ -658,6 +664,12 @@ pub fn run() {
                     // requests are aborted rather than abandoned on exit (#1147).
                     if let Some(mgr) = handle.try_state::<NetworkManager>() {
                         mgr.stop_all_http_monitors();
+                    }
+                    // Cancel every in-flight transfer *before* closing sessions,
+                    // so no half-written file keeps a dedicated channel open
+                    // during teardown (#1245).
+                    if let Some(reg) = handle.try_state::<TransferRegistry>() {
+                        reg.cancel_all();
                     }
                     // Close every open SFTP session so no SSH+SFTP connection is
                     // left dangling on the server until it times out (#1244).
