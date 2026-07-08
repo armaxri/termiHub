@@ -185,7 +185,9 @@ impl SshConnector for RusshSshConnector {
             // without display forwarding rather than aborting the whole connect.
             use super::x11::x_server_provisioner;
             let resolved = match x_server_provisioner() {
-                Some(provisioner) => match provisioner.ensure().await {
+                // Thread the connect-abort token so a Stop while XQuartz is still
+                // coming up (macOS) short-cuts the readiness wait promptly (#1260).
+                Some(provisioner) => match provisioner.ensure(cancel.cloned()).await {
                     Ok(lease) => {
                         // Hold the desktop session-lifetime guard (dependent-session
                         // refcount lease, #1107) for the whole session. Pushing it

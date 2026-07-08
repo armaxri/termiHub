@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::config::SshConfig;
@@ -144,9 +145,14 @@ pub trait XServerProvisioner: Send + Sync {
     /// - `lease.guard` — an opaque session-lifetime guard the connect path holds
     ///   until the session ends (see [`XServerLease`]).
     ///
+    /// `cancel` is the connect-abort token (`None` when the caller has none): if
+    /// the user aborts the connect while the provisioner is still bringing a
+    /// server up (e.g. waiting for XQuartz on macOS, #1260), tripping it
+    /// short-cuts that wait promptly instead of blocking to completion.
+    ///
     /// `Err(message)` — provisioning failed; `message` is an actionable,
     /// user-facing explanation surfaced to the UI (never a silent no-op).
-    async fn ensure(&self) -> Result<XServerLease, String>;
+    async fn ensure(&self, cancel: Option<CancellationToken>) -> Result<XServerLease, String>;
 }
 
 static PROVISIONER: OnceLock<Arc<dyn XServerProvisioner>> = OnceLock::new();
