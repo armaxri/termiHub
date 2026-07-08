@@ -49,7 +49,8 @@ async fn mon_01_cpu_stats() {
     let mut rx = provider
         .subscribe()
         .await
-        .expect("Subscribe should succeed");
+        .expect("Subscribe should succeed")
+        .stats;
 
     // Wait for at least two stats updates — CPU usage needs a delta between
     // two /proc/stat readings to compute percentage.
@@ -101,7 +102,8 @@ async fn mon_02_memory_stats() {
     let mut rx = provider
         .subscribe()
         .await
-        .expect("Subscribe should succeed");
+        .expect("Subscribe should succeed")
+        .stats;
 
     // Memory stats should be available from the first sample.
     let stats = tokio::time::timeout(Duration::from_secs(10), rx.recv())
@@ -146,7 +148,8 @@ async fn mon_03_disk_stats() {
     let mut rx = provider
         .subscribe()
         .await
-        .expect("Subscribe should succeed");
+        .expect("Subscribe should succeed")
+        .stats;
 
     // Disk stats should be available from the first sample.
     let stats = tokio::time::timeout(Duration::from_secs(10), rx.recv())
@@ -191,7 +194,8 @@ async fn mon_04_stats_under_load() {
     let mut rx = provider
         .subscribe()
         .await
-        .expect("Subscribe should succeed");
+        .expect("Subscribe should succeed")
+        .stats;
 
     // Generate CPU load in the container via a separate SSH session.
     let config = common::ssh_password_config(port_ssh_password());

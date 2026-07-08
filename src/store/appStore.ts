@@ -138,8 +138,12 @@ import {
 } from "@/services/lastSessionApi";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { connectTimeoutMessage, type ConnectTimeoutKind } from "@/utils/connectTimeout";
-import { SystemStats } from "@/types/monitoring";
-import { onSessionMonitoringStats, onPersistentSessionStateChanged } from "@/services/events";
+import { MonitorStatus, SystemStats } from "@/types/monitoring";
+import {
+  onSessionMonitoringStats,
+  onSessionMonitoringStatus,
+  onPersistentSessionStateChanged,
+} from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
@@ -760,6 +764,15 @@ interface AppState {
   monitoringLoading: boolean;
   monitoringError: string | null;
   /**
+   * Observable lifecycle state of the active monitoring collector loop.
+   *
+   * `null` when no monitor is connected. Set to `"live"` on connect and driven
+   * by `session-monitoring-status` push events for session-based tabs: a
+   * mid-stream drop flips it to `"stale"` so the status bar stops rendering
+   * frozen stats as live (#1229, audit gap G1).
+   */
+  monitoringStatus: MonitorStatus | null;
+  /**
    * Number of stats samples received on the current monitoring connection.
    * The remote collectors report CPU 0% on the first sample (no prior delta),
    * so the UI treats sample #1 as "priming" for the CPU field. Reset to 0 on
@@ -998,8 +1011,11 @@ function collectLiveTabs(state: {
   return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
 }
 
-/** Unlisten function for the active session-based monitoring event subscription. */
+/** Unlisten function for the active session-based monitoring stats subscription. */
 let _monitoringUnlisten: (() => void) | null = null;
+
+/** Unlisten function for the active session-based monitoring status subscription. */
+let _monitoringStatusUnlisten: (() => void) | null = null;
 
 function createTab(
   title: string,
@@ -4095,6 +4111,7 @@ export const useAppStore = create<AppState>((set, get) => {
     monitoringStats: null,
     monitoringLoading: false,
     monitoringError: null,
+    monitoringStatus: null,
     monitoringSampleCount: 0,
     monitoringCancelled: false,
     monitoringStatsCache: {},
@@ -4121,6 +4138,7 @@ export const useAppStore = create<AppState>((set, get) => {
             monitoringError: null,
             monitoringStats: cachedStats,
             monitoringHost: cachedStats ? sessionId : null,
+            monitoringStatus: "connecting",
             // Fresh connection: reset the sample counter so CPU shows the
             // priming indicator until the second push arrives (audit gap G10).
             monitoringSampleCount: 0,
@@ -4141,11 +4159,22 @@ export const useAppStore = create<AppState>((set, get) => {
           // Store unlisten in a module-level variable so disconnectMonitoring can call it.
           _monitoringUnlisten = unlisten;
 
+          // The status stream flips the indicator to `stale` on a mid-stream
+          // drop (and back to `live` on recovery) so frozen stats are never
+          // shown as live (#1229, audit gap G1).
+          const statusUnlisten = await onSessionMonitoringStatus((sid, status) => {
+            if (sid === sessionId) {
+              useAppStore.setState({ monitoringStatus: status });
+            }
+          });
+          _monitoringStatusUnlisten = statusUnlisten;
+
           await sessionMonitoringOpen(sessionId);
           set({
             monitoringSessionId: sessionId,
             monitoringHost: sessionId,
             monitoringLoading: false,
+            monitoringStatus: "live",
           });
           return;
         }
@@ -4158,6 +4187,7 @@ export const useAppStore = create<AppState>((set, get) => {
           monitoringError: null,
           monitoringStats: cachedStats,
           monitoringHost: cachedStats ? hostKey : null,
+          monitoringStatus: "connecting",
           // Fresh connection: reset the sample counter so CPU shows the priming
           // indicator until the second fetch arrives (audit gap G10).
           monitoringSampleCount: 0,
@@ -4172,6 +4202,7 @@ export const useAppStore = create<AppState>((set, get) => {
           monitoringHost: hostKey,
           monitoringStats: stats,
           monitoringLoading: false,
+          monitoringStatus: "live",
           monitoringSampleCount: state.monitoringSampleCount + 1,
           monitoringStatsCache: { ...state.monitoringStatsCache, [hostKey]: stats },
         }));
@@ -4185,9 +4216,14 @@ export const useAppStore = create<AppState>((set, get) => {
           _monitoringUnlisten();
           _monitoringUnlisten = null;
         }
+        if (_monitoringStatusUnlisten) {
+          _monitoringStatusUnlisten();
+          _monitoringStatusUnlisten = null;
+        }
         set({
           monitoringLoading: false,
           monitoringError: err instanceof Error ? err.message : String(err),
+          monitoringStatus: null,
         });
       }
     },
@@ -4211,11 +4247,16 @@ export const useAppStore = create<AppState>((set, get) => {
         _monitoringUnlisten();
         _monitoringUnlisten = null;
       }
+      if (_monitoringStatusUnlisten) {
+        _monitoringStatusUnlisten();
+        _monitoringStatusUnlisten = null;
+      }
       set((state) => ({
         monitoringSessionId: null,
         monitoringHost: null,
         monitoringStats: null,
         monitoringError: null,
+        monitoringStatus: null,
         monitoringSampleCount: 0,
         monitoringCancelled: false,
         // Preserve last-known stats so the UI can show them instantly on reconnect.
@@ -4236,14 +4277,19 @@ export const useAppStore = create<AppState>((set, get) => {
         set((state) => ({
           monitoringStats: stats,
           monitoringError: null,
+          // A successful poll recovers the indicator to live (audit gap G1).
+          monitoringStatus: "live",
           monitoringSampleCount: state.monitoringSampleCount + 1,
           monitoringStatsCache: monitoringHost
             ? { ...state.monitoringStatsCache, [monitoringHost]: stats }
             : state.monitoringStatsCache,
         }));
       } catch (err) {
+        // A failed poll while still "connected" flips to stale so the last-good
+        // numbers are dimmed rather than shown as live (audit gap G1).
         set({
           monitoringError: err instanceof Error ? err.message : String(err),
+          monitoringStatus: "stale",
         });
       }
     },

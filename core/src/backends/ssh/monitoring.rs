@@ -22,8 +22,9 @@ use tracing::debug;
 use crate::config::SshConfig;
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, CpuDeltaTracker, MonitoringProvider, MonitoringReceiver, MonitoringSender,
-    MONITORING_COMMAND,
+    parse_stats, CollectLoopState, CpuDeltaTracker, MonitorStatus, MonitorStatusSender,
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+    DEFAULT_STALE_THRESHOLD, MONITORING_COMMAND,
 };
 
 use super::handler::{ForwardedChannelRegistry, SshSession};
@@ -34,6 +35,12 @@ const MONITORING_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Channel capacity for monitoring stats updates.
 const MONITORING_CHANNEL_CAPACITY: usize = 16;
+
+/// Channel capacity for monitoring status updates.
+///
+/// Status transitions are rare (only on Live↔Stale changes), so a small
+/// buffer is ample.
+const MONITORING_STATUS_CHANNEL_CAPACITY: usize = 8;
 
 /// Maximum time a single collect may take before it is treated as a failure.
 ///
@@ -124,6 +131,8 @@ impl Drop for MonitoringTask {
 pub(crate) struct SshMonitoringProviderImpl<T: MonitoringTransport> {
     transport: Arc<T>,
     collect_timeout: Duration,
+    /// Consecutive collect failures tolerated before the loop reports `Stale`.
+    stale_threshold: u32,
     task: Arc<Mutex<Option<MonitoringTask>>>,
 }
 
@@ -136,6 +145,7 @@ impl<T: MonitoringTransport> SshMonitoringProviderImpl<T> {
         Self {
             transport: Arc::new(transport),
             collect_timeout,
+            stale_threshold: DEFAULT_STALE_THRESHOLD,
             task: Arc::new(Mutex::new(None)),
         }
     }
@@ -195,9 +205,17 @@ async fn collect_once<T: MonitoringTransport>(
     }
 }
 
+/// Send a status transition, ignoring a closed receiver.
+///
+/// A dropped status receiver (frontend stopped listening) must not tear down
+/// the collect loop — the stats channel governs the loop's lifetime.
+async fn emit_status(status_tx: &MonitorStatusSender, status: MonitorStatus) {
+    let _ = status_tx.send(status).await;
+}
+
 #[async_trait::async_trait]
 impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T> {
-    async fn subscribe(&self) -> Result<MonitoringReceiver, CoreError> {
+    async fn subscribe(&self) -> Result<MonitoringSubscription, CoreError> {
         // Stop any existing monitoring task.
         if let Ok(mut guard) = self.task.lock() {
             *guard = None;
@@ -212,19 +230,27 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
 
         let (tx, rx): (MonitoringSender, MonitoringReceiver) =
             tokio::sync::mpsc::channel(MONITORING_CHANNEL_CAPACITY);
+        let (status_tx, status_rx) = tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
 
         let alive = Arc::new(AtomicBool::new(true));
         let alive_clone = alive.clone();
         let transport = self.transport.clone();
         let collect_timeout = self.collect_timeout;
+        let stale_threshold = self.stale_threshold;
 
-        // The loop owns the already-open session; it never reconnects.
+        // The loop owns the already-open session; it never reconnects. It
+        // tracks its own status via `CollectLoopState`: the first successful
+        // collect emits `Live`; `stale_threshold` consecutive failures emit
+        // `Stale`; a later success emits `Live` again (#1229, gap G1).
         tokio::spawn(async move {
             let session = session;
             let mut cpu_tracker = CpuDeltaTracker::new();
+            let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
             while alive_clone.load(Ordering::SeqCst) {
-                match collect_once(&*transport, &session, collect_timeout).await {
+                // A collect error, a parse error, or a stat send failure all
+                // mean "no fresh sample this tick" → count as a failure.
+                let collected = match collect_once(&*transport, &session, collect_timeout).await {
                     Ok(output) => match parse_stats(&output) {
                         Ok((mut stats, counters)) => {
                             if let Some(pct) = cpu_tracker.update(counters) {
@@ -233,14 +259,26 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                             if tx.send(stats).await.is_err() {
                                 break;
                             }
+                            true
                         }
                         Err(e) => {
                             debug!("Failed to parse monitoring output: {e}");
+                            false
                         }
                     },
                     Err(e) => {
                         debug!("Monitoring collect failed: {e}");
+                        false
                     }
+                };
+
+                let transition = if collected {
+                    loop_state.on_success()
+                } else {
+                    loop_state.on_failure()
+                };
+                if let Some(status) = transition {
+                    emit_status(&status_tx, status).await;
                 }
 
                 // Sleep in 100ms increments to allow quick shutdown.
@@ -258,7 +296,10 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
             *guard = Some(MonitoringTask { alive, cancel });
         }
 
-        Ok(rx)
+        Ok(MonitoringSubscription {
+            stats: rx,
+            status: status_rx,
+        })
     }
 
     async fn unsubscribe(&self) -> Result<(), CoreError> {
@@ -272,13 +313,34 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::monitoring::MonitorStatusReceiver;
     use std::sync::atomic::AtomicUsize;
 
+    /// A valid `MONITORING_COMMAND` output that `parse_stats` accepts, so the
+    /// collect loop can produce a real `Live` sample in tests. Matches the
+    /// plain-line layout the parser expects (hostname, loadavg, cpu, meminfo,
+    /// uptime, df, uname).
+    const SAMPLE_STATS: &str = "\
+testhost
+0.15 0.10 0.05 1/234 5678
+cpu  10000 500 3000 80000 1000 0 200 0 0 0
+MemTotal:       16384000 kB
+MemAvailable:   12000000 kB
+12345.67 45678.90
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        50000000  20000000  28000000      42% /
+Linux 5.15.0";
+
     /// Fake transport with scripted connect / collect behaviour for tests.
+    ///
+    /// `collect_should_fail` lets a test flip collects between success and
+    /// failure at runtime to exercise the Live↔Stale status transitions.
     struct FakeTransport {
         connect_ok: bool,
         collect_delay: Duration,
         collect_calls: Arc<AtomicUsize>,
+        collect_should_fail: Arc<AtomicBool>,
+        collect_output: String,
     }
 
     impl FakeTransport {
@@ -287,7 +349,23 @@ mod tests {
                 connect_ok,
                 collect_delay,
                 collect_calls: Arc::new(AtomicUsize::new(0)),
+                collect_should_fail: Arc::new(AtomicBool::new(false)),
+                collect_output: "collected".to_string(),
             }
+        }
+
+        /// A transport whose collects return parseable stats and whose failure
+        /// mode is controlled by the returned flag (`true` = fail).
+        fn with_failure_flag() -> (Self, Arc<AtomicBool>) {
+            let flag = Arc::new(AtomicBool::new(false));
+            let transport = Self {
+                connect_ok: true,
+                collect_delay: Duration::ZERO,
+                collect_calls: Arc::new(AtomicUsize::new(0)),
+                collect_should_fail: flag.clone(),
+                collect_output: SAMPLE_STATS.to_string(),
+            };
+            (transport, flag)
         }
     }
 
@@ -306,8 +384,19 @@ mod tests {
         async fn collect(&self, _session: &Self::Session) -> Result<String, CoreError> {
             self.collect_calls.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.collect_delay).await;
-            Ok("collected".to_string())
+            if self.collect_should_fail.load(Ordering::SeqCst) {
+                return Err(CoreError::Other("collect dropped".to_string()));
+            }
+            Ok(self.collect_output.clone())
         }
+    }
+
+    /// Wait for the next status transition, failing if none arrives in time.
+    async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("status should arrive before timeout")
+            .expect("status channel should stay open")
     }
 
     /// G4: a connect failure must surface as `Err` from `subscribe`, so the
@@ -325,7 +414,7 @@ mod tests {
         );
     }
 
-    /// G4: a successful connect yields a live receiver.
+    /// G4: a successful connect yields a live subscription.
     #[tokio::test]
     async fn subscribe_returns_ok_when_connect_succeeds() {
         let transport = FakeTransport::new(true, Duration::ZERO);
@@ -333,7 +422,48 @@ mod tests {
 
         let result = provider.subscribe().await;
 
-        assert!(result.is_ok(), "successful connect must return a receiver");
+        assert!(
+            result.is_ok(),
+            "successful connect must return a subscription"
+        );
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// G1: a mid-stream collect drop flips the status channel to `Stale`, and a
+    /// recovery flips it back to `Live` — the loop-state transitions observed
+    /// through the real collect loop.
+    #[tokio::test]
+    async fn collect_loop_emits_stale_on_drop_and_live_on_recovery() {
+        let (transport, fail) = FakeTransport::with_failure_flag();
+        // Threshold 1 so a single failure is enough to go Stale in the test.
+        let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+        provider.stale_threshold = 1;
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        // First successful collect emits Live.
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Live,
+            "first successful collect must emit Live"
+        );
+
+        // Simulate a mid-stream drop: subsequent collects fail → Stale.
+        fail.store(true, Ordering::SeqCst);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Stale,
+            "a mid-stream collect drop must emit Stale"
+        );
+
+        // Recover: collects succeed again → Live.
+        fail.store(false, Ordering::SeqCst);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Live,
+            "recovery must emit Live again"
+        );
+
         provider.unsubscribe().await.expect("unsubscribe");
     }
 

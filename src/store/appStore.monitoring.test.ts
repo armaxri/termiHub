@@ -42,18 +42,27 @@ vi.mock("@/services/api", () => ({
   sessionMonitoringClose: (...args: unknown[]) => mockSessionMonitoringClose(...args),
 }));
 
-// Session-based monitoring subscribes to a Tauri event and stores the returned
-// unlisten fn; the tests below assert that listener is not leaked on a failed open.
+// Session-based monitoring subscribes to Tauri events and stores the returned
+// unlisten fns; the tests below assert those listeners are not leaked on a
+// failed open. Status callbacks are captured so a test can push a transition.
 const mockUnlisten = vi.fn();
+const mockStatusUnlisten = vi.fn();
+type StatusCallback = (sessionId: string, status: MonitorStatus) => void;
+let capturedStatusCallback: StatusCallback | null = null;
 const mockOnSessionMonitoringStats = vi.fn((..._args: unknown[]) => Promise.resolve(mockUnlisten));
+const mockOnSessionMonitoringStatus = vi.fn((cb: StatusCallback) => {
+  capturedStatusCallback = cb;
+  return Promise.resolve(mockStatusUnlisten);
+});
 
 vi.mock("@/services/events", () => ({
   onSessionMonitoringStats: (...args: unknown[]) => mockOnSessionMonitoringStats(...args),
+  onSessionMonitoringStatus: (cb: StatusCallback) => mockOnSessionMonitoringStatus(cb),
   onPersistentSessionStateChanged: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 import { useAppStore } from "./appStore";
-import type { SystemStats } from "@/types/monitoring";
+import type { MonitorStatus, SystemStats } from "@/types/monitoring";
 
 const TEST_SSH_CONFIG = {
   host: "pi.local",
@@ -81,6 +90,7 @@ describe("appStore — monitoring", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
+    capturedStatusCallback = null;
   });
 
   describe("connectMonitoring", () => {
@@ -526,6 +536,99 @@ describe("appStore — monitoring", () => {
       await useAppStore.getState().disconnectMonitoring();
 
       expect(useAppStore.getState().monitoringCancelled).toBe(false);
+    });
+  });
+
+  // Issue #1229 (audit gap G1): a mid-stream drop must surface as an explicit
+  // "stale" status so frozen stats are not shown as live.
+  describe("monitoringStatus (Stale — G1)", () => {
+    it("defaults to null when nothing is monitored", () => {
+      expect(useAppStore.getState().monitoringStatus).toBeNull();
+    });
+
+    it("is 'live' after a successful SSH connect", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+
+      expect(useAppStore.getState().monitoringStatus).toBe("live");
+    });
+
+    it("flips to 'stale' when an SSH refresh poll fails", async () => {
+      mockMonitoringFetchStats.mockRejectedValue(new Error("timeout"));
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+        monitoringStatus: "live",
+      });
+
+      await useAppStore.getState().refreshMonitoring();
+
+      expect(useAppStore.getState().monitoringStatus).toBe("stale");
+    });
+
+    it("recovers to 'live' when a later SSH refresh poll succeeds", async () => {
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+        monitoringStatus: "stale",
+      });
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      await useAppStore.getState().refreshMonitoring();
+
+      expect(useAppStore.getState().monitoringStatus).toBe("live");
+    });
+
+    it("is 'live' after a session-based open, then follows status push events", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+
+      await useAppStore.getState().connectMonitoring({
+        _sessionBased: true,
+        _sessionId: "sess-abc",
+      });
+      expect(useAppStore.getState().monitoringStatus).toBe("live");
+      expect(mockOnSessionMonitoringStatus).toHaveBeenCalledTimes(1);
+      expect(capturedStatusCallback).not.toBeNull();
+
+      // A mid-stream drop pushes "stale" for the active session.
+      capturedStatusCallback?.("sess-abc", "stale" as MonitorStatus);
+      expect(useAppStore.getState().monitoringStatus).toBe("stale");
+
+      // Recovery pushes "live" again.
+      capturedStatusCallback?.("sess-abc", "live" as MonitorStatus);
+      expect(useAppStore.getState().monitoringStatus).toBe("live");
+    });
+
+    it("ignores status events for a different session", async () => {
+      mockSessionMonitoringOpen.mockResolvedValue(undefined);
+
+      await useAppStore.getState().connectMonitoring({
+        _sessionBased: true,
+        _sessionId: "sess-abc",
+      });
+
+      capturedStatusCallback?.("some-other-session", "stale" as MonitorStatus);
+
+      // Unrelated session must not change our status.
+      expect(useAppStore.getState().monitoringStatus).toBe("live");
+    });
+
+    it("resets to null on disconnect", async () => {
+      mockMonitoringClose.mockResolvedValue(undefined);
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+        monitoringStatus: "stale",
+      });
+
+      await useAppStore.getState().disconnectMonitoring();
+
+      expect(useAppStore.getState().monitoringStatus).toBeNull();
     });
   });
 });

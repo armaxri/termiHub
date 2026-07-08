@@ -418,7 +418,7 @@ export async function onEmbeddedServerStatusChanged(
   });
 }
 
-import type { SystemStats } from "@/types/monitoring";
+import type { MonitorStatus, SystemStats } from "@/types/monitoring";
 
 interface SessionMonitoringStatsPayload {
   session_id: string;
@@ -431,6 +431,26 @@ export async function onSessionMonitoringStats(
 ): Promise<UnlistenFn> {
   return await listen<SessionMonitoringStatsPayload>("session-monitoring-stats", (event) => {
     callback(event.payload.session_id, event.payload.stats);
+  });
+}
+
+interface SessionMonitoringStatusPayload {
+  session_id: string;
+  status: MonitorStatus;
+}
+
+/**
+ * Subscribe to session-based monitoring status push events.
+ *
+ * Delivers the collector loop's lifecycle transitions (`connecting` → `live` →
+ * `stale` → …) so the status bar can render an explicit stale indicator on a
+ * mid-stream drop (#1229, audit gap G1).
+ */
+export async function onSessionMonitoringStatus(
+  callback: (sessionId: string, status: MonitorStatus) => void
+): Promise<UnlistenFn> {
+  return await listen<SessionMonitoringStatusPayload>("session-monitoring-status", (event) => {
+    callback(event.payload.session_id, event.payload.status);
   });
 }
 
