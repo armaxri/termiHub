@@ -270,6 +270,17 @@ export function Terminal({
   // destroying the live xterm and leaving a blank terminal. Using a mount-time
   // ref keeps setupTerminal stable after the initial connect.
   const initialSessionIdRef = useRef(existingSessionId);
+  // Keep the latest persistentConnectionId in a ref so the terminal-creation
+  // effect below can read it without listing it as a dependency. Adding it to
+  // that effect's deps would dispose and recreate the live xterm instance and
+  // its backend session whenever the prop changed — the same churn we avoid for
+  // existingSessionId above. The value is only read on (re)connect to decide
+  // whether to replay the local scrollback snapshot, so a ref preserves the
+  // exact behavior while satisfying react-hooks/exhaustive-deps (#1271).
+  const persistentConnectionIdRef = useRef(persistentConnectionId);
+  useEffect(() => {
+    persistentConnectionIdRef.current = persistentConnectionId;
+  }, [persistentConnectionId]);
   const {
     register,
     unregister,
@@ -855,7 +866,7 @@ export function Terminal({
     // the scrollback — skip it for those and rely on the server buffer.
     // Always clear the ref so an unrelated re-run starts empty.
     if (scrollbackSnapshotRef.current) {
-      if (!persistentConnectionId) {
+      if (!persistentConnectionIdRef.current) {
         xterm.write(scrollbackSnapshotRef.current);
       }
       scrollbackSnapshotRef.current = null;
