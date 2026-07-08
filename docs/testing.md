@@ -960,6 +960,27 @@ Verify acquisition end-to-end on a **clean Windows box** (no VcXsrv installed):
    error offline) rather than launching a broken server.
    > > > > > > > origin/develop
 
+#### Monitoring auto-reconnect on a mid-stream drop (#1230)
+
+Verifies that remote system monitoring auto-reconnects after a transient
+transport drop and resolves to `Offline` when the reconnect budget is
+exhausted. Pending a fault-injection system test (follow-up), verify manually:
+
+1. Start the SSH test containers (`tests/docker/`) and open an SSH connection to
+   `ssh-password:2201`. Confirm the status-bar monitoring chips show live CPU /
+   memory / disk (`Live`).
+2. **Transient drop → recovery:** briefly interrupt the monitored host's sshd
+   (e.g. `docker pause`/`unpause` the container, or drop the network for a few
+   seconds via the `network-fault-proxy`). Confirm the status bar dims and shows
+   **Stale**, then **Reconnecting**, and returns to live numbers automatically
+   once the host is reachable again — no manual Kill / re-pick.
+3. **Exhausted backoff → Offline:** stop the monitored host's sshd and leave it
+   down. Confirm monitoring goes `Stale` → `Reconnecting`, retries under an
+   increasing backoff (capped at 30 s), and after the attempt budget resolves to
+   **Offline** and stops retrying (no runaway reconnect loop).
+4. Repeat against a monitored host **behind the agent** (agent monitoring
+   subscription) to confirm the agent mirrors the same behavior.
+
 ### Legacy Guided Manual Test Runner (YAML)
 
 The remaining manual test items are still defined as machine-readable YAML in [`tests/manual/*.yaml`](../tests/manual/). The standalone runner presents applicable tests one at a time, manages infrastructure, and generates a JSON report. It is being subsumed by the harness flow above:
