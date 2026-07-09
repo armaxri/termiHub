@@ -13,10 +13,18 @@ import {
   Download,
   Upload,
   Ban,
+  Pause,
+  Play,
+  RotateCw,
+  Timer,
+  Check,
 } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Modal, Button, Tooltip, Progress, toast } from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
 import type { TransferState } from "@/types/connection";
+import type { MonitoringEntry } from "@/types/monitoring";
+import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
@@ -81,6 +89,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     [monitors]
   );
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
+  const setMonitoringPaused = useAppStore((s) => s.setMonitoringPaused);
+  const setMonitoringInterval = useAppStore((s) => s.setMonitoringInterval);
+  const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
   // Live source of truth for HTTP monitors (kept current by the Network Tools
   // sidebar / check events); the panel reads it directly so it stays in sync
   // and this "kill everything" surface can see and stop the poll loops (#1147).
@@ -429,6 +440,41 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     }
   };
 
+  // ── Per-host monitoring lifecycle (#1233) ────────────────────────────────
+
+  const handleToggleMonitorPaused = async (key: string, paused: boolean) => {
+    try {
+      await setMonitoringPaused(key, paused);
+      toast.success(paused ? "Monitoring paused" : "Monitoring resumed");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to toggle monitoring pause: ${err}`);
+      toast.error(`Failed to ${paused ? "pause" : "resume"} monitoring: ${err}`);
+    }
+  };
+
+  const handleSetMonitorInterval = async (key: string, intervalMs: number) => {
+    try {
+      await setMonitoringInterval(key, intervalMs);
+      toast.success(`Refresh interval set to ${formatMonitorInterval(intervalMs)}`);
+    } catch (err) {
+      frontendLog("open_connections", `Failed to set monitoring interval: ${err}`);
+      toast.error(`Failed to set interval: ${err}`);
+    }
+  };
+
+  // Retry re-polls a monitor that dropped to stale/offline; a successful fetch
+  // flips its status back to live (session monitors recover via their own push
+  // stream, so this is a harmless no-op there).
+  const handleRetryMonitor = async (key: string) => {
+    try {
+      await refreshMonitoring(key);
+      toast.success("Retrying monitor");
+    } catch (err) {
+      frontendLog("open_connections", `Failed to retry monitoring: ${err}`);
+      toast.error(`Failed to retry monitoring: ${err}`);
+    }
+  };
+
   return (
     <Modal
       open={open}
@@ -694,9 +740,17 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 key={m.key}
                 icon={<MonitorStop size={14} />}
                 title={m.host ?? m.key}
-                detail={m.status === "stale" ? "stale — connection dropped" : undefined}
-                badge={m.status === "stale" ? "reconnecting" : "connected"}
+                detail={monitorRowDetail(m)}
+                badge={monitorRowBadge(m)}
                 onKill={() => disconnectMonitoring(m.key)}
+                actions={
+                  <MonitorRowActions
+                    entry={m}
+                    onTogglePaused={handleToggleMonitorPaused}
+                    onSetInterval={handleSetMonitorInterval}
+                    onRetry={handleRetryMonitor}
+                  />
+                }
               />
             ))}
           </Section>
@@ -907,6 +961,8 @@ interface ConnectionRowProps {
   onKill?: () => void | Promise<void>;
   /** Label for the kill button (defaults to "Kill"). */
   killLabel?: string;
+  /** Extra per-row controls rendered before the kill button. */
+  actions?: React.ReactNode;
   "data-testid"?: string;
   /** data-testid forwarded to the kill button. */
   killTestId?: string;
@@ -919,6 +975,7 @@ function ConnectionRow({
   badge,
   onKill,
   killLabel = "Kill",
+  actions,
   "data-testid": testId,
   killTestId,
 }: ConnectionRowProps) {
@@ -930,6 +987,7 @@ function ConnectionRow({
         {detail && <span className="oc-row__detail">{detail}</span>}
       </span>
       <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
+      {actions}
       {onKill && (
         <Button
           variant="danger"
@@ -942,5 +1000,127 @@ function ConnectionRow({
         </Button>
       )}
     </div>
+  );
+}
+
+/** Format a monitoring refresh interval (ms) as a compact label like "2s" (#1233). */
+function formatMonitorInterval(intervalMs: number): string {
+  return `${Math.round(intervalMs / 1000)}s`;
+}
+
+/** Human-readable secondary line for a monitoring row (#1233). */
+function monitorRowDetail(m: MonitoringEntry): string | undefined {
+  if (m.paused) return "paused — collection stopped";
+  if (m.status === "offline") return "offline — connection lost";
+  if (m.status === "stale") return "stale — connection dropped";
+  return `every ${formatMonitorInterval(m.intervalMs)}`;
+}
+
+/** Status badge variant for a monitoring row (#1233). */
+function monitorRowBadge(m: MonitoringEntry): BadgeVariant {
+  if (m.paused) return "paused";
+  if (m.status === "offline") return "error";
+  if (m.status === "stale") return "reconnecting";
+  return "connected";
+}
+
+/** Props for {@link MonitorRowActions}. */
+interface MonitorRowActionsProps {
+  entry: MonitoringEntry;
+  onTogglePaused: (key: string, paused: boolean) => void | Promise<void>;
+  onSetInterval: (key: string, intervalMs: number) => void | Promise<void>;
+  onRetry: (key: string) => void | Promise<void>;
+}
+
+/**
+ * Per-host monitoring controls for an Open Connections row: Pause/Resume, an
+ * interval selector, and (when offline) a Retry — all composed from shared
+ * primitives with feedback-on-every-action handled by the parent (#1233).
+ */
+function MonitorRowActions({
+  entry,
+  onTogglePaused,
+  onSetInterval,
+  onRetry,
+}: MonitorRowActionsProps) {
+  const paused = entry.paused;
+  const isOffline = entry.status === "offline";
+  return (
+    <span className="oc-row__actions">
+      {isOffline && (
+        <Tooltip content="Retry monitor" side="top">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => onRetry(entry.key)}
+            aria-label="Retry monitor"
+            data-testid={`monitor-retry-${entry.key}`}
+          >
+            <RotateCw size={14} />
+          </Button>
+        </Tooltip>
+      )}
+      <Tooltip content={paused ? "Resume monitoring" : "Pause monitoring"} side="top">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => onTogglePaused(entry.key, !paused)}
+          aria-label={paused ? "Resume monitoring" : "Pause monitoring"}
+          data-testid={paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}
+        >
+          {paused ? <Play size={14} /> : <Pause size={14} />}
+        </Button>
+      </Tooltip>
+      <DropdownMenu.Root>
+        <Tooltip content="Refresh interval" side="top">
+          <DropdownMenu.Trigger asChild>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-label="Set refresh interval"
+              data-testid={`monitor-interval-${entry.key}`}
+            >
+              <Timer size={14} />
+              {formatMonitorInterval(entry.intervalMs)}
+            </Button>
+          </DropdownMenu.Trigger>
+        </Tooltip>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="monitoring-menu__content"
+            side="bottom"
+            align="end"
+            sideOffset={4}
+          >
+            <DropdownMenu.Label className="monitoring-menu__label monitoring-menu__interval-label">
+              Refresh interval
+            </DropdownMenu.Label>
+            <DropdownMenu.RadioGroup
+              value={String(entry.intervalMs)}
+              onValueChange={(v) => onSetInterval(entry.key, Number(v))}
+            >
+              {MONITORING_INTERVAL_OPTIONS.map((opt) => (
+                <DropdownMenu.RadioItem
+                  key={opt}
+                  className="monitoring-menu__action monitoring-menu__radio"
+                  value={String(opt)}
+                  data-testid={`monitor-interval-${entry.key}-${opt}`}
+                >
+                  <DropdownMenu.ItemIndicator className="monitoring-menu__radio-indicator">
+                    <Check size={14} />
+                  </DropdownMenu.ItemIndicator>
+                  <span className="monitoring-menu__radio-label">
+                    Refresh every {formatMonitorInterval(opt)}
+                  </span>
+                  {opt === DEFAULT_MONITORING_INTERVAL_MS && (
+                    <span className="monitoring-menu__radio-default">default</span>
+                  )}
+                </DropdownMenu.RadioItem>
+              ))}
+            </DropdownMenu.RadioGroup>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </span>
   );
 }

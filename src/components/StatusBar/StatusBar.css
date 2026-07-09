@@ -359,6 +359,45 @@
   cursor: default;
 }
 
+/* Neutral "Paused" badge in the status bar — collection stopped, link kept (1233). */
+.monitoring-status__paused-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+/* Header for the refresh-interval radio group in the detail dropdown (1233). */
+.monitoring-menu__interval-label {
+  padding: var(--spacing-xs) var(--spacing-md) 2px;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Radio-style interval items: reserve space for the leading tick indicator. */
+.monitoring-menu__radio {
+  position: relative;
+  padding-left: calc(var(--spacing-sm) + 20px);
+}
+
+.monitoring-menu__radio-indicator {
+  position: absolute;
+  left: var(--spacing-sm);
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-color);
+}
+
+.monitoring-menu__radio-label {
+  flex: 1;
+}
+
+.monitoring-menu__radio-default {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
 /* Update indicator dot in status bar */
 .update-indicator__dot {
   display: inline-block;
