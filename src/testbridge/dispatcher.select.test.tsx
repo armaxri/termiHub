@@ -76,6 +76,40 @@ describe("dispatchCommand select against the Select primitive", () => {
     expect(onChange).toHaveBeenCalledWith("serial");
   });
 
+  it("waits for a late-mounting listbox option (single call, no retry)", async () => {
+    // Regression for the guided-manual harness (issue: guided-manual Radix
+    // select): the Python bridge's `select` fires exactly one call with no
+    // retry, and Radix portals its listbox asynchronously, so the dispatcher
+    // must itself wait for the option to mount rather than checking once and
+    // failing. Simulate the async portal mount deterministically: the trigger
+    // carries the `ui-select__trigger` marker, and the matching option is
+    // appended a task later (as the real portal does) in response to the
+    // open keystroke. A single dispatch must still locate and click it.
+    const trigger = document.createElement("button");
+    trigger.setAttribute("data-testid", "sel");
+    trigger.className = "ui-select__trigger";
+    document.body.appendChild(trigger);
+
+    const clicked = vi.fn();
+    trigger.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).key !== "Enter") return;
+      setTimeout(() => {
+        const opt = document.createElement("div");
+        opt.className = "ui-select__item";
+        opt.setAttribute("data-value", "serial");
+        opt.addEventListener("click", () => clicked());
+        document.body.appendChild(opt);
+      }, 0);
+    });
+
+    const res = await dispatchCommand({ action: "select", testId: "sel", value: "serial" }, deps());
+
+    expect(res.ok).toBe(true);
+    expect(clicked).toHaveBeenCalledTimes(1);
+    trigger.remove();
+    document.querySelector('.ui-select__item[data-value="serial"]')?.remove();
+  });
+
   it("reports an error when the requested option is absent", async () => {
     act(() => {
       root.render(<Select data-testid="sel" value="local" onChange={() => {}} options={OPTIONS} />);
