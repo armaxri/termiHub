@@ -296,9 +296,14 @@ class TestExternalApp(
             "was not negotiated"
         )
 
+        # KNOWN ISSUE #1304: forwarding negotiates and $DISPLAY is set (asserted
+        # above), but the forwarded X11 channel never reaches termiHub, so no
+        # window appears yet. This step is expected to fail until #1304 is fixed;
+        # it stays active so it re-verifies once forwarding delivers the channel.
         self.manual_step(
             "In the SSH terminal, type: xeyes   (or: xclock)",
-            "An X11 window appears on your screen.",
+            "An X11 window appears on your screen. (Known bug #1304: it may not "
+            "yet — mark [n] if no window shows.)",
         )
 
     # ── Clipboard copy/paste (MT-KB-01..04) ──────────────────────────────────
