@@ -210,6 +210,28 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 
+  it("reflects consent persisted on connect in the Provide X Server toggle (#1296)", async () => {
+    // After a connect-time Enable, the backend persists
+    // provide_x_server_automatically = Some(true); the Settings toggle must show
+    // that as checked so the decision is visible and reversible in one place.
+    useAppStore.setState({
+      settings: { ...FULL_SETTINGS, provideXServerAutomatically: true },
+      savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: true },
+    });
+    render();
+    expect(findProvideXServerCheckbox()!.checked).toBe(true);
+
+    // A persisted decline (Some(false)) shows as unchecked.
+    act(() => root.unmount());
+    root = createRoot(container);
+    useAppStore.setState({
+      settings: { ...FULL_SETTINGS, provideXServerAutomatically: false },
+      savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: false },
+    });
+    render();
+    expect(findProvideXServerCheckbox()!.checked).toBe(false);
+  });
+
   it("marks settings dirty when toggling Stop X Server When Idle", async () => {
     useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
     render();
