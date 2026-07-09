@@ -16,6 +16,7 @@
 #[cfg(windows)]
 pub mod acquire;
 pub mod auth;
+mod consent;
 mod linux_gap;
 pub(crate) mod macos;
 pub mod manager;
