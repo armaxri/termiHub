@@ -11,6 +11,7 @@ import {
 } from "@/types/xserver";
 import { XServerSetupContent, type XServerSetupPhase } from "./XServerSetupContent";
 import { driveXServerEnsure } from "./xServerProvisioning";
+import { guideHomebrewInstall } from "./guideHomebrewInstall";
 
 interface XServerSetupDialogProps {
   /** Whether the dialog is open (controlled). */
@@ -106,6 +107,7 @@ export function XServerSetupDialog({ open, onOpenChange, onProvisioned }: XServe
       onNotNow={handleClose}
       onRetry={handleRetry}
       onInstallDependency={handleInstallDependency}
+      onGuideHomebrewInstall={guideHomebrewInstall}
       onClose={handleClose}
     />
   );

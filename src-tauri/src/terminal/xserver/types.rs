@@ -7,6 +7,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The official Homebrew installer one-liner (brew.sh). The macOS brew-absent
+/// path hands this back as an [`XServerError::DependencyMissing`] `install_command`
+/// so the UI can open a local terminal tab that runs it, guiding the user through
+/// the real `sudo` / RETURN prompts (#1117). Single source of truth for the
+/// command the frontend types into that terminal.
+pub(crate) const HOMEBREW_INSTALL_COMMAND: &str =
+    "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"";
+
 /// The host platform, as it matters for X server provisioning.
 ///
 /// Each platform has a different strategy: Windows provisions VcXsrv, macOS
@@ -173,7 +181,20 @@ impl XServerError {
     /// stable discriminator the frontend branches on; if the user declines, the
     /// hint still points at the manual xquartz.org download (help ends there).
     pub fn homebrew_required() -> Self {
-        todo!("homebrew_required — implemented in the follow-up commit")
+        XServerError::DependencyMissing {
+            message: "XQuartz can't be installed automatically because Homebrew is not installed. \
+                Install Homebrew, then retry — or install XQuartz manually from \
+                https://www.xquartz.org."
+                .to_string(),
+            dependency: "Homebrew".to_string(),
+            install_hint: Some(
+                "Installing XQuartz automatically needs Homebrew. \"Install Homebrew\" opens a \
+                terminal with the official installer; once it finishes, retry to install XQuartz. \
+                Prefer not to? Install XQuartz manually from https://www.xquartz.org."
+                    .to_string(),
+            ),
+            install_command: Some(HOMEBREW_INSTALL_COMMAND.to_string()),
+        }
     }
 
     /// macOS: XQuartz is installed but no server is running.

@@ -2,10 +2,11 @@
 //!
 //! macOS can't embed an X server, so termiHub detects XQuartz and — only on an
 //! explicit user action, never silently — guides its install: `brew install
-//! --cask xquartz` when Homebrew is present, otherwise actionable guidance to
-//! download it from xquartz.org (the hosted notarized `.pkg` path is a
-//! follow-up). Detection is a pure check over injectable paths so it is
-//! unit-testable on any CI host; the install runs off the async reactor.
+//! --cask xquartz` when Homebrew is present, otherwise a guided Homebrew install
+//! (the UI opens a terminal running the official installer) and, if the user
+//! declines, actionable guidance to download XQuartz from xquartz.org (#1117).
+//! Detection is a pure check over injectable paths so it is unit-testable on any
+//! CI host; the install runs off the async reactor.
 
 use std::path::Path;
 #[cfg(any(target_os = "macos", test))]
@@ -164,8 +165,10 @@ pub(super) fn launch_xquartz_and_wait(cancel: Option<&CancellationToken>) {
 /// Only ever called from the `x_server_install_dependency` command — i.e. after
 /// an explicit user action, never on the silent connect path. Uses Homebrew when
 /// available (`brew install --cask xquartz`, which prompts for admin auth
-/// itself); otherwise returns the actionable download guidance the UI surfaces as
-/// an "Open xquartz.org" action. Never installs anything silently.
+/// itself); when Homebrew is absent it returns [`XServerError::homebrew_required`]
+/// so the UI can guide the user through installing Homebrew first (opening a
+/// terminal with the official installer), with a manual xquartz.org fallback.
+/// Never installs anything silently.
 pub(crate) async fn install_xquartz() -> Result<(), XServerError> {
     match decide_install_action(xquartz_installed(), super::binary_on_path("brew")) {
         InstallAction::AlreadyInstalled => Ok(()),
@@ -192,8 +195,14 @@ enum InstallAction {
 }
 
 /// Decide how to satisfy the XQuartz dependency from the two detected booleans.
-fn decide_install_action(_xquartz_installed: bool, _brew_present: bool) -> InstallAction {
-    todo!("decide_install_action — implemented in the follow-up commit")
+fn decide_install_action(xquartz_installed: bool, brew_present: bool) -> InstallAction {
+    if xquartz_installed {
+        InstallAction::AlreadyInstalled
+    } else if brew_present {
+        InstallAction::InstallViaBrew
+    } else {
+        InstallAction::HomebrewRequired
+    }
 }
 
 /// Run `brew install --cask xquartz` off the async reactor, mapping a spawn

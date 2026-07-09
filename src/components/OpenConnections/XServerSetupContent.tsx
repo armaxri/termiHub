@@ -1,10 +1,29 @@
 import type { ReactNode } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Modal, Button } from "@/components/ui";
 import type { XServerError, XServerProgress } from "@/types/xserver";
 import "./XServerSetupDialog.css";
 
 /** Which screen of the setup flow is showing. */
 export type XServerSetupPhase = "consent" | "provisioning" | "error";
+
+/** Manual XQuartz download page — the fallback when the user declines Homebrew. */
+const XQUARTZ_DOWNLOAD_URL = "https://www.xquartz.org";
+
+/**
+ * Whether an error is the macOS brew-absent case (#1117), where the recovery is
+ * a guided Homebrew install (opening a terminal with `installCommand`) rather
+ * than the generic "Install {dependency}" retry.
+ */
+function isHomebrewRequired(error: XServerError | null): error is XServerError & {
+  installCommand: string;
+} {
+  return (
+    error?.kind === "dependencyMissing" &&
+    error.dependency === "Homebrew" &&
+    typeof error.installCommand === "string"
+  );
+}
 
 interface XServerSetupContentProps {
   /** Whether the dialog is open (controlled). */
@@ -73,6 +92,7 @@ export function XServerSetupContent({
   onNotNow,
   onRetry,
   onInstallDependency,
+  onGuideHomebrewInstall,
   onClose,
 }: XServerSetupContentProps) {
   const title = phase === "error" ? "X server setup failed" : "Set up X server";
@@ -158,16 +178,7 @@ export function XServerSetupContent({
           <Button variant="secondary" onClick={onClose} data-testid={`${testIdPrefix}-close`}>
             Close
           </Button>
-          {error?.kind === "dependencyMissing" && (
-            <Button
-              variant="secondary"
-              onClick={onInstallDependency}
-              errorToast={false}
-              data-testid={`${testIdPrefix}-install-dep`}
-            >
-              Install {error.dependency ?? "dependency"}
-            </Button>
-          )}
+          {renderInstallAction()}
           <Button variant="primary" onClick={onRetry} data-testid={`${testIdPrefix}-retry`}>
             Retry
           </Button>
@@ -175,6 +186,49 @@ export function XServerSetupContent({
       );
     }
     // provisioning — no footer actions (work is in flight).
+    return null;
+  }
+
+  /**
+   * The dependency-recovery action(s) on the error screen. For the macOS
+   * brew-absent case (#1117) this is a guided Homebrew install (opens a terminal
+   * with the installer) plus a manual xquartz.org fallback for a user who
+   * declines; for any other missing dependency it's the plain install-and-retry.
+   */
+  function renderInstallAction() {
+    if (isHomebrewRequired(error)) {
+      const command = error.installCommand;
+      return (
+        <>
+          <Button
+            variant="ghost"
+            onClick={() => openUrl(XQUARTZ_DOWNLOAD_URL)}
+            data-testid={`${testIdPrefix}-open-xquartz`}
+          >
+            Open xquartz.org
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => onGuideHomebrewInstall(command)}
+            data-testid={`${testIdPrefix}-install-homebrew`}
+          >
+            Install Homebrew
+          </Button>
+        </>
+      );
+    }
+    if (error?.kind === "dependencyMissing") {
+      return (
+        <Button
+          variant="secondary"
+          onClick={onInstallDependency}
+          errorToast={false}
+          data-testid={`${testIdPrefix}-install-dep`}
+        >
+          Install {error.dependency ?? "dependency"}
+        </Button>
+      );
+    }
     return null;
   }
 }
