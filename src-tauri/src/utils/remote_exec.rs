@@ -188,6 +188,26 @@ pub fn upload_bytes_via_sftp(
     })
 }
 
+/// Remove a remote file over SFTP (best-effort rollback of a partial upload).
+///
+/// SFTP works uniformly across POSIX and Windows hosts, so this avoids the shell
+/// quoting / `rm` vs `del` differences a remote `exec` would incur. A missing
+/// file is not an error the caller needs to distinguish — it returns whatever
+/// the server reports.
+pub fn remove_via_sftp(session: &SshSession, remote_path: &str) -> Result<(), TerminalError> {
+    debug!(remote_path, "Removing remote file via SFTP");
+    let remote_path = remote_path.to_string();
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let sftp = open_sftp(session).await?;
+            sftp.remove_file(&remote_path)
+                .await
+                .map_err(|e| TerminalError::SshError(format!("SFTP remove failed: {e}")))?;
+            Ok::<(), TerminalError>(())
+        })
+    })
+}
+
 /// Open a fresh SFTP subsystem on the given session.
 async fn open_sftp(session: &SshSession) -> Result<SftpSession, TerminalError> {
     let channel = session

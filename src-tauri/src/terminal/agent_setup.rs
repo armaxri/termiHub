@@ -7,16 +7,18 @@
 /// 4. Upload a self-contained POSIX setup script and execute it in the terminal.
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_binary;
+use crate::terminal::agent_cancel::bail_if_cancelled;
 use crate::terminal::agent_install;
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
-    detect_binary_arch, detect_remote_info, expected_arch_for_uname, upload_bytes_via_sftp,
-    upload_via_sftp,
+    detect_binary_arch, detect_remote_info, expected_arch_for_uname, remove_via_sftp,
+    upload_bytes_via_sftp, upload_via_sftp,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
 use termihub_core::backends::ssh::handler::SshSession;
@@ -142,13 +144,18 @@ pub struct AgentSetupResult {
 ///
 /// Creates a visible SSH terminal and spawns a background thread that
 /// uploads the agent binary via SFTP and injects setup commands.
-pub fn setup_remote_agent(
+pub fn setup_remote_agent<F>(
     agent_id: &str,
     agent_config: &RemoteAgentConfig,
     setup_config: &AgentSetupConfig,
     app_handle: &AppHandle,
     session_manager: &SessionManager,
-) -> Result<AgentSetupResult, TerminalError> {
+    cancel: Option<CancellationToken>,
+    on_complete: F,
+) -> Result<AgentSetupResult, TerminalError>
+where
+    F: FnOnce() + Send + 'static,
+{
     // Validate local file exists upfront (before spawning the terminal session)
     if let AgentBinarySource::LocalFile { path } = &setup_config.binary_source {
         if !std::path::Path::new(path).is_file() {
@@ -200,7 +207,11 @@ pub fn setup_remote_agent(
             &app_handle_clone,
             &sm,
             &rt_handle,
+            cancel.as_ref(),
         );
+        // Clear the cancellation registry entry now the run is done (success,
+        // failure, or cancel), so the map does not accumulate stale tokens.
+        on_complete();
     });
 
     Ok(AgentSetupResult { session_id })
@@ -224,6 +235,14 @@ where
 }
 
 /// Background thread: resolve binary, upload it + script, execute script.
+///
+/// `cancel` is checked before each network step (G10, #1242); firing it aborts
+/// the setup before the next step and rolls back a partial upload so no lingering
+/// background transfer or half-written binary remains.
+// One extra param over the clippy limit: the cancellation token is threaded
+// alongside the existing (already-at-limit) setup context. Bundling these into a
+// struct would obscure the linear step sequence, so the token is passed directly.
+#[allow(clippy::too_many_arguments)]
 fn run_setup_background(
     agent_id: &str,
     session_id: &str,
@@ -232,8 +251,14 @@ fn run_setup_background(
     app_handle: &AppHandle,
     session_manager: &SessionManager,
     rt_handle: &tokio::runtime::Handle,
+    cancel: Option<&CancellationToken>,
 ) {
     std::thread::sleep(std::time::Duration::from_millis(SHELL_INIT_DELAY_MS));
+
+    if bail_if_cancelled(cancel).is_err() {
+        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        return;
+    }
 
     inject_commands(
         session_manager,
@@ -269,6 +294,11 @@ fn run_setup_background(
         }
     };
 
+    if bail_if_cancelled(cancel).is_err() {
+        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        return;
+    }
+
     // Resolve binary path (download from GitHub or validate local file)
     let binary_path = match resolve_binary(
         setup_config,
@@ -293,6 +323,10 @@ fn run_setup_background(
     };
 
     // Upload binary via SFTP
+    if bail_if_cancelled(cancel).is_err() {
+        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        return;
+    }
     emit_progress(app_handle, agent_id, "upload", "Uploading agent binary...");
     match upload_via_sftp(&sftp_session, &binary_path, upload_path) {
         Ok(bytes) => {
@@ -324,6 +358,14 @@ fn run_setup_background(
         }
     }
 
+    // A cancel that landed during the upload must not leave the temp binary
+    // behind or inject any install commands — roll it back and stop (G10, #1242).
+    if bail_if_cancelled(cancel).is_err() {
+        rollback_uploaded_binary(&sftp_session, upload_path);
+        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        return;
+    }
+
     if is_windows {
         run_windows_install(
             agent_id,
@@ -342,6 +384,12 @@ fn run_setup_background(
         .as_deref()
         .unwrap_or(DEFAULT_REMOTE_PATH);
     let script = generate_setup_script(remote_path, setup_config.install_service);
+
+    if bail_if_cancelled(cancel).is_err() {
+        rollback_uploaded_binary(&sftp_session, upload_path);
+        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        return;
+    }
 
     emit_progress(app_handle, agent_id, "script", "Uploading setup script...");
     match upload_bytes_via_sftp(&sftp_session, script.as_bytes(), TEMP_SCRIPT_PATH) {
@@ -378,6 +426,40 @@ fn run_setup_background(
         "Setup script started in terminal",
     );
     info!("Agent setup: script started for agent {}", agent_id);
+}
+
+/// Emit a `cancelled` progress event and show the cancellation in the visible
+/// terminal so the user gets feedback that the setup was aborted (G10, #1242).
+fn report_setup_cancelled(
+    agent_id: &str,
+    session_id: &str,
+    app_handle: &AppHandle,
+    session_manager: &SessionManager,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    info!("Agent setup: cancelled for agent {agent_id}");
+    emit_progress(app_handle, agent_id, "cancelled", "Setup cancelled");
+    inject_commands(
+        session_manager,
+        session_id,
+        "echo 'termiHub agent setup cancelled.'\n",
+        rt_handle,
+    );
+}
+
+/// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
+///
+/// The binary is uploaded to a temp path (`/tmp/termihub-agent-upload` on POSIX,
+/// the upload name on Windows) before the install step moves it into place, so
+/// removing it fully rolls back the SFTP upload. Failures are logged only — the
+/// setup already aborted and a lingering temp file is harmless.
+fn rollback_uploaded_binary(sftp_session: &SshSession, upload_path: &str) {
+    match remove_via_sftp(sftp_session, upload_path) {
+        Ok(_) => info!("Agent setup: rolled back partial upload at {upload_path}"),
+        Err(e) => {
+            error!("Agent setup: failed to roll back partial upload at {upload_path}: {e}")
+        }
+    }
 }
 
 /// Install the uploaded agent on a Windows host by injecting the

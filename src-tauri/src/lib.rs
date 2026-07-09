@@ -95,6 +95,7 @@ pub fn run() {
         .manage(NetworkManager::new())
         .manage(x_server_manager.clone())
         .manage(commands::connection_path::ProbeRegistry::default())
+        .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
@@ -539,6 +540,7 @@ pub fn run() {
             commands::agent::delete_agent_folder,
             commands::agent::detect_agent_arch,
             commands::agent::setup_remote_agent,
+            commands::agent::cancel_agent_setup,
             commands::agent::probe_remote_agent,
             commands::agent::deploy_agent,
             commands::agent::update_agent,

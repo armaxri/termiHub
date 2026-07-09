@@ -38,8 +38,10 @@ Fixed strings — match exactly.
 | `agent-setup-branch-name` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-browse` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-cancel` | `src/components/Sidebar/AgentSetupDialog.tsx` |
+| `agent-setup-cancel-running` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-error` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-install-service` | `src/components/Sidebar/AgentSetupDialog.tsx` |
+| `agent-setup-progress` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-remote-path` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-source-branch` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-source-github` | `src/components/Sidebar/AgentSetupDialog.tsx` |

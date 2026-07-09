@@ -79,6 +79,38 @@
   color: var(--text-secondary);
 }
 
+/* Running phase — live setup status row (issue 1242). Reuses the shared
+   spinner; a horizontal row so the current step/message stays readable. */
+.agent-setup-dialog__running {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.agent-setup-dialog__running-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.agent-setup-dialog__running-step {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+.agent-setup-dialog__running-message {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
 /* Detection error */
 .agent-setup-dialog__detection-error {
   display: flex;
