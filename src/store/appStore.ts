@@ -173,7 +173,12 @@ import {
 } from "@/utils/panelTree";
 
 export type SidebarView =
-  "connections" | "files" | "tunnels" | "services" | "workspaces" | "network-tools";
+  | "connections"
+  | "files"
+  | "tunnels"
+  | "services"
+  | "workspaces"
+  | "network-tools";
 
 /** Clipboard state for file browser copy/cut operations. */
 export interface FileClipboard {
