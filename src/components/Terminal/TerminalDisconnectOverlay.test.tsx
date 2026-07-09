@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
+import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
 
 // Stub lucide-react icons used in the overlay
@@ -11,6 +12,7 @@ vi.mock("lucide-react", () => ({
   X: () => null,
   AlertTriangle: () => null,
   Loader2: () => null,
+  CheckCircle2: () => null,
 }));
 
 describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
@@ -39,7 +41,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
 
   it("renders the overlay with the disconnected heading", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(container.querySelector("[data-testid='terminal-disconnect-overlay']")).not.toBeNull();
@@ -48,7 +50,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
 
   it("renders reconnect and view-scrollback buttons", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(
@@ -64,7 +66,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -83,7 +85,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     useAppStore.setState({ terminalExitedTabs: { "tab-1": true }, terminalRetryCounters: {} });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -106,7 +108,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -119,6 +121,86 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     const state = useAppStore.getState();
     expect(state.terminalExitedTabs["tab-1"]).toBe(true);
     expect(state.terminalViewMode["tab-1"]).toBe(true);
+  });
+});
+
+describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    useAppStore.setState({
+      terminalExitedTabs: { "tab-1": true },
+      terminalExitInfo: {},
+      terminalRetryCounters: {},
+      terminalDisconnectErrors: {},
+      terminalViewMode: {},
+      terminalReconnectingTabs: {},
+      terminalReconnectPrompt: {},
+      terminalReconnectTriggerErrors: {},
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("shows a clean-exit heading for a normal exit (code 0)", () => {
+    useAppStore.setState({
+      terminalExitInfo: { "tab-1": { code: 0, reason: "clean" } },
+    });
+
+    act(() => {
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+    });
+
+    expect(container.textContent).toContain("Session ended");
+    // Must NOT read as an unexpected disconnect.
+    expect(container.textContent).not.toContain("The remote process has exited");
+  });
+
+  it("shows a non-zero exit-code heading and surfaces the code", () => {
+    useAppStore.setState({
+      terminalExitInfo: { "tab-1": { code: 137, reason: "dropped" } },
+    });
+
+    act(() => {
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+    });
+
+    expect(container.textContent).toContain("Session disconnected");
+    expect(container.textContent).toContain("137");
+    // Non-zero exit is not a clean exit.
+    expect(container.textContent).not.toContain("Session ended");
+  });
+
+  it("shows a peer-drop message when the exit code is unknown (null)", () => {
+    useAppStore.setState({
+      terminalExitInfo: { "tab-1": { code: null, reason: "dropped" } },
+    });
+
+    act(() => {
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+    });
+
+    expect(container.textContent).toContain("Session disconnected");
+    // Distinct wording from the clean-exit variant.
+    expect(container.textContent).toContain("connection was lost");
+  });
+
+  it("falls back to the generic disconnect heading when no exit info is present", () => {
+    // No terminalExitInfo entry — legacy behaviour.
+    act(() => {
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+    });
+
+    expect(container.textContent).toContain("Session disconnected");
+    expect(container.textContent).toContain("The remote process has exited");
   });
 });
 
@@ -149,7 +231,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
 
   it("shows reconnecting heading and a stop button", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(container.textContent).toContain("Reconnecting");
@@ -160,7 +242,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
 
   it("stop button transitions tab from reconnecting to exited", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -182,7 +264,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     });
 
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(
@@ -193,7 +275,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
 
   it("does not show trigger error box when no error is set", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(
@@ -228,7 +310,7 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
 
   it("shows error heading and the error message", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     expect(container.textContent).toContain("Reconnect failed");
@@ -238,7 +320,7 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
 
   it("try-again button clears error and increments retry counter", () => {
     act(() => {
-      root.render(<TerminalDisconnectOverlay tabId="tab-1" />);
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
 
     const btn = container.querySelector(
@@ -259,6 +341,8 @@ describe("appStore disconnect actions", () => {
   beforeEach(() => {
     useAppStore.setState({
       terminalExitedTabs: {},
+      terminalExitInfo: {},
+      intentionallyKilledSessions: {},
       terminalRetryCounters: {},
       terminalDisconnectErrors: {},
       terminalViewMode: {},
@@ -271,6 +355,51 @@ describe("appStore disconnect actions", () => {
   it("setTerminalExited marks a tab as exited", () => {
     useAppStore.getState().setTerminalExited("tab-42");
     expect(useAppStore.getState().terminalExitedTabs["tab-42"]).toBe(true);
+  });
+
+  it("setTerminalExited records exit info (code + reason) when provided (#1121)", () => {
+    useAppStore.getState().setTerminalExited("tab-42", { code: 0, reason: "clean" });
+    const info = useAppStore.getState().terminalExitInfo["tab-42"];
+    expect(info).toEqual({ code: 0, reason: "clean" });
+  });
+
+  it("setTerminalExited records a non-zero exit code with a dropped reason (#1121)", () => {
+    useAppStore.getState().setTerminalExited("tab-42", { code: 137, reason: "dropped" });
+    expect(useAppStore.getState().terminalExitInfo["tab-42"]).toEqual({
+      code: 137,
+      reason: "dropped",
+    });
+  });
+
+  it("setTerminalExited with a killed reason enters view mode so no overlay is shown (#1121)", () => {
+    useAppStore.getState().setTerminalExited("tab-42", { code: null, reason: "killed" });
+    const state = useAppStore.getState();
+    // Session is marked dead...
+    expect(state.terminalExitedTabs["tab-42"]).toBe(true);
+    // ...but view mode is set, so `isExited && !isViewMode` is false and the
+    // "unexpected disconnect" overlay never appears.
+    expect(state.terminalViewMode["tab-42"]).toBe(true);
+    expect(state.terminalExitInfo["tab-42"]).toEqual({ code: null, reason: "killed" });
+  });
+
+  it("setTerminalExited without info leaves no exit info entry (legacy fallback) (#1121)", () => {
+    useAppStore.getState().setTerminalExited("tab-42");
+    expect(useAppStore.getState().terminalExitInfo["tab-42"]).toBeUndefined();
+    // A non-killed exit must not force view mode.
+    expect(useAppStore.getState().terminalViewMode["tab-42"]).toBeUndefined();
+  });
+
+  it("markSessionKilled + consumeSessionKilled tags a user kill exactly once (#1121)", () => {
+    const store = useAppStore.getState();
+    store.markSessionKilled("sess-1");
+    // First consume reports the kill and clears the flag.
+    expect(useAppStore.getState().consumeSessionKilled("sess-1")).toBe(true);
+    // Second consume for the same session is not a kill anymore.
+    expect(useAppStore.getState().consumeSessionKilled("sess-1")).toBe(false);
+  });
+
+  it("consumeSessionKilled returns false for an unmarked session (#1121)", () => {
+    expect(useAppStore.getState().consumeSessionKilled("never-marked")).toBe(false);
   });
 
   it("setTerminalExited clears any stale reconnecting flag", () => {

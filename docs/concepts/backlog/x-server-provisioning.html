@@ -1,0 +1,1098 @@
+<!doctype html>
+<!--
+  Single-file concept: X Server Provisioning for SSH X11 forwarding.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/backlog/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X Server Provisioning for SSH X11 Forwarding (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <path d="M8 21h8" />
+        <path d="M12 17v4" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 15V3" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-app-window" viewBox="0 0 24 24">
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <path d="M10 4v4" />
+        <path d="M2 8h20" />
+        <path d="M6 4v4" />
+      </symbol>
+      <symbol id="i-power" viewBox="0 0 24 24">
+        <path d="M12 2v10" />
+        <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Provide a Local X Server for SSH X11 Forwarding</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span>MobaXterm-style GUI forwarding</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/1044">#1044</a></span
+          >
+          <span>Epic: <a href="https://github.com/armaxri/termiHub/issues/1047">#1047</a></span>
+          <span><code>docs/concepts/backlog/x-server-provisioning.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept x-server-provisioning</code> to
+          reconcile it with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          When a user opens an SSH connection with <strong>X11 forwarding</strong> enabled, a remote
+          GUI program (<code>xclock</code>, <code>wireshark</code>, a vendor tool) is an
+          <em>X client</em> — it needs a running <strong>X server on the local machine</strong> to
+          draw into. Today termiHub forwards the X protocol correctly but assumes the user has
+          already installed and configured a local X server. On Windows that is almost never true,
+          and on macOS it requires a manual XQuartz install. The result: X11 forwarding "silently
+          does nothing" for most users.
+        </p>
+        <p>
+          This concept adds a subsystem that
+          <strong>ensures a usable local X server exists</strong> before an X11-forwarding session
+          starts, so remote GUI apps open as <strong>independent native windows</strong> with zero
+          manual setup — the model popularized by <strong>MobaXterm</strong> ("the app provides the
+          X server; the user never installs one").
+        </p>
+
+        <h3>The two halves of X11 forwarding</h3>
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Transport half exists; this concept adds the provisioning half</span
+          >
+          <pre class="mermaid">
+flowchart LR
+    subgraph Remote["Remote host (SSH server)"]
+        APP["GUI app<br/>(X client)"]
+    end
+    subgraph Local["Local machine (termiHub)"]
+        FWD["Transport half<br/>(already implemented)<br/>core/src/backends/ssh/x11.rs"]
+        XSRV["Local X server<br/>(THIS CONCEPT ensures it)"]
+        WIN["Native OS windows"]
+    end
+    APP -- "X11 protocol over SSH" --> FWD
+    FWD -- "proxied to display :N" --> XSRV
+    XSRV --> WIN
+    style XSRV fill:#e87d0d,stroke:#333,color:#fff
+          </pre>
+        </div>
+        <p>
+          The <strong>transport half</strong> exists: <code>enable_x11_forwarding</code> sets up
+          reverse port-forwarding, injects <code>DISPLAY</code> + an <code>xauth</code> cookie on
+          the remote shell, and proxies X channels to a local display (<code>connector.rs</code>,
+          tested via <code>tests/docker/ssh-x11/</code>). This concept specifies the
+          <strong>provisioning half</strong>: detect-or-provide the local X server the transport
+          half proxies into.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Make remote GUI apps "just work" as native windows when X11 forwarding is enabled — no
+            manual X-server install on the common path.
+          </li>
+          <li>
+            On <strong>Windows</strong>, bundle/auto-download and manage a real X server (VcXsrv)
+            transparently.
+          </li>
+          <li>
+            On <strong>macOS</strong>, detect XQuartz and offer a guided, consent-based install when
+            it is missing.
+          </li>
+          <li>
+            On <strong>Linux</strong>, detect the already-present Xorg/XWayland and give a targeted
+            hint only in the rare gap cases.
+          </li>
+          <li>Reuse an already-running user X server instead of spawning a duplicate.</li>
+          <li>
+            Surface the managed server in the <strong>Open Connections</strong> panel so it can be
+            inspected and killed like any other connection.
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Rendering remote GUIs <em>inside</em> termiHub's own window (they stay independent OS
+            windows).
+          </li>
+          <li>
+            Native <code>x11-req</code> SSH channel support (the existing reverse-port-forward
+            transport is sufficient).
+          </li>
+          <li>
+            Implementing an X server ourselves —
+            <strong>no embeddable X-server library exists</strong>; we ship/spawn an external binary
+            (as MobaXterm does with its "MobaX" X.Org fork).
+          </li>
+          <li>
+            Bundling an X server on macOS or Linux (not possible / not advisable respectively).
+          </li>
+          <li>Wayland-native remote display (XWayland covers forwarded X11 clients).</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          A schema-driven setting
+          <strong><code>provideXServerAutomatically</code></strong> (rendered by
+          <code>DynamicForm</code>, default <strong>on</strong> for Windows) controls whether
+          termiHub may provision a local X server; a companion
+          <strong><code>stopXServerWhenIdle</code></strong> (default <strong>on</strong>) stops the
+          managed server once the last X11 session closes. The existing per-connection
+          <em>X11 Forwarding</em> toggle (<code>enableX11Forwarding</code>) is unchanged. Nothing is
+          downloaded or installed without explicit consent.
+        </p>
+
+        <!-- Mockup 1 -->
+        <div class="mockup-section">
+          <h3>Mockup — settings, first-run consent, progress &amp; running</h3>
+          <div class="mockup-note">
+            Rendered by <code>DynamicForm</code>. <span class="callout">A</span> controls whether
+            termiHub may provision a local X server; <span class="callout">B</span> stops the
+            managed server once the last X11 session closes.
+          </div>
+          <div class="menu" style="width: 340px">
+            <div class="menu__title">
+              <svg class="li"><use href="#i-monitor" /></svg> X Server
+            </div>
+            <div class="menu__row menu__row--selected">
+              <span class="check">✓</span> Provide an X server automatically
+              <span class="count">Windows</span>
+            </div>
+            <div class="menu__row menu__row--selected">
+              <span class="check">✓</span> Stop X server when idle
+            </div>
+            <div class="menu__row">
+              <span class="check"></span> Always allow network X clients
+              <span class="count">off</span>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> <code>provideXServerAutomatically</code> (default on,
+                Windows).
+              </li>
+              <li><span class="callout">B</span> <code>stopXServerWhenIdle</code> (default on).</li>
+            </ul>
+          </div>
+
+          <div class="mockup-note" style="margin-top: 16px">
+            First-run flow (Windows), shown the first time an X11-forwarding connection is opened
+            with no reachable X server. <strong>Nothing is downloaded before consent</strong>
+            <span class="callout">C</span>.
+          </div>
+          <div class="states">
+            <div>
+              <p class="state-label">Step 1 — consent prompt</p>
+              <div class="menu">
+                <div class="menu__title">
+                  <svg class="li"><use href="#i-app-window" /></svg> Set up X server
+                </div>
+                <div class="menu__row" style="display: block; color: var(--text-secondary)">
+                  Remote GUI apps need a local X server to open as native windows. termiHub can
+                  download and set up <strong>VcXsrv</strong> (~7&nbsp;MB, one time).
+                </div>
+                <div class="menu__footer">
+                  <button class="btn btn--primary">
+                    <svg class="li"><use href="#i-download" /></svg> Download &amp; Enable
+                  </button>
+                  <button class="btn">Not now</button>
+                </div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">Step 2 — provisioning</p>
+              <div class="menu">
+                <div class="menu__title">
+                  <svg class="li"><use href="#i-download" /></svg> Setting up X server
+                </div>
+                <div class="menu__row menu__row--selected">
+                  <span class="check">✓</span> Download VcXsrv
+                </div>
+                <div class="menu__row menu__row--selected">
+                  <span class="check">✓</span> Verify checksum
+                </div>
+                <div class="menu__row">
+                  <span class="state-dot state-dot--connecting"></span> Extract &amp; start
+                  <span class="count">62%</span>
+                </div>
+                <div style="padding: 0 14px 12px">
+                  <div style="height: 4px; border-radius: 2px; background: var(--bg-active)">
+                    <div
+                      style="
+                        width: 62%;
+                        height: 100%;
+                        border-radius: 2px;
+                        background: var(--accent-color);
+                      "
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">Step 3 — running</p>
+              <div class="menu">
+                <div class="menu__title" style="color: var(--color-success)">
+                  <svg class="li"><use href="#i-circle-check" /></svg> X server running
+                </div>
+                <div class="menu__row">
+                  <span class="state-dot state-dot--running"></span> VcXsrv on display
+                  <code>:0</code>
+                  <span class="count">managed</span>
+                </div>
+                <div class="menu__row" style="display: block; color: var(--text-secondary)">
+                  Remote GUI apps now open as native windows. Manage it any time from
+                  <em>Open Connections → X Servers</em>.
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">C</span> No network request happens until the user picks
+                <strong>Download &amp; Enable</strong>. Progress is driven by backend events (<code
+                  >download</code
+                >
+                / <code>verifying</code> / <code>status</code>). On later runs (VcXsrv cached)
+                Steps&nbsp;1–2 are skipped — the server just starts.
+              </li>
+            </ul>
+          </div>
+
+          <div class="mockup-note" style="margin-top: 16px">
+            macOS variant — cannot embed an X server, so the prompt offers a guided, consent-based
+            install of XQuartz instead of an in-app download.
+          </div>
+          <div class="menu" style="width: 340px">
+            <div class="menu__title">
+              <svg class="li"><use href="#i-app-window" /></svg> XQuartz required
+            </div>
+            <div class="menu__row" style="display: block; color: var(--text-secondary)">
+              Remote GUI forwarding on macOS needs <strong>XQuartz</strong>. Install it?
+            </div>
+            <div class="menu__footer">
+              <button class="btn btn--primary">Install XQuartz</button>
+              <button class="btn btn--link">Open xquartz.org</button>
+              <button class="btn">Not now</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mockup 2 -->
+        <div class="mockup-section">
+          <h3>Mockup — "X Servers" section in the Open Connections panel</h3>
+          <div class="mockup-note">
+            The managed (or adopted) X server appears as a new <strong>X Servers</strong> section in
+            the Open Connections modal <span class="callout">A</span>, alongside the existing
+            groups. Each row has a <strong>Stop</strong> control <span class="callout">B</span>; the
+            section header carries a count and a <strong>Kill all</strong> action
+            <span class="callout">C</span>
+            — matching how every other section in this panel behaves.
+          </div>
+          <div class="menu" style="width: 460px">
+            <div
+              class="menu__title"
+              style="display: flex; align-items: center; justify-content: space-between"
+            >
+              <span>Open Connections</span>
+              <button class="tab__close" style="opacity: 1">
+                <svg class="li"><use href="#i-x" /></svg>
+              </button>
+            </div>
+            <div class="state-label" style="padding: 8px 14px 0; margin: 0">
+              Local Sessions <span class="count">1</span>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--running"></span> zsh — /Users/arne
+            </div>
+            <div class="state-label" style="padding: 8px 14px 0; margin: 0">
+              SSH Tunnels <span class="count">1</span>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--connected"></span> server-1 · 5432 → localhost:5432
+            </div>
+            <div
+              class="state-label"
+              style="
+                padding: 10px 14px 2px;
+                margin: 0;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                border-top: 1px solid var(--border-secondary);
+              "
+            >
+              <svg class="li" style="width: 13px; height: 13px"><use href="#i-monitor" /></svg>
+              X Servers <span class="count" style="margin-left: 0">1</span>
+              <button class="btn btn--link" style="margin-left: auto">Kill all</button>
+            </div>
+            <div class="menu__row menu__row--selected">
+              <span class="state-dot state-dot--running"></span>
+              VcXsrv
+              <span class="count" style="margin-left: 4px; color: var(--text-primary)"
+                >managed</span
+              >
+              <span style="color: var(--text-secondary)">· display :0 · 2 sessions</span>
+              <button
+                class="btn"
+                style="margin-left: auto; display: inline-flex; align-items: center; gap: 5px"
+              >
+                <svg class="li"><use href="#i-power" /></svg> Stop
+              </button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> New <strong>X Servers</strong> section in
+                <code>OpenConnectionsModal.tsx</code>, following the existing
+                <code>Section</code> pattern (title + count + kill-all).
+              </li>
+              <li>
+                <span class="callout">B</span> Per-server <strong>Stop</strong> (lucide
+                <code>Power</code>) terminates the managed <code>vcxsrv.exe</code>.
+              </li>
+              <li>
+                <span class="callout">C</span> <strong>Kill all</strong> stops every managed server
+                — consistent with the panel being the single place to kill any connection.
+              </li>
+              <li>
+                An <em>adopted external</em> server shows as
+                <code>External X server · display :0</code> with no Stop control (termiHub did not
+                start it, so it does not stop it).
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <ul>
+          <li>
+            <strong>Provision is lazy &amp; consent-gated.</strong> Nothing is downloaded/installed
+            until a user opens an X11-forwarding connection <em>and</em> confirms the prompt. A user
+            who never uses X11 forwarding never downloads an X server.
+          </li>
+          <li>
+            <strong>Reuse before spawn.</strong> If a reachable X server already exists (<code
+              >DISPLAY</code
+            >
+            set, <code>/tmp/.X11-unix</code> socket on Unix, or TCP <code>127.0.0.1:6000</code> open
+            on Windows), termiHub <strong>adopts</strong> it instead of starting its own.
+          </li>
+          <li>
+            <strong>One shared managed server per termiHub instance</strong>, reused by all X11
+            sessions (display <code>:0</code>, port 6000). Not one server per connection.
+          </li>
+          <li>
+            <strong>Idle shutdown (Windows managed server).</strong> When the last X11-forwarding
+            session closes and <code>stopXServerWhenIdle</code> is on, the managed server is
+            stopped; it is always stopped on app exit (no orphan <code>vcxsrv.exe</code>).
+          </li>
+          <li>
+            <strong>Per-platform strategy:</strong> Windows → provide (bundle/download VcXsrv);
+            macOS → detect + guided install XQuartz (cannot bundle); Linux → detect + guide (never
+            bundle).
+          </li>
+          <li>
+            <strong>Failure is actionable, never silent.</strong> If provisioning fails at any
+            stage, the session surfaces a clear error with a retry/skip path rather than forwarding
+            into a void.
+          </li>
+          <li>
+            <strong>Security:</strong> the managed server uses <code>MIT-MAGIC-COOKIE-1</code> auth
+            by default (not <code>-ac</code>), matching the cookie the transport half installs on
+            the remote side.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Top-level: ensure a server when an X11 session opens</span>
+          <pre class="mermaid">
+flowchart TD
+    A[User opens SSH connection<br/>with enableX11Forwarding] --> B{Reachable local<br/>X server detected?}
+    B -->|Yes| Z[Adopt existing server<br/>DISPLAY + cookie]
+    B -->|No| C{provideXServerAutomatically<br/>enabled?}
+    C -->|No| W[Warn: no X server;<br/>forwarding will not display]
+    C -->|Yes| D{Platform?}
+    D -->|Windows| E[Provision VcXsrv]
+    D -->|macOS| F[Guided XQuartz install]
+    D -->|Linux| G[Classify gap + hint]
+    E --> Z
+    F --> Z
+    G --> H{Server now<br/>reachable?}
+    H -->|Yes| Z
+    H -->|No| W
+    Z --> Y[Transport half proxies<br/>remote X clients to display :N]
+    style E fill:#e87d0d,stroke:#333,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Per-platform decision</span>
+          <pre class="mermaid">
+flowchart LR
+    subgraph WIN[Windows]
+        W1[No native X server] --> W2[Download/adopt VcXsrv<br/>spawn + manage]
+    end
+    subgraph MAC[macOS]
+        M1[No embeddable server] --> M2[Detect XQuartz]
+        M2 -->|present| M3[open -a XQuartz]
+        M2 -->|missing| M4[Guided install<br/>brew / .pkg / link]
+    end
+    subgraph LIN[Linux]
+        L1[Xorg / XWayland<br/>almost always present] --> L2[Detect + adopt]
+        L2 -->|gap| L3[Targeted hint<br/>no bundle]
+    end
+    style W2 fill:#e87d0d,stroke:#333,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Windows provisioning workflow (VcXsrv)</span>
+          <pre class="mermaid">
+flowchart TD
+    A[ensure_x_server: Windows] --> B{VcXsrv reachable<br/>at 127.0.0.1:6000?}
+    B -->|Yes| Z[Adopt external server]
+    B -->|No| C{Pinned VcXsrv<br/>extracted in data dir?}
+    C -->|Yes| L[Launch managed server]
+    C -->|No| D{Bundled with app?}
+    D -->|Yes| K[Copy into place] --> L
+    D -->|No| E[Show consent prompt]
+    E -->|Not now| W[Skip: no server]
+    E -->|Download & Enable| F[Download pinned .zip<br/>from GitHub releases]
+    F --> G[Verify SHA-256]
+    G -->|mismatch| G2[Discard + retry once] --> F
+    G -->|ok| H[Extract → atomic rename]
+    H --> L
+    L --> M[Generate MIT-MAGIC-COOKIE-1<br/>write .Xauthority]
+    M --> N["vcxsrv.exe :0 -multiwindow<br/>-clipboard -auth &lt;file&gt;"]
+    N --> O[Register managed server<br/>display :0 + cookie]
+    O --> Z
+    style F fill:#e87d0d,stroke:#333,color:#fff
+    style L fill:#e87d0d,stroke:#333,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">X server lifecycle state machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Absent
+    Absent --> Adopted: external server detected on display 0 (port 6000)
+    Absent --> Downloading: provision consented
+    Downloading --> Verifying: zip fetched
+    Verifying --> Downloading: checksum mismatch (retry once)
+    Verifying --> Extracting: checksum ok
+    Extracting --> Starting: files in place
+    Starting --> Running: process up + reachable
+    Starting --> Failed: spawn/port error
+    Running --> Running: new X11 session adopts same server
+    Running --> Idle: last X11 session closed
+    Idle --> Running: new X11 session opens
+    Idle --> Stopped: stopXServerWhenIdle or app exit
+    Adopted --> [*]: app exit (external left running)
+    Running --> Stopped: app exit (managed killed)
+    Failed --> Absent: user retries
+    Stopped --> [*]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Session open sequence (Windows, managed server)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Conn as connector.rs
+    participant Orch as ensure_x_server()
+    participant Mgr as XServerManager
+    participant Acq as acquire.rs
+    participant VcX as vcxsrv.exe
+    participant Fwd as X11Forwarder
+    User->>Conn: Open SSH conn (enableX11Forwarding)
+    Conn->>Orch: ensure_x_server()
+    Orch->>Mgr: status()
+    alt server already running/adopted
+        Mgr-->>Orch: Some(ResolvedXServer(:0, cookie))
+    else must provision
+        Orch->>User: consent prompt (download ~N MB?)
+        User-->>Orch: Download & Enable
+        Orch->>Acq: resolve VcXsrv (cache→bundled→download+verify+unzip)
+        Acq-->>Orch: path
+        Orch->>Mgr: start(path)
+        Mgr->>Mgr: gen cookie + write .Xauthority
+        Mgr->>VcX: spawn :0 -multiwindow -auth file
+        Mgr-->>Orch: Some(ResolvedXServer(:0, cookie))
+    end
+    Note over Orch: provisioner returns Option&lt;ResolvedXServer&gt;,<br/>ensure_x_server returns EnsureOutcome (report and resolved)
+    Orch-->>Conn: ResolvedXServer(:0, cookie)
+    Conn->>Fwd: start forwarding to display :0 (known cookie)
+    Note over Fwd,VcX: remote GUI apps render as native windows
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Detection decision flow — two layers after the #1087 seam collapse</span
+          >
+          <pre class="mermaid">
+flowchart TD
+    subgraph ORCHL["Desktop orchestrator (src-tauri) — managed/adopted resolution"]
+        O[ensure_x_server] --> OM{Manager adopts or spawns<br/>a server on 127.0.0.1:6000+n?}
+        OM -->|Yes| OR["ResolvedXServer<br/>Tcp 127.0.0.1:6000+n + known cookie<br/>(managed: cookie up front; adopted: via xauth)"]
+        OM -->|No| DU
+    end
+    subgraph CORE["Core fallback (x11.rs) — user-run server only"]
+        DU["ResolvedXServer::detect_user_run()"] --> A[detect_local_x_server]
+        A --> B{DISPLAY set?}
+        B -->|Yes| R2[Parse DISPLAY to info]
+        B -->|No| U{Unix?}
+        U -->|Yes| S[Scan /tmp/.X11-unix]
+        U -->|No: Windows| T{TCP 127.0.0.1:6000<br/>open?}
+        S -->|found| R3[UnixSocket info]
+        S -->|none| N[None]
+        T -->|open| R4[Tcp info]
+        T -->|closed| N
+        R2 --> RC["attach cookie via read_local_xauth_cookie()"]
+        R3 --> RC
+        R4 --> RC
+    end
+    OR --> FWD[Forward to resolved target]
+    RC --> FWD
+    N --> W[No X server]
+    style OR fill:#e87d0d,stroke:#333,color:#fff
+    style DU fill:#e87d0d,stroke:#333,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Idle shutdown sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant S1 as X11 session A
+    participant S2 as X11 session B
+    participant Mgr as XServerManager
+    participant VcX as vcxsrv.exe
+    S1->>Mgr: register (refcount 1)
+    S2->>Mgr: register (refcount 2, adopts same server)
+    S1->>Mgr: close (refcount 1)
+    S2->>Mgr: close (refcount 0)
+    alt stopXServerWhenIdle = on
+        Mgr->>VcX: terminate
+        Note over Mgr,VcX: managed server stopped when idle
+    else keep running
+        Note over Mgr,VcX: stays up until app exit
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Architecture overview</span>
+          <pre class="mermaid">
+flowchart TB
+    subgraph FE[Frontend]
+        SET[Settings toggle]
+        PRMPT[Consent + progress]
+        OC[Open Connections<br/>X Servers section]
+    end
+    subgraph IPC[Tauri commands / events]
+        CMD[x_server_status / _ensure<br/>_stop / _install_dependency]
+        EVT[progress events]
+    end
+    subgraph BE[Backend]
+        ORCH[orchestrator.rs]
+        MGR[manager.rs]
+        ACQ[acquire.rs]
+        AUTH[auth.rs]
+        DET[x11.rs detection]
+        PORT[portable.rs]
+    end
+    SET --> CMD
+    PRMPT --> CMD
+    OC --> CMD
+    CMD --> ORCH
+    ORCH --> MGR
+    MGR --> ACQ
+    MGR --> AUTH
+    ACQ --> PORT
+    ORCH --> DET
+    MGR --> EVT
+    EVT --> PRMPT
+    style MGR fill:#e87d0d,stroke:#333,color:#fff
+    style ORCH fill:#e87d0d,stroke:#333,color:#fff
+          </pre>
+        </div>
+
+        <h3>Edge cases</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>User already runs VcXsrv / X410 / Xming on <code>:0</code></td>
+                <td>Adopt it (TCP 6000 probe); do not spawn a duplicate</td>
+              </tr>
+              <tr>
+                <td>Port 6000 taken by a non-X process</td>
+                <td>Pick the next free display number; register that display</td>
+              </tr>
+              <tr>
+                <td>Download fails / checksum mismatch</td>
+                <td>
+                  Discard, retry once, then surface an actionable error (never run a bad binary)
+                </td>
+              </tr>
+              <tr>
+                <td>Offline, pinned version already cached</td>
+                <td>No network call; launch from cache</td>
+              </tr>
+              <tr>
+                <td>Portable install</td>
+                <td>
+                  Store VcXsrv under <code>&lt;data&gt;/xserver/…</code> next to the exe; nothing
+                  outside app tree
+                </td>
+              </tr>
+              <tr>
+                <td>Managed VcXsrv dies mid-session</td>
+                <td><code>ensure_running()</code> restarts it on next use</td>
+              </tr>
+              <tr>
+                <td>App exit with sessions still open</td>
+                <td>Managed server killed (no orphan); adopted external server left running</td>
+              </tr>
+              <tr>
+                <td>macOS without XQuartz, user declines install</td>
+                <td>Session opens without GUI display; clear hint shown, no silent failure</td>
+              </tr>
+              <tr>
+                <td>Linux Wayland-only session without XWayland</td>
+                <td>Detect gap; hint to install <code>xwayland</code>; do not bundle</td>
+              </tr>
+              <tr>
+                <td>Flatpak/Snap sandbox blocks the X socket</td>
+                <td>
+                  Detect; hint to adjust sandbox <code>--socket=x11</code>; packaging-level fix
+                </td>
+              </tr>
+              <tr>
+                <td><code>provideXServerAutomatically</code> off, no server present</td>
+                <td>Warn only; never download/install</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the current architecture at concept-creation time; the codebase may evolve before
+          implementation.
+        </p>
+
+        <h3>New and modified files</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src-tauri/src/terminal/xserver/mod.rs</code></td>
+                <td><strong>New</strong> — provisioning module root</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/terminal/xserver/acquire.rs</code></td>
+                <td>
+                  <strong>New (Windows)</strong> — resolve VcXsrv: cache → bundled →
+                  download+verify+unzip
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/terminal/xserver/manager.rs</code></td>
+                <td>
+                  <strong>New</strong> — <code>XServerManager</code>:
+                  spawn/supervise/reuse/idle-shutdown
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/terminal/xserver/auth.rs</code></td>
+                <td>
+                  <strong>New (Windows)</strong> — generate <code>MIT-MAGIC-COOKIE-1</code>, write
+                  <code>.Xauthority</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/terminal/xserver/orchestrator.rs</code></td>
+                <td><strong>New</strong> — <code>ensure_x_server()</code> per-platform dispatch</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ssh/x11.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — Windows TCP:6000 probe fallback +
+                  <code>ResolvedXServer</code> (<code>detect_user_run()</code>); managed resolution
+                  lives in the orchestrator (#1087), not in core detection
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ssh/connector.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — call <code>ensure_x_server()</code> in X11 startup
+                  (~lines 160–189)
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/ssh/mod.rs</code></td>
+                <td><strong>Modify</strong> — new settings fields in the SSH schema</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/commands/xserver.rs</code></td>
+                <td>
+                  <strong>New</strong> — <code>x_server_status</code> / <code>_ensure</code> /
+                  <code>_stop</code> / <code>_install_dependency</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/utils/portable.rs</code></td>
+                <td>
+                  <strong>Reuse</strong> — <code>resolve_portable_path</code> /
+                  <code>AppMode</code> for storage location
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/OpenConnections/OpenConnectionsModal.tsx</code></td>
+                <td><strong>Modify</strong> — add "X Servers" <code>Section</code></td>
+              </tr>
+              <tr>
+                <td><code>src/components/Settings/*</code></td>
+                <td>
+                  <strong>Modify</strong> — surface
+                  <code>provideXServerAutomatically</code> (schema-driven)
+                </td>
+              </tr>
+              <tr>
+                <td><code>THIRD_PARTY_LICENSES</code> / installer</td>
+                <td><strong>Modify</strong> — GPL-3.0 text + source offer for VcXsrv</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Windows: VcXsrv acquisition (decision)</h3>
+        <p>
+          Deliver VcXsrv as a <strong>pinned, pre-extracted minimal tree</strong> (<code
+            >vcxsrv.exe</code
+          >
+          + required DLLs + <code>fonts/</code>) hosted as a
+          <strong>versioned <code>.zip</code> on termiHub's own GitHub releases</strong> (same host
+          as agent binaries). Rationale: avoids running an NSIS installer that writes to
+          <code>Program&nbsp;Files</code>, keeps the install self-contained/portable, and gives a
+          stable pinned URL + checksum we control. Resolution order mirrors
+          <code>agent_setup.rs</code> (<code>cache → bundled → download</code>). Storage via
+          <code>resolve_portable_path</code> / <code>AppMode</code>: portable →
+          <code>&lt;data&gt;/xserver/vcxsrv-&lt;version&gt;/</code>; installed →
+          <code>dirs::data_local_dir()/termiHub/xserver/vcxsrv-&lt;version&gt;/</code>. Pinned table
+          <code>{ version, zip_url, sha256 }</code> compiled into the app; version-keyed dirs give
+          safe upgrade + rollback + prune. New deps: <code>zip</code>, <code>sha2</code>;
+          <code>reqwest</code> (blocking) + <code>dirs</code> already exist.
+        </p>
+
+        <h3>Windows: launch, auth, DISPLAY</h3>
+        <p>
+          Launch a single shared server
+          <code>vcxsrv.exe :0 -multiwindow -clipboard -auth &lt;xauthfile&gt;</code> (<code
+            >-multiwindow</code
+          >
+          → each remote app is its own native window; <code>-nowgl</code> as a GL fallback).
+          Generate a per-start <code>MIT-MAGIC-COOKIE-1</code> (16 random bytes → 32 hex), write a
+          standard-format <code>.Xauthority</code> for <code>localhost:0</code>, pass via
+          <code>-auth</code>, and hand the cookie to the transport half directly (bypassing
+          <code>read_local_xauth_cookie()</code>, which shells to <code>xauth</code> — absent on
+          Windows). MVP fallback: <code>-ac</code> (loopback-only, documented security tradeoff).
+        </p>
+
+        <h3>Detection fix (x11.rs)</h3>
+        <p>
+          <code>detect_local_x_server()</code> scans <code>/tmp/.X11-unix</code> and
+          <code>read_local_xauth_cookie()</code> shells to <code>xauth</code> — both no-ops on
+          Windows. Two changes: add a Windows TCP <code>127.0.0.1:6000</code> probe fallback for
+          user-installed servers, and wrap detection in
+          <code>ResolvedXServer::detect_user_run()</code> so a user-run server (DISPLAY / Unix
+          socket / Windows TCP:6000) resolves into <code>ResolvedXServer { info, cookie }</code> in
+          one place. <code>LocalXServerInfo</code> already has a TCP-loopback form
+          (<code>tcp_loopback(n)</code> → <code>127.0.0.1:6000+n</code>), so no new transport type is
+          needed. Unix behavior stays unchanged.
+        </p>
+        <p>
+          <strong>Managed resolution lives in the orchestrator, not in core detection (#1087).</strong>
+          After the seam collapse, <code>detect_local_x_server()</code> is <em>only</em> the user-run
+          fallback: it does <strong>not</strong> consult any manager. The desktop
+          <code>ensure_x_server()</code> resolves a managed (spawned) or adopted server into a
+          <code>ResolvedXServer</code> (TCP <code>127.0.0.1:6000+n</code> + the cookie known up front
+          for a managed server, or read via <code>xauth</code> for an adopted one) and threads it
+          straight to <code>X11Forwarder::start(resolved: Option&lt;ResolvedXServer&gt;)</code>, which
+          uses it as-is with no second probe. The retired
+          <code>ManagedXServerSource</code> trait / <code>SingleManagedServer</code> adapter from the
+          pre-#1087 design no longer exist — observable behavior is identical; the seam simply moved up
+          a layer into the app.
+        </p>
+
+        <h3>macOS &amp; Linux</h3>
+        <ul>
+          <li>
+            <strong>macOS:</strong> detect <code>/opt/X11</code> + <code>XQuartz.app</code>; if
+            absent, offer <code>brew install --cask xquartz</code>, a downloaded notarized
+            <code>.pkg</code> via <code>installer -pkg … -target /</code> (admin prompt), or a deep
+            link. If present, <code>open -a XQuartz</code> and let <code>ssh -X/-Y</code> set
+            <code>DISPLAY</code> (<code>:0</code> fallback). Cannot bundle.
+          </li>
+          <li>
+            <strong>Linux:</strong> the existing <code>/tmp/.X11-unix</code> detection covers the
+            normal case. Classify gaps (Wayland-only without XWayland, headless, Flatpak/Snap
+            X-socket sandbox) and show a targeted hint; never bundle or auto-install.
+          </li>
+        </ul>
+
+        <h3>Orchestrator &amp; IPC</h3>
+        <p>
+          <code>ensure_x_server()</code> dispatches per platform and is called from
+          <code>connector.rs</code> X11 startup. Tauri commands (<code>x_server_status</code>,
+          <code>x_server_ensure</code>, <code>x_server_stop</code>,
+          <code>x_server_install_dependency</code>) and progress events reuse the agent-deploy event
+          shape.
+        </p>
+
+        <h3>Licensing (GPL-3.0)</h3>
+        <p>
+          Hosting/redistributing VcXsrv (GPL-3.0) obliges shipping the GPL-3.0 text + a source
+          offer/link for the exact pinned version (<code>github.com/marchaesen/vcxsrv</code>).
+          VcXsrv runs strictly as a <strong>separate process</strong> (no linking), so termiHub's
+          own license is unaffected — document this boundary; confirm with counsel before release.
+          XQuartz (MIT + APSL2) needs attribution on the macOS path.
+        </p>
+
+        <h3>Implementation order</h3>
+        <ol>
+          <li>
+            Windows acquisition (<code>acquire.rs</code>) — pinned zip
+            resolve/download/verify/extract, portable-aware.
+          </li>
+          <li>
+            Lifecycle manager (<code>manager.rs</code>) — spawn/supervise/reuse/idle-shutdown.
+          </li>
+          <li>
+            Auth + DISPLAY (<code>auth.rs</code>) — cookie + <code>.Xauthority</code>, wire into
+            transport.
+          </li>
+          <li>Detection fix (<code>x11.rs</code>) — managed-aware + Windows TCP probe.</li>
+          <li>Orchestrator + Tauri commands/events; hook into <code>connector.rs</code>.</li>
+          <li>
+            UI — settings toggle, first-run/progress prompt, Open Connections "X Servers" section.
+          </li>
+          <li>macOS guided install; Linux detect-and-guide.</li>
+          <li>GPL-3.0 compliance; integration/manual tests + docs.</li>
+        </ol>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept x-server-provisioning</code>. Records the last commit
+            at which the concept and code were reconciled, plus open divergences. The concept is the
+            source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> 2026-07-07 at commit <code>66ca7724</code> ·
+          <strong>Status:</strong> diverged — <strong>backend implemented</strong> (acquire #1048,
+          manager #1049, auth #1050, detection #1051, orchestrator + Tauri commands #1052, seam
+          refactor #1087); <strong>frontend UI pending</strong> (#1053). The three detection
+          diagram/prose artifacts were reconciled to the post-#1087 two-layer design (#1100); the
+          remaining open divergences are all the pending frontend UI (#1053).
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>
+                  Settings <code>provideXServerAutomatically</code> /
+                  <code>stopXServerWhenIdle</code> rendered by <code>DynamicForm</code>
+                </td>
+                <td>
+                  Backend fields exist (<code>settings.rs</code>:
+                  <code>provide_x_server_automatically</code>,
+                  <code>stop_x_server_when_idle</code>); no settings UI yet
+                </td>
+                <td>Missing (partial)</td>
+                <td>Implement settings UI in #1053</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>First-run consent + provisioning-progress UI (Mockup 1)</td>
+                <td>No frontend consent/progress surface; backend emits progress events</td>
+                <td>Missing</td>
+                <td>Implement in #1053</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>"X Servers" section in Open Connections panel (Mockup 2)</td>
+                <td>Not present in <code>OpenConnectionsModal.tsx</code></td>
+                <td>Missing</td>
+                <td>Implement in #1053</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>2026-07-07</td>
+                <td>#1100</td>
+                <td>
+                  Reconciled the three pre-#1087 detection artifacts to the post-seam-collapse
+                  two-layer design: the "Detection decision flow" diagram now shows the desktop
+                  orchestrator resolving a managed/adopted server into a
+                  <code>ResolvedXServer</code> (TCP <code>127.0.0.1:6000+n</code> + known cookie) with
+                  <code>detect_local_x_server()</code> as the user-run fallback (DISPLAY / socket /
+                  Windows TCP:6000) via <code>ResolvedXServer::detect_user_run()</code>; the
+                  session-open sequence now labels the provisioner return
+                  <code>Some(ResolvedXServer(:0, cookie))</code> and notes
+                  <code>ensure_x_server → EnsureOutcome { report, resolved }</code>; and the
+                  "Detection fix (x11.rs)" prose + impl-details row drop the retired
+                  <code>ManagedXServerSource</code> / <code>SingleManagedServer</code> managed-aware
+                  detection, keeping only the Windows TCP:6000 probe + <code>ResolvedXServer</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-05</td>
+                <td>—</td>
+                <td>
+                  Backend subsystem implemented across the epic: <code>acquire.rs</code> (#1048),
+                  <code>manager.rs</code> (#1049), <code>auth.rs</code> (#1050), managed detection +
+                  Windows TCP:6000 probe (#1051), <code>orchestrator.rs</code> + four Tauri commands
+                  (#1052), and the managed-source seam collapse (#1087). Settings fields
+                  <code>provideXServerAutomatically</code> / <code>stopXServerWhenIdle</code> exist
+                  in <code>settings.rs</code>. Remaining work is the frontend UI (#1053).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

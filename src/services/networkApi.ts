@@ -158,9 +158,29 @@ export async function networkHttpMonitorStart(
   });
 }
 
-/** Stop a running HTTP monitor. */
+/** Stop a running HTTP monitor, keeping it listed so it can be resumed. */
 export async function networkHttpMonitorStop(monitorId: string): Promise<void> {
   await invoke("network_http_monitor_stop", { monitorId });
+}
+
+/** Remove an HTTP monitor entirely (cancel + delete its persisted config). */
+export async function networkHttpMonitorRemove(monitorId: string): Promise<void> {
+  await invoke("network_http_monitor_remove", { monitorId });
+}
+
+/** Pause a running HTTP monitor (suspend polling, keep the loop alive). */
+export async function networkHttpMonitorPause(monitorId: string): Promise<void> {
+  await invoke("network_http_monitor_pause", { monitorId });
+}
+
+/** Resume a paused or stopped HTTP monitor with the same config. */
+export async function networkHttpMonitorResume(monitorId: string): Promise<void> {
+  await invoke("network_http_monitor_resume", { monitorId });
+}
+
+/** Stop every running HTTP monitor at once (Kill All). */
+export async function networkHttpMonitorStopAll(): Promise<void> {
+  await invoke("network_http_monitor_stop_all");
 }
 
 /** List all HTTP monitors and their current state. */

@@ -162,9 +162,12 @@ class TestVisualRendering(
         self.wait_for_output("scrollback line 200")
         self.driver.scroll_terminal(-80)
         self.manual_observe(
-            "Look at the terminal's right edge while scrolled up into history.",
-            "A vertical scrollbar is visible with the app's unified styling -- no "
-            "flicker/flash as it appears, no jarring default-OS scrollbar.",
+            "Move the mouse over the terminal and look at its right edge while "
+            "scrolled up into history; then move the mouse away.",
+            "The vertical scrollbar is a thin, subtle themed bar that fades in "
+            "on hover and fades out when the mouse leaves (auto-hide, VS Code "
+            "style) -- no always-on bright bar, no jarring default-OS scrollbar. "
+            "Its style matches the tab-bar/list scrollbars elsewhere in the app.",
             label="scrollbar",
         )
         self.driver.scroll_terminal(to_bottom=True)

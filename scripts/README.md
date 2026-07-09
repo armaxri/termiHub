@@ -84,6 +84,8 @@ python scripts/test-manual.py --keep-infra        # Keep Docker containers after
 python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume previous session
 
 # data-testid catalog (for system-test authors)
+# The autoformat PostToolUse hook regenerates this automatically after a source
+# .tsx edit (#1084); run it by hand only when editing outside that flow.
 python scripts/build-testid-catalog.py            # Regenerate tests/system/testid-catalog.md
 python scripts/build-testid-catalog.py --check    # Verify it is up to date (CI gate)
 python scripts/build-testid-catalog.py --stdout   # Print without writing
@@ -97,7 +99,8 @@ python scripts/build-testid-catalog.py --stdout   # Print without writing
 
 The `internal/` subdirectory contains scripts that are **not** intended for direct use. They are invoked by other scripts or by tooling. See [`internal/README.md`](internal/README.md) for details.
 
-| File                     | Used by                                  | Purpose                                             |
-| ------------------------ | ---------------------------------------- | --------------------------------------------------- |
-| `internal/autoformat.sh` | `.claude/settings.json` PostToolUse hook | Auto-format a single file (Prettier / rustfmt)      |
-| `internal/kill-port.cjs` | `dev.sh` / `dev.cmd`                     | Kill any process occupying the Vite dev server port |
+| File                                | Used by                                  | Purpose                                                                                        |
+| ----------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `internal/autoformat.sh`            | `.claude/settings.json` PostToolUse hook | Auto-format a single edited file (Prettier / rustfmt) and refresh the `data-testid` catalog    |
+| `internal/regen-testid-catalog.mjs` | `internal/autoformat.sh`                 | Regenerate the `data-testid` catalog when a source `.tsx` with a `data-testid` changes (#1084) |
+| `internal/kill-port.cjs`            | `dev.sh` / `dev.cmd`                     | Kill any process occupying the Vite dev server port                                            |

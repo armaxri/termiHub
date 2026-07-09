@@ -4,6 +4,8 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ExternalFileConfig } from "@/types/connection";
+import { Button, Tooltip } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -44,7 +46,8 @@ export function ExternalFilesSettings() {
         await reloadExternalConnections();
       }
     } catch (err) {
-      console.error("Failed to create external connection file:", err);
+      frontendLog("external-files", `Failed to create external connection file: ${err}`);
+      throw err;
     }
   }, [createName, settings, updateSettings, reloadExternalConnections]);
 
@@ -101,32 +104,35 @@ export function ExternalFilesSettings() {
         <div className="settings-panel__section-header">
           <h3 className="settings-panel__section-title">External Connection Files</h3>
           <div className="settings-panel__section-actions">
-            <button
-              className="settings-panel__btn"
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<RefreshCw size={14} className={reloading ? "settings-panel__spin" : ""} />}
               onClick={handleReload}
               disabled={reloading}
               title="Reload all external files"
             >
-              <RefreshCw size={14} className={reloading ? "settings-panel__spin" : ""} />
               Reload
-            </button>
-            <button
-              className="settings-panel__btn"
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<FilePlus2 size={14} />}
               onClick={() => setShowCreatePrompt((v) => !v)}
               title="Create a new external connection file from your current connections"
             >
-              <FilePlus2 size={14} />
               Create File
-            </button>
-            <button
-              className="settings-panel__btn settings-panel__btn--primary"
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Plus size={14} />}
               onClick={handleAddFile}
               title="Add external connection file"
               data-testid="external-files-add"
             >
-              <Plus size={14} />
               Add File
-            </button>
+            </Button>
           </div>
         </div>
         <p className="settings-panel__description">
@@ -148,16 +154,17 @@ export function ExternalFilesSettings() {
               placeholder="e.g. Test Farm Connections"
               autoFocus
             />
-            <button
-              className="settings-panel__btn settings-panel__btn--primary"
+            <Button
+              variant="primary"
+              size="sm"
               onClick={handleCreateFile}
               disabled={!createName.trim()}
             >
               Save
-            </button>
-            <button className="settings-panel__btn" onClick={() => setShowCreatePrompt(false)}>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setShowCreatePrompt(false)}>
               Cancel
-            </button>
+            </Button>
           </div>
         )}
         {settings.externalConnectionFiles.length === 0 ? (
@@ -180,13 +187,15 @@ export function ExternalFilesSettings() {
                 >
                   {file.path}
                 </span>
-                <button
-                  className="settings-panel__file-remove"
-                  onClick={() => handleRemoveFile(file.path)}
-                  title="Remove file"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <Tooltip content="Remove file">
+                  <button
+                    className="settings-panel__file-remove"
+                    onClick={() => handleRemoveFile(file.path)}
+                    aria-label="Remove file"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </Tooltip>
               </li>
             ))}
           </ul>

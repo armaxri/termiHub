@@ -15,6 +15,9 @@ use super::local_forward::ForwarderStats;
 pub struct DynamicForwarder {
     task_handle: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<ForwarderStats>,
+    /// Fires when the accept loop exits, so the tunnel supervisor can observe
+    /// forwarder death and drive the tunnel to `Error` (#1243, GAP 2).
+    death: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 const SOCKS5_VERSION: u8 = 0x05;
@@ -40,19 +43,27 @@ impl DynamicForwarder {
         let stats = Arc::new(ForwarderStats::new());
         let stats_clone = Arc::clone(&stats);
 
+        let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
+            let _death = death_tx;
             Self::accept_loop(listener, session, stats_clone).await;
         });
 
         Ok(Self {
             task_handle: Some(task_handle),
             stats,
+            death: Some(death_rx),
         })
     }
 
     /// Get current tunnel statistics.
     pub fn get_stats(&self) -> TunnelStats {
         self.stats.to_tunnel_stats()
+    }
+
+    /// Take the forwarder-death receiver (once) for the tunnel supervisor.
+    pub fn take_death_signal(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        self.death.take()
     }
 
     /// Stop the forwarder by aborting the accept task.

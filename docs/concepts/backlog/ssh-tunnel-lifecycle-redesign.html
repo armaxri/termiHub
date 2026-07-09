@@ -1,0 +1,893 @@
+<!doctype html>
+<!--
+  Single-file concept — SSH tunnel lifecycle redesign (issue #1191, from #1141).
+  Source of truth per CLAUDE.md: when this concept and the code disagree, fix the
+  code. Grounded in the SSH tunnel state-machine audit (docs/audits/ssh-tunnel-state-machine.md).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SSH Tunnel Lifecycle Redesign (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Error resting-state dot — the app lacks a state-dot--error variant today;
+         this concept proposes adding one (mapped to --color-error). */
+      .state-dot--error {
+        background: var(--color-error);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Only the symbols used below. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-arrow-left-right" viewBox="0 0 24 24">
+        <path d="M8 3 4 7l4 4" />
+        <path d="M4 7h16" />
+        <path d="m16 21 4-4-4-4" />
+        <path d="M20 17H4" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3" /></symbol>
+      <symbol id="i-square" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+      </symbol>
+      <symbol id="i-rotate-cw" viewBox="0 0 24 24">
+        <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+        <path d="M21 3v5h-5" />
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+        <path d="M3 21v-5h5" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path
+          d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"
+        />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4" />
+        <path d="M12 8h.01" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24">
+        <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24">
+        <path d="m5 12 7-7 7 7" /><path d="M12 19V5" />
+      </symbol>
+      <symbol id="i-arrow-down" viewBox="0 0 24 24">
+        <path d="M12 5v14" /><path d="m19 12-7 7-7-7" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>SSH Tunnel Lifecycle Redesign</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/1191">#1191</a>
+            (from <a href="https://github.com/armaxri/termiHub/issues/1141">#1141</a>)</span
+          >
+          <span
+            >Audit: <code>docs/audits/ssh-tunnel-state-machine.md</code> (issue
+            <a href="https://github.com/armaxri/termiHub/issues/1130">#1130</a>)</span
+          >
+          <span><code>docs/concepts/backlog/ssh-tunnel-lifecycle-redesign.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          The SSH tunnel state machine has two authorities that are only loosely reconciled: a
+          declared <code>TunnelStatus</code> enum, and the runtime truth in
+          <code>active_tunnels: Mutex&lt;HashMap&gt;</code>. Status is never stored —
+          <code>get_statuses()</code> <em>recomputes</em> it purely from set membership (in the
+          active map → <code>Connected</code>; connecting → <code>Connecting</code>; else
+          <code>Disconnected</code>). There is no field that can hold <code>Error</code> or
+          <code>Reconnecting</code>. This produces three user-facing defects that this concept
+          fixes:
+        </p>
+        <ul>
+          <li>
+            <strong>Dead tunnels stay green and leak (GAP 1).</strong> When the bastion drops, the
+            laptop sleeps, or the server reboots, the SSH session dies but nothing observes it. The
+            accept loops just <code>break</code> and log; the <code>ActiveTunnel</code> (with its
+            pooled endpoint / gateway <code>PooledRef</code> guards) lingers in the active map. The
+            sidebar dot stays green &ldquo;connected&rdquo;, every <code>localhost:port</code>
+            connection fails, and the only control is <strong>Stop</strong>. The leaked tunnel also
+            vanishes from the Open Connections kill panel (its filter only counts
+            <code>connected</code>/<code>connecting</code>).
+          </li>
+          <li>
+            <strong>False &ldquo;Connected&rdquo; on accept-loop death (GAP 2).</strong> Forwarders
+            bind synchronously (good), then <code>tokio::spawn</code> the accept loop and
+            immediately return <code>Ok</code>. Any post-bind failure lands after
+            <code>Connected</code> was already reported — green dot, zero traffic.
+          </li>
+          <li>
+            <strong>No reconnect, stale stats (GAP 5, GAP 6).</strong> The
+            <code>reconnect_on_disconnect</code> toggle is persisted but never read. The
+            <code>tunnel-stats-updated</code> event is wired end-to-end on the frontend but has
+            <em>no Rust emitter</em>, so <code>↑/↓ bytes</code> and <code>N conn</code> freeze at 0
+            for the tunnel&rsquo;s whole lifetime.
+          </li>
+        </ul>
+        <p>
+          The redesign makes <strong>session death observable</strong>, turns <code>Error</code>
+          into a <strong>real, persisted, queryable resting state</strong> (surfaced in the sidebar
+          <em>and</em> Open Connections), implements <strong>opt-in reconnect with backoff</strong>,
+          and gives tunnels <strong>live throughput / connection-count stats</strong>. It also adds
+          the missing controls the correct machine needs: <strong>Retry</strong>,
+          <strong>Reconnect</strong>, <strong>View last error</strong>, and
+          <strong>force-Stop</strong> of a stuck/errored tunnel from the canonical kill panel.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Detect SSH session / accept-loop death and transition
+            <code>Connected → Error</code>, dropping the <code>active_tunnels</code> entry and its
+            pool guards (GAP 1, GAP 2).
+          </li>
+          <li>
+            Make <code>Error</code> a persisted resting state that survives reload and is returned
+            by <code>get_statuses()</code>, with its last-error message (GAP 3).
+          </li>
+          <li>Implement <code>reconnect_on_disconnect</code> with capped exponential backoff (GAP 5).</li>
+          <li>
+            Emit <code>tunnel-stats-updated</code> periodically for live throughput &amp;
+            connection counts (GAP 6).
+          </li>
+          <li>
+            Expose Retry, Reconnect, View-last-error and force-Stop in the TunnelSidebar and Open
+            Connections.
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            GAP 4 (re-entrancy Start/Stop double-fire guard) — tracked separately; the audit stages
+            it between GAP 3 and GAP 5, but it is a small store-level guard, not part of the
+            lifecycle redesign.
+          </li>
+          <li>Confirm-before-delete for active tunnels (GAP 7) and Kill-panel drift (GAP 9 details).</li>
+          <li>Reworking the tunnel <em>editor</em> form beyond the reconnect toggle&rsquo;s meaning.</li>
+          <li>Persisting tunnel <em>traffic history</em> — stats are live/instantaneous only.</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The tunnel surface gains a fourth resting colour — <strong>red = Error</strong> — alongside
+          green (connected), amber (connecting/reconnecting) and grey (disconnected). An errored row
+          shows the last-error text inline and swaps its action buttons for
+          <strong>Retry</strong> and <strong>View last error</strong>. A connected row shows
+          <strong>live</strong> throughput and connection count, plus a
+          <strong>Reconnect</strong> (force-reconnect) control. The same
+          <code>Error</code> tunnels now appear in <strong>Open Connections</strong> so they can be
+          force-Stopped from the canonical kill panel.
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — TunnelSidebar with connected / connecting / error rows</h3>
+          <div class="mockup-note">
+            The Tunnels sidebar. One tunnel is healthy (green, live stats + Reconnect), one is
+            reconnecting (amber, backoff countdown), and one has died (red Error resting state with
+            its message, a Retry, and a View-last-error control).
+          </div>
+          <div class="app" style="height: 360px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Tunnels">
+                    <svg class="li"><use href="#i-arrow-left-right" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar" style="width: 340px">
+                <div class="sidebar__header"><span class="sidebar__title">Tunnels</span></div>
+                <div class="sidebar__content">
+                  <!-- Connected: green dot, live stats, Reconnect + Stop -->
+                  <div class="connection-tree__item" style="flex-direction: column; align-items: stretch; gap: 4px">
+                    <div style="display: flex; align-items: center; gap: 8px">
+                      <span class="state-dot state-dot--connected"></span>
+                      <span style="flex: 1">Dev DB</span>
+                      <span class="tab-group-chip" style="height: 18px; font-size: 10px">Local</span>
+                      <button class="terminal-view__toolbar-btn" title="Reconnect" style="width: 22px; height: 22px">
+                        <svg class="li"><use href="#i-refresh-cw" /></svg>
+                      </button>
+                      <button class="terminal-view__toolbar-btn" title="Stop" style="width: 22px; height: 22px">
+                        <svg class="li"><use href="#i-square" /></svg>
+                      </button>
+                    </div>
+                    <div style="display: flex; gap: 12px; padding-left: 15px; color: var(--text-secondary); font-size: 11px">
+                      <span>127.0.0.1:5432 → db.internal:5432</span>
+                    </div>
+                    <div style="display: flex; gap: 14px; padding-left: 15px; color: var(--text-secondary); font-size: 11px">
+                      <span><svg class="li" style="width: 11px; height: 11px"><use href="#i-arrow-up" /></svg> 4.2 MB</span>
+                      <span><svg class="li" style="width: 11px; height: 11px"><use href="#i-arrow-down" /></svg> 18.7 MB</span>
+                      <span>3 conn</span>
+                    </div>
+                  </div>
+
+                  <!-- Reconnecting: amber dot, backoff countdown -->
+                  <div class="connection-tree__item" style="flex-direction: column; align-items: stretch; gap: 4px">
+                    <div style="display: flex; align-items: center; gap: 8px">
+                      <span class="state-dot state-dot--connecting"></span>
+                      <span style="flex: 1">SOCKS Proxy</span>
+                      <span class="tab-group-chip" style="height: 18px; font-size: 10px">Dynamic</span>
+                      <button class="terminal-view__toolbar-btn" title="Stop" style="width: 22px; height: 22px">
+                        <svg class="li"><use href="#i-square" /></svg>
+                      </button>
+                    </div>
+                    <div style="display: flex; gap: 8px; padding-left: 15px; color: var(--state-connecting); font-size: 11px">
+                      <span>Reconnecting… attempt 2/5 · retrying in 4s</span>
+                    </div>
+                  </div>
+
+                  <!-- Error: red dot, message, Retry + View last error -->
+                  <div class="connection-tree__item connection-tree__item--selected" style="flex-direction: column; align-items: stretch; gap: 4px">
+                    <div style="display: flex; align-items: center; gap: 8px">
+                      <span class="state-dot state-dot--error"></span>
+                      <span style="flex: 1">Expose Web</span>
+                      <span class="tab-group-chip" style="height: 18px; font-size: 10px">Remote</span>
+                      <button class="terminal-view__toolbar-btn" title="Retry" style="width: 22px; height: 22px">
+                        <svg class="li"><use href="#i-rotate-cw" /></svg>
+                      </button>
+                      <button class="terminal-view__toolbar-btn" title="View last error" style="width: 22px; height: 22px">
+                        <svg class="li"><use href="#i-info" /></svg>
+                      </button>
+                    </div>
+                    <div style="display: flex; gap: 8px; padding-left: 15px; color: var(--color-error); font-size: 11px; align-items: center">
+                      <svg class="li" style="width: 12px; height: 12px; color: var(--color-error)"><use href="#i-triangle-alert" /></svg>
+                      <span>Connection lost — SSH session closed by peer (bastion.corp)</span>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">user@host $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">1 tunnel connected · 1 error</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> <strong>Connected (green).</strong> Live stats
+                (<code>↑</code> sent / <code>↓</code> received / <code>N conn</code>) update in place
+                via the new <code>tunnel-stats-updated</code> emitter. A
+                <strong>Reconnect</strong> button force-cycles a suspected-stale tunnel.
+              </li>
+              <li>
+                <span class="callout">B</span> <strong>Reconnecting (amber).</strong> Shown only when
+                <code>reconnect_on_disconnect</code> is on: attempt counter + backoff countdown.
+                Stop cancels the reconnect loop.
+              </li>
+              <li>
+                <span class="callout">C</span> <strong>Error (red, resting).</strong> Persisted last
+                error text inline; <strong>Retry</strong> (<code>Error → Connecting</code>, clears
+                the stored error) and <strong>View last error</strong> replace the Play button.
+                This state survives a window reload.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — Open Connections, SSH Tunnels section with a stuck/errored tunnel</h3>
+          <div class="mockup-note">
+            The canonical kill panel now lists errored / stale tunnels (not just
+            connected/connecting), each force-Stoppable so the leaked
+            <code>active_tunnels</code> entry + pool guards can be released.
+          </div>
+          <div class="app" style="height: 300px">
+            <div class="menu" style="width: 520px; margin: 16px auto">
+              <div class="menu__title">
+                <svg class="li"><use href="#i-arrow-left-right" /></svg>
+                SSH Tunnels
+                <span class="count">3</span>
+                <button class="btn btn--link" style="margin-left: auto">Stop all</button>
+              </div>
+              <div class="menu__row">
+                <span class="state-dot state-dot--connected"></span>
+                <span style="flex: 1">Dev DB <span style="color: var(--text-secondary)">· 127.0.0.1:5432 · ↑4.2MB ↓18.7MB · 3 conn</span></span>
+                <button class="btn">Stop</button>
+              </div>
+              <div class="menu__row">
+                <span class="state-dot state-dot--connecting"></span>
+                <span style="flex: 1">SOCKS Proxy <span style="color: var(--state-connecting)">· reconnecting 2/5</span></span>
+                <button class="btn">Stop</button>
+              </div>
+              <div class="menu__row menu__row--selected">
+                <span class="state-dot state-dot--error"></span>
+                <span style="flex: 1">Expose Web
+                  <span style="color: var(--color-error)">· error: SSH session closed by peer</span>
+                </span>
+                <button class="btn">Stop</button>
+              </div>
+              <div class="menu__footer">
+                <svg class="li" style="width: 14px; height: 14px; color: var(--text-secondary)"><use href="#i-info" /></svg>
+                <span style="color: var(--text-secondary); font-size: 11px">
+                  Errored tunnels appear here so their leaked session &amp; pool guards can be
+                  force-released.
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">D</span> The <code>activeTunnels</code> filter is widened to
+                include <code>error</code> (and stale <code>connected</code>) — force-Stop calls
+                <code>stop_tunnel</code>, which now also clears the persisted error.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Session death mid-tunnel</h3>
+        <p>
+          A supervisor task per active tunnel waits on a <strong>liveness signal</strong> (see the
+          design decision in §Behavior). When the signal fires it removes the entry from
+          <code>active_tunnels</code>, drops the pool guards (draining the shared endpoint / gateway
+          sessions), records the last error, and — depending on
+          <code>reconnect_on_disconnect</code> — either emits <code>Error</code> or enters the
+          reconnect loop. The user sees the row turn red with the cause, and Open Connections stops
+          listing it as a live connection.
+        </p>
+
+        <h3>Accept-loop exit right after bind (GAP 2)</h3>
+        <p>
+          The accept loop breaking is treated identically to session death: it is one of the
+          liveness signals. An early exit (e.g. the socket is reclaimed, or a remote-forward local
+          target is unreachable so every relay fails) transitions the tunnel to <code>Error</code>
+          rather than leaving a green dot with zero traffic. Per-connection relay failures that do
+          <em>not</em> kill the loop stay best-effort (logged), but a run of them does not falsely
+          keep the tunnel &ldquo;healthy&rdquo; because throughput/conn stats now update live and the
+          liveness watch covers the session.
+        </p>
+
+        <h3>Error persisting across reload</h3>
+        <p>
+          The manager keeps a <code>last_errors: Mutex&lt;HashMap&lt;String, TunnelError&gt;&gt;</code>
+          set on the <code>Error</code> branch and cleared on a successful <code>start</code> /
+          explicit <code>stop</code> / <code>Retry</code>. <code>get_statuses()</code> returns
+          <code>Error{error}</code> for those ids, so a window reload (<code>loadTunnels</code>
+          overwrites the whole frontend map from <code>get_statuses</code>) no longer launders
+          <code>Error</code> back to <code>Disconnected</code>. &ldquo;Never started&rdquo; and
+          &ldquo;died with an error&rdquo; become distinct, durable states.
+        </p>
+
+        <h3>Reconnect backoff</h3>
+        <p>
+          With <code>reconnect_on_disconnect</code> enabled, session death enters
+          <code>Reconnecting</code> and re-runs the start path under a capped exponential backoff
+          (e.g. 1s, 2s, 4s, 8s, 16s; max ~5 attempts, configurable default). Each wait emits the
+          <code>Reconnecting</code> status with the attempt number so the sidebar can show the
+          countdown. Success returns to <code>Connected</code>; exhausting the attempts falls
+          through to <code>Error</code> (&ldquo;reconnect failed after N attempts&rdquo;). A user
+          <strong>Stop</strong> at any point cancels the reconnect loop (via a per-tunnel
+          <code>CancellationToken</code>, mirroring the existing connect-cancel path) and returns to
+          <code>Disconnected</code>. If reconnect is <em>off</em>, death goes straight to
+          <code>Error</code> and the &ldquo;Reconnecting&rdquo; branch never runs — no dead toggle.
+        </p>
+
+        <h3>Stats polling vs event</h3>
+        <p>
+          Stats are pushed, not pulled. A single periodic task (e.g. every 1s while any tunnel is
+          active) reads each forwarder&rsquo;s live <code>ForwarderStats</code> atomics and emits
+          <code>tunnel-stats-updated</code> per tunnel; the already-wired
+          <code>useTunnelEvents</code> hook merges them into the store. This matches the existing
+          frontend plumbing (which today receives nothing) and avoids the sidebar re-polling
+          <code>get_statuses</code>. The pull API (<code>get_statuses</code>) still returns a
+          stats snapshot for the initial <code>loadTunnels</code> and reloads.
+        </p>
+
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>Reconnect vs. Stop race:</strong> Stop always wins — it cancels the token before
+            the next attempt and clears any pending backoff timer.
+          </li>
+          <li>
+            <strong>Shared pooled session:</strong> when a pooled endpoint / gateway session dies,
+            multiple tunnels may error at once; each supervisor independently drops its guard so the
+            pool ref-count returns to zero and the session drains exactly once.
+          </li>
+          <li>
+            <strong>App shutdown during reconnect:</strong> <code>stop_all</code> cancels every
+            reconnect loop so no zombie backoff task survives teardown.
+          </li>
+          <li>
+            <strong>Retry on a stale-but-green tunnel:</strong> the <strong>Reconnect</strong>
+            control force-tears-down and re-starts even if liveness hasn&rsquo;t fired yet, covering
+            cases the watch is slow to notice.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Redesigned tunnel lifecycle — Error is a real resting state; reconnect is
+            implemented</span
+          >
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Disconnected
+
+    Disconnected --> Connecting : start_tunnel()
+    Connecting --> Connected : build_forwarder ok + finish Commit
+    Connecting --> Disconnected : Stop during connect (cancel)
+    Connecting --> Error : build_forwarder Err (bind/auth fail)
+
+    Connected --> Disconnected : stop_tunnel()
+    Connected --> Error : liveness death, reconnect off + drop guards
+    Connected --> Reconnecting : liveness death, reconnect on + drop guards
+
+    Reconnecting --> Connecting : backoff elapsed, re-run start
+    Reconnecting --> Error : attempts exhausted
+    Reconnecting --> Disconnected : Stop (cancel reconnect loop)
+
+    Error --> Connecting : Retry / start_tunnel (clears last_error)
+    Error --> Disconnected : stop_tunnel (clears last_error)
+
+    note right of Error
+        Persisted and queryable:
+        get_statuses returns Error with msg.
+        Survives window reload.
+    end note
+
+    note right of Reconnecting
+        Only entered when
+        reconnect_on_disconnect = true.
+        Emits attempt number for the
+        sidebar countdown.
+    end note
+</pre>
+        </div>
+
+        <h3>Design decision — the liveness mechanism</h3>
+        <p>
+          The core question is <em>how a tunnel learns its SSH session died</em>. Three options:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>How it works</th>
+                <th>Pros</th>
+                <th>Cons</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>A. Accept-loop-exit only</strong></td>
+                <td>
+                  Treat the forwarder&rsquo;s accept loop <code>break</code> (and every relay
+                  failing) as the death signal via a <code>watch</code>/<code>oneshot</code> the loop
+                  fires on exit.
+                </td>
+                <td>Cheapest; no new SSH machinery; catches GAP 2 directly.</td>
+                <td>
+                  Local/dynamic accept loops <em>don&rsquo;t</em> exit when only the SSH session dies
+                  — the listener is still bound; only new relays fail. So pure session death (bastion
+                  drop, sleep) can go undetected until the next connection attempt. Weak for GAP 1.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>B. SSH keepalive / channel-watch</strong></td>
+                <td>
+                  Observe the shared <code>SshSession</code> liveness — a keepalive/heartbeat or a
+                  closed-notification from russh — and fire the death signal centrally.
+                </td>
+                <td>
+                  Detects true session death promptly and proactively, independent of traffic; the
+                  natural GAP 1 fix.
+                </td>
+                <td>
+                  Requires a liveness hook on <code>SshSession</code> (russh
+                  <code>Handle</code>) that the pool exposes; more plumbing; keepalive interval is a
+                  new tunable.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>C. Both (recommended)</strong></td>
+                <td>
+                  Supervisor selects over <em>both</em> a session-liveness watch (B) and the
+                  accept-loop-exit signal (A); whichever fires first wins.
+                </td>
+                <td>
+                  Covers GAP 1 <em>and</em> GAP 2 with no gap: proactive session-death detection plus
+                  catching post-bind forwarder failures the session watch can&rsquo;t see.
+                </td>
+                <td>Slightly more wiring; two signals to reason about.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Recommendation: Option C.</strong> Option A alone leaves the audit&rsquo;s
+          <em>critical</em> GAP 1 (silent session death while the listener stays bound) largely
+          unaddressed; Option B alone misses GAP 2&rsquo;s post-bind forwarder deaths. A supervisor
+          that <code>tokio::select!</code>s over a session-liveness watch (surfaced from the pooled
+          <code>SshSession</code>) <em>and</em> a forwarder accept-loop-exit channel closes both
+          gaps. If the russh session-liveness hook proves costly, ship Option A first (S2) as the
+          accept-loop signal + a lightweight periodic keepalive probe, then upgrade to the native
+          watch — the supervisor shape is identical either way.
+        </p>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Sequence — session death detected → real Error state (reconnect off)</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant Peer as SSH peer (bastion / server)
+    participant Sess as SshSession (pooled)
+    participant Sup as Tunnel supervisor
+    participant M as TunnelManager
+    participant St as last_errors + active_tunnels
+    participant Ev as tunnel-status-changed
+    participant UI as TunnelSidebar / Open Connections
+
+    Note over Sess,Sup: supervisor selects over session-liveness watch + accept-loop-exit
+    Peer-->>Sess: TCP reset / session close (sleep, reboot, bastion drop)
+    Sess-->>Sup: liveness signal fires
+    Sup->>M: on_tunnel_dead(id, cause)
+    M->>St: active_tunnels.remove(id) + drop PooledSessionGuards
+    Note over St: pool ref-count to 0, session drains
+    M->>St: last_errors.insert(id, "connection lost: ...")
+    M-->>Ev: emit Error(id, msg)
+    Ev-->>UI: updateTunnelState(Error, msg)
+    Note over UI: row turns red, message inline, Retry + View-last-error shown
+</pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Sequence — reconnect loop with capped backoff (reconnect on)</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant Sup as Tunnel supervisor
+    participant M as TunnelManager
+    participant Ev as tunnel-status-changed
+    participant UI as TunnelSidebar
+    participant U as User
+
+    Sup->>M: on_tunnel_dead(id) [reconnect on]
+    M->>M: drop guards, clear active entry
+    loop attempt 1..max (backoff 1,2,4,8,16s)
+        M-->>Ev: emit Reconnecting(id, attempt)
+        Ev-->>UI: "Reconnecting... attempt k/max, retrying in Ns"
+        Note over M: await backoff OR cancel token
+        alt Stop requested
+            U->>M: stop_tunnel(id)
+            M->>M: cancel reconnect token
+            M-->>Ev: emit Disconnected(id)
+            Note over M: loop exits
+        else backoff elapsed
+            M->>M: re-run start path (build_forwarder)
+            alt success
+                M-->>Ev: emit Connected(id)
+                Note over M: re-arm supervisor, loop exits
+            else failure
+                Note over M: continue to next attempt
+            end
+        end
+    end
+    Note over M: attempts exhausted, emit Error(id, "reconnect failed after N")
+</pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Grounded in the code at concept time. The manager is
+          <code>src-tauri/src/tunnel/tunnel_manager.rs</code>; the forwarders are
+          <code>local_forward.rs</code> / <code>remote_forward.rs</code> / <code>dynamic_forward.rs</code>;
+          the enum lives in <code>src-tauri/src/tunnel/config.rs</code>. Status is recomputed in
+          <code>get_statuses()</code> (there is no stored status today), events go through
+          <code>emit_status</code> → <code>tunnel-status-changed</code>, and the frontend mirror is
+          <code>appStore.tunnelStates</code> fed by <code>useTunnelEvents</code>.
+        </p>
+
+        <h3>Staging</h3>
+        <p>
+          Per the issue and the audit&rsquo;s recommended order:
+          <strong>S1 = GAP 3</strong> (persisted queryable Error),
+          <strong>S2 = GAP 1 + GAP 2</strong> (supervisor + liveness → real Error),
+          <strong>S3 = GAP 5 + GAP 6</strong> (reconnect loop + live stats). S1 lands the persisted
+          <code>Error</code> plumbing and UI first so S2 has a resting state to transition into; S3
+          builds the reconnect loop and stats emitter on the S2 supervisor.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stage / GAP</th>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>S1 · GAP 3</strong></td>
+                <td><code>src-tauri/src/tunnel/tunnel_manager.rs</code></td>
+                <td>
+                  Add <code>last_errors: Mutex&lt;HashMap&lt;String, String&gt;&gt;</code> to
+                  <code>TunnelManager</code>. Set it on every <code>Error</code> branch (the
+                  <code>build_forwarder</code> <code>FinishOutcome::Commit</code> arm at
+                  <code>tunnel_manager.rs:282-284</code>). Clear it on a successful
+                  <code>start_tunnel</code> insert and on <code>stop_tunnel</code>. In
+                  <code>get_statuses()</code> (<code>:193-221</code>), the <em>else</em> branch
+                  returns <code>Error{error}</code> when <code>last_errors</code> has the id, instead
+                  of unconditionally <code>Disconnected</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>S1 · GAP 3</strong></td>
+                <td>
+                  <code>src/store/appStore.ts</code>,
+                  <code>src/components/OpenConnections/OpenConnectionsModal.tsx</code>
+                </td>
+                <td>
+                  <code>loadTunnels</code> already overwrites the map from
+                  <code>get_statuses</code> — now that <code>Error</code> is returned it survives
+                  reload with no store change. Widen the Open Connections
+                  <code>activeTunnels</code> filter (<code>:127-130</code>) to include
+                  <code>error</code>; add a Stop row for it. <code>TunnelListItem</code> already
+                  renders <code>status === "error"</code> text (<code>:145-147</code>) — add the
+                  Retry / View-last-error affordances.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>S2 · GAP 1/2</strong></td>
+                <td>
+                  <code>local_forward.rs</code>, <code>dynamic_forward.rs</code>,
+                  <code>remote_forward.rs</code>
+                </td>
+                <td>
+                  <strong>New</strong> — each forwarder exposes a <em>death signal</em>: fire a
+                  <code>tokio::sync::oneshot</code> / <code>watch</code> when the accept loop
+                  <code>break</code>s (<code>local_forward.rs:124-127</code>,
+                  <code>dynamic_forward.rs:81-85</code>). This is the accept-loop-exit half of
+                  liveness Option A.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>S2 · GAP 1/2</strong></td>
+                <td>
+                  <code>core/src/backends/ssh/…</code> (session pool / handler) →
+                  <code>tunnel_manager.rs</code>
+                </td>
+                <td>
+                  <strong>New</strong> — surface an <code>SshSession</code> liveness watch (russh
+                  handle closed / keepalive miss) from the pooled endpoint / gateway so the
+                  supervisor can observe true session death (Option B). Keep it optional behind the
+                  supervisor&rsquo;s <code>select!</code> so S2 can ship on Option A alone and upgrade
+                  later.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>S2 · GAP 1/2</strong></td>
+                <td><code>tunnel_manager.rs</code></td>
+                <td>
+                  <strong>New</strong> — on <code>start_tunnel</code> success, spawn a
+                  <code>supervise(id)</code> task that <code>tokio::select!</code>s over the
+                  forwarder death signal + session-liveness watch + a per-tunnel
+                  <code>CancellationToken</code>. On death: remove from
+                  <code>active_tunnels</code>, drop <code>PooledSessionGuards</code> (RAII drains the
+                  pool via <code>teardown_forwarder</code>), set <code>last_errors</code>, and
+                  <code>emit_status(Error|Reconnecting)</code>. Store the supervisor
+                  handle + cancel token on <code>ActiveTunnel</code> so <code>stop_tunnel</code>
+                  aborts it.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>S3 · GAP 5</strong></td>
+                <td>
+                  <code>tunnel_manager.rs</code>, <code>config.rs</code>,
+                  <code>src/components/TunnelEditor/TunnelEditor.tsx</code>
+                </td>
+                <td>
+                  Read <code>reconnect_on_disconnect</code> (<code>config.rs:70</code>) in the
+                  supervisor&rsquo;s death branch. If set, drive the
+                  <code>Reconnecting → Connecting</code> loop with capped exponential backoff,
+                  emitting <code>Reconnecting</code> (<code>config.rs:80</code>, the currently-dead
+                  variant) with the attempt number; on exhaustion fall through to
+                  <code>Error</code>. The editor Toggle
+                  (<code>TunnelEditor.tsx:370-375</code>) now controls real behavior.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>S3 · GAP 6</strong></td>
+                <td>
+                  <code>tunnel_manager.rs</code>, <code>src/services/events.ts</code> (already
+                  wired), <code>src/hooks/useTunnelEvents.ts</code> (already wired)
+                </td>
+                <td>
+                  <strong>New</strong> — spawn a periodic (~1s while any tunnel active) task reading
+                  each forwarder&rsquo;s <code>ForwarderStats</code> atomics
+                  (<code>local_forward.rs:35-42</code>) and
+                  <code>app_handle.emit("tunnel-stats-updated", …)</code>. The frontend
+                  <code>onTunnelStatsUpdated</code> (<code>events.ts:363-369</code>) →
+                  <code>useTunnelEvents</code> already merges it into <code>tunnelStates</code>; the
+                  sidebar stats (<code>TunnelListItem.tsx:138-144</code>) then update live instead of
+                  freezing at 0.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>All stages</strong></td>
+                <td><code>src-tauri/src/tunnel/*</code> tests</td>
+                <td>
+                  Unit tests (TDD, test commit first): <code>get_statuses</code> returns
+                  <code>Error</code> after a recorded failure and clears on start/stop (S1);
+                  supervisor drops guards + emits <code>Error</code> on a fired death signal, pool
+                  ref-count → 0 (S2, extending the existing GAP-8 teardown tests); reconnect loop
+                  honours backoff + cancel and exhausts to <code>Error</code> (S3); stats emitter
+                  ships non-zero counters (S3).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept ssh-tunnel-lifecycle-redesign</code>. Records the last
+            commit at which the concept and code were reconciled, plus open divergences. The concept
+            is the source of truth — code is fixed to match by default.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+          — this concept describes the target state; the current code is the pre-redesign machine
+          from <code>docs/audits/ssh-tunnel-state-machine.md</code>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality (at concept time)</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Session death → real, persisted <code>Error</code> state (GAP 1, GAP 3)</td>
+                <td>
+                  No liveness watch; <code>Error</code> is event-only, laundered to
+                  <code>Disconnected</code> on reload
+                </td>
+                <td>Missing</td>
+                <td>Implement S1 + S2, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Accept-loop-exit → <code>Error</code> (GAP 2)</td>
+                <td>Accept loop <code>break</code>s + logs only; stays <code>Connected</code></td>
+                <td>Missing</td>
+                <td>Implement S2 forwarder death signal</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td><code>reconnect_on_disconnect</code> drives a real reconnect loop (GAP 5)</td>
+                <td>Toggle persisted but never read; <code>Reconnecting</code> never constructed</td>
+                <td>Missing</td>
+                <td>Implement S3 reconnect loop</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Live stats via <code>tunnel-stats-updated</code> (GAP 6)</td>
+                <td>Event wired on frontend, no Rust emitter; stats freeze at 0</td>
+                <td>Missing</td>
+                <td>Implement S3 stats emitter</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>Retry / Reconnect / View-last-error / force-Stop controls</td>
+                <td>Only Play/Stop; error text transient; errored tunnels absent from kill panel</td>
+                <td>Missing</td>
+                <td>Add controls across S1–S3</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

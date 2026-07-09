@@ -1,8 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Play, StopCircle, RefreshCw } from "lucide-react";
+import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
+import { Button, Tooltip, toast } from "@/components/ui";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
+  networkHttpMonitorRemove,
+  networkHttpMonitorPause,
+  networkHttpMonitorResume,
   networkHttpMonitorList,
   onHttpMonitorCheck,
 } from "@/services/networkApi";
@@ -40,6 +44,12 @@ export function HttpMonitorPanel() {
   // stop/unmount/restart.
   const activeMonitorIdRef = useRef<string | null>(null);
   const unlistenCheckRef = useRef<(() => void) | null>(null);
+  // Guards against a Start double-fire (#1147, GAP #7). The Button's async
+  // lifecycle only disables on the *next* click; two clicks in the same tick
+  // both reach handleStart before React re-renders the pending state, spawning
+  // two backend monitors for one URL. This synchronous ref rejects the second
+  // call immediately, so only one start is ever in flight.
+  const startInFlightRef = useRef(false);
 
   const loadMonitors = useCallback(async () => {
     try {
@@ -47,6 +57,7 @@ export function HttpMonitorPanel() {
       setMonitors(list);
     } catch (err) {
       frontendLog("http_monitor", `Failed to list monitors: ${err}`);
+      toast.error(`Failed to refresh monitors: ${err}`);
     }
   }, []);
 
@@ -67,6 +78,9 @@ export function HttpMonitorPanel() {
 
   const handleStart = useCallback(async () => {
     if (!url.trim()) return;
+    // Reject a re-entrant start while one is already in flight (#1147, GAP #7).
+    if (startInFlightRef.current) return;
+    startInFlightRef.current = true;
     setError(null);
     setHistory([]);
     stopListening();
@@ -100,6 +114,8 @@ export function HttpMonitorPanel() {
       stopListening();
       setError(String(err));
       frontendLog("http_monitor", `Start failed: ${err}`);
+    } finally {
+      startInFlightRef.current = false;
     }
   }, [url, intervalSecs, method, expectedStatus, timeoutSecs, loadMonitors, stopListening]);
 
@@ -109,8 +125,10 @@ export function HttpMonitorPanel() {
       await networkHttpMonitorStop(activeMonitorIdRef.current);
       clearActiveMonitor();
       await loadMonitors();
+      toast.success("Monitor stopped");
     } catch (err) {
       setError(String(err));
+      toast.error(`Failed to stop monitor: ${err}`);
     }
   }, [loadMonitors, clearActiveMonitor]);
 
@@ -118,10 +136,54 @@ export function HttpMonitorPanel() {
     async (id: string) => {
       try {
         await networkHttpMonitorStop(id);
-        if (id === activeMonitorIdRef.current) clearActiveMonitor();
         await loadMonitors();
+        toast.success("Monitor stopped");
       } catch (err) {
         setError(String(err));
+        toast.error(`Failed to stop monitor: ${err}`);
+      }
+    },
+    [loadMonitors]
+  );
+
+  const handlePauseMonitor = useCallback(
+    async (id: string) => {
+      try {
+        await networkHttpMonitorPause(id);
+        await loadMonitors();
+        toast.success("Monitor paused");
+      } catch (err) {
+        setError(String(err));
+        toast.error(`Failed to pause monitor: ${err}`);
+      }
+    },
+    [loadMonitors]
+  );
+
+  const handleResumeMonitor = useCallback(
+    async (id: string) => {
+      try {
+        await networkHttpMonitorResume(id);
+        await loadMonitors();
+        toast.success("Monitor resumed");
+      } catch (err) {
+        setError(String(err));
+        toast.error(`Failed to resume monitor: ${err}`);
+      }
+    },
+    [loadMonitors]
+  );
+
+  const handleRemoveMonitor = useCallback(
+    async (id: string) => {
+      try {
+        await networkHttpMonitorRemove(id);
+        if (id === activeMonitorIdRef.current) clearActiveMonitor();
+        await loadMonitors();
+        toast.success("Monitor removed");
+      } catch (err) {
+        setError(String(err));
+        toast.error(`Failed to remove monitor: ${err}`);
       }
     },
     [loadMonitors, clearActiveMonitor]
@@ -147,32 +209,36 @@ export function HttpMonitorPanel() {
       <div className="network-panel__header">
         <span className="network-panel__title">HTTP Monitor</span>
         <div className="network-panel__actions">
-          <button
-            className="network-panel__btn network-panel__btn--run"
-            onClick={loadMonitors}
-            title="Refresh monitor list"
-          >
-            <RefreshCw size={14} />
-          </button>
+          <Tooltip content="Refresh monitor list" side="bottom">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<RefreshCw size={14} />}
+              onClick={loadMonitors}
+              aria-label="Refresh monitor list"
+            />
+          </Tooltip>
           {activeMonitorId ? (
-            <button
-              className="network-panel__btn network-panel__btn--stop"
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<StopCircle size={14} />}
               onClick={handleStop}
               data-testid="http-monitor-stop"
             >
-              <StopCircle size={14} />
               Stop
-            </button>
+            </Button>
           ) : (
-            <button
-              className="network-panel__btn network-panel__btn--run"
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Play size={14} />}
               onClick={handleStart}
               disabled={!url.trim() || url === "https://"}
               data-testid="http-monitor-start"
             >
-              <Play size={14} />
               Start
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -294,25 +360,65 @@ export function HttpMonitorPanel() {
         </>
       )}
 
-      {/* All running monitors */}
+      {/* All monitors (running, paused, and stopped-but-listed) */}
       {monitors.length > 0 && (
         <>
-          <div className="network-panel__section-title">Running Monitors</div>
+          <div className="network-panel__section-title">Monitors</div>
           {monitors.map((m) => (
-            <div key={m.config.id} className="http-monitor-row">
+            <div
+              key={m.config.id}
+              className="http-monitor-row"
+              data-testid={`monitor-row-${m.config.id}`}
+            >
               <span className="http-monitor-row__url" title={m.config.url}>
                 {m.config.url}
               </span>
               <span className="http-monitor-row__meta">
                 {m.config.method} · every {m.config.intervalMs / 1000}s
+                {!m.running ? " · stopped" : m.paused ? " · paused" : ""}
               </span>
-              <button
-                className="network-panel__icon-btn network-panel__icon-btn--danger"
-                onClick={() => handleStopMonitor(m.config.id)}
-                title="Stop"
-              >
-                <StopCircle size={13} />
-              </button>
+              {m.running && !m.paused && (
+                <Tooltip content="Pause" side="left">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Pause size={13} />}
+                    onClick={() => handlePauseMonitor(m.config.id)}
+                    aria-label={`Pause monitoring ${m.config.url}`}
+                  />
+                </Tooltip>
+              )}
+              {(m.paused || !m.running) && (
+                <Tooltip content="Resume" side="left">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Play size={13} />}
+                    onClick={() => handleResumeMonitor(m.config.id)}
+                    aria-label={`Resume monitoring ${m.config.url}`}
+                  />
+                </Tooltip>
+              )}
+              {m.running && (
+                <Tooltip content="Stop" side="left">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<StopCircle size={13} />}
+                    onClick={() => handleStopMonitor(m.config.id)}
+                    aria-label={`Stop monitoring ${m.config.url}`}
+                  />
+                </Tooltip>
+              )}
+              <Tooltip content="Remove" side="left">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Trash2 size={13} />}
+                  onClick={() => handleRemoveMonitor(m.config.id)}
+                  aria-label={`Remove monitor ${m.config.url}`}
+                />
+              </Tooltip>
             </div>
           ))}
         </>

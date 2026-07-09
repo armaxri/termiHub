@@ -9,8 +9,6 @@ source — the #1 authoring error when porting system tests (#899).
 - **Regenerate:** `python scripts/build-testid-catalog.py`
 - **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`
 
-**452** literal · **123** dynamic · **14** indirect.
-
 ## Literal test IDs
 
 Fixed strings — match exactly.
@@ -22,6 +20,7 @@ Fixed strings — match exactly.
 | `about-github-link` | `src/components/Settings/AboutSettings.tsx` |
 | `about-license-link` | `src/components/Settings/AboutSettings.tsx` |
 | `about-settings` | `src/components/Settings/AboutSettings.tsx` |
+| `about-third-party-licenses-link` | `src/components/Settings/AboutSettings.tsx` |
 | `about-version` | `src/components/Settings/AboutSettings.tsx` |
 | `activity-bar-context-menu` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `activity-bar-logs` | `src/components/ActivityBar/ActivityBar.tsx` |
@@ -39,8 +38,10 @@ Fixed strings — match exactly.
 | `agent-setup-branch-name` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-browse` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-cancel` | `src/components/Sidebar/AgentSetupDialog.tsx` |
+| `agent-setup-cancel-running` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-error` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-install-service` | `src/components/Sidebar/AgentSetupDialog.tsx` |
+| `agent-setup-progress` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-remote-path` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-source-branch` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-source-github` | `src/components/Sidebar/AgentSetupDialog.tsx` |
@@ -97,6 +98,7 @@ Fixed strings — match exactly.
 | `connection-picker-inline` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-picker-search` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
 | `connection-settings-form` | `src/components/DynamicForm/ConnectionSettingsForm.tsx` |
+| `context-agent-cancel-connect` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-connect` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-def-attach-persistent` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-def-duplicate` | `src/components/Sidebar/AgentNode.tsx` |
@@ -112,6 +114,7 @@ Fixed strings — match exactly.
 | `context-agent-new-shell` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-refresh` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-agent-setup` | `src/components/Sidebar/AgentNode.tsx` |
+| `context-agent-shutdown` | `src/components/Sidebar/AgentNode.tsx` |
 | `context-bg-new-file` | `src/components/Sidebar/FileBrowser.tsx` |
 | `context-bg-new-folder` | `src/components/Sidebar/FileBrowser.tsx` |
 | `context-bg-paste` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -153,6 +156,7 @@ Fixed strings — match exactly.
 | `export-submit` | `src/components/ExportImport/ExportDialog.tsx` |
 | `export-warning` | `src/components/ExportImport/ExportDialog.tsx` |
 | `external-files-add` | `src/components/Settings/ExternalFilesSettings.tsx` |
+| `field-error` | `src/components/ui/Field.tsx` |
 | `file-browser-cd-here` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-current-path` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-disconnect` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -168,6 +172,10 @@ Fixed strings — match exactly.
 | `file-browser-refresh` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-session-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-sftp-dismiss` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-sftp-retry` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-transfer` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-transfers` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-up` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-upload` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
@@ -236,20 +244,12 @@ Fixed strings — match exactly.
 | `master-password-confirm-input` | `src/components/Settings/SecuritySettings.tsx` |
 | `master-password-input` | `src/components/Settings/SecuritySettings.tsx` |
 | `master-password-setup` | `src/components/Settings/SecuritySettings.tsx` |
-| `master-pw-cancel` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-confirm` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-current` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-error` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-mismatch` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-new` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-strength` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-submit` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
-| `master-pw-warning` | `src/components/MasterPasswordSetup/MasterPasswordSetup.tsx` |
 | `migration-cancel` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-confirm` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-dialog` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-result` | `src/components/Settings/PortableModeSettings.tsx`, `src/components/Settings/SecuritySettings.tsx` |
-| `monitoring-connect-btn` | `src/components/StatusBar/StatusBar.tsx` |
+| `modal-close` | `src/components/ui/Modal.tsx` |
+| `monitoring-cancel-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-cpu` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disconnect` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disk` | `src/components/StatusBar/StatusBar.tsx` |
@@ -257,7 +257,9 @@ Fixed strings — match exactly.
 | `monitoring-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-loading` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-mem` | `src/components/StatusBar/StatusBar.tsx` |
-| `monitoring-refresh` | `src/components/StatusBar/StatusBar.tsx` |
+| `monitoring-paused` | `src/components/StatusBar/StatusBar.tsx` |
+| `monitoring-retry-btn` | `src/components/StatusBar/StatusBar.tsx` |
+| `monitoring-stale` | `src/components/StatusBar/StatusBar.tsx` |
 | `multi-select-copy` | `src/components/Sidebar/FileBrowser.tsx` |
 | `multi-select-cut` | `src/components/Sidebar/FileBrowser.tsx` |
 | `multi-select-delete` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -265,12 +267,23 @@ Fixed strings — match exactly.
 | `network-monitors-section` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-new-monitor` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `network-tools-sidebar` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `open-connections-establishing-agents-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-http-monitors-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-prune-dead-agents` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-sftp-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-transfer` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-transfers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-x-server-empty` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-x-server-row` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-x-server-setup` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-x-servers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-ports-panel` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-ports-refresh` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-saved-file-ask-again` | `src/components/Terminal/OpenSavedFileDialog.tsx` |
 | `open-saved-file-cancel` | `src/components/Terminal/OpenSavedFileDialog.tsx` |
 | `open-saved-file-confirm` | `src/components/Terminal/OpenSavedFileDialog.tsx` |
 | `open-saved-file-dialog` | `src/components/Terminal/OpenSavedFileDialog.tsx` |
+| `overlay-view` | `src/components/Settings/OverlayViewPanel.tsx` |
 | `password-prompt-cancel` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `password-prompt-connect` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `password-prompt-input` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
@@ -302,7 +315,6 @@ Fixed strings — match exactly.
 | `rename-dialog-apply` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-cancel` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-input` | `src/components/Terminal/RenameDialog.tsx` |
-| `save-workspace-cancel` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-confirm` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-description` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-dialog` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
@@ -343,10 +355,11 @@ Fixed strings — match exactly.
 | `settings-menu-open` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-open-connections` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-updates` | `src/components/ActivityBar/ActivityBar.tsx` |
+| `settings-provide-x-server` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-restore-last-session` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-serial-port-prefixes` | `src/components/Settings/SerialPortSettings.tsx` |
+| `settings-stop-x-server-idle` | `src/components/Settings/GeneralSettings.tsx` |
 | `shortcuts-overlay` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
-| `shortcuts-overlay-close` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `shortcuts-overlay-search` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `sidebar` | `src/components/Sidebar/Sidebar.tsx` |
 | `sidebar-group-header-connections` | `src/components/Sidebar/ConnectionList.tsx` |
@@ -361,6 +374,7 @@ Fixed strings — match exactly.
 | `status-bar-jump-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-language` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-tab-size` | `src/components/StatusBar/StatusBar.tsx` |
+| `status-bar-transfers` | `src/components/StatusBar/StatusBar.tsx` |
 | `tab-context-clear` | `src/components/Terminal/Tab.tsx` |
 | `tab-context-copy` | `src/components/Terminal/Tab.tsx` |
 | `tab-context-horizontal-scroll` | `src/components/Terminal/Tab.tsx` |
@@ -372,9 +386,13 @@ Fixed strings — match exactly.
 | `tab-group-chip-close` | `src/components/Terminal/TabGroupChips.tsx` |
 | `tab-group-ctx-close` | `src/components/Terminal/TabGroupChips.tsx` |
 | `tab-group-ctx-rename` | `src/components/Terminal/TabGroupChips.tsx` |
+| `terminal-connection-abort-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-cancel-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
+| `terminal-connection-elapsed` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-overlay` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-connection-retry-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
+| `terminal-connection-retry-now-btn` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
+| `terminal-connection-timeout` | `src/components/Terminal/TerminalConnectionOverlay.tsx` |
 | `terminal-context-copy-all` | `src/components/SplitView/SplitView.tsx` |
 | `terminal-context-copy-selection` | `src/components/SplitView/SplitView.tsx` |
 | `terminal-context-paste` | `src/components/SplitView/SplitView.tsx` |
@@ -422,6 +440,7 @@ Fixed strings — match exactly.
 | `tunnel-type-remote` | `src/components/TunnelEditor/TunnelEditor.tsx` |
 | `unlock-dialog-error` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-input` | `src/components/UnlockDialog/UnlockDialog.tsx` |
+| `unlock-dialog-reset` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-skip` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-unlock` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unsaved-changes-cancel` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
@@ -463,6 +482,8 @@ Fixed strings — match exactly.
 | `workspace-save-btn` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-save-current-btn` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
 | `workspace-sidebar` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
+| `x-server-connect-consent-body` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
+| `x-server-setup-consent` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
 | `zoom-context-clear` | `src/components/SplitView/SplitView.tsx` |
 | `zoom-context-copy` | `src/components/SplitView/SplitView.tsx` |
 | `zoom-context-horizontal-scroll` | `src/components/SplitView/SplitView.tsx` |
@@ -478,16 +499,24 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | pattern | example template | source |
 | ------- | ---------------- | ------ |
 | `*-*` | `${rowTestIdPrefix}-${index}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
+| `*-close` | `${testIdPrefix}-close` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-copy` | `${testIdPrefix}-copy` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-name` | `${testIdPrefix}-copy-name` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-path` | `${testIdPrefix}-copy-path` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-cut` | `${testIdPrefix}-cut` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-delete` | `${testIdPrefix}-delete` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-dialog` | `${testIdPrefix}-dialog` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-download` | `${testIdPrefix}-download` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-edit` | `${testIdPrefix}-edit` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-enable` | `${testIdPrefix}-enable` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-error` | `${testIdPrefix}-error` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-install-dep` | `${testIdPrefix}-install-dep` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-not-now` | `${testIdPrefix}-not-now` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-open` | `${testIdPrefix}-open` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-paste` | `${testIdPrefix}-paste` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-progress` | `${testIdPrefix}-progress` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-rename` | `${testIdPrefix}-rename` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-retry` | `${testIdPrefix}-retry` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-share-ftp` | `${testIdPrefix}-share-ftp` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-share-http` | `${testIdPrefix}-share-http` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-share-tftp` | `${testIdPrefix}-share-tftp` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -499,8 +528,12 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `*key-path-validation` | `${prefix}key-path-validation` | `src/components/Settings/KeyPathInput.tsx` |
 | `activity-bar-*` | `activity-bar-${label.toLowerCase().replace(/\s+/g, "-")}` | `src/components/ActivityBar/ActivityBarItem.tsx` |
 | `activity-bar-context-toggle-*` | `activity-bar-context-toggle-${item.view}` | `src/components/ActivityBar/ActivityBar.tsx` |
+| `agent-cancel-connect-*` | `agent-cancel-connect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-disconnect-*` | `agent-disconnect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-header-*` | `agent-header-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-node-*` | `agent-node-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-reconnect-*` | `agent-reconnect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-shutdown-*` | `agent-shutdown-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
@@ -559,9 +592,15 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `layout-remove-tab-*-*` | `layout-remove-tab-${idx}-${tabIdx}` | `src/components/WorkspaceEditor/LayoutDesigner.tsx` |
 | `layout-sidebar-*` | `layout-sidebar-${pos}` | `src/components/Settings/CustomizeLayoutDialog.tsx` |
 | `layout-split-*` | `layout-split-${node.direction}` | `src/components/WorkspaceEditor/LayoutDesigner.tsx` |
-| `monitor-row-*` | `monitor-row-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
-| `monitoring-connect-*` | `monitoring-connect-${conn.id}` | `src/components/StatusBar/StatusBar.tsx` |
+| `monitor-interval-*` | `monitor-interval-${entry.key}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `monitor-interval-*-*` | `monitor-interval-${entry.key}-${opt}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `monitor-retry-*` | `monitor-retry-${entry.key}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `monitor-row-*` | `monitor-row-${config.id}` | `src/components/NetworkTools/HttpMonitorPanel.tsx`, `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `monitor-stale-*` | `monitor-stale-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `monitoring-interval-*` | `monitoring-interval-${opt}` | `src/components/StatusBar/StatusBar.tsx` |
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `oc-agent-disconnect-*` | `oc-agent-disconnect-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `oc-agent-shutdown-*` | `oc-agent-shutdown-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `persistent-attach-*` | `persistent-attach-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-start-*` | `persistent-start-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-stop-*` | `persistent-stop-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
@@ -581,16 +620,20 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `tab-*` | `tab-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `tab-close-*` | `tab-close-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `tab-group-chip-*` | `tab-group-chip-${group.id}` | `src/components/Terminal/TabGroupChips.tsx` |
+| `tab-state-dot-*` | `tab-state-dot-${tab.id}` | `src/components/Terminal/Tab.tsx` |
 | `terminal-context-trigger-*` | `terminal-context-trigger-${tab.id}` | `src/components/SplitView/SplitView.tsx` |
 | `tunnel-delete-*` | `tunnel-delete-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-duplicate-*` | `tunnel-duplicate-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-edit-*` | `tunnel-edit-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-item-*` | `tunnel-item-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-name-*` | `tunnel-name-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
+| `tunnel-reconnect-*` | `tunnel-reconnect-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
+| `tunnel-retry-*` | `tunnel-retry-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-start-*` | `tunnel-start-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-status-*` | `tunnel-status-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-stop-*` | `tunnel-stop-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-type-*` | `tunnel-type-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
+| `tunnel-view-error-*` | `tunnel-view-error-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `workspace-delete-*` | `workspace-delete-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-duplicate-*` | `workspace-duplicate-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-edit-*` | `workspace-edit-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
@@ -611,8 +654,14 @@ where the component is used, not at the `data-testid` site.
 | `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
+| `{killTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
+| `{paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}` | `src/components/StatusBar/StatusBar.tsx` |
+| `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
+| `{testId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connection")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |

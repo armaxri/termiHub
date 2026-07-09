@@ -19,6 +19,33 @@ use super::crypto::{
 use super::types::{CredentialKey, CredentialStoreStatus};
 use super::CredentialStore;
 
+/// Why an unlock attempt failed.
+///
+/// Distinguishing these lets the UI (G8, #1144) offer the right recovery: a
+/// retry for a wrong password, but a "reset store" affordance when the file is
+/// unreadable/corrupt so the user isn't stuck in an infinite wrong-password loop.
+#[derive(Debug)]
+pub enum UnlockFailure {
+    /// The password was wrong — decryption authentication failed. Retryable.
+    WrongPassword,
+    /// The credentials file is missing, unreadable, malformed, or an
+    /// unsupported version. Not fixable by retrying the password.
+    Corrupted(String),
+}
+
+impl std::fmt::Display for UnlockFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnlockFailure::WrongPassword => {
+                write!(f, "Decryption failed — wrong password")
+            }
+            UnlockFailure::Corrupted(detail) => {
+                write!(f, "Credentials file is corrupted: {detail}")
+            }
+        }
+    }
+}
+
 /// Credential store that encrypts all credentials into a single file
 /// using Argon2id key derivation and AES-256-GCM authenticated encryption.
 ///
@@ -81,40 +108,62 @@ impl MasterPasswordStore {
 
     /// Decrypt the credentials file with the given master password and
     /// load credentials into memory.
+    ///
+    /// Returns a plain [`anyhow::Error`]; callers that need to distinguish a
+    /// wrong password from a corrupt file should use
+    /// [`unlock_classified`](Self::unlock_classified) instead.
     pub fn unlock(&self, password: &str) -> Result<()> {
-        let raw = fs::read_to_string(&self.file_path).context("Failed to read credentials file")?;
-        let envelope: EncryptedEnvelope =
-            serde_json::from_str(&raw).context("Invalid credentials file format")?;
+        self.unlock_classified(password)
+            .map_err(|failure| anyhow::anyhow!("{failure}"))
+    }
+
+    /// Decrypt the credentials file, distinguishing a wrong password from a
+    /// corrupt/unreadable file (G8, #1144).
+    ///
+    /// A failure to read, parse, base64-decode, or version-check the envelope is
+    /// [`UnlockFailure::Corrupted`]; only an authenticated-decryption failure
+    /// (the AEAD tag mismatch) is [`UnlockFailure::WrongPassword`].
+    pub fn unlock_classified(&self, password: &str) -> std::result::Result<(), UnlockFailure> {
+        let raw = fs::read_to_string(&self.file_path)
+            .map_err(|e| UnlockFailure::Corrupted(format!("cannot read file: {e}")))?;
+        let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
+            .map_err(|e| UnlockFailure::Corrupted(format!("invalid file format: {e}")))?;
 
         if envelope.version != ENVELOPE_VERSION {
-            bail!("Unsupported credentials file version: {}", envelope.version);
+            return Err(UnlockFailure::Corrupted(format!(
+                "unsupported file version: {}",
+                envelope.version
+            )));
         }
 
         let salt = BASE64
             .decode(&envelope.kdf.salt)
-            .context("Invalid salt encoding")?;
+            .map_err(|e| UnlockFailure::Corrupted(format!("invalid salt encoding: {e}")))?;
         let nonce_bytes = BASE64
             .decode(&envelope.nonce)
-            .context("Invalid nonce encoding")?;
+            .map_err(|e| UnlockFailure::Corrupted(format!("invalid nonce encoding: {e}")))?;
         let ciphertext = BASE64
             .decode(&envelope.data)
-            .context("Invalid ciphertext encoding")?;
+            .map_err(|e| UnlockFailure::Corrupted(format!("invalid ciphertext encoding: {e}")))?;
 
-        let key = derive_key(password, &salt)?;
+        let key = derive_key(password, &salt)
+            .map_err(|e| UnlockFailure::Corrupted(format!("key derivation failed: {e}")))?;
 
-        let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|e| UnlockFailure::Corrupted(format!("cipher init failed: {e}")))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let payload = aes_gcm::aead::Payload {
             msg: &ciphertext,
             aad: AAD,
         };
+        // An AEAD failure here is the wrong-password signal.
         let mut plaintext = cipher
             .decrypt(nonce, payload)
-            .map_err(|_| anyhow::anyhow!("Decryption failed — wrong password or corrupted file"))?;
+            .map_err(|_| UnlockFailure::WrongPassword)?;
 
-        let credentials: HashMap<String, String> =
-            serde_json::from_slice(&plaintext).context("Invalid decrypted data format")?;
+        let credentials: HashMap<String, String> = serde_json::from_slice(&plaintext)
+            .map_err(|e| UnlockFailure::Corrupted(format!("invalid decrypted data: {e}")))?;
         plaintext.zeroize();
 
         {
@@ -130,6 +179,17 @@ impl MasterPasswordStore {
             *creds_guard = Some(credentials);
         }
 
+        Ok(())
+    }
+
+    /// Delete the on-disk credentials file, if present, and clear in-memory
+    /// state. Used to recover from a corrupt store (G8, #1144): after reset the
+    /// store returns to the `Unavailable` state so the user can set it up afresh.
+    pub fn reset(&self) -> Result<()> {
+        self.lock();
+        if self.file_path.exists() {
+            fs::remove_file(&self.file_path).context("Failed to delete credentials file")?;
+        }
         Ok(())
     }
 
@@ -410,6 +470,72 @@ mod tests {
         let result = store.unlock("wrong");
         assert!(result.is_err());
         assert!(!store.is_unlocked());
+    }
+
+    // --- G8 (#1144): distinguish wrong-password from corrupt-file failures ---
+
+    #[test]
+    fn unlock_classified_wrong_password_reports_wrong_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("correct").unwrap();
+        store.lock();
+
+        let err = store.unlock_classified("wrong").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::WrongPassword),
+            "expected WrongPassword, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_correct_password_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("correct").unwrap();
+        store.lock();
+
+        store.unlock_classified("correct").unwrap();
+        assert!(store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_garbage_file_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        // Write a non-JSON file where the encrypted envelope should be.
+        fs::write(&store.file_path, b"this is not a valid envelope").unwrap();
+
+        let err = store.unlock_classified("any-password").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_unsupported_version_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        // Rewrite the envelope with an unsupported version number.
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.version = ENVELOPE_VERSION + 99;
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let err = store.unlock_classified("pw").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted for unsupported version, got {err:?}"
+        );
     }
 
     #[test]

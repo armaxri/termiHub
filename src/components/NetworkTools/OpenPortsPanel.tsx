@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui";
 import { networkOpenPorts } from "@/services/networkApi";
 import type { OpenPort, PortProtocol, DiagnosticStatus } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
@@ -59,15 +60,16 @@ export function OpenPortsPanel() {
       <div className="network-panel__header">
         <span className="network-panel__title">Open Ports</span>
         <div className="network-panel__actions">
-          <button
-            className="network-panel__btn network-panel__btn--run"
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<RefreshCw size={14} />}
             onClick={handleRefresh}
             disabled={status === "running"}
             data-testid="open-ports-refresh"
           >
-            <RefreshCw size={14} />
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
 

@@ -12,6 +12,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 
 vi.mock("@/services/api", () => ({
@@ -89,7 +90,12 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
     useAppStore.setState({ remoteAgents: [makeAgent()] });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     expect(container.querySelector('[data-testid="sidebar-outer-separator"]')).toBeTruthy();
@@ -99,7 +105,12 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
     useAppStore.setState({ remoteAgents: [makeAgent()] });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const sep = container.querySelector('[data-testid="sidebar-outer-separator"]');
@@ -110,7 +121,12 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
     useAppStore.setState({ remoteAgents: [makeAgent({ isExpanded: false })] });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const sep = container.querySelector('[data-testid="sidebar-outer-separator"]');
@@ -136,7 +152,12 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
     useAppStore.setState({ remoteAgents: [makeAgent({ isExpanded: true })] });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     expect(container.querySelector('[data-testid="sidebar-group-separator-0"]')).toBeNull();
@@ -151,7 +172,12 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     expect(container.querySelector('[data-testid="sidebar-group-separator-0"]')).toBeTruthy();
@@ -166,7 +192,12 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const sep = container.querySelector('[data-testid="sidebar-group-separator-0"]');
@@ -182,7 +213,12 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const sep = container.querySelector('[data-testid="sidebar-group-separator-0"]');

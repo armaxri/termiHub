@@ -46,35 +46,12 @@
   gap: 2px;
 }
 
-.file-browser__btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  transition:
-    color var(--transition-fast),
-    background-color var(--transition-fast);
-}
-
-.file-browser__btn:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-hover);
-}
-
-.file-browser__btn:disabled {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-.file-browser__btn--menu {
+.file-browser__menu-reveal {
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
-.file-browser__row-wrapper:hover .file-browser__btn--menu {
+.file-browser__row-wrapper:hover .file-browser__menu-reveal {
   opacity: 1;
 }
 
@@ -284,4 +261,56 @@
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   text-align: center;
+}
+
+/* Recovery controls (Retry / Dismiss) shown under a failed-connect message. */
+.file-browser__error-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}
+
+/* Transfer footer (issue 1247): compact, pinned below the live file list. Each row
+   stacks a header line (verb icon + name + percentage + cancel) over an inline
+   progress bar. The file list above stays scrollable and live. */
+.file-browser__transfers {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-top: 1px solid var(--border-secondary);
+  background: var(--bg-secondary);
+}
+
+.file-browser__transfer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.file-browser__transfer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.file-browser__transfer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.file-browser__transfer-pct {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.file-browser__transfer-cancel {
+  flex-shrink: 0;
 }

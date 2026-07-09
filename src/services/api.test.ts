@@ -5,6 +5,19 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
+// `sftpDownload` / `sftpUpload` await the terminal `transfer-progress` event
+// after the command returns a transferId (#1245). Capture the registered
+// listener so tests can drive the lifecycle deterministically.
+let transferListener: ((event: { payload: unknown }) => void) | undefined;
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn((_event: string, handler: (event: { payload: unknown }) => void) => {
+    transferListener = handler;
+    return Promise.resolve(() => {
+      transferListener = undefined;
+    });
+  }),
+}));
+
 const mockedInvoke = vi.mocked(invoke);
 
 // Import after mock setup
@@ -36,6 +49,7 @@ import {
   sftpListDir,
   sftpDownload,
   sftpUpload,
+  sftpCancelTransfer,
   sftpMkdir,
   sftpDelete,
   sftpRename,
@@ -58,6 +72,7 @@ import {
   listPodmanImages,
   detectAgentArch,
   setupRemoteAgent,
+  cancelAgentSetup,
   getLogs,
   clearLogs,
   getCredentialStoreStatus,
@@ -73,6 +88,7 @@ import {
 describe("api service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transferListener = undefined;
   });
 
   describe("terminal commands", () => {
@@ -455,11 +471,28 @@ describe("api service", () => {
       expect(result).toEqual(entries);
     });
 
-    it("sftpDownload invokes with correct params and returns bytes", async () => {
-      mockedInvoke.mockResolvedValue(1024);
+    // Wait until `awaitTransfer` has registered its `transfer-progress`
+    // listener (it does so after a dynamic import), then emit `payload`.
+    const fireWhenListening = async (payload: unknown) => {
+      for (let i = 0; i < 50 && !transferListener; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      if (!transferListener) throw new Error("transfer listener never registered");
+      transferListener({ payload });
+    };
 
-      const result = await sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt");
+    it("sftpDownload invokes with correct params and returns bytes on the done event", async () => {
+      // The command returns a transferId; completion arrives via the event.
+      mockedInvoke.mockResolvedValue("transfer-1");
 
+      const pending = sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt");
+      await fireWhenListening({
+        transferId: "transfer-1",
+        phase: "done",
+        transferred: 1024,
+      });
+
+      const result = await pending;
       expect(mockedInvoke).toHaveBeenCalledWith("sftp_download", {
         sessionId: "sftp-1",
         remotePath: "/remote/file.txt",
@@ -468,17 +501,46 @@ describe("api service", () => {
       expect(result).toBe(1024);
     });
 
-    it("sftpUpload invokes with correct params and returns bytes", async () => {
-      mockedInvoke.mockResolvedValue(2048);
+    it("sftpUpload invokes with correct params and returns bytes on the done event", async () => {
+      mockedInvoke.mockResolvedValue("transfer-2");
 
-      const result = await sftpUpload("sftp-1", "/local/file.txt", "/remote/file.txt");
+      const pending = sftpUpload("sftp-1", "/local/file.txt", "/remote/file.txt");
+      await fireWhenListening({
+        transferId: "transfer-2",
+        phase: "done",
+        transferred: 2048,
+      });
 
+      const result = await pending;
       expect(mockedInvoke).toHaveBeenCalledWith("sftp_upload", {
         sessionId: "sftp-1",
         localPath: "/local/file.txt",
         remotePath: "/remote/file.txt",
       });
       expect(result).toBe(2048);
+    });
+
+    it("sftpDownload rejects when the transfer is cancelled", async () => {
+      mockedInvoke.mockResolvedValue("transfer-3");
+
+      const pending = sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt");
+      await fireWhenListening({
+        transferId: "transfer-3",
+        phase: "cancelled",
+        transferred: 5,
+      });
+
+      await expect(pending).rejects.toThrow("Transfer cancelled");
+    });
+
+    it("sftpCancelTransfer invokes with the transfer id", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sftpCancelTransfer("transfer-9");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("sftp_cancel_transfer", {
+        transferId: "transfer-9",
+      });
     });
 
     it("sftpMkdir invokes with session ID and path", async () => {
@@ -884,6 +946,23 @@ describe("api service", () => {
           }
         )
       ).rejects.toEqual("Binary not found");
+    });
+
+    it("cancelAgentSetup invokes cancel_agent_setup with the agentId", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await cancelAgentSetup("agent-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("cancel_agent_setup", { agentId: "agent-1" });
+      expect(result).toBe(true);
+    });
+
+    it("cancelAgentSetup returns false when no run is in flight", async () => {
+      mockedInvoke.mockResolvedValue(false);
+
+      const result = await cancelAgentSetup("agent-2");
+
+      expect(result).toBe(false);
     });
   });
 

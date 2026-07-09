@@ -868,6 +868,219 @@ To verify SSH tunnels actually work on macOS, do this manually against the tunne
 4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
 5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
 
+### X11 / GUI forwarding
+
+SSH **X11 forwarding** lets a remote GUI app (`xeyes`, `xclock`, a graphical IDE)
+render as a native window on the machine running termiHub. Making a usable **local
+X server** available — and tearing it down cleanly afterwards — is the X-server
+provisioning subsystem (epic #1047). The strategy is chosen **per platform**, so the
+verification is too. Architecture:
+[X Server Provisioning](architecture.md#x-server-provisioning-ssh-x11-forwarding) and
+[ADR-10](architecture.md#adr-10-per-platform-x-server-provisioning).
+
+**Shipped across:** manual UI — settings toggles + X Servers section + setup dialog
+(#1053, PRs #1110 / #1111 / #1118); connect-triggered consent + live progress (#1116,
+PR #1298); unified consent UI + recoverable error / Retry (#1296, PR #1302);
+cancellable readiness wait (#1260, PR #1285). This section consolidates their manual
+steps in one place.
+
+Everything below the "automated" line needs a **real local X server rendering a real
+window** (or a native OS install dialog), which the harness cannot fake (per ADR-5);
+those steps are the deliverable, executed by a human for the release.
+
+#### What is automated vs. manual
+
+| Layer                                                                                                                                                                                              | Coverage                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Per-platform decision, adopt/spawn lifecycle, session refcount (#1107), consent gate, Linux gap classifier, VcXsrv acquire/verify/extract, XQuartz detect + brew args, readiness-wait cancellation | **Rust unit tests** (`src-tauri/src/terminal/xserver/*`, `core/src/backends/ssh/x11.rs`) — run on every CI host |
+| Setup dialog, connect-time consent dialog, X Servers section rows/actions                                                                                                                          | **Vitest/RTL** component tests (`XServerSetupDialog`, `XServerConnectConsent`, `OpenConnectionsModal.xservers`) |
+| A GUI app renders to an X server **headlessly, in-container** (Xvfb)                                                                                                                               | **Docker fixture** `ssh-x11` → `render-check.sh` (automatable anywhere Docker runs)                             |
+| Forwarded GUI renders into the **operator's real X server** end to end; per-OS provisioning UX; clean shutdown / no orphan                                                                         | **Manual** (the release matrix below)                                                                           |
+
+#### Docker fixture: `ssh-x11`
+
+`tests/docker/ssh-x11/` is an sshd container with X11 forwarding enabled plus
+`xeyes` / `xclock` / `xdpyinfo` (host port `2208`; `core/tests/common` exposes
+`port_ssh_x11()`). Two baked-in helper scripts:
+
+- **`render-check.sh`** — brings up an in-container **Xvfb** X server, launches
+  `xeyes` against it, and asserts the client actually mapped a window
+  (`RENDER_CHECK_OK`). This proves the "a GUI client renders to an X server"
+  pipeline with **no host X server**, so it runs in any Docker environment:
+  `docker compose -f tests/docker/docker-compose.yml exec ssh-x11 render-check.sh`.
+- **`test-x11.sh`** — run _inside a forwarded session_
+  (`ssh -X -p 2208 testuser@localhost test-x11.sh`); asserts `DISPLAY` is set and a
+  client can reach the forwarded server (`X11_FORWARDING_OK`). Automatable on Linux
+  with an Xvfb `:0`; on macOS it needs XQuartz (manual). See
+  [`tests/docker/README.md`](../tests/docker/README.md) → _X11 forwarding_.
+
+The container render-check is a genuine capability check, not a stand-in for the
+end-to-end forward into the operator's real display — that remains the manual matrix.
+
+#### Cross-platform release matrix
+
+Execute once per release on a **clean box** of each OS. **This is a human release
+step — it cannot be run by CI or an AI agent** (no real X server, and the per-OS
+install dialogs are native). Record the result against the release.
+
+| OS          | Strategy                                                 | Clean-box procedure                                                                                                                                                                                                     | Pass criteria                                                                                                                                                                |
+| ----------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Windows** | Bundle / download VcXsrv                                 | Enable X11 on an SSH connection → first connect **pauses for consent** → **Enable** → VcXsrv auto-provisions (download → verify → extract, or reuse cache) → a forwarded `xeyes` / `xclock` renders as a native window. | Window renders; choice remembered (2nd X11 connect does **not** prompt); on disconnect the managed server shuts down when idle — **no orphan `vcxsrv.exe`** in Task Manager. |
+| **macOS**   | Detect / guide XQuartz (`brew --cask`, else xquartz.org) | Without XQuartz → connect surfaces **XQuartz-missing** guidance; run **Install** (brew cask, admin prompt) or follow the link. With XQuartz → connect launches it (`open -a XQuartz`) and a forwarded `xclock` renders. | Guidance never auto-installs silently; window renders; aborting the connect **while XQuartz is still starting** stops promptly (#1260).                                      |
+| **Linux**   | Native X, guide-only                                     | On a normal X / Wayland-with-XWayland desktop → connect **adopts** the running server (no prompt), forwarded `xeyes` renders. On a gap env (Wayland-only, headless, sandboxed) → connect shows the **targeted hint**.   | Window renders on a normal desktop; each gap yields its specific actionable hint, never a silent failure or generic error (#1055).                                           |
+
+Detailed per-OS procedures follow.
+
+#### Linux X server detect-and-guide edge cases (#1055)
+
+The Linux X-server gap classifier (`src-tauri/src/terminal/xserver/linux_gap.rs`)
+turns an unreachable-server failure into a targeted hint. The classification is
+covered exhaustively by unit tests (fixtures → gap → error), but confirming the
+hint actually surfaces in a real edge-case environment is manual. A normal
+graphical desktop must be unaffected (server adopted, no prompt).
+
+To verify the **Wayland-without-XWayland** hint (the headline case):
+
+1. On a Wayland-only VM/session, ensure XWayland is not installed and no X
+   socket exists: `ls /tmp/.X11-unix` is empty and `echo $DISPLAY` is unset.
+2. In termiHub, open an SSH connection with **X11 forwarding** enabled.
+3. Confirm the connect surfaces the **XWayland** dependency hint (install
+   `xwayland`, then reconnect) — not a generic "no display" error.
+
+Optional additional cases:
+
+- **Headless:** on a box with no local display (no `DISPLAY`, no
+  `/tmp/.X11-unix`, no `Xorg`/`Xwayland`), connect with X11 forwarding and
+  confirm the headless hint (graphical session / Xvfb) appears.
+
+- **Sandboxed socket:** run termiHub as a Flatpak/Snap without the X socket
+  granted; confirm the hint names the `--socket=x11` / `--socket=fallback-x11`
+  grant.
+
+#### macOS XQuartz detect + guided install (#1054)
+
+macOS can't embed an X server, so termiHub detects XQuartz and offers an
+explicit, consent-based install (`src-tauri/src/terminal/xserver/macos.rs`).
+Detection is unit-tested (mock FS), but the guided install and forwarded
+rendering are macOS-only and manual (per ADR-5). **No install may ever run
+silently** — it happens only on the explicit install action.
+
+On a clean macOS **without** XQuartz (`/opt/X11` and
+`/Applications/Utilities/XQuartz.app` both absent):
+
+1. Open an SSH connection with **X11 forwarding** enabled. Confirm it surfaces
+   the **XQuartz missing** guidance (with a link to xquartz.org) — no silent
+   install, no generic failure.
+2. Trigger the install action (the `x_server_install_dependency` command, via
+   the #1053 UI once present):
+   - **With Homebrew installed:** confirm `brew install --cask xquartz` runs
+     (admin auth prompted by brew/macOS), progress is shown, and it reports
+     success.
+   - **Without Homebrew:** confirm it returns the actionable xquartz.org
+     download guidance rather than doing nothing or failing opaquely.
+
+With XQuartz **present**:
+
+1. Connect with X11 forwarding to a host running a GUI app (e.g. `xclock`).
+   Confirm termiHub launches XQuartz if it isn't running (`open -a XQuartz`) and
+   the remote window renders locally. (XQuartz's "Allow connections from network
+   clients" preference may be required.)
+
+**Cancellable readiness wait (#1260, PR #1285):** XQuartz takes ~1-2 s to create
+its socket, so termiHub polls for readiness (≤ ~4 s budget). Start an X11-forwarding
+connect on a box where XQuartz is **not yet running**, then **Stop** the connect
+while it is still coming up. Confirm the abort takes effect **promptly** — it must
+not block for the full readiness budget before the Stop is honored.
+
+#### VcXsrv provisioning: first-run download + offline re-run (Windows, #1076)
+
+termiHub downloads a pinned, minimal VcXsrv `.zip` from its GitHub releases on
+first use of SSH X11 forwarding, SHA-256-verifies it, and extracts a runnable
+`vcxsrv.exe` (`src-tauri/src/terminal/xserver/acquire.rs`). Building and
+publishing that artifact is a release step; the acquisition path is then
+verified on a **clean Windows box** (no VcXsrv installed).
+
+Build & publish the artifact (once per pinned version):
+
+1. Install the pinned VcXsrv (currently **21.1.13**) from
+   <https://github.com/marchaesen/vcxsrv/releases> on a build machine.
+2. Run `scripts/internal/package-vcxsrv.ps1 -UpdateAcquire`. It stages a minimal
+   tree, writes `target/vcxsrv-package/vcxsrv-<version>-minimal.zip`, prints the
+   SHA-256, and patches `PINNED_VCXSRV.sha256` in `acquire.rs`.
+3. Publish the printed artifact: `gh release create vcxsrv-<version> <zip>
+--title "VcXsrv <version> (minimal, for termiHub X11)"
+--notes "GPL-3.0. See THIRD_PARTY_LICENSES.md and licenses/GPL-3.0.txt."`.
+4. Confirm the automated check passes against the live asset:
+   `cargo test -p termihub -- --ignored pinned_artifact_downloads_verifies_and_contains_exe`.
+
+Verify acquisition end-to-end on a **clean Windows box** (no VcXsrv installed):
+
+1. First run — download + verify + extract: trigger X server provisioning (open
+   an SSH connection with X11 forwarding, or use the Settings/Open Connections X
+   server control once #1053 lands). Confirm the pinned `.zip` downloads,
+   verifies, and yields a runnable `vcxsrv.exe` under the app data dir
+   (`<data>/xserver/vcxsrv-<version>/vcxsrv.exe`; portable mode uses the
+   `data/` folder). An X client from the forwarded session should display.
+2. Offline re-run — cache reuse: disconnect the network and repeat. Provisioning
+   must **not** attempt a download; it reuses the already-extracted tree and the
+   X client displays again.
+3. Tamper check (optional): corrupt the cached `vcxsrv.exe` to zero bytes and
+   confirm the next provisioning re-resolves (download when online, or a clear
+   error offline) rather than launching a broken server.
+
+#### Connect-triggered X server consent + live progress (Windows, #1116)
+
+The first time an X11-forwarding SSH connection is opened with no local X server
+and automatic provisioning undecided, termiHub pauses the connect to ask for
+download consent and streams provisioning progress
+(`src-tauri/src/terminal/xserver/mod.rs`, `XServerConnectConsent.tsx`). The
+handshake and progress emission are unit-tested; the on-connect experience is
+Windows-only and manual. Verify on a clean Windows box (no VcXsrv, "Provide X
+server automatically" left at its default/undecided):
+
+1. Open an SSH connection with **X11 forwarding** enabled. Confirm the connect
+   **pauses** and the "Set up X server" consent dialog appears (nothing is
+   downloaded yet).
+2. Choose **Enable**. Confirm live progress is shown, provisioning completes, the
+   remote X client displays, and the choice is remembered — a second X11 connect
+   provisions **without** re-prompting.
+3. Repeat from a fresh undecided state and choose **Not now**. Confirm the SSH
+   connection still opens (shell works) but without X forwarding, and that the
+   next X11 connect prompts again.
+4. Repeat and press **Stop** while the consent dialog is up. Confirm the connect
+   aborts promptly rather than hanging.
+5. Sanity: a non-Windows connect, or a connect with a server already running, is
+   unaffected apart from gaining progress feedback (no prompt).
+6. Force a provisioning **failure** after choosing Enable (e.g. block the VcXsrv
+   download, or use a fault-injected environment). Confirm the dialog now shows a
+   **recoverable error screen** with **Retry** — not a toast-and-close (#1296) —
+   and that Retry re-provisions in place; on a missing-dependency failure an
+   **Install** action appears. The screen must match the manual "X Servers → Set
+   up" dialog (`XServerSetupContent.tsx`).
+
+### Remote system monitoring
+
+#### Monitoring auto-reconnect on a mid-stream drop (#1230)
+
+Verifies that remote system monitoring auto-reconnects after a transient
+transport drop and resolves to `Offline` when the reconnect budget is
+exhausted. Pending a fault-injection system test (follow-up), verify manually:
+
+1. Start the SSH test containers (`tests/docker/`) and open an SSH connection to
+   `ssh-password:2201`. Confirm the status-bar monitoring chips show live CPU /
+   memory / disk (`Live`).
+2. **Transient drop → recovery:** briefly interrupt the monitored host's sshd
+   (e.g. `docker pause`/`unpause` the container, or drop the network for a few
+   seconds via the `network-fault-proxy`). Confirm the status bar dims and shows
+   **Stale**, then **Reconnecting**, and returns to live numbers automatically
+   once the host is reachable again — no manual Kill / re-pick.
+3. **Exhausted backoff → Offline:** stop the monitored host's sshd and leave it
+   down. Confirm monitoring goes `Stale` → `Reconnecting`, retries under an
+   increasing backoff (capped at 30 s), and after the attempt budget resolves to
+   **Offline** and stops retrying (no runaway reconnect loop).
+4. Repeat against a monitored host **behind the agent** (agent monitoring
+   subscription) to confirm the agent mirrors the same behavior.
+
 ### Legacy Guided Manual Test Runner (YAML)
 
 The remaining manual test items are still defined as machine-readable YAML in [`tests/manual/*.yaml`](../tests/manual/). The standalone runner presents applicable tests one at a time, manages infrastructure, and generates a JSON report. It is being subsumed by the harness flow above:

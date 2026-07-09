@@ -43,9 +43,18 @@ body::after {
   background-size: 200px 200px;
 }
 
-/* Scrollbar styling */
+/* Scrollbar styling — subtle, auto-hide (VS Code style). The gutter is always
+   reserved (no layout shift), but the thumb is transparent until the scrollable
+   element is hovered or focused. Applies to every scrollable surface in the app
+   so tabs, lists, and terminals share one consistent look. */
 * {
   scrollbar-width: thin;
+  /* Firefox/Chromium standard property: hide the thumb by default. */
+  scrollbar-color: transparent transparent;
+}
+
+*:hover,
+*:focus-within {
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-bg);
 }
 
@@ -58,12 +67,18 @@ body::after {
   background: var(--scrollbar-bg);
 }
 
+/* Transparent thumb by default; revealed on hover/focus of the scroll host. */
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
+  background: transparent;
   border-radius: var(--scrollbar-width);
 }
 
-::-webkit-scrollbar-thumb:hover {
+:hover::-webkit-scrollbar-thumb,
+:focus-within::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+
+:hover::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
 

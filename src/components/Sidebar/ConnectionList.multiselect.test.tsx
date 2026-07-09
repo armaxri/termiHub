@@ -9,6 +9,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 import type { RemoteAgentDefinition } from "@/types/connection";
 
@@ -93,7 +94,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -112,7 +118,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -135,7 +146,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -158,7 +174,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -185,7 +206,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -212,7 +238,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -241,7 +272,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -266,7 +302,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -294,7 +335,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;
@@ -325,7 +371,12 @@ describe("ConnectionList — multi-select", () => {
     });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const item1 = container.querySelector('[data-testid="connection-item-conn-1"]') as HTMLElement;

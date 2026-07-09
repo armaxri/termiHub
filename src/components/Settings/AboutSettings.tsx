@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
-import { Github, ExternalLink } from "lucide-react";
+import { Github, ExternalLink, ScrollText } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getAppInfo, type AppInfo } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { Button } from "@/components/ui";
 import "./AboutSettings.css";
 
 const GITHUB_URL = "https://github.com/armaxri/termiHub";
 const LICENSE_URL = "https://github.com/armaxri/termiHub/blob/main/LICENSE";
+const THIRD_PARTY_LICENSES_URL =
+  "https://github.com/armaxri/termiHub/blob/main/THIRD_PARTY_LICENSES.md";
 
 /** Settings page section showing app version, project links, and license info. */
 export function AboutSettings() {
@@ -18,12 +21,31 @@ export function AboutSettings() {
       .catch((err) => frontendLog("about", `Failed to load app info: ${err}`));
   }, []);
 
-  const handleGitHub = () => {
-    openUrl(GITHUB_URL).catch((err) => frontendLog("about", `Failed to open GitHub URL: ${err}`));
+  const handleGitHub = async () => {
+    try {
+      await openUrl(GITHUB_URL);
+    } catch (err) {
+      frontendLog("about", `Failed to open GitHub URL: ${err}`);
+      throw err;
+    }
   };
 
-  const handleLicense = () => {
-    openUrl(LICENSE_URL).catch((err) => frontendLog("about", `Failed to open license URL: ${err}`));
+  const handleLicense = async () => {
+    try {
+      await openUrl(LICENSE_URL);
+    } catch (err) {
+      frontendLog("about", `Failed to open license URL: ${err}`);
+      throw err;
+    }
+  };
+
+  const handleThirdPartyLicenses = async () => {
+    try {
+      await openUrl(THIRD_PARTY_LICENSES_URL);
+    } catch (err) {
+      frontendLog("about", `Failed to open third-party licenses URL: ${err}`);
+      throw err;
+    }
   };
 
   return (
@@ -63,22 +85,33 @@ export function AboutSettings() {
 
       <div className="settings-panel__section">
         <div className="about-settings__actions">
-          <button
-            className="settings-panel__btn"
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Github size={13} />}
             onClick={handleGitHub}
             data-testid="about-github-link"
           >
-            <Github size={13} />
             GitHub Repository
-          </button>
-          <button
-            className="settings-panel__btn"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<ExternalLink size={13} />}
             onClick={handleLicense}
             data-testid="about-license-link"
           >
-            <ExternalLink size={13} />
             View License
-          </button>
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<ScrollText size={13} />}
+            onClick={handleThirdPartyLicenses}
+            data-testid="about-third-party-licenses-link"
+          >
+            Third-Party Licenses
+          </Button>
         </div>
       </div>
     </div>

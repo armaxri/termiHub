@@ -682,7 +682,38 @@ describe("events service", () => {
       expect(result).toBe(unlisten);
     });
 
-    it("calls callback with no arguments", async () => {
+    it("calls callback with auto=true when the payload flags an auto-lock", async () => {
+      let capturedHandler: ((event: unknown) => void) | undefined;
+      mockedListen.mockImplementation((_event, handler) => {
+        capturedHandler = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      const callback = vi.fn();
+      await onCredentialStoreLocked(callback);
+
+      capturedHandler!({ payload: { auto: true } });
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(true);
+    });
+
+    it("calls callback with auto=false when the payload flags a manual lock", async () => {
+      let capturedHandler: ((event: unknown) => void) | undefined;
+      mockedListen.mockImplementation((_event, handler) => {
+        capturedHandler = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      const callback = vi.fn();
+      await onCredentialStoreLocked(callback);
+
+      capturedHandler!({ payload: { auto: false } });
+
+      expect(callback).toHaveBeenCalledWith(false);
+    });
+
+    it("defaults to auto=false when no payload is present", async () => {
       let capturedHandler: ((event: unknown) => void) | undefined;
       mockedListen.mockImplementation((_event, handler) => {
         capturedHandler = handler as (event: unknown) => void;
@@ -694,8 +725,7 @@ describe("events service", () => {
 
       capturedHandler!({ payload: null });
 
-      expect(callback).toHaveBeenCalledTimes(1);
-      expect(callback).toHaveBeenCalledWith();
+      expect(callback).toHaveBeenCalledWith(false);
     });
   });
 

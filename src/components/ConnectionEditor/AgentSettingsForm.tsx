@@ -8,8 +8,16 @@
  */
 
 import { AgentCapabilities, AgentSettings } from "@/types/connection";
+import { Input, Select, Toggle } from "@/components/ui";
 
 const LOG_LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
+
+/**
+ * Sentinel for the "auto-detect" shell option. Radix Select reserves the empty
+ * string to clear the selection, so an explicit non-empty value is required and
+ * mapped back to `null` (auto-detect) at the call site.
+ */
+const AUTO_DETECT_SHELL = "__auto__";
 
 interface AgentSettingsFormProps {
   settings: AgentSettings;
@@ -33,14 +41,11 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <div className="settings-form__field">
           <span className="settings-form__label">System Monitoring</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.enableMonitoring}
-              onChange={(e) => update("enableMonitoring", e.target.checked)}
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            checked={settings.enableMonitoring}
+            onCheckedChange={(v) => update("enableMonitoring", v)}
+            aria-label="System Monitoring"
+          />
           <span className="settings-form__hint">
             Collect CPU, memory, and disk usage from the remote host.
           </span>
@@ -48,14 +53,11 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <div className="settings-form__field">
           <span className="settings-form__label">File Browser (SFTP)</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.enableFileBrowser}
-              onChange={(e) => update("enableFileBrowser", e.target.checked)}
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            checked={settings.enableFileBrowser}
+            onCheckedChange={(v) => update("enableFileBrowser", v)}
+            aria-label="File Browser (SFTP)"
+          />
           <span className="settings-form__hint">
             Browse and transfer files on the remote host via SFTP.
           </span>
@@ -63,14 +65,11 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <div className="settings-form__field">
           <span className="settings-form__label">Docker Sessions</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.enableDocker}
-              onChange={(e) => update("enableDocker", e.target.checked)}
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            checked={settings.enableDocker}
+            onCheckedChange={(v) => update("enableDocker", v)}
+            aria-label="Docker Sessions"
+          />
           <span className="settings-form__hint">
             Open terminal sessions directly inside Docker containers on the remote host.
           </span>
@@ -94,19 +93,17 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
             )}
           </span>
           {isConnected ? (
-            <select
-              value={settings.defaultShell ?? ""}
-              onChange={(e) => update("defaultShell", e.target.value || null)}
-            >
-              <option value="">Auto-detect</option>
-              {availableShells.map((shell) => (
-                <option key={shell} value={shell}>
-                  {shell}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={settings.defaultShell ?? AUTO_DETECT_SHELL}
+              onChange={(v) => update("defaultShell", v === AUTO_DETECT_SHELL ? null : v)}
+              options={[
+                { value: AUTO_DETECT_SHELL, label: "Auto-detect" },
+                ...availableShells.map((shell) => ({ value: shell, label: shell })),
+              ]}
+              aria-label="Default Shell"
+            />
           ) : (
-            <input
+            <Input
               type="text"
               placeholder="Auto-detect"
               value={settings.defaultShell ?? ""}
@@ -120,7 +117,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <label className="settings-form__field">
           <span className="settings-form__label">Starting Directory</span>
-          <input
+          <Input
             type="text"
             value={settings.startingDirectory}
             onChange={(e) => update("startingDirectory", e.target.value)}
@@ -137,7 +134,7 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <label className="settings-form__field">
           <span className="settings-form__label">Persistent Scrollback Buffer</span>
-          <input
+          <Input
             type="number"
             min={1}
             max={64}
@@ -162,16 +159,15 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <label className="settings-form__field">
           <span className="settings-form__label">Log Level</span>
-          <select
+          <Select
             value={settings.logLevel}
-            onChange={(e) => update("logLevel", e.target.value as AgentSettings["logLevel"])}
-          >
-            {LOG_LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {level.charAt(0).toUpperCase() + level.slice(1)}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => update("logLevel", v as AgentSettings["logLevel"])}
+            options={LOG_LEVELS.map((level) => ({
+              value: level,
+              label: level.charAt(0).toUpperCase() + level.slice(1),
+            }))}
+            aria-label="Log Level"
+          />
           <span className="settings-form__hint">
             Controls the verbosity of agent-side log output.
           </span>
@@ -179,14 +175,11 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <div className="settings-form__field">
           <span className="settings-form__label">Verbose Protocol Tracing</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.verboseTracing}
-              onChange={(e) => update("verboseTracing", e.target.checked)}
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            checked={settings.verboseTracing}
+            onCheckedChange={(v) => update("verboseTracing", v)}
+            aria-label="Verbose Protocol Tracing"
+          />
           <span className="settings-form__hint">
             Log every JSON-RPC message. Useful for debugging connection issues.
           </span>

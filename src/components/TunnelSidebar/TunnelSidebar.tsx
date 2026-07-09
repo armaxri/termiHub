@@ -1,8 +1,13 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
+import type { TunnelStatus } from "@/types/tunnel";
 import { TunnelListItem } from "./TunnelListItem";
 import "./TunnelSidebar.css";
+
+/** Tunnel statuses that count as "active" — deleting one tears down a live connection. */
+const ACTIVE_STATUSES: readonly TunnelStatus[] = ["connecting", "connected", "reconnecting"];
 
 export function TunnelSidebar() {
   const tunnels = useAppStore((s) => s.tunnels);
@@ -10,9 +15,13 @@ export function TunnelSidebar() {
   const connections = useAppStore((s) => s.connections);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
+  const reconnectTunnel = useAppStore((s) => s.reconnectTunnel);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const deleteTunnel = useAppStore((s) => s.deleteTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
+
+  // Tunnel pending confirmation before an active-tunnel delete, or null when idle.
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   const handleNew = useCallback(() => {
     openTunnelEditorTab(null);
@@ -42,10 +51,26 @@ export function TunnelSidebar() {
 
   const handleDelete = useCallback(
     (tunnelId: string) => {
-      deleteTunnel(tunnelId);
+      const status = tunnelStates[tunnelId]?.status;
+      // Deleting an active tunnel silently tears down a live connection — confirm first.
+      if (status && ACTIVE_STATUSES.includes(status)) {
+        const name = tunnels.find((t) => t.id === tunnelId)?.name ?? "this tunnel";
+        setPendingDelete({ id: tunnelId, name });
+        return;
+      }
+      void deleteTunnel(tunnelId);
     },
-    [deleteTunnel]
+    [tunnelStates, tunnels, deleteTunnel]
   );
+
+  const confirmDelete = useCallback(() => {
+    if (pendingDelete) {
+      void deleteTunnel(pendingDelete.id);
+      setPendingDelete(null);
+    }
+  }, [pendingDelete, deleteTunnel]);
+
+  const cancelDelete = useCallback(() => setPendingDelete(null), []);
 
   return (
     <div className="tunnel-sidebar" data-testid="tunnel-sidebar">
@@ -75,6 +100,7 @@ export function TunnelSidebar() {
               connections={connections}
               onStart={startTunnel}
               onStop={stopTunnel}
+              onReconnect={reconnectTunnel}
               onEdit={handleEdit}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
@@ -82,6 +108,16 @@ export function TunnelSidebar() {
           ))}
         </div>
       )}
+      <ConfirmDeleteDialog
+        open={pendingDelete !== null}
+        message={
+          pendingDelete
+            ? `"${pendingDelete.name}" is currently active. Deleting it will stop the tunnel. Continue?`
+            : ""
+        }
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      />
     </div>
   );
 }

@@ -5,6 +5,8 @@ import { WorkspaceEditorMeta } from "@/types/terminal";
 import { WorkspaceDefinition, WorkspaceLayoutNode, WorkspaceTabGroupDef } from "@/types/workspace";
 import { loadWorkspace } from "@/services/workspaceApi";
 import { getWorkspaceLeaves, countWorkspaceTabs } from "@/utils/workspaceLayout";
+import { Button, Input, Field, Tooltip } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
 import "./WorkspaceEditor.css";
 
@@ -121,8 +123,10 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
       if (leaf) {
         closeTab(tabId, leaf.id);
       }
-    } catch {
-      // Save failed — stay open
+    } catch (err) {
+      // Save failed — surface it via the async Button's error toast and stay open.
+      frontendLog("workspace_editor", `Failed to save workspace: ${err}`);
+      throw err instanceof Error ? err : new Error("Failed to save workspace");
     }
   }, [
     meta.workspaceId,
@@ -172,35 +176,27 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
       </div>
 
       <div className="workspace-editor__form">
-        <div className="workspace-editor__field">
-          <label className="workspace-editor__label" htmlFor="ws-name">
-            Name
-          </label>
-          <input
+        <Field label="Name" htmlFor="ws-name" className="workspace-editor__field">
+          <Input
             id="ws-name"
-            className="workspace-editor__input"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Workspace name"
             data-testid="workspace-name-input"
           />
-        </div>
+        </Field>
 
-        <div className="workspace-editor__field">
-          <label className="workspace-editor__label" htmlFor="ws-description">
-            Description
-          </label>
-          <input
+        <Field label="Description" htmlFor="ws-description" className="workspace-editor__field">
+          <Input
             id="ws-description"
-            className="workspace-editor__input"
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Optional description"
             data-testid="workspace-description-input"
           />
-        </div>
+        </Field>
 
         <div className="workspace-editor__layout-section">
           <div className="workspace-editor__layout-header">
@@ -218,7 +214,8 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                   data-testid={`workspace-group-chip-${index}`}
                 >
                   {renamingGroupIndex === index ? (
-                    <input
+                    <Input
+                      inline
                       autoFocus
                       className="workspace-group-chip__rename-input"
                       value={renameValue}
@@ -244,41 +241,47 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                       {group.name}
                     </span>
                   )}
-                  <button
-                    className="workspace-group-chip__close"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleCloseGroup(index);
-                    }}
-                    title="Remove group"
-                    data-testid={`workspace-group-close-${index}`}
-                  >
-                    <X size={10} />
-                  </button>
+                  <Tooltip content="Remove group" side="top">
+                    <button
+                      className="workspace-group-chip__close"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCloseGroup(index);
+                      }}
+                      aria-label="Remove group"
+                      data-testid={`workspace-group-close-${index}`}
+                    >
+                      <X size={10} />
+                    </button>
+                  </Tooltip>
                 </div>
               ))}
-              <button
-                className="workspace-group-strip__add"
-                onClick={handleAddGroup}
-                title="Add group"
-                data-testid="workspace-group-add"
-              >
-                <Plus size={12} />
-              </button>
+              <Tooltip content="Add group" side="top">
+                <button
+                  className="workspace-group-strip__add"
+                  onClick={handleAddGroup}
+                  aria-label="Add group"
+                  data-testid="workspace-group-add"
+                >
+                  <Plus size={12} />
+                </button>
+              </Tooltip>
             </div>
           )}
 
           {!showGroupStrip && (
             <div className="workspace-group-strip workspace-group-strip--single">
-              <button
-                className="workspace-group-strip__add"
-                onClick={handleAddGroup}
-                title="Add group"
-                data-testid="workspace-group-add"
-              >
-                <Plus size={12} />
-                Add Group
-              </button>
+              <Tooltip content="Add group" side="top">
+                <button
+                  className="workspace-group-strip__add"
+                  onClick={handleAddGroup}
+                  aria-label="Add group"
+                  data-testid="workspace-group-add"
+                >
+                  <Plus size={12} />
+                  Add Group
+                </button>
+              </Tooltip>
             </div>
           )}
 
@@ -287,20 +290,12 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
       </div>
 
       <div className="workspace-editor__actions">
-        <button
-          className="workspace-editor__btn workspace-editor__btn--primary"
-          onClick={handleSave}
-          data-testid="workspace-save-btn"
-        >
+        <Button variant="primary" onClick={handleSave} data-testid="workspace-save-btn">
           Save
-        </button>
-        <button
-          className="workspace-editor__btn"
-          onClick={handleCancel}
-          data-testid="workspace-cancel-btn"
-        >
+        </Button>
+        <Button variant="secondary" onClick={handleCancel} data-testid="workspace-cancel-btn">
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );

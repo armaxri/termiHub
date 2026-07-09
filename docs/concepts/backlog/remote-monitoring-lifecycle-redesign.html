@@ -1,0 +1,1033 @@
+<!doctype html>
+<!--
+  Concept: Remote system monitoring lifecycle redesign (#1193, from audit #1137/#1148).
+  Single self-contained HTML concept. Prose + Mermaid + mockups + sync ledger.
+  Links only ../_assets/. Mockups reuse REAL mockup.css classes + lucide icons.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Remote Monitoring Lifecycle Redesign (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Only symbols used below. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <!-- lucide: activity (monitoring heartbeat) -->
+      <symbol id="i-activity" viewBox="0 0 24 24">
+        <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+      </symbol>
+      <!-- lucide: triangle-alert (stale/error) -->
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <!-- lucide: wifi-off (offline) -->
+      <symbol id="i-wifi-off" viewBox="0 0 24 24">
+        <path d="M12 20h.01" />
+        <path d="M8.5 16.429a5 5 0 0 1 7 0" />
+        <path d="M5 12.859a10 10 0 0 1 5.17-2.69" />
+        <path d="M19 12.859a10 10 0 0 0-2.007-1.523" />
+        <path d="M2 8.82a15 15 0 0 1 4.177-2.643" />
+        <path d="M22 8.82a15 15 0 0 0-11.288-3.764" />
+        <path d="m2 2 20 20" />
+      </symbol>
+      <!-- lucide: refresh-cw (reconnecting / retry) -->
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <!-- lucide: pause -->
+      <symbol id="i-pause" viewBox="0 0 24 24">
+        <rect x="14" y="4" width="4" height="16" rx="1" />
+        <rect x="6" y="4" width="4" height="16" rx="1" />
+      </symbol>
+      <!-- lucide: play -->
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="M6 3v18l15-9Z" />
+      </symbol>
+      <!-- lucide: monitor-stop (kill monitoring) -->
+      <symbol id="i-monitor-stop" viewBox="0 0 24 24">
+        <path d="M12 17v4" />
+        <path d="M8 21h8" />
+        <path d="M21 12V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h5" />
+        <rect x="13" y="13" width="8" height="8" rx="1" />
+      </symbol>
+      <!-- lucide: cpu -->
+      <symbol id="i-cpu" viewBox="0 0 24 24">
+        <path d="M12 20v2" /><path d="M12 2v2" /><path d="M17 20v2" /><path d="M17 2v2" />
+        <path d="M2 12h2" /><path d="M2 17h2" /><path d="M2 7h2" /><path d="M20 12h2" />
+        <path d="M20 17h2" /><path d="M20 7h2" /><path d="M7 20v2" /><path d="M7 2v2" />
+        <rect x="4" y="4" width="16" height="16" rx="2" /><rect x="8" y="8" width="8" height="8" rx="1" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Remote System Monitoring — Lifecycle Redesign</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/1193">#1193</a> (from
+            <a href="https://github.com/armaxri/termiHub/issues/1148">#1148</a> /
+            <a href="https://github.com/armaxri/termiHub/issues/1137">#1137</a>)</span
+          >
+          <span
+            >Audit:
+            <code>docs/audits/remote-system-monitoring-state-machine.md</code></span
+          >
+          <span
+            ><code>docs/concepts/backlog/remote-monitoring-lifecycle-redesign.html</code></span
+          >
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#decisions">Design Decisions</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          termiHub can show live CPU / memory / disk / load for a remote host in the status bar. The
+          audit
+          (<code>docs/audits/remote-system-monitoring-state-machine.md</code>) found that this is
+          served by <strong>two independent state machines that share one global store slice</strong>:
+          a <em>legacy pull-based</em> desktop-SSH path (<code>monitoring_open</code> /
+          <code>monitoring_fetch_stats</code>, polled every 5&nbsp;s from
+          <code>StatusBar.tsx</code>) and a <em>push-based</em> session/agent path
+          (<code>session_monitoring_open</code> → <code>SshMonitoringProvider::subscribe</code>,
+          emitting <code>session-monitoring-stats</code> events every 2&nbsp;s). Both feed the same
+          five singleton fields (<code>monitoringSessionId</code>, <code>monitoringHost</code>,
+          <code>monitoringStats</code>, <code>monitoringLoading</code>,
+          <code>monitoringError</code>).
+        </p>
+        <p>This design causes four concrete, user-visible failures:</p>
+        <ul>
+          <li>
+            <strong>Frozen stats shown as live (G1).</strong> When the SSH transport drops
+            mid-stream, neither path surfaces an error state — the last-good CPU/Mem/Disk numbers
+            keep rendering as if healthy. The user trusts stale metrics of a host that may be down.
+          </li>
+          <li>
+            <strong>No reconnect (G2).</strong> Once the transport dies, monitoring stays dead. The
+            legacy path needs a manual Kill + re-pick; the session path may never recover without
+            switching tabs away and back.
+          </li>
+          <li>
+            <strong>Collect can hang forever (G3).</strong> The legacy
+            <code>run_remote_command</code> has no timeout, and the 5&nbsp;s poll fires regardless of
+            whether the previous fetch resolved — a half-dead remote stacks blocking tasks until the
+            pool starves.
+          </li>
+          <li>
+            <strong>False "connected" (G4).</strong>
+            <code>SshMonitoringProvider::subscribe</code> returns <code>Ok(rx)</code>
+            <em>before</em> the SSH connect is attempted; a connect failure only logs
+            <code>warn!</code>. The UI is told monitoring started and waits forever for a first stat.
+          </li>
+          <li>
+            <strong>Single-host-only singleton (G6).</strong> Only one host can be monitored
+            app-wide; opening a second SSH tab silently evicts the first tab's monitoring, and Open
+            Connections can only ever show one Monitoring row.
+          </li>
+        </ul>
+        <p>
+          This concept redesigns the monitoring lifecycle around an <strong>explicit, observable
+          state machine</strong> (Connecting → Live → Stale → Reconnecting → Offline) that both the
+          status bar and Open Connections render, adds the missing user controls
+          (Pause/Resume, Cancel-during-connecting, Retry, interval), and re-keys the store by
+          session/host so multiple hosts can be monitored at once.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            <strong>G1 — Stale sub-state:</strong> a mid-stream drop transitions to an explicit
+            <code>Stale</code> (error-while-connected) state so the UI stops rendering frozen stats
+            as live.
+          </li>
+          <li>
+            <strong>G2 — Reconnect:</strong> each collector loop performs bounded backoff reconnect
+            after a transport error, surfacing <code>Reconnecting</code> to the UI.
+          </li>
+          <li>
+            <strong>G3 — Timeout &amp; in-flight guard:</strong> wrap the collect in a timeout and
+            skip a tick while a fetch is still in flight.
+          </li>
+          <li>
+            <strong>G4 — Real connect result:</strong> perform the initial connect inside
+            <code>subscribe()</code> and return <code>Err</code> on failure so the open lands in the
+            error branch.
+          </li>
+          <li>
+            <strong>G6 — Per-session keying:</strong> replace the global singleton with a
+            <code>Record&lt;MonitorKey, MonitoringState&gt;</code> map (keyed by the owning session
+            id) so multiple hosts monitor simultaneously and each appears in Open Connections with
+            its own Kill.
+          </li>
+          <li>
+            <strong>Missing controls:</strong> Pause/Resume, Cancel-during-connecting,
+            stale/offline indicator, per-host Kill, interval control.
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Changing <em>what</em> metrics are collected or the wire format of
+            <code>SystemStats</code> / <code>MONITORING_COMMAND</code>.
+          </li>
+          <li>
+            Historical charting / retention of past samples (only the current + a short in-store
+            cache remain).
+          </li>
+          <li>
+            The Windows/PowerShell remote monitoring command variants (out of scope; Linux
+            <code>/proc</code>-based command unchanged).
+          </li>
+          <li>
+            G5/G7–G10 from the audit are addressed only where they fall out of this redesign; the
+            remaining polish items stay tracked in the audit.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Design Decisions ───────────────────────────────────────── -->
+      <section>
+        <h2 id="decisions">Design Decisions <a class="anchor" href="#decisions">#</a></h2>
+
+        <h3>Decision 1 — Complete the <code>MonitoringProvider</code> migration (retire legacy)</h3>
+        <p>
+          <strong>Recommendation: complete the unified <code>MonitoringProvider</code> migration and
+          retire the legacy pull path — do not fix both paths.</strong>
+        </p>
+        <p>
+          The legacy <code>MonitoringSession</code> is already documented as slated for removal
+          (<code>src-tauri/src/monitoring/session.rs:16-21</code>: "will be removed once monitoring
+          is migrated to use <code>ConnectionType</code>"). Fixing both paths would mean implementing
+          G1–G4 twice — once in the frontend poll loop + <code>run_remote_command</code>, once in the
+          provider task — and would preserve the interval mismatch (5&nbsp;s poll vs 2&nbsp;s push)
+          and the overloaded store fields that caused the confusion in the first place. The push
+          model is also structurally the right home for these fixes: reconnect/backoff/stale belong
+          in <em>one</em> long-lived collector loop that owns the transport, not split between a
+          React <code>setInterval</code> and a blocking IPC call.
+        </p>
+        <p>Concretely, both the desktop-SSH and the session/agent surfaces route through a single
+          provider abstraction:</p>
+        <ul>
+          <li>
+            The desktop-direct SSH tab (today's legacy path) gets a <code>MonitoringProvider</code>
+            just like the session path already has — the difference becomes "which transport the
+            provider owns", not "which state machine".
+          </li>
+          <li>
+            <code>monitoring_open</code> / <code>monitoring_fetch_stats</code> /
+            <code>monitoring_close</code> and the 5&nbsp;s <code>setInterval</code> +
+            <code>refreshMonitoring</code> in <code>StatusBar.tsx</code> are removed. The frontend
+            only ever <em>subscribes</em> and receives pushed stats + status events.
+          </li>
+          <li>
+            The provider loop owns the interval, the timeout, the in-flight guard, the
+            stale-detection, and the reconnect backoff — so G1/G2/G3 live in one place and apply to
+            every host.
+          </li>
+        </ul>
+        <p>
+          Staging (below) keeps this reviewable: S1 lands the correctness fixes on the provider path
+          (G4 real connect + G3 timeout/guard), S2 adds the observable <code>Stale</code> state
+          (G1) plus the status-event channel and the UI indicator, S3 adds reconnect backoff (G2)
+          and the per-host keying (G6) and finally deletes the legacy code.
+        </p>
+
+        <h3>Decision 2 — Per-host / per-session keying model</h3>
+        <p>
+          <strong>Recommendation: key monitoring state by a stable <code>MonitorKey</code> derived
+          from the owning session/host, stored in a <code>Record&lt;MonitorKey, MonitoringEntry&gt;</code>
+          on both the backend registry and the frontend store.</strong>
+        </p>
+        <p>
+          The key is the identity the rest of the app already uses to address a monitored target —
+          <strong>one unified keying:</strong> <code>MonitorKey = sessionId</code>, the id of the
+          owning terminal session, for <em>every</em> monitored tab. Both flows route through the
+          same session-based <code>MonitoringProvider</code>:
+        </p>
+        <ul>
+          <li>
+            <strong>Session-based (remote-session) tabs:</strong> the tab's session id is the key —
+            matches the session-path store keying (<code>monitoringStatsCache</code> is keyed by
+            <code>sessionId</code>).
+          </li>
+          <li>
+            <strong>Desktop-direct SSH tabs:</strong> also keyed by the owning terminal session id.
+            The tab already owns a live SSH session, so its session id is available at keying time;
+            it auto-connects through <code>session_monitoring_open(sessionId)</code> exactly like a
+            remote-session tab. The human-readable host label rides alongside as <code>host</code>
+            for display. (Earlier the connect-picker pull path keyed these by the
+            <code>user@host:port</code> host key; #1232 retired that legacy path and re-routed
+            desktop-direct SSH through the session-based provider, collapsing the two keyings into
+            this single session-id keying — see the <a href="#sync">Sync Ledger</a>.)
+          </li>
+        </ul>
+        <p>
+          Each entry holds its own <code>{ status, stats, host, error, intervalMs, paused }</code>.
+          The status-bar widget renders the entry for the <em>active tab</em>; Open Connections
+          renders <em>all</em> entries, each with its own Kill / Pause / Retry. Auto-connect no
+          longer tears down the previous host on tab switch — switching tabs just changes which
+          entry the status bar shows. The backend keeps a matching
+          <code>HashMap&lt;MonitorKey, Subscription&gt;</code> so
+          <code>session_monitoring_close(key)</code> kills exactly one host.
+        </p>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          Two surfaces change: the <strong>status-bar monitoring segment</strong> (per active tab)
+          gains an explicit stale/offline/reconnecting indicator plus Pause/Resume and Cancel
+          controls; the <strong>Open Connections modal</strong> lists <em>every</em> monitored host
+          as its own row with per-host Pause/Retry/Kill. An <strong>interval control</strong> lives
+          in the status-bar monitoring dropdown.
+        </p>
+
+        <!-- Mockup 1 — status bar states -->
+        <div class="mockup-section">
+          <h3>Mockup — status-bar monitoring segment (four states)</h3>
+          <div class="mockup-note">
+            The status bar's monitoring segment renders the state machine directly. Live shows an
+            activity icon + green numbers; Stale keeps the last numbers but dims them and shows a
+            warning; Reconnecting shows a spinner; Offline shows a wifi-off + Retry. Connecting shows
+            a Cancel affordance.
+          </div>
+          <div class="app" style="height: 300px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">user@prod-01 $</span> uptime<br />
+                      <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Live -->
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item" style="color: var(--state-connected)">
+                  <svg class="li"><use href="#i-activity" /></svg> prod-01
+                </span>
+                <span class="status-bar__item"><svg class="li"><use href="#i-cpu" /></svg> 12%</span>
+                <span class="status-bar__item">MEM 41%</span>
+                <span class="status-bar__item">DISK 60%</span>
+                <span class="status-bar__item">up 4d</span>
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">2s · <span class="callout">A</span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- The other three states, stacked as bare status bars -->
+          <div style="margin-top: 12px">
+            <div class="state-label">Stale — mid-stream drop, last stats dimmed + warning</div>
+            <div class="status-bar" style="border-radius: 6px; border: 1px solid var(--border-secondary)">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item" style="color: var(--color-warning)">
+                  <svg class="li"><use href="#i-alert" /></svg> prod-01 · stale
+                </span>
+                <span class="status-bar__item" style="color: var(--text-disabled)">
+                  <svg class="li"><use href="#i-cpu" /></svg> 12%
+                </span>
+                <span class="status-bar__item" style="color: var(--text-disabled)">MEM 41%</span>
+                <span class="status-bar__item" style="color: var(--text-disabled)">DISK 60%</span>
+                <span class="status-bar__item" style="color: var(--text-secondary)">last 14s ago</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 10px">
+            <div class="state-label">Reconnecting — bounded backoff in the collector loop</div>
+            <div class="status-bar" style="border-radius: 6px; border: 1px solid var(--border-secondary)">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item" style="color: var(--state-connecting)">
+                  <svg class="li"><use href="#i-refresh" /></svg> prod-01 · reconnecting (try 2)
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 10px">
+            <div class="state-label">Offline — backoff exhausted; Retry surfaced</div>
+            <div class="status-bar" style="border-radius: 6px; border: 1px solid var(--border-secondary)">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item" style="color: var(--color-error)">
+                  <svg class="li"><use href="#i-wifi-off" /></svg> prod-01 · offline
+                </span>
+                <button class="btn btn--link" style="padding: 0 4px">
+                  <svg class="li"><use href="#i-refresh" /></svg> Retry
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 10px">
+            <div class="state-label">Connecting — Cancel abortable (no more uninterruptible 75s handshake)</div>
+            <div class="status-bar" style="border-radius: 6px; border: 1px solid var(--border-secondary)">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item" style="color: var(--state-connecting)">
+                  <svg class="li"><use href="#i-refresh" /></svg> prod-01 · connecting…
+                </span>
+                <button class="btn btn--link" style="padding: 0 4px">
+                  <svg class="li"><use href="#i-x" /></svg> Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Interval chip — click opens the monitoring dropdown
+                with a refresh-rate select (1s / 2s / 5s / 10s), Pause/Resume, and Disconnect.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Mockup 2 — monitoring dropdown -->
+        <div class="mockup-section">
+          <h3>Mockup — status-bar monitoring dropdown (Pause / Resume / interval)</h3>
+          <div class="mockup-note">
+            Opened from the monitoring segment. Adds Pause/Resume (stops collection without tearing
+            down the transport) and an interval select. Replaces today's Refresh-only + Disconnect.
+          </div>
+          <div class="menu" style="width: 260px">
+            <div class="menu__title">Monitoring · prod-01</div>
+            <div class="menu__row">
+              <svg class="li"><use href="#i-pause" /></svg> Pause monitoring
+            </div>
+            <div class="menu__row menu__row--selected">
+              <span class="radio"></span> Refresh every 2s <span class="count">default</span>
+            </div>
+            <div class="menu__row"><span class="radio"></span> Refresh every 1s</div>
+            <div class="menu__row"><span class="radio"></span> Refresh every 5s</div>
+            <div class="menu__row"><span class="radio"></span> Refresh every 10s</div>
+            <div class="menu__footer">
+              <button class="btn">
+                <svg class="li"><use href="#i-monitor-stop" /></svg> Disconnect
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mockup 3 — Open Connections per-host rows -->
+        <div class="mockup-section">
+          <h3>Mockup — Open Connections · Monitoring section (per-host rows)</h3>
+          <div class="mockup-note">
+            Today this section shows a single global row gated on <code>monitoringHost</code>. With
+            per-host keying it lists every monitored host with its own status dot, Pause, Retry (when
+            stale/offline), and Kill — plus a section-level Kill All.
+          </div>
+          <div class="menu" style="width: 460px">
+            <div class="menu__title" style="display: flex; align-items: center; gap: 8px">
+              <svg class="li"><use href="#i-activity" /></svg> Monitoring
+              <button class="btn btn--link" style="margin-left: auto">Kill all</button>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--connected"></span>
+              <span>prod-01</span>
+              <span class="count">CPU 12% · live · 2s</span>
+              <button class="btn btn--link" title="Pause"><svg class="li"><use href="#i-pause" /></svg></button>
+              <button class="btn btn--link" title="Kill"><svg class="li"><use href="#i-monitor-stop" /></svg></button>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--connecting"></span>
+              <span>db-02</span>
+              <span class="count" style="color: var(--color-warning)">stale · last 14s</span>
+              <button class="btn btn--link" title="Retry"><svg class="li"><use href="#i-refresh" /></svg></button>
+              <button class="btn btn--link" title="Kill"><svg class="li"><use href="#i-monitor-stop" /></svg></button>
+            </div>
+            <div class="menu__row">
+              <span class="state-dot state-dot--disconnected"></span>
+              <span>edge-07</span>
+              <span class="count" style="color: var(--color-error)">offline</span>
+              <button class="btn btn--link" title="Retry"><svg class="li"><use href="#i-refresh" /></svg></button>
+              <button class="btn btn--link" title="Kill"><svg class="li"><use href="#i-monitor-stop" /></svg></button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                Each row is one <code>MonitoringEntry</code> keyed by <code>MonitorKey</code>; Kill
+                calls <code>session_monitoring_close(key)</code> for exactly that host.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Subscribe returns the real connect result (G4)</h3>
+        <p>
+          <code>SshMonitoringProvider::subscribe</code> performs the initial
+          <code>connect_target</code> <em>before</em> returning. On success it returns
+          <code>Ok(receiver)</code> and hands the already-open session to the spawned loop; on
+          failure it returns <code>Err(CoreError)</code>, which propagates through
+          <code>start_session_monitoring</code> → <code>session_monitoring_open</code> →
+          <code>connectMonitoring</code> so the store lands in the <code>Offline</code>/error branch
+          with a real message instead of a false "connected". The status bar shows Connecting until
+          the connect resolves; a <strong>Cancel</strong> control aborts the in-flight connect via a
+          <code>CancellationToken</code> (replacing today's uninterruptible ~75&nbsp;s handshake).
+        </p>
+
+        <h3>Mid-stream drop → Stale (G1)</h3>
+        <p>
+          The collector loop counts consecutive collect failures. On the first failure after being
+          Live, it emits a <code>status: Stale</code> event (carrying <code>lastOkAt</code>) but
+          keeps the last stats so the UI can dim them. The status bar renders the Stale arm — warning
+          color, dimmed numbers, "last N s ago" — so frozen data is never shown as live. If a
+          subsequent collect succeeds, the loop emits <code>status: Live</code> and the numbers go
+          bright again.
+        </p>
+
+        <h3>Reconnect with bounded backoff (G2)</h3>
+        <p>
+          After <code>K</code> consecutive failures the loop stops reusing the dead session, emits
+          <code>status: Reconnecting</code> (with attempt number), and re-runs
+          <code>connect_target</code> under exponential backoff (e.g. 1s, 2s, 4s… capped at 30s, max
+          N attempts). A successful reconnect resumes collection and emits <code>status: Live</code>.
+          If the backoff budget is exhausted, the loop emits <code>status: Offline</code> and idles,
+          waiting for a user <strong>Retry</strong> (which restarts the connect from
+          <code>Connecting</code>).
+        </p>
+
+        <h3>Timeout &amp; in-flight guard (G3)</h3>
+        <p>
+          Every collect is wrapped in <code>tokio::time::timeout</code> (default 10&nbsp;s); a
+          timeout is treated as a collect failure (→ Stale/Reconnecting), never a hang. Because
+          collection is a single sequential loop (not a fire-and-forget <code>setInterval</code>),
+          the in-flight guard is structural: the loop never starts a new collect until the previous
+          one has resolved or timed out, so a slow remote can never stack blocking tasks.
+        </p>
+
+        <h3>Multiple hosts monitored simultaneously (G6)</h3>
+        <p>
+          Each monitored host is an independent entry keyed by <code>MonitorKey</code> with its own
+          provider subscription and its own state machine. Opening monitoring on a second tab does
+          <em>not</em> evict the first — both loops run concurrently. The status bar shows the active
+          tab's entry; Open Connections lists all entries. Killing one host leaves the others
+          untouched. Pause on one host stops only that loop's collection.
+        </p>
+
+        <h3>Pause / Resume</h3>
+        <p>
+          Pause sets <code>paused: true</code> on the entry and signals the loop to stop collecting
+          while keeping the transport open (state <code>Paused</code>). Resume clears it and the loop
+          collects immediately. Pause is orthogonal to Stale/Offline — a paused monitor shows a
+          neutral "paused" badge, not stale/live numbers.
+        </p>
+
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>Underlying terminal session exits.</strong> The owning tab's exit still tears
+            down its monitor entry (today's <code>disconnectMonitoring</code> coupling), keyed so
+            only that host's entry is removed.
+          </li>
+          <li>
+            <strong>First-sample CPU 0%.</strong> Until the second sample arrives the loop reports a
+            "priming" flag; the status bar renders "—" for CPU rather than a misleading solid 0%
+            (audit G10 — folds in cheaply here).
+          </li>
+          <li>
+            <strong>Open failure listener leak.</strong> With subscribe returning the real result
+            (G4), the store attaches the stats/status listener only after a successful open, or tears
+            it down in the catch — closing the G5 dangling-listener leak.
+          </li>
+          <li>
+            <strong>Retry after Offline</strong> clears any latched "auto-connect failed" guard so a
+            recovered host can reconnect without a tab switch (audit G7).
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Unified monitoring session state machine (per <code>MonitorKey</code>)</span
+          >
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Connecting : subscribe(key)
+    Connecting --> Live : connect_target OK + first stats
+    Connecting --> Offline : connect_target Err (G4 real result)
+    Connecting --> Idle : Cancel (abort handshake)
+
+    Live --> Live : collect OK (interval tick)
+    Live --> Paused : Pause
+    Paused --> Live : Resume
+    Live --> Stale : collect fails / times out (G1, G3)
+
+    Stale --> Live : collect recovers
+    Stale --> Reconnecting : K consecutive failures (G2)
+
+    Reconnecting --> Live : reconnect OK
+    Reconnecting --> Reconnecting : backoff retry (bounded)
+    Reconnecting --> Offline : backoff budget exhausted
+
+    Offline --> Connecting : Retry (user)
+
+    Live --> Idle : Kill / tab exit
+    Stale --> Idle : Kill / tab exit
+    Reconnecting --> Idle : Kill / tab exit
+    Offline --> Idle : Kill
+    Paused --> Idle : Kill / tab exit
+    Idle --> [*]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Sequence — subscribe with the real connect result (G4)</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant UI as StatusBar (React)
+    participant Store as appStore (keyed slice)
+    participant Cmd as session_monitoring_open
+    participant SM as SessionManager
+    participant Prov as SshMonitoringProvider
+    participant SSH as Remote host
+
+    UI->>Store: connectMonitoring(key)
+    Store->>Store: entry[key].status = Connecting
+    Store->>Cmd: session_monitoring_open(key)
+    Cmd->>SM: start_session_monitoring(key)
+    SM->>Prov: subscribe()
+    Prov->>SSH: connect_target (awaited, cancellable)
+    alt connect fails
+        SSH-->>Prov: Err
+        Prov-->>SM: Err(CoreError)
+        SM-->>Cmd: Err
+        Cmd-->>Store: reject
+        Store->>Store: entry[key].status = Offline + error
+    else connect OK
+        SSH-->>Prov: session
+        Prov-->>SM: Ok(receiver)
+        SM-->>Cmd: Ok
+        Cmd-->>Store: resolve
+        Store->>Store: entry[key].status = Live
+        loop every intervalMs
+            Prov->>SSH: collect (timeout-wrapped)
+            SSH-->>Prov: stats
+            Prov->>SM: send(stats)
+            SM->>UI: emit session-monitoring-stats {key}
+        end
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Sequence — mid-stream drop → Stale → reconnect (G1, G2)</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant Col as Collector loop (per key)
+    participant SSH as Remote host
+    participant SM as SessionManager
+    participant Store as appStore
+    participant UI as StatusBar / OpenConnections
+
+    Col->>SSH: collect (Live)
+    SSH-->>Col: Err (transport dropped)
+    Col->>SM: emit status=Stale (lastOkAt)
+    SM->>Store: entry[key].status=Stale, keep last stats
+    Store->>UI: dim numbers + stale warning
+    Col->>SSH: collect retry
+    SSH-->>Col: Err (still down)
+    Note over Col: K consecutive failures reached
+    Col->>SM: emit status=Reconnecting (attempt)
+    SM->>Store: entry[key].status=Reconnecting
+    loop bounded backoff 1s, 2s, 4s… cap 30s
+        Col->>SSH: connect_target
+        alt reconnect OK
+            SSH-->>Col: session
+            Col->>SM: emit status=Live
+            SM->>Store: entry[key].status=Live, stats resume
+        else still failing
+            SSH-->>Col: Err
+        end
+    end
+    Note over Col: budget exhausted → emit status=Offline, await Retry
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Sequence — timeout + in-flight guard on collect (G3)</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant Col as Collector loop
+    participant Timer as tokio timeout
+    participant SSH as Remote host
+
+    Note over Col: single sequential loop, no overlapping collects
+    Col->>Timer: timeout(10s, ssh_exec(MONITORING_COMMAND))
+    Timer->>SSH: exec
+    alt responds in time
+        SSH-->>Timer: output
+        Timer-->>Col: Ok(stats)
+        Col->>Col: emit Live, sleep intervalMs
+    else exceeds 10s
+        Timer-->>Col: Err(Elapsed)
+        Col->>Col: treat as collect failure → Stale
+    end
+    Note over Col: next tick only starts after this one resolves
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Grounded in the current code. The redesign consolidates onto the push-based
+          <code>MonitoringProvider</code> path and adds a status channel alongside the existing stats
+          channel. Staged as S1 (G4, G3) → S2 (G1) → S3 (G2, G6 + legacy removal).
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Goal</th>
+                <th>Stage</th>
+                <th>File(s)</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>G4</strong> — subscribe returns real connect result</td>
+                <td>S1</td>
+                <td><code>core/src/backends/ssh/monitoring.rs</code></td>
+                <td>
+                  Move <code>connect_target</code> <em>before</em> the <code>Ok(rx)</code> return
+                  (currently inside the spawned task at lines 102–112, returns <code>Ok(rx)</code>
+                  at 151). Await it in <code>subscribe()</code>; return
+                  <code>Err(CoreError)</code> on failure; pass the open session into the loop. Add a
+                  <code>CancellationToken</code> so an in-flight connect can be aborted (Cancel).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G3</strong> — collect timeout + in-flight guard</td>
+                <td>S1</td>
+                <td>
+                  <code>core/src/backends/ssh/monitoring.rs</code> · <code>agent/src/monitoring/mod.rs</code>
+                </td>
+                <td>
+                  Wrap <code>ssh_exec(&amp;session, MONITORING_COMMAND)</code> (monitoring.rs:117) in
+                  <code>tokio::time::timeout</code>; treat <code>Elapsed</code> as a collect failure.
+                  The single sequential loop is the in-flight guard (no overlapping collects). Legacy
+                  <code>run_remote_command</code> (<code>src-tauri/src/utils/remote_exec.rs:31-46</code>)
+                  and its 5&nbsp;s <code>setInterval</code> are removed in S3, so no timeout is added
+                  there.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G1</strong> — explicit Stale sub-state</td>
+                <td>S2</td>
+                <td>
+                  <code>core/src/monitoring/</code> (provider trait / message types) ·
+                  <code>src-tauri/src/session/manager.rs:630-687</code> ·
+                  <code>src/store/appStore.ts</code> · <code>StatusBar.tsx</code>
+                </td>
+                <td>
+                  Add a <code>MonitorStatus</code> enum (<code>Connecting|Live|Stale|Reconnecting|Offline|Paused</code>)
+                  and a status channel next to the stats channel. The loop counts consecutive
+                  collect failures and emits <code>Stale</code>/<code>Live</code>. Emit a
+                  <code>session-monitoring-status</code> Tauri event from
+                  <code>start_session_monitoring</code>. Store: add
+                  <code>status</code> to each entry; render the Stale arm in
+                  <code>StatusBar.tsx</code> (today the connected arm has no error branch at
+                  <code>StatusBar.tsx:474-508</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G2</strong> — bounded backoff reconnect</td>
+                <td>S3</td>
+                <td>
+                  <code>core/src/backends/ssh/monitoring.rs</code> · <code>agent/src/monitoring/mod.rs</code>
+                </td>
+                <td>
+                  After <code>K</code> consecutive failures, re-run <code>connect_target</code> under
+                  exponential backoff (cap 30&nbsp;s, max N attempts), emitting
+                  <code>Reconnecting</code> then <code>Live</code> or <code>Offline</code>. The loop
+                  owns the session, so it can re-dial in place (today it connects once at
+                  monitoring.rs:106 and never re-dials).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>G6</strong> — per-host/session keying</td>
+                <td>S3</td>
+                <td>
+                  <code>src/store/appStore.ts:653-657, 3626-3630</code> ·
+                  <code>src-tauri/src/session/manager.rs</code> ·
+                  <code>OpenConnectionsModal.tsx:448-463</code>
+                </td>
+                <td>
+                  Replace the five singleton fields (<code>monitoringSessionId</code>,
+                  <code>monitoringHost</code>, <code>monitoringStats</code>,
+                  <code>monitoringLoading</code>, <code>monitoringError</code>) with
+                  <code>monitors: Record&lt;MonitorKey, MonitoringEntry&gt;</code> (entry =
+                  <code>{ status, stats, host, error, intervalMs, paused }</code>). The
+                  <code>MonitorKey</code> is the owning terminal session's <code>sessionId</code> for
+                  every tab — both session-based and desktop-direct SSH tabs, since #1232 routes both
+                  through the session-based provider (<code>monitorKeyForTab</code> returns
+                  <code>tab.sessionId</code>); <code>monitoringStatsCache</code> uses that same
+                  keying — fold it into the entry. Backend keeps a
+                  <code>HashMap&lt;MonitorKey, Subscription&gt;</code>;
+                  <code>session_monitoring_close(key)</code> kills one host. Status bar renders the
+                  active tab's entry; Open Connections iterates all entries (replaces the single
+                  <code>monitoringHost</code>-gated row).
+                </td>
+              </tr>
+              <tr>
+                <td>Controls — Pause/Resume, Cancel, Retry, interval</td>
+                <td>S2–S3</td>
+                <td>
+                  <code>StatusBar.tsx</code> (monitoring dropdown) · <code>OpenConnectionsModal.tsx</code> ·
+                  new Tauri commands
+                </td>
+                <td>
+                  Pause/Resume signal the loop (keep transport, stop collecting → <code>Paused</code>).
+                  Cancel aborts the connect token. Retry restarts from <code>Connecting</code> and
+                  clears the latched auto-connect-failed guard (<code>StatusBar.tsx:340-341</code>).
+                  Interval select drives <code>intervalMs</code> per entry (replaces the hardcoded
+                  <code>MONITORING_INTERVAL</code> monitoring.rs:24 / <code>REFRESH_INTERVAL_MS</code>
+                  StatusBar.tsx:18 / agent <code>DEFAULT_INTERVAL_MS</code>). Compose all controls
+                  from <code>src/components/ui/</code> primitives.
+                </td>
+              </tr>
+              <tr>
+                <td>Retire legacy pull path</td>
+                <td>S3</td>
+                <td>
+                  <code>src-tauri/src/monitoring/session.rs</code> ·
+                  <code>src-tauri/src/commands/monitoring.rs</code> ·
+                  <code>src-tauri/src/utils/remote_exec.rs</code> · <code>StatusBar.tsx</code>
+                </td>
+                <td>
+                  Delete <code>MonitoringSession</code>/<code>MonitoringManager</code> (marked for
+                  removal at session.rs:16-21), the <code>monitoring_open</code> /
+                  <code>monitoring_fetch_stats</code> / <code>monitoring_close</code> commands, and
+                  the <code>setInterval</code> + <code>refreshMonitoring</code> poll. Desktop-direct
+                  SSH tabs monitor through a <code>MonitoringProvider</code> like session tabs.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Testing plan</h3>
+        <ul>
+          <li>
+            <strong>Unit (core):</strong> collector-loop state transitions with a fake transport —
+            connect-fails-returns-Err (G4), collect-timeout→Stale (G3), K-failures→Reconnecting,
+            backoff-exhausted→Offline, recover→Live (G1/G2). TDD: write these before the loop rewrite.
+          </li>
+          <li>
+            <strong>Unit (store):</strong> keyed <code>monitors</code> slice — two entries coexist,
+            Kill one leaves the other, status events update the right entry (G6).
+          </li>
+          <li>
+            <strong>System (tests/system):</strong> a monitored Docker SSH host whose sshd is killed
+            mid-stream drives Live→Stale→Reconnecting→Offline and the status-bar/Open-Connections
+            indicators; a second host confirms concurrent monitoring.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept remote-monitoring-lifecycle-redesign</code>. Records
+            the last commit at which the concept and code were reconciled, plus open divergences. The
+            concept is the source of truth; code is fixed to match by default.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> after the legacy pull path was retired in #1232 / PR #1295
+          (following stages S1–S3; per-host keying G6 landed via #1231 / PR #1280, first reconciled
+          in #1281 / PR #1293, re-reconciled here in #1300) · <strong>Status:</strong> aligned — the
+          keyed <code>monitors</code> store matches the concept, and the former desktop-direct SSH
+          keying deviation (row 8) is now <em>resolved</em>: #1232 re-routed those tabs through the
+          session-based provider, so all tabs key by the owning session id.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Explicit Stale / Reconnecting / Offline states (G1)</td>
+                <td>
+                  Mid-stream drop swallowed; only <code>monitoringError</code> set, stale stats keep
+                  rendering (appStore + monitoring.rs:127-133)
+                </td>
+                <td>Resolved</td>
+                <td>Shipped in S2</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Bounded backoff reconnect in collector loop (G2)</td>
+                <td>Loop connects once (monitoring.rs:106), never re-dials</td>
+                <td>Resolved</td>
+                <td>Shipped in S3</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Collect timeout + in-flight guard (G3)</td>
+                <td>
+                  <code>run_remote_command</code> has no timeout; 5s <code>setInterval</code> stacks
+                  tasks
+                </td>
+                <td>Resolved</td>
+                <td>Shipped in S1 (push path); legacy removed in S3</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td><code>subscribe()</code> returns real connect result (G4)</td>
+                <td>Returns <code>Ok(rx)</code> before connect; failure only <code>warn!</code></td>
+                <td>Resolved</td>
+                <td>Shipped in S1</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>Per-host/session keyed store + Open Connections rows (G6)</td>
+                <td>Five singleton fields; single global Monitoring row</td>
+                <td>Resolved</td>
+                <td>Shipped in S3 (#1231 / PR #1280)</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>Pause/Resume, Cancel, Retry, interval controls</td>
+                <td>Only Refresh + Disconnect; no Pause/Cancel/Retry/interval</td>
+                <td>Resolved</td>
+                <td>Shipped in S2–S3</td>
+              </tr>
+              <tr>
+                <td>7</td>
+                <td>Legacy pull path retired</td>
+                <td>Legacy <code>MonitoringSession</code> still present (marked for removal)</td>
+                <td>Resolved</td>
+                <td>Removed in S3 after provider parity</td>
+              </tr>
+              <tr>
+                <td>8</td>
+                <td>
+                  Desktop-direct SSH <code>MonitorKey</code> = owning terminal session id
+                </td>
+                <td>
+                  Now keyed by the owning terminal session id (<code>monitorKeyForTab</code> returns
+                  <code>tab.sessionId</code> in <code>appStore.ts</code>); #1232 retired the legacy
+                  pull path and re-routed desktop-direct SSH tabs through the session-based
+                  <code>MonitoringProvider</code> (auto-connect via
+                  <code>session_monitoring_open(sessionId)</code>), matching session-based tabs
+                </td>
+                <td>Resolved</td>
+                <td>
+                  Supersedes the #1281 / PR #1293 reconciliation, which had documented the interim
+                  <code>user@host:port</code> host-key deviation (#1231 / PR #1280). With the legacy
+                  path gone (#1232 / PR #1295), keying is unified on the session id and matches the
+                  original concept — the two-keying distinction is dropped (re-reconciled in #1300)
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

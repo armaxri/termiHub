@@ -2,13 +2,20 @@
 
 pub mod parser;
 pub mod provider;
+pub mod status;
 pub mod types;
 
 pub use parser::{
     cpu_percent_from_delta, parse_cpu_line, parse_df_output, parse_meminfo_value, parse_stats,
     MONITORING_COMMAND,
 };
-pub use provider::{MonitoringProvider, MonitoringReceiver, MonitoringSender};
+pub use provider::{
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+};
+pub use status::{
+    BackoffSchedule, CollectLoopState, MonitorStatus, MonitorStatusReceiver, MonitorStatusSender,
+    BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_STALE_THRESHOLD,
+};
 pub use types::{CpuCounters, SystemStats};
 
 use crate::errors::CoreError;

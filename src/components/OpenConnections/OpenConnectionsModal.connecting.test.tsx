@@ -4,9 +4,10 @@
  * which aborts the in-flight connect via cancel_connecting.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab } from "@/types/terminal";
 
 const cancelConnecting = vi.fn((_id: string) => Promise.resolve(true));
@@ -16,6 +17,10 @@ vi.mock("@/services/api", () => ({
   closeTerminal: vi.fn(() => Promise.resolve()),
   closeAgentSession: vi.fn(() => Promise.resolve()),
   cancelConnecting: (id: string) => cancelConnecting(id),
+  xServerStatus: vi.fn(() =>
+    Promise.resolve({ state: "absent", platform: "linux", managed: false, sessionCount: 0 })
+  ),
+  xServerStop: vi.fn(() => Promise.resolve()),
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
@@ -60,7 +65,9 @@ describe("OpenConnectionsModal — Connecting section", () => {
     });
     act(() => {
       root.render(
-        React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
+        <TooltipProvider delayDuration={0}>
+          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+        </TooltipProvider>
       );
     });
   }
@@ -76,15 +83,26 @@ describe("OpenConnectionsModal — Connecting section", () => {
 
     const killBtn = rows[0].querySelector(".oc-row__kill") as HTMLButtonElement;
     expect(killBtn).not.toBeNull();
+    // Kill is now the shared Button primitive (retains .oc-row__kill as a hook).
+    expect(killBtn.classList.contains("ui-btn")).toBe(true);
     act(() => killBtn.click());
 
     expect(cancelConnecting).toHaveBeenCalledWith("tab-1");
   });
 
+  it("renders through the shared Modal primitive", () => {
+    renderWithConnectingTab();
+    const modal = document.querySelector(".ui-modal");
+    expect(modal).not.toBeNull();
+    expect(modal?.querySelector(".ui-modal__title")?.textContent).toContain("Open Connections");
+  });
+
   it("shows no Connecting section when nothing is connecting", () => {
     act(() => {
       root.render(
-        React.createElement(OpenConnectionsModal, { open: true, onOpenChange: () => {} })
+        <TooltipProvider delayDuration={0}>
+          <OpenConnectionsModal open={true} onOpenChange={() => {}} />
+        </TooltipProvider>
       );
     });
     const titles = Array.from(document.querySelectorAll(".oc-section__title")).map(

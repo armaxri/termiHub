@@ -32,8 +32,12 @@ import {
   Zap,
   Copy,
   Link,
+  XCircle,
+  Unplug,
+  Power,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import { Button, Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
@@ -43,9 +47,11 @@ import {
   AgentFolderInfo,
   removeCredential,
   storeCredential,
+  cancelConnectAgent,
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
 import { AgentSetupDialog } from "./AgentSetupDialog";
@@ -196,44 +202,50 @@ function AgentConnectionItem({
           {definition.persistent ? (
             <span className="connection-tree__persistent-actions">
               {!runState || runState === "stopped" || runState === "error" ? (
-                <span
-                  className="connection-tree__action-btn"
-                  role="button"
-                  title="Start session"
-                  data-testid={`persistent-start-${definition.id}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onStartPersistent(agentId, definition);
-                  }}
-                >
-                  <Play size={12} />
-                </span>
+                <Tooltip content="Start session" side="top">
+                  <button
+                    type="button"
+                    className="connection-tree__action-btn"
+                    aria-label="Start session"
+                    data-testid={`persistent-start-${definition.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onStartPersistent(agentId, definition);
+                    }}
+                  >
+                    <Play size={12} />
+                  </button>
+                </Tooltip>
               ) : isRunning ? (
                 <>
-                  <span
-                    className="connection-tree__action-btn"
-                    role="button"
-                    title="Attach new tab"
-                    data-testid={`persistent-attach-${definition.id}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onAttachPersistent(agentId, definition);
-                    }}
-                  >
-                    <Link size={12} />
-                  </span>
-                  <span
-                    className="connection-tree__action-btn connection-tree__action-btn--danger"
-                    role="button"
-                    title="Stop session"
-                    data-testid={`persistent-stop-${definition.id}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStopPersistent(agentId, definition);
-                    }}
-                  >
-                    <Square size={12} />
-                  </span>
+                  <Tooltip content="Attach new tab" side="top">
+                    <button
+                      type="button"
+                      className="connection-tree__action-btn"
+                      aria-label="Attach new tab"
+                      data-testid={`persistent-attach-${definition.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAttachPersistent(agentId, definition);
+                      }}
+                    >
+                      <Link size={12} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="Stop session" side="top">
+                    <button
+                      type="button"
+                      className="connection-tree__action-btn connection-tree__action-btn--danger"
+                      aria-label="Stop session"
+                      data-testid={`persistent-stop-${definition.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onStopPersistent(agentId, definition);
+                      }}
+                    >
+                      <Square size={12} />
+                    </button>
+                  </Tooltip>
                 </>
               ) : null}
             </span>
@@ -538,6 +550,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const toggleRemoteAgent = useAppStore((s) => s.toggleRemoteAgent);
   const connectRemoteAgent = useAppStore((s) => s.connectRemoteAgent);
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
+  const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const deleteRemoteAgent = useAppStore((s) => s.deleteRemoteAgent);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
@@ -556,6 +569,8 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const isConnected = agent.connectionState === "connected";
   const isReconnecting = agent.connectionState === "reconnecting";
+  const isConnecting = agent.connectionState === "connecting";
+  const isDisconnected = agent.connectionState === "disconnected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
   // Derived: root-level folders and definitions (no parent/folder)
@@ -599,16 +614,11 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     // If the credential store is locked and this agent uses a stored credential,
     // prompt for unlock first and wait — on success the code continues and the
     // credential resolves automatically.
-    const needsStoredCredential =
-      agent.config.authMethod === "password" ||
-      (agent.config.authMethod === "key" && agent.config.savePassword);
-    if (needsStoredCredential) {
-      const credStatus = useAppStore.getState().credentialStoreStatus;
-      if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-        const unlocked = await useAppStore.getState().requestUnlock();
-        if (!unlocked) return;
-      }
-    }
+    const proceed = await ensureCredentialStoreUnlocked({
+      authMethod: agent.config.authMethod,
+      savePassword: agent.config.savePassword,
+    });
+    if (!proceed) return;
 
     setConnecting(true);
     try {
@@ -681,9 +691,38 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     void handleConnect();
   }, [agent.id, disconnectRemoteAgent, handleConnect]);
 
+  // Disconnect (detach) — drop the transport but leave persistent daemon-backed
+  // remote sessions running so they re-list on the next connect (G9, #1237).
   const handleDisconnect = useCallback(() => {
     disconnectRemoteAgent(agent.id);
   }, [agent.id, disconnectRemoteAgent]);
+
+  // Shutdown (stop remote) — stop the remote sessions and disconnect, reporting
+  // how many sessions the agent detached/killed as a success toast (G9, #1237).
+  // Returns the promise so the async Button surfaces pending/error feedback.
+  const handleShutdown = useCallback(async () => {
+    const detached = await shutdownRemoteAgent(agent.id);
+    toast.success(
+      detached > 0
+        ? `Agent shut down — ${detached} session${detached === 1 ? "" : "s"} stopped`
+        : "Agent shut down"
+    );
+  }, [agent.id, shutdownRemoteAgent]);
+
+  // Cancel an in-flight connect (G1, #1235). Fires cancel_connect_agent, which
+  // aborts the blocking SSH + initialize handshake; the backend then emits
+  // `disconnected` (single writer), so the state dot returns on its own — no
+  // optimistic write here. The prompt-driven `connecting` local state (set by
+  // handleConnect) also clears when connectRemoteAgent's promise rejects.
+  const handleCancelConnect = useCallback(async () => {
+    try {
+      await cancelConnectAgent(agent.id);
+      toast.success("Connect cancelled");
+    } catch (err) {
+      frontendLog("agent_node", `Failed to cancel agent connect: ${err}`);
+      toast.error(`Failed to cancel: ${err}`);
+    }
+  }, [agent.id]);
 
   const handleNewShellSession = useCallback(() => {
     const defaultShell = agent.capabilities?.availableShells?.[0];
@@ -864,20 +903,85 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
             </button>
             {isConnected && (
               <div className="connection-list__group-actions">
-                <button
-                  className="connection-list__add-btn"
-                  onClick={() => setCreatingFolder(true)}
-                  title="New Folder"
+                <Tooltip content="New Folder" side="top">
+                  <button
+                    className="connection-list__add-btn"
+                    onClick={() => setCreatingFolder(true)}
+                    aria-label="New Folder"
+                  >
+                    <FolderPlus size={16} />
+                  </button>
+                </Tooltip>
+                <Tooltip content="New Connection" side="top">
+                  <button
+                    className="connection-list__add-btn"
+                    onClick={() => handleNewConnection(null)}
+                    aria-label="New Connection"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </Tooltip>
+                {/* Two distinct teardown intents (G9, #1237). Detach keeps the
+                    remote sessions running; Shutdown stops them. Both go through
+                    the async Button so every action gives pending/error feedback;
+                    Shutdown adds a success toast with the stopped-session count. */}
+                <Tooltip content="Detach transport — keep persistent remote sessions" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Unplug size={14} />}
+                    onClick={handleDisconnect}
+                    aria-label="Disconnect (detach)"
+                    data-testid={`agent-disconnect-${agent.id}`}
+                  />
+                </Tooltip>
+                <Tooltip content="Stop remote sessions and disconnect" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Power size={14} />}
+                    onClick={handleShutdown}
+                    aria-label="Shutdown (stop remote)"
+                    data-testid={`agent-shutdown-${agent.id}`}
+                  />
+                </Tooltip>
+              </div>
+            )}
+            {isConnecting && (
+              // Inline Cancel so a stuck connect is abortable without opening the
+              // context menu (G1, #1235).
+              <div className="connection-list__group-actions">
+                <Tooltip content="Cancel Connect" side="top">
+                  <button
+                    className="connection-list__add-btn"
+                    onClick={() => void handleCancelConnect()}
+                    aria-label="Cancel Connect"
+                    data-testid={`agent-cancel-connect-${agent.id}`}
+                  >
+                    <XCircle size={16} />
+                  </button>
+                </Tooltip>
+              </div>
+            )}
+            {isDisconnected && (
+              // First-class Reconnect after a drop / auto-reconnect exhaustion
+              // (G3, #1236). The native `title` carries the stored last error so
+              // the user learns *why* the agent went down (matching the sidebar
+              // tree's title-based hover help); clicking re-runs the normal
+              // connect path (disconnected → connecting). The async Button gives
+              // pending/success feedback and a toast on failure.
+              <div className="connection-list__group-actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<RefreshCw size={14} />}
+                  onClick={handleConnect}
+                  aria-label="Reconnect"
+                  title={agent.lastError ?? "Reconnect"}
+                  data-testid={`agent-reconnect-${agent.id}`}
                 >
-                  <FolderPlus size={16} />
-                </button>
-                <button
-                  className="connection-list__add-btn"
-                  onClick={() => handleNewConnection(null)}
-                  title="New Connection"
-                >
-                  <Plus size={16} />
-                </button>
+                  Reconnect
+                </Button>
               </div>
             )}
           </div>
@@ -885,7 +989,18 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
 
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
-            {!isConnected && !isReconnecting ? (
+            {isConnecting ? (
+              // A connecting agent is no longer a dead-end: offer Cancel, which
+              // aborts the in-flight handshake (G1, #1235).
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => void handleCancelConnect()}
+                data-testid="context-agent-cancel-connect"
+              >
+                <XCircle size={14} />
+                Cancel Connect
+              </ContextMenu.Item>
+            ) : !isConnected && !isReconnecting ? (
               <>
                 <ContextMenu.Item
                   className="context-menu__item"
@@ -911,8 +1026,16 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   onSelect={handleDisconnect}
                   data-testid="context-agent-disconnect"
                 >
-                  <Square size={14} />
-                  Disconnect
+                  <Unplug size={14} />
+                  Disconnect (detach)
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => void handleShutdown()}
+                  data-testid="context-agent-shutdown"
+                >
+                  <Power size={14} />
+                  Shutdown (stop remote)
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   className="context-menu__item"

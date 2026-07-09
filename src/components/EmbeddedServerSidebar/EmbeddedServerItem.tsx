@@ -1,7 +1,9 @@
+import { useCallback, useState } from "react";
 import { Play, Square, Pencil, Copy, Trash2, ExternalLink, Clipboard } from "lucide-react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { toast, Tooltip } from "@/components/ui";
 import {
   EmbeddedServerConfig,
   ServerState,
@@ -13,11 +15,18 @@ import {
 interface Props {
   config: EmbeddedServerConfig;
   state: ServerState | undefined;
-  onStart: (id: string) => void;
-  onStop: (id: string) => void;
+  onStart: (id: string) => void | Promise<void>;
+  onStop: (id: string) => void | Promise<void>;
   onEdit: (id: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
+}
+
+/** Extract a human-readable message from an unknown rejection value. */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return String(err);
 }
 
 function formatBytes(n: number): string {
@@ -64,6 +73,31 @@ export function EmbeddedServerItem({
   const status = state?.status;
   const active = isActive(status);
   const url = serverUrl(config);
+  const [busy, setBusy] = useState(false);
+
+  const handleStart = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onStart(config.id);
+    } catch (err) {
+      toast.error(`Failed to start ${config.name}`, { description: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, onStart, config.id, config.name]);
+
+  const handleStop = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onStop(config.id);
+    } catch (err) {
+      toast.error(`Failed to stop ${config.name}`, { description: errorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, onStop, config.id, config.name]);
 
   const handleCopyUrl = () => {
     writeClipboard(url).catch(() => {});
@@ -99,63 +133,75 @@ export function EmbeddedServerItem({
             </span>
             <div className="server-item__actions">
               {active ? (
-                <button
-                  className="server-item__action"
-                  title="Stop"
-                  data-testid={`server-stop-${config.id}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onStop(config.id);
-                  }}
-                >
-                  <Square size={12} />
-                </button>
+                <Tooltip content="Stop" side="top">
+                  <button
+                    className="server-item__action"
+                    aria-label="Stop"
+                    data-testid={`server-stop-${config.id}`}
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleStop();
+                    }}
+                  >
+                    <Square size={12} />
+                  </button>
+                </Tooltip>
               ) : (
+                <Tooltip content="Start" side="top">
+                  <button
+                    className="server-item__action"
+                    aria-label="Start"
+                    data-testid={`server-start-${config.id}`}
+                    disabled={busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleStart();
+                    }}
+                  >
+                    <Play size={12} />
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip content="Edit" side="top">
                 <button
                   className="server-item__action"
-                  title="Start"
-                  data-testid={`server-start-${config.id}`}
+                  aria-label="Edit"
+                  data-testid={`server-edit-${config.id}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onStart(config.id);
+                    onEdit(config.id);
                   }}
                 >
-                  <Play size={12} />
+                  <Pencil size={12} />
                 </button>
-              )}
-              <button
-                className="server-item__action"
-                title="Edit"
-                data-testid={`server-edit-${config.id}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(config.id);
-                }}
-              >
-                <Pencil size={12} />
-              </button>
-              <button
-                className="server-item__action"
-                title="Duplicate"
-                data-testid={`server-duplicate-${config.id}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDuplicate(config.id);
-                }}
-              >
-                <Copy size={12} />
-              </button>
-              <button
-                className="server-item__action server-item__action--danger"
-                title="Delete"
-                data-testid={`server-delete-${config.id}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(config.id);
-                }}
-              >
-                <Trash2 size={12} />
-              </button>
+              </Tooltip>
+              <Tooltip content="Duplicate" side="top">
+                <button
+                  className="server-item__action"
+                  aria-label="Duplicate"
+                  data-testid={`server-duplicate-${config.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDuplicate(config.id);
+                  }}
+                >
+                  <Copy size={12} />
+                </button>
+              </Tooltip>
+              <Tooltip content="Delete" side="top">
+                <button
+                  className="server-item__action server-item__action--danger"
+                  aria-label="Delete"
+                  data-testid={`server-delete-${config.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(config.id);
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </Tooltip>
             </div>
           </div>
           <div className="server-item__details">
@@ -175,7 +221,7 @@ export function EmbeddedServerItem({
           {active ? (
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => onStop(config.id)}
+              onSelect={() => void handleStop()}
               data-testid={`ctx-stop-${config.id}`}
             >
               <Square size={14} /> Stop
@@ -183,7 +229,7 @@ export function EmbeddedServerItem({
           ) : (
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => onStart(config.id)}
+              onSelect={() => void handleStart()}
               data-testid={`ctx-start-${config.id}`}
             >
               <Play size={14} /> Start

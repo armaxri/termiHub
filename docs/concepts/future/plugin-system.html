@@ -1,0 +1,2705 @@
+<!doctype html>
+<!--
+  Single-file concept: Plugin System for termiHub.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/backlog/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plugin System (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* ── Mockup-only structural helpers built from theme vars (not app classes). ── */
+      .plugin-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 6px 8px 4px;
+        padding: 4px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .plugin-search .li {
+        width: 13px;
+        height: 13px;
+      }
+      .plugin-tree__sep {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 8px 2px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-disabled);
+      }
+      .plugin-tree__sep::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-secondary);
+      }
+      /* A plugin row is a connection-tree__item; the version is a dim suffix. */
+      .plugin-row__ver {
+        margin-left: auto;
+        color: var(--text-disabled);
+        font-size: 11px;
+        font-family: var(--font-mono);
+      }
+      .plugin-row--disabled {
+        color: var(--text-secondary);
+      }
+      .sidebar__header-actions {
+        display: flex;
+        gap: 2px;
+      }
+      .sidebar__header-btn {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        cursor: pointer;
+      }
+      .sidebar__header-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+      }
+      .sidebar__header-btn .li {
+        width: 15px;
+        height: 15px;
+      }
+      .sidebar__footer {
+        padding: 8px;
+        border-top: 1px solid var(--border-secondary);
+      }
+      .sidebar__footer .btn {
+        width: 100%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .sidebar__footer .li {
+        width: 14px;
+        height: 14px;
+      }
+      /* ── Plugin detail panel (main area) ──────────────────────────────── */
+      .detail {
+        flex: 1 1 auto;
+        overflow: auto;
+        padding: 18px 20px;
+        background: var(--bg-primary);
+      }
+      .detail__head {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .detail__icon {
+        width: 40px;
+        height: 40px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-md);
+        background: var(--bg-tertiary);
+        color: var(--text-accent);
+        flex: 0 0 auto;
+      }
+      .detail__icon .li {
+        width: 22px;
+        height: 22px;
+      }
+      .detail__name {
+        font-size: 15px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .detail__meta {
+        color: var(--text-secondary);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .detail__meta code {
+        font-family: var(--font-mono);
+      }
+      .detail__desc {
+        color: var(--text-primary);
+        font-size: 13px;
+        margin: 14px 0 18px;
+        max-width: 560px;
+      }
+      .detail__section-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 0 0 8px;
+      }
+      .detail__block {
+        margin-bottom: 18px;
+      }
+      .ext-list,
+      .perm-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        max-width: 560px;
+      }
+      .ext-item,
+      .perm-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        background: var(--bg-secondary);
+        font-size: 12.5px;
+      }
+      .ext-item .li {
+        width: 15px;
+        height: 15px;
+        color: var(--text-accent);
+      }
+      .perm-item .li {
+        width: 15px;
+        height: 15px;
+        color: var(--color-warning);
+      }
+      .perm-item__name {
+        font-weight: 600;
+      }
+      .perm-item__desc {
+        color: var(--text-secondary);
+      }
+      .detail__actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 6px;
+        flex-wrap: wrap;
+      }
+      .detail__actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .detail__actions .li {
+        width: 14px;
+        height: 14px;
+      }
+      .btn--danger {
+        color: var(--color-error);
+        border-color: color-mix(in srgb, var(--color-error) 45%, var(--border-primary));
+      }
+      .detail__status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 999px;
+      }
+      .detail__status--active {
+        color: var(--state-connected);
+        background: color-mix(in srgb, var(--state-connected) 16%, transparent);
+      }
+      .detail__status--disabled {
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+      }
+      .detail__status--error {
+        color: var(--color-error);
+        background: color-mix(in srgb, var(--color-error) 16%, transparent);
+      }
+      .detail__error {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 10px 12px;
+        margin: 14px 0 18px;
+        border: 1px solid color-mix(in srgb, var(--color-error) 40%, var(--border-secondary));
+        border-radius: var(--radius-md);
+        background: color-mix(in srgb, var(--color-error) 10%, transparent);
+        color: var(--text-primary);
+        font-size: 12.5px;
+        max-width: 560px;
+      }
+      .detail__error .li {
+        width: 16px;
+        height: 16px;
+        color: var(--color-error);
+        flex: 0 0 auto;
+        margin-top: 1px;
+      }
+      /* ── Install-from-file dialog ─────────────────────────────────────── */
+      .menu--wide {
+        width: 360px;
+      }
+      .install-meta {
+        padding: 12px 14px;
+        font-size: 12.5px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .install-meta__row {
+        display: flex;
+        gap: 8px;
+        margin: 3px 0;
+      }
+      .install-meta__label {
+        color: var(--text-secondary);
+        min-width: 64px;
+      }
+      .install-meta__file {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        color: var(--text-accent);
+        font-size: 12px;
+      }
+      .install-meta__file .li {
+        width: 14px;
+        height: 14px;
+      }
+      .perm-prompt {
+        padding: 10px 14px;
+      }
+      .perm-prompt__title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 0 0 8px;
+      }
+      .perm-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 6px 0;
+        font-size: 12.5px;
+      }
+      .perm-row .li {
+        width: 16px;
+        height: 16px;
+        color: var(--color-warning);
+        flex: 0 0 auto;
+        margin-top: 1px;
+      }
+      .perm-row__name {
+        font-weight: 600;
+      }
+      .perm-row__desc {
+        color: var(--text-secondary);
+      }
+      /* ── Settings shell ───────────────────────────────────────────────── */
+      .settings {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        background: var(--bg-primary);
+      }
+      .settings__nav {
+        width: 180px;
+        flex: 0 0 180px;
+        border-right: 1px solid var(--border-secondary);
+        padding: 10px 0;
+        background: var(--bg-secondary);
+      }
+      .settings__nav-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 16px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        cursor: pointer;
+      }
+      .settings__nav-item .li {
+        width: 15px;
+        height: 15px;
+      }
+      .settings__nav-item--active {
+        color: var(--text-primary);
+        background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+        box-shadow: inset 2px 0 0 var(--accent-color);
+      }
+      .settings__body {
+        flex: 1 1 auto;
+        overflow: auto;
+        padding: 18px 22px;
+      }
+      .settings__group {
+        margin-bottom: 18px;
+      }
+      .settings__group-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 10px;
+      }
+      .settings__group-head .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+      .settings__badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: 6px;
+        padding: 1px 6px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-accent);
+        background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+      }
+      .settings__badge .li {
+        width: 11px;
+        height: 11px;
+        color: var(--text-accent);
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        max-width: 520px;
+        margin: 8px 0;
+      }
+      .field__label {
+        width: 150px;
+        flex: 0 0 150px;
+        color: var(--text-secondary);
+        font-size: 12.5px;
+      }
+      .field__input {
+        flex: 1 1 auto;
+        padding: 5px 8px;
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: 12.5px;
+        font-family: var(--font-mono);
+      }
+      /* ── Selector dropdowns ───────────────────────────────────────────── */
+      .selector-badge {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        color: var(--text-accent);
+      }
+      .selector-badge .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-accent);
+      }
+      .menu__sep {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px 2px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-disabled);
+      }
+      .menu__sep::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-secondary);
+      }
+      .demo-row {
+        display: flex;
+        gap: 28px;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry) — union of both mockups' symbols. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-puzzle" viewBox="0 0 24 24">
+        <path
+          d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"
+        />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <path d="m21 21-4.34-4.34" />
+        <circle cx="11" cy="11" r="8" />
+      </symbol>
+      <symbol id="i-file-up" viewBox="0 0 24 24">
+        <path
+          d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
+        />
+        <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+        <path d="M12 12v6" />
+        <path d="m15 15-3-3-3 3" />
+      </symbol>
+      <symbol id="i-package" viewBox="0 0 24 24">
+        <path
+          d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"
+        />
+        <path d="M12 22V12" />
+        <polyline points="3.29 7 12 12 20.71 7" />
+        <path d="m7.5 4.27 9 5.15" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+      </symbol>
+      <symbol id="i-shield-alert" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="M12 8v4" />
+        <path d="M12 16h.01" />
+      </symbol>
+      <symbol id="i-sliders-horizontal" viewBox="0 0 24 24">
+        <path d="M10 5H3" />
+        <path d="M12 19H3" />
+        <path d="M14 3v4" />
+        <path d="M16 17v4" />
+        <path d="M21 12h-9" />
+        <path d="M21 19h-5" />
+        <path d="M21 5h-7" />
+        <path d="M8 10v4" />
+        <path d="M8 12H3" />
+      </symbol>
+      <symbol id="i-power" viewBox="0 0 24 24">
+        <path d="M12 2v10" />
+        <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+      <symbol id="i-circle-alert" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" x2="12" y1="8" y2="12" />
+        <line x1="12" x2="12.01" y1="16" y2="16" />
+      </symbol>
+      <symbol id="i-network-link" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Plugin System</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Future · post-v1</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/28">#28</a></span>
+          <span><code>docs/concepts/future/plugin-system.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept plugin-system</code> to reconcile
+          it with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          termiHub currently supports a fixed set of terminal backends (local shell, SSH, serial,
+          telnet, Docker, remote agent) and two built-in themes (dark and light). All functionality
+          is compiled into the application binary — there is no mechanism for users or the community
+          to extend termiHub without modifying its source code and rebuilding.
+        </p>
+        <p>
+          A plugin system would allow third-party extensions to add new terminal backends, protocol
+          parsers, themes, and UI components at runtime, without recompiling the core application.
+          This opens termiHub to community-driven specialization: industrial serial protocols, cloud
+          shell integrations, accessibility themes, or custom status bar widgets.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Define a clear <strong>Plugin API</strong> with versioned contracts for each extension
+            point
+          </li>
+          <li>
+            Support <strong>custom terminal backends</strong> via plugins (e.g., a Kubernetes exec
+            backend, a cloud shell backend)
+          </li>
+          <li>
+            Support <strong>custom protocol parsers</strong> that can transform or annotate terminal
+            output (e.g., ANSI art detection, log highlighting)
+          </li>
+          <li>
+            Support <strong>theme extensions</strong> — community-created color themes loaded at
+            runtime
+          </li>
+          <li>
+            Provide a <strong>Plugin Manager UI</strong> for discovering, installing,
+            enabling/disabling, and removing plugins
+          </li>
+          <li>
+            Maintain <strong>sandboxed execution</strong> — plugins should not be able to crash the
+            core application or access resources beyond their declared permissions
+          </li>
+          <li>
+            Keep the <strong>core application lean</strong> — plugins are optional, and termiHub
+            works fully without any plugins installed
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            A full marketplace or plugin store (out of scope for initial concept — local install and
+            sideloading only)
+          </li>
+          <li>
+            Hot-reloading plugins while terminals are active (restart required for backend plugins)
+          </li>
+          <li>
+            Plugins modifying core UI layout (Activity Bar, Sidebar structure) — only designated
+            extension slots
+          </li>
+          <li>Cross-plugin dependencies or plugin-to-plugin communication</li>
+          <li>Mobile platform support for plugins (desktop only: Windows, macOS, Linux)</li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The visual surfaces are specified by the mockups below — they are authoritative for
+          layout. This section describes them.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Plugin Manager</td>
+                <td>
+                  The Plugins Activity Bar view — installed list (enabled / disabled / error states)
+                  and the Detail panel
+                </td>
+              </tr>
+              <tr>
+                <td>Install &amp; Settings</td>
+                <td>
+                  Install-from-file dialog (permission prompt), the Plugins category in Settings,
+                  and plugin-badged selectors
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Plugin Manager View</h3>
+        <p>
+          The Plugin Manager is a new view in the <strong>Activity Bar</strong> (lucide
+          <code>Puzzle</code> icon). When selected it fills the Sidebar like the existing
+          Connections and Files views: a search box, then an <strong>Installed</strong> list. Each
+          plugin is a <code>connection-tree__item</code> row with a <code>state-dot</code> showing
+          its runtime state — green (<code>--connected</code>/enabled), grey (disabled), red
+          (<code>--disconnected</code>/error) — its display name, version, and a plugin-type icon. A
+          header action and a footer <strong>Install from file…</strong> button start an install.
+          See the Plugin Manager mockup, state 1.
+        </p>
+
+        <h3>Plugin Detail Panel</h3>
+        <p>
+          Selecting an installed plugin opens its detail panel in the main area: identity (name,
+          version, author, description), the list of <strong>Extension Points</strong> it provides,
+          its requested <strong>Permissions</strong>, and action buttons — <strong>Enable</strong> /
+          <strong>Disable</strong>, <strong>Uninstall</strong>, and <strong>Settings…</strong> (only
+          when the plugin declares settings). An <strong>error</strong> plugin shows the error
+          message and a <strong>Retry</strong> action in place of Disable. See the Plugin Manager
+          mockup, states 2 and 3.
+        </p>
+
+        <h3>Install from File Dialog</h3>
+        <p>
+          Installing from a local <code>.termihub-plugin</code> package opens a confirmation dialog
+          built on the shared <code>menu</code> overlay: the parsed manifest (name, version, author,
+          type) plus a <strong>Requested Permissions</strong> list where each permission is shown
+          with a <code>shield</code>/<code>shield-alert</code> icon and a plain-language
+          explanation. The footer offers <strong>Cancel</strong> and
+          <strong>Install &amp; Enable</strong>. See the Install &amp; Settings mockup, state 1.
+        </p>
+
+        <h3>Plugin Settings, Connection Types, and Themes</h3>
+        <p>
+          Plugins that declare configuration get a <strong>Plugins</strong> category in the Settings
+          view, grouped by plugin name and rendered with the schema-driven <code>DynamicForm</code>.
+          Plugin-provided terminal backends appear in the connection-type selector under a
+          <strong>Plugins</strong> separator, each tagged with a <code>puzzle</code> badge; theme
+          plugins appear the same way in the theme selector. See the Install &amp; Settings mockup,
+          states 2 and 3.
+        </p>
+
+        <h3>Plugin Types and Extension Points</h3>
+        <p>Each plugin declares one or more extension points in its manifest:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Extension Point</th>
+                <th>Description</th>
+                <th>Runtime</th>
+                <th>Registration</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Terminal Backend</strong></td>
+                <td>New connection type with full terminal I/O</td>
+                <td>Rust (dynamic library)</td>
+                <td>Registers a factory function with TerminalManager</td>
+              </tr>
+              <tr>
+                <td><strong>Protocol Parser</strong></td>
+                <td>Transforms or annotates terminal output streams</td>
+                <td>JavaScript (WebView)</td>
+                <td>Registers as output filter in terminal rendering pipeline</td>
+              </tr>
+              <tr>
+                <td><strong>Theme</strong></td>
+                <td>Custom color theme definition</td>
+                <td>JSON (static data)</td>
+                <td>Registers ThemeDefinition with theme engine</td>
+              </tr>
+              <tr>
+                <td><strong>Status Bar Widget</strong></td>
+                <td>Adds information to the status bar</td>
+                <td>JavaScript (WebView)</td>
+                <td>Registers component in status bar slot</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Plugin Permissions</h3>
+        <p>
+          Plugins declare required permissions in their manifest; the user grants them during
+          installation. Permissions are coarse-grained to keep the model simple:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Permission</th>
+                <th>Grants Access To</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>terminal</code></td>
+                <td>Creating and managing terminal sessions</td>
+              </tr>
+              <tr>
+                <td><code>network</code></td>
+                <td>Making outbound network connections</td>
+              </tr>
+              <tr>
+                <td><code>filesystem</code></td>
+                <td>Reading/writing files (scoped to declared paths)</td>
+              </tr>
+              <tr>
+                <td><code>ui</code></td>
+                <td>Rendering UI components in designated slots</td>
+              </tr>
+              <tr>
+                <td><code>settings</code></td>
+                <td>Storing and reading plugin-specific configuration</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ── Mockup — Plugin Manager ─────────────────────────────────── -->
+        <div class="mockup-section">
+          <h3>Mockup — Plugin Manager (installed list &amp; detail panel)</h3>
+
+          <h4>1 · Plugins view — installed list</h4>
+          <div class="mockup-note">
+            New <strong>Plugins</strong> entry in the Activity Bar
+            <span class="callout">A</span> opens the Plugins sidebar: a search box
+            <span class="callout">B</span> and an <strong>Installed</strong> list
+            <span class="callout">C</span> where each plugin is a
+            <code>connection-tree__item</code> with a <code>state-dot</code> for its state
+            <span class="callout">D</span> — enabled (green), disabled (grey), error (red). The
+            footer has an <strong>Install from file…</strong> button <span class="callout">E</span>.
+          </div>
+          <div class="app">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                  <button class="activity-bar__item activity-bar__item--active" title="Plugins">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Log Viewer">
+                    <svg class="li"><use href="#i-scroll-text" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+
+              <aside class="sidebar">
+                <div class="sidebar__header">
+                  <span class="sidebar__title">Plugins</span>
+                  <div class="sidebar__header-actions">
+                    <button class="sidebar__header-btn" title="Install from file">
+                      <svg class="li"><use href="#i-file-up" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="plugin-search">
+                  <svg class="li"><use href="#i-search" /></svg> Search plugins…
+                </div>
+                <div class="sidebar__content">
+                  <div class="plugin-tree__sep">Installed (3)</div>
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-network-link" /></svg> Kubernetes Exec
+                    <span class="plugin-row__ver">v1.2.0</span>
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-package" /></svg> Dracula
+                    <span class="plugin-row__ver">v2.0.1</span>
+                  </div>
+                  <div class="connection-tree__item plugin-row--disabled">
+                    <span class="state-dot"></span>
+                    <svg class="li"><use href="#i-package" /></svg> Log Colorizer
+                    <span class="plugin-row__ver">v0.3.0</span>
+                  </div>
+                </div>
+                <div class="sidebar__footer">
+                  <button class="btn">
+                    <svg class="li"><use href="#i-file-up" /></svg> Install from file…
+                  </button>
+                </div>
+              </aside>
+
+              <div class="terminal-view">
+                <div class="terminal-view__toolbar">
+                  <div class="tab-group-chip">
+                    <svg class="li"><use href="#i-puzzle" /></svg> Kubernetes Exec
+                  </div>
+                </div>
+                <div class="terminal-view__content">
+                  <!-- Detail panel for the selected (enabled) plugin -->
+                  <div class="detail">
+                    <div class="detail__head">
+                      <div class="detail__icon">
+                        <svg class="li"><use href="#i-network-link" /></svg>
+                      </div>
+                      <div>
+                        <div class="detail__name">
+                          Kubernetes Exec
+                          <span class="detail__status detail__status--active">
+                            <span class="state-dot state-dot--connected"></span> Enabled
+                          </span>
+                        </div>
+                        <div class="detail__meta">
+                          v1.2.0 · by k8s-contrib · <code>terminal backend</code>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p class="detail__desc">
+                      Terminal backend for Kubernetes pod exec sessions. Adds a "Kubernetes Exec"
+                      connection type backed by <code>kubectl exec</code>.
+                    </p>
+
+                    <div class="detail__block">
+                      <div class="detail__section-title">Extension Points</div>
+                      <div class="ext-list">
+                        <div class="ext-item">
+                          <svg class="li"><use href="#i-network-link" /></svg> Terminal Backend —
+                          <code>k8s-exec</code>
+                        </div>
+                        <div class="ext-item">
+                          <svg class="li"><use href="#i-sliders-horizontal" /></svg> Connection
+                          Config UI
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="detail__block">
+                      <div class="detail__section-title">Permissions</div>
+                      <div class="perm-list">
+                        <div class="perm-item">
+                          <svg class="li"><use href="#i-shield" /></svg>
+                          <span class="perm-item__name">Terminal</span>
+                          <span class="perm-item__desc">— create terminal sessions</span>
+                        </div>
+                        <div class="perm-item">
+                          <svg class="li"><use href="#i-shield" /></svg>
+                          <span class="perm-item__name">Network</span>
+                          <span class="perm-item__desc">— make network connections</span>
+                        </div>
+                        <div class="perm-item">
+                          <svg class="li"><use href="#i-shield" /></svg>
+                          <span class="perm-item__name">FileSystem</span>
+                          <span class="perm-item__desc">— read kubeconfig files</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="detail__actions">
+                      <button class="btn">
+                        <svg class="li"><use href="#i-power" /></svg> Disable
+                      </button>
+                      <button class="btn">
+                        <svg class="li"><use href="#i-sliders-horizontal" /></svg> Settings…
+                      </button>
+                      <button class="btn btn--danger">
+                        <svg class="li"><use href="#i-trash-2" /></svg> Uninstall
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">3 plugins · 2 enabled</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Plugins Activity Bar item — lucide
+                <code>Puzzle</code>, active with indicator.
+              </li>
+              <li>
+                <span class="callout">B</span> Search box — filters the installed list by name.
+              </li>
+              <li>
+                <span class="callout">C</span> Installed list — each plugin reuses
+                <code>connection-tree__item</code> with a type icon and version suffix.
+              </li>
+              <li>
+                <span class="callout">D</span> State dot — <code>--connected</code> (enabled), plain
+                grey (disabled), <code>--disconnected</code> (error).
+              </li>
+              <li>
+                <span class="callout">E</span> Footer <strong>Install from file…</strong> button
+                (also in the header) — opens the native package picker.
+              </li>
+            </ul>
+          </div>
+
+          <h4>2 · Detail panel — disabled plugin</h4>
+          <div class="mockup-note">
+            A disabled plugin shows a grey <strong>Disabled</strong> status
+            <span class="callout">F</span> and an <strong>Enable</strong> action
+            <span class="callout">G</span> in place of Disable. Its extension points are listed but
+            not registered until enabled.
+          </div>
+          <div class="app" style="height: 320px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Plugins">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Plugins</span></div>
+                <div class="sidebar__content">
+                  <div class="plugin-tree__sep">Installed (3)</div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-network-link" /></svg> Kubernetes Exec
+                    <span class="plugin-row__ver">v1.2.0</span>
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-package" /></svg> Dracula
+                    <span class="plugin-row__ver">v2.0.1</span>
+                  </div>
+                  <div
+                    class="connection-tree__item connection-tree__item--selected plugin-row--disabled"
+                  >
+                    <span class="state-dot"></span>
+                    <svg class="li"><use href="#i-package" /></svg> Log Colorizer
+                    <span class="plugin-row__ver">v0.3.0</span>
+                  </div>
+                </div>
+              </aside>
+
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="detail">
+                    <div class="detail__head">
+                      <div class="detail__icon">
+                        <svg class="li"><use href="#i-package" /></svg>
+                      </div>
+                      <div>
+                        <div class="detail__name">
+                          Log Colorizer
+                          <span class="detail__status detail__status--disabled">
+                            <span class="state-dot"></span> Disabled
+                          </span>
+                        </div>
+                        <div class="detail__meta">
+                          v0.3.0 · by community · <code>protocol parser</code>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p class="detail__desc">
+                      Colorizes ERROR / WARN lines in terminal output. Runs as an output filter in
+                      the rendering pipeline.
+                    </p>
+
+                    <div class="detail__block">
+                      <div class="detail__section-title">Extension Points</div>
+                      <div class="ext-list">
+                        <div class="ext-item">
+                          <svg class="li"><use href="#i-sliders-horizontal" /></svg> Protocol Parser
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="detail__actions">
+                      <button class="btn btn--primary">
+                        <svg class="li"><use href="#i-power" /></svg> Enable
+                      </button>
+                      <button class="btn btn--danger">
+                        <svg class="li"><use href="#i-trash-2" /></svg> Uninstall
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">Log Colorizer · disabled</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">F</span> Disabled status pill — grey dot, no extension points
+                active.
+              </li>
+              <li>
+                <span class="callout">G</span> <strong>Enable</strong> (primary) replaces Disable;
+                <strong>Settings…</strong> is hidden when no settings are declared.
+              </li>
+            </ul>
+          </div>
+
+          <h4>3 · Detail panel — failed plugin (error)</h4>
+          <div class="mockup-note">
+            A plugin that failed to load shows a red <strong>Error</strong> status
+            <span class="callout">H</span>, the error message in a callout
+            <span class="callout">I</span>, and a <strong>Retry</strong> action
+            <span class="callout">J</span> in place of Enable/Disable.
+          </div>
+          <div class="app" style="height: 320px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Plugins">
+                    <svg class="li"><use href="#i-puzzle" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Plugins</span></div>
+                <div class="sidebar__content">
+                  <div class="plugin-tree__sep">Installed (4)</div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span>
+                    <svg class="li"><use href="#i-network-link" /></svg> Kubernetes Exec
+                    <span class="plugin-row__ver">v1.2.0</span>
+                  </div>
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <span class="state-dot state-dot--disconnected"></span>
+                    <svg class="li"><use href="#i-network-link" /></svg> AWS CloudShell
+                    <span class="plugin-row__ver">v0.9.0</span>
+                  </div>
+                </div>
+              </aside>
+
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="detail">
+                    <div class="detail__head">
+                      <div class="detail__icon" style="color: var(--color-error)">
+                        <svg class="li"><use href="#i-network-link" /></svg>
+                      </div>
+                      <div>
+                        <div class="detail__name">
+                          AWS CloudShell
+                          <span class="detail__status detail__status--error">
+                            <span class="state-dot state-dot--disconnected"></span> Error
+                          </span>
+                        </div>
+                        <div class="detail__meta">
+                          v0.9.0 · by aws-contrib · <code>terminal backend</code>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="detail__error">
+                      <svg class="li"><use href="#i-circle-alert" /></svg>
+                      <div>
+                        Failed to load: dependency <code>aws</code> CLI not found in PATH. Install
+                        the AWS CLI and retry.
+                      </div>
+                    </div>
+
+                    <div class="detail__block">
+                      <div class="detail__section-title">Extension Points</div>
+                      <div class="ext-list">
+                        <div class="ext-item">
+                          <svg class="li"><use href="#i-network-link" /></svg> Terminal Backend —
+                          <code>aws-cloudshell</code>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="detail__actions">
+                      <button class="btn btn--primary">
+                        <svg class="li"><use href="#i-power" /></svg> Retry
+                      </button>
+                      <button class="btn btn--danger">
+                        <svg class="li"><use href="#i-trash-2" /></svg> Uninstall
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">AWS CloudShell · load error</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">H</span> Error status pill — red <code>--disconnected</code>
+                dot.
+              </li>
+              <li>
+                <span class="callout">I</span> Error callout — the load/dependency failure reason
+                from the detail panel.
+              </li>
+              <li>
+                <span class="callout">J</span> <strong>Retry</strong> re-attempts load/init;
+                Uninstall removes the plugin.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ── Mockup — Install & Settings ─────────────────────────────── -->
+        <div class="mockup-section">
+          <h3>Mockup — Install from file, Plugins settings, and badged selectors</h3>
+
+          <h4>1 · Install from file — permission prompt</h4>
+          <div class="mockup-note">
+            After picking a <code>.termihub-plugin</code> file, the parsed manifest
+            <span class="callout">A</span> and a <strong>Requested Permissions</strong> list
+            <span class="callout">B</span> are shown on the shared <code>menu</code> overlay. The
+            footer offers <strong>Cancel</strong> and <strong>Install &amp; Enable</strong>
+            <span class="callout">C</span>.
+          </div>
+          <div class="menu menu--wide">
+            <div class="menu__title">Install Plugin</div>
+            <div class="install-meta">
+              <div class="install-meta__row">
+                <span class="install-meta__label">File</span>
+                <span class="install-meta__file">
+                  <svg class="li"><use href="#i-package" /></svg> k8s-exec-1.2.0.termihub-plugin
+                </span>
+              </div>
+              <div class="install-meta__row">
+                <span class="install-meta__label">Plugin</span><span>Kubernetes Exec</span>
+              </div>
+              <div class="install-meta__row">
+                <span class="install-meta__label">Version</span><span>1.2.0</span>
+              </div>
+              <div class="install-meta__row">
+                <span class="install-meta__label">Author</span><span>k8s-contrib</span>
+              </div>
+              <div class="install-meta__row">
+                <span class="install-meta__label">Type</span><span>Terminal Backend</span>
+              </div>
+            </div>
+            <div class="perm-prompt">
+              <div class="perm-prompt__title">Requested Permissions</div>
+              <div class="perm-row">
+                <svg class="li"><use href="#i-shield-alert" /></svg>
+                <div>
+                  <span class="perm-row__name">Terminal</span>
+                  <span class="perm-row__desc">— create terminal sessions</span>
+                </div>
+              </div>
+              <div class="perm-row">
+                <svg class="li"><use href="#i-shield-alert" /></svg>
+                <div>
+                  <span class="perm-row__name">Network</span>
+                  <span class="perm-row__desc">— make network connections</span>
+                </div>
+              </div>
+              <div class="perm-row">
+                <svg class="li"><use href="#i-shield-alert" /></svg>
+                <div>
+                  <span class="perm-row__name">FileSystem</span>
+                  <span class="perm-row__desc">— read kubeconfig files</span>
+                </div>
+              </div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn">Cancel</button>
+              <button class="btn btn--primary" style="margin-left: auto">
+                Install &amp; Enable
+              </button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Parsed manifest — file name, plugin name, version,
+                author, extension type.
+              </li>
+              <li>
+                <span class="callout">B</span> Requested permissions — each with a
+                <code>ShieldAlert</code> icon (amber) and plain-language explanation.
+              </li>
+              <li>
+                <span class="callout">C</span> Footer — Cancel aborts; Install &amp; Enable
+                extracts, grants permissions, and enables.
+              </li>
+            </ul>
+          </div>
+
+          <h4>2 · Settings — Plugins category</h4>
+          <div class="mockup-note">
+            The Settings view gains a <strong>Plugins</strong> nav entry
+            <span class="callout">D</span>. Each plugin that declares settings becomes a group
+            <span class="callout">E</span> rendered with the schema-driven <code>DynamicForm</code>
+            <span class="callout">F</span>.
+          </div>
+          <div class="app">
+            <div class="app__body">
+              <div class="settings">
+                <div class="settings__nav">
+                  <div class="settings__nav-item">
+                    <svg class="li"><use href="#i-settings" /></svg> General
+                  </div>
+                  <div class="settings__nav-item">
+                    <svg class="li"><use href="#i-network" /></svg> Terminal
+                  </div>
+                  <div class="settings__nav-item">
+                    <svg class="li"><use href="#i-package" /></svg> Appearance
+                  </div>
+                  <div class="settings__nav-item settings__nav-item--active">
+                    <svg class="li"><use href="#i-puzzle" /></svg> Plugins
+                  </div>
+                </div>
+                <div class="settings__body">
+                  <div class="settings__group">
+                    <div class="settings__group-head">
+                      <svg class="li"><use href="#i-puzzle" /></svg> Kubernetes Exec
+                      <span class="settings__badge"
+                        ><svg class="li"><use href="#i-puzzle" /></svg> plugin</span
+                      >
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Default namespace</span>
+                      <input class="field__input" value="default" readonly />
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Kubeconfig path</span>
+                      <input class="field__input" value="~/.kube/config" readonly />
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Container shell</span>
+                      <input class="field__input" value="/bin/bash" readonly />
+                    </div>
+                  </div>
+                  <div class="settings__group">
+                    <div class="settings__group-head">
+                      <svg class="li"><use href="#i-puzzle" /></svg> Log Colorizer
+                      <span class="settings__badge"
+                        ><svg class="li"><use href="#i-puzzle" /></svg> plugin</span
+                      >
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Highlight errors</span>
+                      <span class="menu__row--selected"
+                        ><span class="check" style="color: #fff">✓</span></span
+                      >
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Timestamp format</span>
+                      <input class="field__input" value="ISO 8601" readonly />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">Settings · Plugins</span>
+              </div>
+              <div class="status-bar__section status-bar__section--center"></div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">D</span> Plugins nav entry — lucide <code>Puzzle</code>.
+              </li>
+              <li>
+                <span class="callout">E</span> One group per plugin that declares settings, tagged
+                with a <code>plugin</code> badge.
+              </li>
+              <li>
+                <span class="callout">F</span> Fields rendered from each plugin's settings schema
+                via <code>DynamicForm</code>.
+              </li>
+            </ul>
+          </div>
+
+          <h4>3 · Plugin-badged selectors</h4>
+          <div class="mockup-note">
+            Plugin-provided connection types <span class="callout">G</span> and themes
+            <span class="callout">H</span> appear in their selectors under a
+            <strong>Plugins</strong> separator, each tagged with a <code>Puzzle</code> badge.
+          </div>
+          <div class="demo-row">
+            <div>
+              <div class="state-label">Connection type</div>
+              <div class="menu">
+                <div class="menu__title">New Connection — Type</div>
+                <div class="menu__row"><span class="radio"></span> Local Shell</div>
+                <div class="menu__row menu__row--selected"><span class="radio"></span> SSH</div>
+                <div class="menu__row"><span class="radio"></span> Serial</div>
+                <div class="menu__row"><span class="radio"></span> Telnet</div>
+                <div class="menu__row"><span class="radio"></span> Docker</div>
+                <div class="menu__sep">Plugins</div>
+                <div class="menu__row">
+                  <span class="radio"></span> Kubernetes Exec
+                  <span class="selector-badge"
+                    ><svg class="li"><use href="#i-puzzle" /></svg
+                  ></span>
+                </div>
+                <div class="menu__row">
+                  <span class="radio"></span> AWS CloudShell
+                  <span class="selector-badge"
+                    ><svg class="li"><use href="#i-puzzle" /></svg
+                  ></span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="state-label">Theme</div>
+              <div class="menu">
+                <div class="menu__title">Theme</div>
+                <div class="menu__row menu__row--selected">
+                  <span class="radio"></span> Dark (built-in)
+                </div>
+                <div class="menu__row"><span class="radio"></span> Light (built-in)</div>
+                <div class="menu__row"><span class="radio"></span> System</div>
+                <div class="menu__sep">Plugins</div>
+                <div class="menu__row">
+                  <span class="radio"></span> Dracula
+                  <span class="selector-badge"
+                    ><svg class="li"><use href="#i-puzzle" /></svg
+                  ></span>
+                </div>
+                <div class="menu__row">
+                  <span class="radio"></span> Solarized Dark
+                  <span class="selector-badge"
+                    ><svg class="li"><use href="#i-puzzle" /></svg
+                  ></span>
+                </div>
+                <div class="menu__row">
+                  <span class="radio"></span> Nord
+                  <span class="selector-badge"
+                    ><svg class="li"><use href="#i-puzzle" /></svg
+                  ></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">G</span> Plugin connection types — below built-ins under a
+                <strong>Plugins</strong> separator, <code>Puzzle</code>-badged.
+              </li>
+              <li>
+                <span class="callout">H</span> Plugin themes — same treatment in the theme selector;
+                core themes always take precedence on name clashes.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <p>
+          Detailed flows — lifecycle, discovery/loading, installation, startup, session I/O, and
+          error recovery — are diagrammed in <a href="#behavior">States &amp; Sequences</a>. Key
+          rules:
+        </p>
+
+        <h3>Installing a Plugin</h3>
+        <ol>
+          <li>
+            User selects a <code>.termihub-plugin</code> file (a ZIP archive with a defined
+            structure).
+          </li>
+          <li>Backend validates the archive structure and manifest.</li>
+          <li>Manifest is parsed and displayed (name, version, requested permissions).</li>
+          <li>User reviews permissions and confirms installation.</li>
+          <li>
+            Plugin files are extracted to <code>&lt;app-data&gt;/plugins/&lt;plugin-id&gt;/</code>.
+          </li>
+          <li>
+            Plugin state is set to <strong>installed, disabled</strong> (not active until explicitly
+            enabled).
+          </li>
+          <li>User enables the plugin, which triggers loading and initialization.</li>
+        </ol>
+
+        <h3>Uninstalling a Plugin</h3>
+        <ol>
+          <li>
+            If the plugin has active terminal sessions, the user is warned that sessions will be
+            closed.
+          </li>
+          <li>Plugin is deactivated (shutdown callback called).</li>
+          <li>Extension points are unregistered.</li>
+          <li>Plugin directory is deleted.</li>
+          <li>Plugin configuration is removed from settings.</li>
+        </ol>
+
+        <h3>Error Handling</h3>
+        <ul>
+          <li>
+            <strong>Plugin fails to load</strong>: marked "error" in the Plugin Manager, error
+            message shown in the detail panel; the core app continues normally.
+          </li>
+          <li>
+            <strong>Plugin crashes during session</strong>: that terminal session is marked
+            disconnected, an error event is emitted, other sessions are unaffected.
+          </li>
+          <li>
+            <strong>Incompatible API version</strong>: plugin marked "incompatible", not loaded,
+            user prompted to update.
+          </li>
+          <li>
+            <strong>Missing permissions</strong>: plugin functionality gracefully degraded (e.g., a
+            backend plugin without <code>network</code> cannot open connections).
+          </li>
+        </ul>
+
+        <h3>Edge Cases</h3>
+        <ul>
+          <li>
+            <strong>Two plugins providing the same connection-type name</strong>: the second type is
+            suffixed with the plugin name to disambiguate.
+          </li>
+          <li>
+            <strong>Plugin and core theme with the same name</strong>: core themes always win; the
+            plugin theme is prefixed with the plugin name.
+          </li>
+          <li>
+            <strong>Plugin directory not writable</strong>: a clear error shows the path and the
+            required permissions.
+          </li>
+          <li>
+            <strong>Plugin dependency missing</strong>: the detail panel shows actionable
+            instructions (e.g., "Requires kubectl in PATH").
+          </li>
+          <li>
+            <strong>App update changes the plugin API version</strong>: incompatible plugins are
+            auto-disabled with a notification.
+          </li>
+          <li>
+            <strong>Large plugin file</strong>: installation validates the file size (&lt;50 MB) and
+            shows extraction progress.
+          </li>
+          <li>
+            <strong>Concurrent plugin operations</strong>: install/uninstall operations are
+            serialized to prevent race conditions.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Plugin lifecycle (Install → Activate → Use → Deactivate)</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant UI as Plugin Manager UI
+    participant Store as App Store
+    participant PM as Plugin Manager (Rust)
+    participant FS as File System
+    participant Plugin as Plugin Runtime
+
+    Note over User,Plugin: Installation
+    User->>UI: Click "Install from file..."
+    UI->>PM: install_plugin(file_path)
+    PM->>FS: Validate &amp; extract package
+    PM->>FS: Copy to plugins directory
+    PM->>PM: Validate manifest &amp; permissions
+    PM-->>UI: Plugin metadata
+    UI->>User: Show permission prompt
+
+    Note over User,Plugin: Activation
+    User->>UI: Click "Install &amp; Enable"
+    UI->>PM: enable_plugin(plugin_id)
+    PM->>Plugin: Load and initialize
+    Plugin->>PM: Register extension points
+    PM->>Store: Update available backends/themes
+    Store->>UI: Re-render with new options
+
+    Note over User,Plugin: Usage
+    User->>UI: Create terminal with plugin backend
+    UI->>PM: create_session(plugin_config)
+    PM->>Plugin: Instantiate backend
+    Plugin-->>PM: TerminalBackend instance
+    PM->>PM: Manage session normally
+
+    Note over User,Plugin: Deactivation
+    User->>UI: Click "Disable"
+    UI->>PM: disable_plugin(plugin_id)
+    PM->>PM: Check for active sessions
+    PM->>Plugin: Shutdown
+    PM->>Store: Remove extension points
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Plugin discovery and loading (on application startup, the Plugin Manager scans the
+            plugins directory for installed plugins)</span
+          >
+          <pre class="mermaid">
+flowchart TD
+    A[App starts] --> B[Scan plugins directory]
+    B --> C{Plugins found?}
+    C -->|No| D[Continue with built-in features only]
+    C -->|Yes| E[For each plugin]
+    E --> F[Read manifest.json]
+    F --> G{Manifest valid?}
+    G -->|No| H[Log warning, skip plugin]
+    G -->|Yes| I{Plugin enabled?}
+    I -->|No| J[Register as disabled in store]
+    I -->|Yes| K{API version compatible?}
+    K -->|No| L[Log error, mark incompatible]
+    K -->|Yes| M[Load plugin]
+    M --> N{Load successful?}
+    N -->|No| O[Log error, mark failed]
+    N -->|Yes| P[Initialize &amp; register extensions]
+
+    H --> E
+    J --> E
+    L --> E
+    O --> E
+    P --> E
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style D fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+    style P fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+    style H fill:#2d2d2d,stroke:#f44747,color:#fff
+    style L fill:#2d2d2d,stroke:#f44747,color:#fff
+    style O fill:#2d2d2d,stroke:#f44747,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Plugin lifecycle state machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> NotInstalled
+
+    NotInstalled --> Installing: User selects plugin file
+    Installing --> Installed: Validation &amp; extraction succeed
+    Installing --> NotInstalled: Validation fails
+
+    Installed --> Enabling: User clicks "Enable"
+    Installed --> Uninstalling: User clicks "Uninstall"
+
+    Enabling --> Active: Load &amp; init succeed
+    Enabling --> Error: Load or init fails
+
+    Active --> Disabling: User clicks "Disable"
+    Active --> Error: Runtime crash
+    Active --> Incompatible: App update breaks API
+
+    Disabling --> Installed: Shutdown complete
+
+    Error --> Enabling: User clicks "Retry"
+    Error --> Uninstalling: User clicks "Uninstall"
+
+    Incompatible --> Enabling: Plugin updated
+    Incompatible --> Uninstalling: User clicks "Uninstall"
+
+    Uninstalling --> NotInstalled: Files removed
+
+    state Active {
+        [*] --> Idle
+        Idle --> InUse: Terminal session created
+        InUse --> Idle: All sessions closed
+    }
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Terminal backend plugin session flow</span>
+          <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant UI as Connection Dialog
+    participant API as api.ts
+    participant TM as Terminal Manager
+    participant PR as Plugin Registry
+    participant PB as Plugin Backend
+
+    User->>UI: Select plugin connection type
+    UI->>UI: Render plugin-provided config form
+    User->>UI: Fill config &amp; click Connect
+    UI->>API: createTerminal(pluginConfig)
+    API->>TM: create_session(config)
+    TM->>PR: lookup_backend_factory(plugin_id)
+    PR-->>TM: factory_fn
+    TM->>PB: factory_fn.create(config, output_sender)
+    PB->>PB: Initialize connection
+    PB-->>TM: Box&lt;dyn TerminalBackend&gt;
+
+    loop Terminal I/O
+        User->>API: sendInput(session_id, data)
+        API->>TM: send_input(session_id, data)
+        TM->>PB: write_input(data)
+        PB-->>TM: Output via channel
+        TM-->>UI: terminal-output event
+    end
+
+    User->>API: closeTerminal(session_id)
+    API->>TM: close_session(session_id)
+    TM->>PB: close()
+    PB->>PB: Cleanup resources
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Protocol parser plugin data flow</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant Backend as Terminal Backend
+    participant TM as Terminal Manager
+    participant PP as Protocol Parser Plugin
+    participant Term as xterm.js
+
+    Backend->>TM: Raw output bytes
+    TM-->>Term: terminal-output event
+
+    Note over PP,Term: Parser operates in WebView
+
+    Term->>PP: onData hook (raw text)
+    PP->>PP: Parse &amp; annotate
+    PP-->>Term: Decorated output (ANSI sequences)
+
+    Note over PP,Term: Example: Log colorizer adds<br/>color codes to ERROR/WARN lines
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Theme plugin loading</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant PM as Plugin Manager
+    participant FS as File System
+    participant TE as Theme Engine
+    participant Doc as Document Root
+
+    PM->>FS: Read theme.json from plugin dir
+    FS-->>PM: ThemeDefinition JSON
+    PM->>PM: Validate against ThemeColors schema
+    PM->>TE: registerTheme(pluginId, definition)
+    TE->>TE: Add to available themes
+
+    Note over TE,Doc: When user selects plugin theme
+
+    TE->>Doc: Apply CSS custom properties
+    TE->>TE: Notify theme change listeners
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Plugin installation sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant UI as Plugin Manager UI
+    participant API as api.ts
+    participant PM as Plugin Manager (Rust)
+    participant FS as File System
+
+    User->>UI: Click "Install from file..."
+    UI->>UI: Open native file picker
+    User->>UI: Select .termihub-plugin file
+    UI->>API: validate_plugin(file_path)
+    API->>PM: validate_plugin(file_path)
+
+    PM->>FS: Open ZIP archive
+    PM->>PM: Read manifest.json from archive
+    PM->>PM: Validate manifest schema
+    PM->>PM: Check API version compatibility
+
+    alt Validation fails
+        PM-->>UI: Error (reason)
+        UI->>User: Show error message
+    else Validation succeeds
+        PM-->>UI: PluginManifest
+        UI->>User: Show permissions prompt
+        User->>UI: Confirm install
+
+        UI->>API: install_plugin(file_path)
+        API->>PM: install_plugin(file_path)
+        PM->>FS: Create plugins/&lt;plugin-id&gt;/
+        PM->>FS: Extract archive contents
+        PM->>FS: Write plugin state (disabled)
+        PM-->>UI: InstallResult (success)
+        UI->>User: Plugin installed (disabled)
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Plugin Manager startup sequence</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant App as Application
+    participant PM as Plugin Manager
+    participant FS as File System
+    participant Store as App Store
+    participant TE as Theme Engine
+    participant TM as Terminal Manager
+
+    App->>PM: initialize()
+    PM->>FS: Scan plugins directory
+
+    loop For each plugin directory
+        PM->>FS: Read manifest.json
+        PM->>PM: Validate manifest
+
+        alt Plugin enabled in settings
+            PM->>PM: Check API compatibility
+
+            alt Compatible
+                PM->>PM: Load plugin
+
+                alt Terminal Backend plugin
+                    PM->>TM: register_backend_factory(id, factory)
+                end
+
+                alt Theme plugin
+                    PM->>TE: registerTheme(id, definition)
+                end
+
+                PM->>Store: Add to active plugins
+            else Incompatible
+                PM->>Store: Add as incompatible
+            end
+        else Plugin disabled
+            PM->>Store: Add as disabled
+        end
+    end
+
+    PM-->>App: Initialization complete
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Error recovery state machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Healthy: Plugin loaded successfully
+
+    Healthy --> SessionError: Backend operation fails
+    SessionError --> Healthy: Error handled gracefully
+    SessionError --> PluginError: Repeated failures
+
+    Healthy --> PluginError: Plugin crashes
+    PluginError --> Recovering: Auto-restart attempt
+    Recovering --> Healthy: Restart succeeds
+    Recovering --> Disabled: Max retries exceeded (3)
+
+    Disabled --> Healthy: User manually re-enables
+
+    note right of SessionError
+        Individual session fails
+        Other sessions unaffected
+    end note
+
+    note right of PluginError
+        Plugin process/library error
+        All plugin sessions affected
+    end note
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Security considerations — install/permission gate</span>
+          <pre class="mermaid">
+flowchart TD
+    A[Plugin Package] --> B{Signature valid?}
+    B -->|Yes| C[Extract to sandbox]
+    B -->|No / Unsigned| D[Warn user: untrusted source]
+    D --> E{User accepts risk?}
+    E -->|No| F[Cancel installation]
+    E -->|Yes| C
+
+    C --> G{Permissions declared?}
+    G -->|Yes| H[Show permission prompt]
+    G -->|No| I[Install with no permissions]
+
+    H --> J{User grants permissions?}
+    J -->|Yes| K[Store granted permissions]
+    J -->|No| F
+
+    K --> L[Plugin installed]
+    I --> L
+
+    style F fill:#2d2d2d,stroke:#f44747,color:#fff
+    style L fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Architecture overview</span>
+          <pre class="mermaid">
+flowchart TD
+    subgraph Frontend [React Frontend - WebView]
+        PMV[Plugin Manager View]
+        PSD[Plugin Settings Dialog]
+        PID[Plugin Install Dialog]
+        TE[Theme Engine]
+        PP[Protocol Parsers]
+        SBW[Status Bar Widgets]
+        CS[Connection Selector]
+    end
+
+    subgraph IPC [Tauri IPC Bridge]
+        CMD[Plugin Commands]
+        EVT[Plugin Events]
+    end
+
+    subgraph Backend [Rust Backend]
+        PM[Plugin Manager]
+        PR[Plugin Registry]
+        TM[Terminal Manager]
+        FS[File System]
+    end
+
+    subgraph Plugins [Loaded Plugins]
+        RP[Rust Backend Plugins]
+        JP[JS Frontend Plugins]
+        TP[Theme JSON Files]
+    end
+
+    PMV <-->|invoke| CMD
+    PSD <-->|invoke| CMD
+    PID <-->|invoke| CMD
+    CMD <--> PM
+    EVT --> PMV
+
+    PM --> PR
+    PM --> FS
+    PR --> TM
+    TM --> RP
+
+    TE --> TP
+    PP --> JP
+    SBW --> JP
+    CS -->|plugin types| PR
+
+    style Frontend fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Backend fill:#2d1e3a,stroke:#b07acc,color:#fff
+    style Plugins fill:#3a2e1e,stroke:#cca700,color:#fff
+          </pre>
+        </div>
+
+        <h3>Session Filtering &amp; State Rules</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Plugin state</th>
+                <th>Behavior in the Plugin Manager</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>active</code></td>
+                <td>Extension points registered; backend/theme available; green state dot</td>
+              </tr>
+              <tr>
+                <td><code>disabled</code></td>
+                <td>Installed but not loaded; no extension points; grey state dot</td>
+              </tr>
+              <tr>
+                <td><code>error</code></td>
+                <td>Load/init failed; error message in detail panel; red state dot + Retry</td>
+              </tr>
+              <tr>
+                <td><code>incompatible</code></td>
+                <td>API version mismatch; auto-disabled; red state dot; prompt to update</td>
+              </tr>
+              <tr>
+                <td><code>installed</code></td>
+                <td>Freshly extracted, awaiting first enable; grey state dot</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Edge Cases</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Two plugins provide the same connection type</td>
+                <td>Second type is suffixed with the plugin name to disambiguate</td>
+              </tr>
+              <tr>
+                <td>Plugin and core theme share a name</td>
+                <td>Core theme wins; plugin theme is prefixed with the plugin name</td>
+              </tr>
+              <tr>
+                <td>Plugin directory not writable</td>
+                <td>Clear error with the path and required permissions</td>
+              </tr>
+              <tr>
+                <td>Plugin dependency missing (e.g. <code>kubectl</code>)</td>
+                <td>Actionable instructions shown in the detail panel</td>
+              </tr>
+              <tr>
+                <td>App update changes the plugin API version</td>
+                <td>Incompatible plugins auto-disabled with a notification</td>
+              </tr>
+              <tr>
+                <td>Plugin file larger than 50 MB</td>
+                <td>Installation rejected; size limit enforced before extraction</td>
+              </tr>
+              <tr>
+                <td>Concurrent install/uninstall</td>
+                <td>Operations serialized to prevent race conditions</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the current project architecture at concept-creation time; the codebase may
+          evolve before implementation. The architecture and data-flow diagrams live in
+          <a href="#behavior">States &amp; Sequences</a>.
+        </p>
+
+        <h3>1. Plugin Package Format</h3>
+        <p>
+          Plugins are distributed as <code>.termihub-plugin</code> files — ZIP archives with a
+          defined structure:
+        </p>
+        <pre><code>my-plugin.termihub-plugin (ZIP)
+├── manifest.json           # Plugin metadata and declarations
+├── backend/                # Rust dynamic library (optional)
+│   ├── my_plugin.dll       # Windows
+│   ├── libmy_plugin.so     # Linux
+│   └── libmy_plugin.dylib  # macOS
+├── frontend/               # JavaScript/CSS assets (optional)
+│   ├── index.js            # Plugin frontend entry point
+│   └── styles.css          # Plugin styles
+├── themes/                 # Theme definitions (optional)
+│   └── dracula.json        # ThemeDefinition JSON
+└── README.md               # Plugin documentation</code></pre>
+
+        <h3>2. Plugin Manifest</h3>
+        <p>
+          The <code>manifest.json</code> defines the plugin's identity, capabilities, and
+          requirements:
+        </p>
+        <pre><code>{
+  "id": "k8s-exec",
+  "name": "Kubernetes Exec",
+  "version": "1.2.0",
+  "author": "k8s-contrib",
+  "description": "Terminal backend for Kubernetes pod exec sessions",
+  "license": "MIT",
+  "apiVersion": "1.0",
+  "platforms": ["windows", "linux", "macos"],
+  "permissions": ["terminal", "network", "filesystem"],
+  "extensions": {
+    "terminalBackend": {
+      "connectionType": "k8s-exec",
+      "displayName": "Kubernetes Exec",
+      "configSchema": {
+        "type": "object",
+        "properties": {
+          "namespace": { "type": "string", "default": "default" },
+          "pod": { "type": "string" },
+          "container": { "type": "string" },
+          "shell": { "type": "string", "default": "/bin/sh" },
+          "kubeconfig": { "type": "string", "default": "~/.kube/config" }
+        },
+        "required": ["pod"]
+      }
+    }
+  },
+  "settings": {
+    "defaultNamespace": {
+      "type": "string",
+      "default": "default",
+      "description": "Default Kubernetes namespace"
+    },
+    "kubeconfigPath": {
+      "type": "string",
+      "default": "~/.kube/config",
+      "description": "Path to kubeconfig file"
+    }
+  }
+}</code></pre>
+
+        <h3>3. Rust Plugin Host — Dynamic Library Loading</h3>
+        <p>
+          Terminal backend plugins are Rust dynamic libraries that implement a C-compatible plugin
+          interface. This is necessary because terminal backends require direct system access (PTY,
+          network sockets, serial ports) that cannot be achieved through JavaScript alone.
+        </p>
+        <pre><code>// Plugin API crate: termihub-plugin-api (published separately)
+
+/// Plugin metadata returned during initialization.
+pub struct PluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub api_version: u32,
+}
+
+/// Configuration for a plugin-provided terminal session.
+/// The config_json field contains the JSON configuration
+/// matching the plugin's declared configSchema.
+pub struct PluginSessionConfig {
+    pub config_json: String,
+}
+
+/// Output sender for plugin backends to write terminal data.
+pub struct PluginOutputSender {
+    sender: std::sync::mpsc::SyncSender&lt;Vec&lt;u8&gt;&gt;,
+}
+
+impl PluginOutputSender {
+    pub fn send(&amp;self, data: &amp;[u8]) -> Result&lt;(), PluginError&gt; {
+        self.sender
+            .send(data.to_vec())
+            .map_err(|_| PluginError::ChannelClosed)
+    }
+}
+
+/// The trait that plugin backends must implement.
+pub trait PluginTerminalBackend: Send {
+    fn write_input(&amp;self, data: &amp;[u8]) -> Result&lt;(), PluginError&gt;;
+    fn resize(&amp;self, cols: u16, rows: u16) -> Result&lt;(), PluginError&gt;;
+    fn close(&amp;self) -> Result&lt;(), PluginError&gt;;
+    fn is_alive(&amp;self) -> bool;
+}
+
+/// Functions exported by the plugin dynamic library.
+/// These are resolved via libloading at runtime.
+extern "C" {
+    fn plugin_init() -> *mut PluginInfo;
+    fn plugin_create_backend(
+        config: *const PluginSessionConfig,
+        output: *mut PluginOutputSender,
+    ) -> *mut dyn PluginTerminalBackend;
+    fn plugin_shutdown();
+}</code></pre>
+
+        <h3>4. Plugin Registry in Terminal Manager</h3>
+        <p>
+          The <code>TerminalManager</code> needs a plugin registry to support dynamic backend types
+          alongside built-in ones:
+        </p>
+        <pre><code>use libloading::Library;
+
+/// A loaded plugin with its dynamic library handle and factory function.
+struct LoadedPlugin {
+    _library: Library,  // Prevent unloading while in use
+    info: PluginInfo,
+    create_backend: unsafe extern "C" fn(
+        *const PluginSessionConfig,
+        *mut PluginOutputSender,
+    ) -> *mut dyn PluginTerminalBackend,
+    shutdown: unsafe extern "C" fn(),
+}
+
+/// Registry of available backend plugins.
+struct PluginRegistry {
+    plugins: HashMap&lt;String, LoadedPlugin&gt;,
+}
+
+impl PluginRegistry {
+    fn register(&amp;mut self, plugin_path: &amp;Path) -> Result&lt;String&gt; {
+        let library = unsafe { Library::new(plugin_path) }
+            .context("Failed to load plugin library")?;
+
+        let init: unsafe extern "C" fn() -> *mut PluginInfo =
+            unsafe { *library.get(b"plugin_init")? };
+
+        let info = unsafe { Box::from_raw(init()) };
+
+        // Validate API version compatibility
+        if info.api_version != CURRENT_API_VERSION {
+            return Err(anyhow!("Incompatible API version"));
+        }
+
+        let create_backend = unsafe {
+            *library.get(b"plugin_create_backend")?
+        };
+        let shutdown = unsafe {
+            *library.get(b"plugin_shutdown")?
+        };
+
+        let plugin_id = info.id.clone();
+        self.plugins.insert(plugin_id.clone(), LoadedPlugin {
+            _library: library,
+            info: *info,
+            create_backend,
+            shutdown,
+        });
+
+        Ok(plugin_id)
+    }
+
+    fn create_backend(
+        &amp;self,
+        plugin_id: &amp;str,
+        config: &amp;str,
+        output_sender: SyncSender&lt;Vec&lt;u8&gt;&gt;,
+    ) -> Result&lt;Box&lt;dyn TerminalBackend&gt;&gt; {
+        let plugin = self.plugins.get(plugin_id)
+            .context("Plugin not found")?;
+
+        let session_config = PluginSessionConfig {
+            config_json: config.to_string(),
+        };
+        let mut plugin_output = PluginOutputSender {
+            sender: output_sender,
+        };
+
+        let backend = unsafe {
+            Box::from_raw((plugin.create_backend)(
+                &amp;session_config,
+                &amp;mut plugin_output,
+            ))
+        };
+
+        Ok(Box::new(PluginBackendWrapper(backend)))
+    }
+}</code></pre>
+
+        <h3>5. Extending ConnectionConfig for Plugins</h3>
+        <p>
+          The <code>ConnectionConfig</code> enum currently has a fixed set of variants. To support
+          plugin backends, add a generic plugin variant:
+        </p>
+        <pre><code>#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConnectionConfig {
+    // ... existing variants ...
+
+    /// Plugin-provided terminal backend.
+    #[serde(rename = "plugin")]
+    Plugin(PluginConnectionConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginConnectionConfig {
+    /// ID of the plugin providing this backend.
+    pub plugin_id: String,
+    /// Plugin-specific configuration as JSON.
+    pub config: serde_json::Value,
+}</code></pre>
+        <p>
+          The <code>create_session</code> match in <code>TerminalManager</code> gains a new arm:
+        </p>
+        <pre><code>ConnectionConfig::Plugin(cfg) => {
+    self.plugin_registry
+        .create_backend(&amp;cfg.plugin_id, &amp;cfg.config.to_string(), sender)
+        .context("Failed to create plugin backend")?
+}</code></pre>
+
+        <h3>6. Frontend Plugin Types</h3>
+        <p>New TypeScript types for the plugin system:</p>
+        <pre><code>// src/types/plugin.ts
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  license: string;
+  apiVersion: string;
+  platforms: ("windows" | "linux" | "macos")[];
+  permissions: PluginPermission[];
+  extensions: PluginExtensions;
+  settings?: Record&lt;string, PluginSettingSchema&gt;;
+}
+
+export type PluginPermission = "terminal" | "network" | "filesystem" | "ui" | "settings";
+
+export interface PluginExtensions {
+  terminalBackend?: TerminalBackendExtension;
+  protocolParser?: ProtocolParserExtension;
+  theme?: ThemeExtension;
+  statusBarWidget?: StatusBarWidgetExtension;
+}
+
+export interface TerminalBackendExtension {
+  connectionType: string;
+  displayName: string;
+  configSchema: JsonSchema;
+}
+
+export interface ProtocolParserExtension {
+  name: string;
+  description: string;
+  entryPoint: string; // Path to JS file within plugin
+}
+
+export interface ThemeExtension {
+  themes: { id: string; name: string; file: string }[];
+}
+
+export interface StatusBarWidgetExtension {
+  entryPoint: string;
+  position: "left" | "right";
+}
+
+export type PluginState = "installed" | "active" | "disabled" | "error" | "incompatible";
+
+export interface InstalledPlugin {
+  manifest: PluginManifest;
+  state: PluginState;
+  errorMessage?: string;
+  installedAt: string;
+}
+
+export interface PluginSettingSchema {
+  type: "string" | "number" | "boolean";
+  default: unknown;
+  description: string;
+  enum?: string[];
+}</code></pre>
+
+        <h3>7. Plugin Manager Tauri Commands</h3>
+        <p>New Tauri commands for plugin management:</p>
+        <pre><code>// src-tauri/src/commands/plugin.rs
+
+#[tauri::command]
+pub async fn list_plugins(
+    manager: State&lt;'_, PluginManager&gt;,
+) -> Result&lt;Vec&lt;InstalledPlugin&gt;, String&gt;
+
+#[tauri::command]
+pub async fn validate_plugin(
+    file_path: String,
+) -> Result&lt;PluginManifest, String&gt;
+
+#[tauri::command]
+pub async fn install_plugin(
+    file_path: String,
+    manager: State&lt;'_, PluginManager&gt;,
+) -> Result&lt;InstalledPlugin, String&gt;
+
+#[tauri::command]
+pub async fn uninstall_plugin(
+    plugin_id: String,
+    manager: State&lt;'_, PluginManager&gt;,
+    terminal_manager: State&lt;'_, TerminalManager&gt;,
+) -> Result&lt;(), String&gt;
+
+#[tauri::command]
+pub async fn enable_plugin(
+    plugin_id: String,
+    manager: State&lt;'_, PluginManager&gt;,
+) -> Result&lt;(), String&gt;
+
+#[tauri::command]
+pub async fn disable_plugin(
+    plugin_id: String,
+    manager: State&lt;'_, PluginManager&gt;,
+    terminal_manager: State&lt;'_, TerminalManager&gt;,
+) -> Result&lt;(), String&gt;
+
+#[tauri::command]
+pub async fn get_plugin_settings(
+    plugin_id: String,
+    manager: State&lt;'_, PluginManager&gt;,
+) -> Result&lt;serde_json::Value, String&gt;
+
+#[tauri::command]
+pub async fn update_plugin_settings(
+    plugin_id: String,
+    settings: serde_json::Value,
+    manager: State&lt;'_, PluginManager&gt;,
+) -> Result&lt;(), String&gt;</code></pre>
+
+        <h3>8. Frontend Protocol Parser Plugins</h3>
+        <p>
+          Protocol parser plugins run in the WebView as JavaScript. They hook into the terminal
+          output rendering pipeline via a registration API exposed on <code>window</code>:
+        </p>
+        <pre><code>// Plugin API exposed to frontend plugins
+interface TermiHubPluginAPI {
+  registerProtocolParser(parser: {
+    id: string;
+    name: string;
+    /**
+     * Called for each chunk of terminal output.
+     * Returns transformed output or null to pass through unchanged.
+     */
+    transform(data: string, sessionId: string): string | null;
+    /**
+     * Optional: called when a session starts.
+     */
+    onSessionStart?(sessionId: string): void;
+    /**
+     * Optional: called when a session ends.
+     */
+    onSessionEnd?(sessionId: string): void;
+  }): void;
+
+  registerStatusBarWidget(widget: {
+    id: string;
+    position: "left" | "right";
+    render(): HTMLElement;
+    dispose(): void;
+  }): void;
+}
+
+// Exposed on window for plugins to access
+declare global {
+  interface Window {
+    termihub: TermiHubPluginAPI;
+  }
+}</code></pre>
+        <p>
+          Frontend plugins are loaded by dynamically injecting a <code>&lt;script&gt;</code> tag
+          with the plugin's <code>index.js</code> entry point. Each plugin's script runs in the same
+          WebView context but is expected to only interact through the registered API.
+        </p>
+
+        <h3>9. Theme Plugin Loading</h3>
+        <p>
+          Theme plugins are the simplest extension type — pure JSON data matching the existing
+          <code>ThemeDefinition</code> structure:
+        </p>
+        <pre><code>// Theme plugin loading in theme engine
+async function loadPluginThemes(
+  pluginId: string,
+  themeFiles: { id: string; name: string; file: string }[]
+): Promise&lt;void&gt; {
+  for (const entry of themeFiles) {
+    const themeJson = await invoke&lt;string&gt;("read_plugin_file", {
+      pluginId,
+      filePath: `themes/${entry.file}`,
+    });
+    const definition: ThemeDefinition = JSON.parse(themeJson);
+
+    // Validate all required color tokens are present
+    validateThemeColors(definition.colors);
+
+    registerTheme(`plugin:${pluginId}:${entry.id}`, {
+      ...definition,
+      id: `plugin:${pluginId}:${entry.id}`,
+      name: `${entry.name}`,
+    });
+  }
+}</code></pre>
+
+        <h3>10. Store Extensions</h3>
+        <p>The Zustand store needs a new section for plugin state:</p>
+        <pre><code>// New store section in appStore.ts
+plugins: InstalledPlugin[];
+pluginBackendTypes: { pluginId: string; connectionType: string; displayName: string }[];
+
+// Actions
+loadPlugins: () => Promise&lt;void&gt;;
+installPlugin: (filePath: string) => Promise&lt;void&gt;;
+uninstallPlugin: (pluginId: string) => Promise&lt;void&gt;;
+enablePlugin: (pluginId: string) => Promise&lt;void&gt;;
+disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
+
+        <h3>11. New Components</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Location</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>PluginManagerView</code></td>
+                <td><code>src/components/Plugins/PluginManagerView.tsx</code></td>
+                <td>Sidebar view listing installed plugins</td>
+              </tr>
+              <tr>
+                <td><code>PluginDetailPanel</code></td>
+                <td><code>src/components/Plugins/PluginDetailPanel.tsx</code></td>
+                <td>Expanded detail view for selected plugin</td>
+              </tr>
+              <tr>
+                <td><code>PluginInstallDialog</code></td>
+                <td><code>src/components/Plugins/PluginInstallDialog.tsx</code></td>
+                <td>Permission review and install confirmation dialog</td>
+              </tr>
+              <tr>
+                <td><code>PluginSettingsSection</code></td>
+                <td><code>src/components/Settings/PluginSettingsSection.tsx</code></td>
+                <td>Settings UI for plugin-specific configuration</td>
+              </tr>
+              <tr>
+                <td><code>PluginConnectionConfig</code></td>
+                <td><code>src/components/Settings/PluginConnectionConfig.tsx</code></td>
+                <td>Dynamic form renderer for plugin connection configs</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>12. File System Layout</h3>
+        <p>Plugins are stored in the application data directory:</p>
+        <pre><code>&lt;app-data&gt;/
+├── plugins/
+│   ├── k8s-exec/
+│   │   ├── manifest.json
+│   │   ├── backend/
+│   │   │   └── libk8s_exec.so
+│   │   └── README.md
+│   ├── dracula-theme/
+│   │   ├── manifest.json
+│   │   └── themes/
+│   │       └── dracula.json
+│   └── log-colorizer/
+│       ├── manifest.json
+│       └── frontend/
+│           ├── index.js
+│           └── styles.css
+├── plugin-state.json        # Enabled/disabled state per plugin
+└── plugin-settings.json     # Per-plugin configuration values</code></pre>
+
+        <h3>13. Security Considerations</h3>
+        <p>
+          The full installation/permission gate flow is diagrammed in
+          <a href="#behavior">States &amp; Sequences</a>.
+        </p>
+        <ul>
+          <li>
+            <strong>Dynamic library safety</strong>: Rust plugin backends run in the same process as
+            the host. A malicious or buggy plugin can crash the host. Mitigations: code signing
+            validation, permission prompts, and clear warnings for unsigned plugins.
+          </li>
+          <li>
+            <strong>JavaScript plugin isolation</strong>: Frontend plugins share the WebView
+            context. They can access the DOM but should only interact through the registered API. A
+            future improvement could use Web Workers or iframes for stronger isolation.
+          </li>
+          <li>
+            <strong>File system access</strong>: Plugins requesting <code>filesystem</code>
+            permission must declare which paths they need. The Plugin Manager enforces path
+            restrictions.
+          </li>
+          <li>
+            <strong>No network by default</strong>: Plugins must explicitly request the
+            <code>network</code> permission. The host can deny network access even if requested.
+          </li>
+        </ul>
+
+        <h3>14. Migration Path</h3>
+        <ol>
+          <li>
+            <strong>First PR — Plugin infrastructure</strong>: Add <code>PluginManager</code> struct
+            in Rust, plugin directory scanning, manifest parsing, and Tauri commands. No actual
+            plugin loading yet — just the management layer.
+          </li>
+          <li>
+            <strong>Second PR — Theme plugins</strong>: Implement theme plugin loading (JSON-only,
+            no dynamic libraries). Add theme registration to the theme engine. Add Plugin Manager
+            sidebar view.
+          </li>
+          <li>
+            <strong>Third PR — Plugin Manager UI</strong>: Complete Plugin Manager view with install
+            dialog, detail panel, enable/disable, uninstall. Plugin settings section in Settings.
+          </li>
+          <li>
+            <strong>Fourth PR — Backend plugins</strong>: Implement dynamic library loading via
+            <code>libloading</code>. Add <code>PluginConnectionConfig</code> variant. Wire plugin
+            backends into <code>TerminalManager</code>.
+          </li>
+          <li>
+            <strong>Fifth PR — Frontend plugins</strong>: Implement JavaScript plugin loading for
+            protocol parsers and status bar widgets. Add <code>window.termihub</code> API.
+          </li>
+          <li>
+            <strong>Sixth PR — Plugin connection config UI</strong>: Dynamic form rendering from
+            JSON Schema for plugin-provided connection types.
+          </li>
+          <li>
+            <strong>Seventh PR — Security and polish</strong>: Code signing validation, permission
+            enforcement, error recovery, documentation.
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          Not started — this is a <code>future/</code> concept, migrated to the single-file form.
+          Once implementation begins, run <code>/sync-concept plugin-system</code> after each change
+          to keep the <a href="#sync">Sync Ledger</a> current.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept plugin-system</code>. Records the last commit at which
+            the concept and code were reconciled, plus open divergences. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (concept not yet implemented) ·
+          <strong>Status:</strong> diverged (entirely missing — future feature)
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Entire feature (per concept)</td>
+                <td>Not implemented — future</td>
+                <td>Missing</td>
+                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

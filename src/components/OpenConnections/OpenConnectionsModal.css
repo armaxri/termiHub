@@ -1,79 +1,17 @@
-.open-connections__overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px) saturate(120%);
-  -webkit-backdrop-filter: blur(8px) saturate(120%);
-  z-index: 1000;
-}
+/*
+ * Content styles for the Open Connections panel. The overlay shell (backdrop,
+ * container, header, title, close button) now comes from the shared Modal
+ * primitive; Kill / Kill All actions use the shared Button primitive. Only the
+ * section/row/badge layout specific to this panel lives here.
+ */
 
-.open-connections__overlay[data-state="open"] {
-  animation: dialog-overlay-show 200ms ease;
-}
-
-.open-connections__content {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 1001;
-  width: 580px;
-  max-width: 90vw;
-  max-height: 80vh;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-overlay);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.open-connections__content[data-state="open"] {
-  animation: dialog-content-show 280ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.open-connections__header {
-  display: flex;
+.open-connections__title-row {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-md) var(--spacing-lg);
-  border-bottom: 1px solid var(--border-primary);
-  flex-shrink: 0;
-}
-
-.open-connections__title {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.open-connections__close {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: var(--spacing-xs);
-  border-radius: var(--radius-sm);
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.open-connections__close:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  gap: var(--spacing-sm);
 }
 
 .open-connections__body {
-  overflow-y: auto;
-  flex: 1;
-  padding: var(--spacing-md) var(--spacing-lg);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
@@ -111,26 +49,6 @@
   padding: 1px 7px;
 }
 
-.oc-section__kill-all {
-  font-size: var(--font-size-xs);
-  padding: 2px var(--spacing-sm);
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    border-color var(--transition-fast);
-}
-
-.oc-section__kill-all:hover {
-  background: var(--color-error-bg, rgba(255, 80, 80, 0.12));
-  border-color: var(--color-error, #e05252);
-  color: var(--color-error, #e05252);
-}
-
 /* Row */
 .oc-row {
   display: flex;
@@ -161,6 +79,24 @@
   white-space: nowrap;
 }
 
+.oc-row__title--muted {
+  color: var(--text-muted);
+}
+
+.oc-row__detail {
+  margin-left: var(--spacing-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Per-row inline control cluster (e.g. monitoring Pause/Interval/Retry, issue 1233). */
+.oc-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
 .oc-row__badge {
   font-size: 10px;
   padding: 1px 6px;
@@ -169,43 +105,78 @@
   flex-shrink: 0;
 }
 
-.oc-row__badge--alive {
-  background: rgba(72, 186, 120, 0.18);
-  color: #48ba78;
-}
-
-.oc-row__badge--dead {
-  background: rgba(224, 82, 82, 0.18);
-  color: #e05252;
-}
-
-.oc-row__badge--connected {
-  background: rgba(72, 186, 120, 0.18);
-  color: #48ba78;
-}
-
-.oc-row__badge--connecting {
-  background: rgba(255, 170, 50, 0.18);
-  color: #ffaa32;
-}
-
-.oc-row__kill {
-  font-size: var(--font-size-xs);
-  padding: 2px var(--spacing-sm);
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+/* Trailing action cluster for rows that expose more than one intent
+   (e.g. an agent's Disconnect vs Shutdown). */
+.oc-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
   flex-shrink: 0;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    border-color var(--transition-fast);
 }
 
-.oc-row__kill:hover {
-  background: var(--color-error-bg, rgba(255, 80, 80, 0.12));
-  border-color: var(--color-error, #e05252);
-  color: var(--color-error, #e05252);
+.oc-row__badge--alive,
+.oc-row__badge--connected,
+.oc-row__badge--up {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+
+.oc-row__badge--dead,
+.oc-row__badge--down,
+.oc-row__badge--error {
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  color: var(--color-error);
+}
+
+.oc-row__badge--connecting,
+.oc-row__badge--reconnecting,
+.oc-row__badge--paused,
+.oc-row__badge--orphaned {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.oc-row__badge--stopped {
+  background: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  color: var(--text-secondary);
+}
+
+/* Transfer row (issue 1247): the icon + Cancel button flank a stacked body that
+   holds the file name, an inline progress bar, and a byte/percentage meta line. */
+.oc-transfer {
+  align-items: flex-start;
+}
+
+.oc-transfer .oc-row__icon {
+  margin-top: 2px;
+}
+
+.oc-transfer__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.oc-transfer__progress {
+  height: 4px;
+}
+
+.oc-transfer__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* termiHub-managed X server: accent to signal termiHub ownership. */
+.oc-row__badge--managed {
+  background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  color: var(--accent-color);
+}
+
+/* Adopted external X server: neutral, matches the section count chip. */
+.oc-row__badge--external {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
 }

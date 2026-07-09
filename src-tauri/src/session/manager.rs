@@ -18,7 +18,7 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::files::FileEntry;
-use termihub_core::monitoring::SystemStats;
+use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver, SystemStats};
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::ScreenClearDetector;
 use tracing::{error, info, warn};
@@ -157,6 +157,30 @@ pub struct SessionMonitoringStatsEvent {
     pub stats: SystemStats,
 }
 
+/// Push event emitted via Tauri when a session's monitoring status changes.
+///
+/// Carries the collector loop's lifecycle state so the frontend can render an
+/// explicit `Stale` indicator instead of showing frozen stats as live (#1229,
+/// audit gap G1). `session_id` is snake_case to match the frontend payload.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMonitoringStatusEvent {
+    pub session_id: String,
+    pub status: MonitorStatus,
+}
+
+/// Receive from an optional status receiver for use inside `tokio::select!`.
+///
+/// When the receiver is `None`, the future never resolves (`pending`), so the
+/// select arm is inert and the other arm drives the loop. This lets the status
+/// arm be disabled after its channel closes without spinning on repeated
+/// `None`s.
+async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<MonitorStatus> {
+    match rx.as_mut() {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Manages all active connection sessions.
 ///
 /// Holds a [`ConnectionTypeRegistry`] for creating local connections and
@@ -251,9 +275,9 @@ impl SessionManager {
         }
 
         // Register a cancellation token so a Stop/close while connecting can abort
-        // the in-flight handshake (#952). Local (core-backend) connects honour it;
-        // remote proxy connects currently ignore it. The guard clears the entry
-        // when this connect finishes, even on an early `?` return.
+        // the in-flight handshake (#952). Both local (core-backend) and remote
+        // proxy (#1122) connects honour it. The guard clears the entry when this
+        // connect finishes, even on an early `?` return.
         let (cancel_token, _connecting_guard) = match connect_id {
             Some(cid) => {
                 let token = CancellationToken::new();
@@ -283,7 +307,7 @@ impl SessionManager {
                     "config": settings,
                 });
                 proxy
-                    .connect(remote_settings)
+                    .connect_cancellable(remote_settings, cancel_token.clone())
                     .await
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
                 let remote_sid = proxy.remote_session_id();
@@ -622,17 +646,22 @@ impl SessionManager {
             .map(|e| e.connection.capabilities())
     }
 
-    /// Subscribe to a session's monitoring provider and forward stats as Tauri events.
+    /// Subscribe to a session's monitoring provider and forward stats and
+    /// status as Tauri events.
     ///
-    /// Spawns a background task that reads from the `MonitoringReceiver` and emits
-    /// `session-monitoring-stats` events to the frontend.  Call
+    /// Spawns a background task that reads the subscription's stats and status
+    /// channels and emits `session-monitoring-stats` and
+    /// `session-monitoring-status` events to the frontend. The status stream
+    /// lets the UI surface an explicit `Stale` arm on a mid-stream drop instead
+    /// of rendering frozen stats as live (#1229, audit gap G1). Call
     /// [`stop_session_monitoring`] to cancel the task and unsubscribe.
     pub async fn start_session_monitoring<R: tauri::Runtime>(
         &self,
         session_id: &str,
+        interval_ms: Option<u64>,
         app_handle: tauri::AppHandle<R>,
     ) -> Result<(), TerminalError> {
-        let rx = {
+        let subscription = {
             let sessions = self.sessions.lock().await;
             let entry = sessions
                 .get(session_id)
@@ -646,16 +675,55 @@ impl SessionManager {
                 .map_err(|e| TerminalError::RemoteError(e.to_string()))?
         };
 
+        // Apply the caller's chosen refresh interval to the now-running loop
+        // (#1233). Done after the subscribe block so the provider reference is
+        // not held across this await. Takes effect on the next tick; omitted →
+        // provider default.
+        if let Some(ms) = interval_ms {
+            self.set_session_monitoring_interval(session_id, ms).await?;
+        }
+
         let sid = session_id.to_string();
         let join_handle = tokio::spawn(async move {
-            let mut rx = rx;
-            while let Some(stats) = rx.recv().await {
-                let event = SessionMonitoringStatsEvent {
-                    session_id: sid.clone(),
-                    stats,
-                };
-                if app_handle.emit("session-monitoring-stats", &event).is_err() {
-                    break;
+            let mut stats_rx = subscription.stats;
+            // `Option` so a closed status channel stops being polled instead of
+            // spinning the select loop hot on repeated `None` (the agent path
+            // sends a single `Live` then drops its status sender).
+            let mut status_rx = Some(subscription.status);
+            loop {
+                tokio::select! {
+                    stats = stats_rx.recv() => {
+                        match stats {
+                            Some(stats) => {
+                                let event = SessionMonitoringStatsEvent {
+                                    session_id: sid.clone(),
+                                    stats,
+                                };
+                                if app_handle.emit("session-monitoring-stats", &event).is_err() {
+                                    break;
+                                }
+                            }
+                            // Stats channel closed: the collector loop ended.
+                            None => break,
+                        }
+                    }
+                    status = recv_optional(&mut status_rx) => {
+                        match status {
+                            Some(status) => {
+                                let event = SessionMonitoringStatusEvent {
+                                    session_id: sid.clone(),
+                                    status,
+                                };
+                                if app_handle.emit("session-monitoring-status", &event).is_err() {
+                                    break;
+                                }
+                            }
+                            // Status channel closed: stop polling it, keep
+                            // forwarding stats. Only a closed stats channel ends
+                            // the task.
+                            None => status_rx = None,
+                        }
+                    }
                 }
             }
             info!(session_id = %sid, "Session monitoring push task ended");
@@ -681,6 +749,60 @@ impl SessionManager {
                 if let Err(e) = provider.unsubscribe().await {
                     warn!(session_id, error = %e, "Session monitoring unsubscribe error");
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Pause or resume a session's monitoring loop (#1233).
+    ///
+    /// A paused loop keeps its transport open but stops collecting, emitting a
+    /// `Paused` status event; resuming emits `Live`.
+    pub async fn set_session_monitoring_paused(
+        &self,
+        session_id: &str,
+        paused: bool,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let provider = entry
+            .connection
+            .monitoring()
+            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
+        provider.set_paused(paused).await;
+        Ok(())
+    }
+
+    /// Change a session monitoring loop's refresh interval (#1233).
+    pub async fn set_session_monitoring_interval(
+        &self,
+        session_id: &str,
+        interval_ms: u64,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let provider = entry
+            .connection
+            .monitoring()
+            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
+        provider
+            .set_interval(std::time::Duration::from_millis(interval_ms.max(1)))
+            .await;
+        Ok(())
+    }
+
+    /// Abort a session monitoring loop's in-flight connect / collect (#1233).
+    ///
+    /// Best-effort: a missing session or provider is treated as already gone.
+    pub async fn cancel_session_monitoring(&self, session_id: &str) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        if let Some(entry) = sessions.get(session_id) {
+            if let Some(provider) = entry.connection.monitoring() {
+                provider.cancel_connect().await;
             }
         }
         Ok(())
@@ -1788,6 +1910,9 @@ mod tests {
         ) -> Result<AgentConnectResult, TerminalError> {
             unimplemented!()
         }
+        fn cancel_connect(&self, _: &str) -> bool {
+            false
+        }
         fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
             unimplemented!()
         }
@@ -2402,6 +2527,9 @@ mod tests {
             _: Option<&AgentSettings>,
         ) -> Result<AgentConnectResult, TerminalError> {
             unimplemented!()
+        }
+        fn cancel_connect(&self, _: &str) -> bool {
+            false
         }
         fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
             unimplemented!()

@@ -3,9 +3,10 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 /**
  * The terminal's vertical (scrollback) scrollbar — used in both normal and
  * horizontal-scroll modes so the scrollbar looks and behaves identically
- * everywhere. xterm's own overlay scrollbar is hidden; instead we render an
- * always-visible thumb inside a fixed gutter and keep it in sync with the
- * buffer via xterm's public API.
+ * everywhere. xterm's own overlay scrollbar is hidden; instead we render our
+ * own thumb inside a fixed gutter and keep it in sync with the buffer via
+ * xterm's public API. The thumb auto-hides (CSS fades it in on terminal hover
+ * or while dragging) to match the app-wide subtle scrollbar style.
  *
  * This decoupling is required by horizontal-scroll mode: there the `.xterm`
  * element is widened to the full content width and scrolled inside an inner
@@ -178,6 +179,8 @@ export function createTerminalScrollbar({
 
   const onThumbPointerUp = (e: PointerEvent): void => {
     thumb.releasePointerCapture?.(e.pointerId);
+    // Keep the thumb visible only while hovered from here on.
+    thumb.classList.remove("terminal-vscroll-thumb--dragging");
     window.removeEventListener("pointermove", onThumbPointerMove);
     window.removeEventListener("pointerup", onThumbPointerUp);
   };
@@ -190,6 +193,9 @@ export function createTerminalScrollbar({
     dragStartThumbTop = thumbTopPx;
     dragTrackHeightPx = gutter.clientHeight;
     dragThumbHeightPx = thumbHeightPx;
+    // Pin the thumb visible for the whole drag, even if the pointer slips off
+    // the terminal (which would otherwise drop the :hover reveal).
+    thumb.classList.add("terminal-vscroll-thumb--dragging");
     thumb.setPointerCapture?.(e.pointerId);
     window.addEventListener("pointermove", onThumbPointerMove);
     window.addEventListener("pointerup", onThumbPointerUp);
@@ -229,6 +235,7 @@ export function createTerminalScrollbar({
       gutter.removeEventListener("pointerdown", onGutterPointerDown);
       window.removeEventListener("pointermove", onThumbPointerMove);
       window.removeEventListener("pointerup", onThumbPointerUp);
+      thumb.classList.remove("terminal-vscroll-thumb--dragging");
       thumb.style.display = "none";
       thumb.style.transform = "";
     },

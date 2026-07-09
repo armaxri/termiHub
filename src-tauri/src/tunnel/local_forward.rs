@@ -12,6 +12,11 @@ use super::config::{LocalForwardConfig, TunnelStats};
 pub struct LocalForwarder {
     task_handle: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<ForwarderStats>,
+    /// Fires when the accept loop exits (bind lost / listener error), so the
+    /// tunnel supervisor can observe forwarder death and drive the tunnel to
+    /// `Error` instead of leaving it green-forever (#1243, GAP 2). Taken once by
+    /// the supervisor; `None` afterwards.
+    death: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 /// Shared atomic counters for tracking tunnel statistics.
@@ -79,14 +84,26 @@ impl LocalForwarder {
         let remote_host = config.remote_host.clone();
         let remote_port = config.remote_port;
 
+        // `death_tx` is moved into the accept task and dropped when it ends — on
+        // a clean `break` (listener error) or an `abort()` from `stop()`. The
+        // receiver resolves either way; the supervisor distinguishes a real death
+        // from a user stop via its own cancel token (#1243).
+        let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
+            let _death = death_tx;
             Self::accept_loop(listener, session, remote_host, remote_port, stats_clone).await;
         });
 
         Ok(Self {
             task_handle: Some(task_handle),
             stats,
+            death: Some(death_rx),
         })
+    }
+
+    /// Take the forwarder-death receiver (once) for the tunnel supervisor.
+    pub fn take_death_signal(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        self.death.take()
     }
 
     /// Get current tunnel statistics.

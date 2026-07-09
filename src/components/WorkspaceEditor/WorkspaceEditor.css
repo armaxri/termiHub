@@ -47,20 +47,6 @@
   color: var(--text-secondary);
 }
 
-.workspace-editor__input {
-  padding: 6px 8px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-}
-
-.workspace-editor__input:focus {
-  border-color: var(--accent-color);
-}
-
 .workspace-editor__layout-section {
   display: flex;
   flex-direction: column;
@@ -84,30 +70,6 @@
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border-primary);
-}
-
-.workspace-editor__btn {
-  padding: 6px 16px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.workspace-editor__btn:hover {
-  background: var(--bg-hover);
-}
-
-.workspace-editor__btn--primary {
-  background: var(--accent-color);
-  color: white;
-  border-color: var(--accent-color);
-}
-
-.workspace-editor__btn--primary:hover {
-  opacity: 0.9;
 }
 
 /* Group Strip */
@@ -154,14 +116,13 @@
   user-select: none;
 }
 
+/*
+ * Sizing-only override for the inline rename input; the borderless/transparent
+ * skin (no border/background, inherited font/color) comes from the `inline`
+ * variant of the shared Input primitive (.ui-input--inline).
+ */
 .workspace-group-chip__rename-input {
   width: 80px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 12px;
-  outline: none;
-  padding: 0;
 }
 
 .workspace-group-chip__close {
@@ -227,7 +188,7 @@
   gap: 4px;
   padding: 4px 8px;
   border: 1px solid var(--border-primary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 11px;
@@ -248,7 +209,7 @@
 .layout-designer__canvas {
   flex: 1;
   border: 1px solid var(--border-primary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 4px;
   min-height: 150px;
   display: flex;
@@ -260,7 +221,7 @@
   display: flex;
   flex-direction: column;
   border: 1px dashed var(--border-primary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -300,7 +261,7 @@
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0;
 }
 
@@ -373,7 +334,7 @@
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0;
 }
 
@@ -404,7 +365,7 @@
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0;
 }
 
@@ -429,7 +390,7 @@
   gap: 4px;
   padding: 2px 4px;
   background: var(--bg-secondary);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   font-size: 11px;
 }
 
@@ -451,7 +412,7 @@
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0;
   flex-shrink: 0;
 }
@@ -467,7 +428,7 @@
 .layout-tab--drag-overlay {
   background: var(--bg-secondary);
   border: 1px solid var(--accent-color);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 2px 4px;
   font-size: 11px;
   display: flex;
@@ -483,7 +444,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -525,7 +486,7 @@
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .connection-picker__close:hover {
@@ -536,7 +497,7 @@
   margin: 8px 16px;
   padding: 6px 8px;
   border: 1px solid var(--border-primary);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: 13px;
@@ -564,7 +525,7 @@
   color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   text-align: left;
 }
 
@@ -575,7 +536,7 @@
 .connection-picker__item--inline {
   border-bottom: 1px solid var(--border-primary);
   margin-bottom: 4px;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .connection-picker__item-name {
@@ -669,7 +630,7 @@
   font-size: 9px;
   font-weight: 500;
   border: 1px solid var(--border-primary);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
@@ -696,7 +657,7 @@
   font-size: 9px;
   text-align: center;
   border: 1px solid var(--accent-color);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;

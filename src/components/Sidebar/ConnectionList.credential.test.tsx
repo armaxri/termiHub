@@ -14,6 +14,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { resolveCredential, storeCredential, isSshKeyEncrypted } from "@/services/api";
 
@@ -67,7 +68,11 @@ function render(connections: SavedConnection[]) {
     credentialStoreStatus: { mode: "master_password", status: "unlocked" },
   });
   act(() => {
-    root.render(<ConnectionList />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <ConnectionList />
+      </TooltipProvider>
+    );
   });
 }
 

@@ -7,6 +7,7 @@ use tracing::{debug, info};
 use crate::connection::config::AgentSettings;
 use crate::connection::manager::ConnectionManager;
 use crate::session::manager::SessionManager;
+use crate::terminal::agent_cancel::AgentDeployCancellation;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
@@ -47,6 +48,35 @@ pub fn disconnect_agent(
     agent_manager
         .disconnect_agent(&agent_id)
         .map_err(|e| e.to_string())
+}
+
+/// Sweep every agent whose I/O task has already died (`alive == false`).
+///
+/// Manual resource-hygiene escape hatch surfaced in the Open Connections panel
+/// (G6, #1239). Returns the ids that were pruned.
+#[tauri::command]
+pub fn prune_dead_agents(
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<Vec<String>, String> {
+    let pruned = agent_manager.prune_dead_agents();
+    info!(count = pruned.len(), "Pruned dead remote agents");
+    Ok(pruned)
+}
+
+/// Cancel an in-flight (still connecting) agent connect.
+///
+/// Fires the per-agent cancellation token registered by [`connect_agent`] so a
+/// Cancel while connecting aborts the blocking SSH + initialize handshake
+/// promptly instead of waiting out the connect timeout; the connect path then
+/// emits `disconnected` (single writer). Returns whether a connecting agent was
+/// found. No-op if the connect already finished (G1, #1235).
+#[tauri::command]
+pub fn cancel_connect_agent(
+    agent_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<bool, String> {
+    info!(agent_id, "Cancelling in-flight agent connect");
+    Ok(agent_manager.cancel_connect(&agent_id))
 }
 
 /// Gracefully shut down a remote agent and disconnect.
@@ -324,6 +354,9 @@ pub async fn detect_agent_arch(config: RemoteAgentConfig) -> Result<RemoteArchIn
 /// Upload and install the agent binary on a remote host.
 ///
 /// Async because it creates an SSH terminal session (blocking network I/O).
+/// Registers a cancellation token (keyed by `agent_id`) so [`cancel_agent_setup`]
+/// can abort the in-flight SFTP upload / script injection between steps and roll
+/// back the partial upload (G10, #1242).
 #[tauri::command]
 pub async fn setup_remote_agent(
     agent_id: String,
@@ -331,9 +364,17 @@ pub async fn setup_remote_agent(
     setup_config: AgentSetupConfig,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
+    cancellation: State<'_, AgentDeployCancellation>,
 ) -> Result<AgentSetupResult, String> {
     info!(agent_id, host = %config.host, "Starting remote agent setup");
     let sm = manager.inner().clone();
+    // Register up front so a Cancel that arrives while the background upload runs
+    // finds the token. The token is `Arc`-shared with the registry; the background
+    // thread checks it between steps and clears the entry on completion.
+    let token = cancellation.register(&agent_id);
+    let registry = cancellation.inner().clone();
+    let complete_id = agent_id.clone();
+    let complete_token = token.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::terminal::agent_setup::setup_remote_agent(
             &agent_id,
@@ -341,11 +382,28 @@ pub async fn setup_remote_agent(
             &setup_config,
             &app_handle,
             &sm,
+            Some((*token).clone()),
+            move || registry.complete(&complete_id, &complete_token),
         )
         .map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Cancel an in-flight agent deploy/setup.
+///
+/// Fires the per-agent cancellation token registered by [`setup_remote_agent`] /
+/// [`deploy_agent`] / [`update_agent`] so the background SFTP upload + script
+/// injection aborts between steps and rolls back the partial upload, instead of
+/// running to completion. Returns whether a run was in flight (G10, #1242).
+#[tauri::command]
+pub fn cancel_agent_setup(
+    agent_id: String,
+    cancellation: State<'_, AgentDeployCancellation>,
+) -> Result<bool, String> {
+    info!(agent_id, "Cancelling in-flight agent deploy/setup");
+    Ok(cancellation.cancel(&agent_id))
 }
 
 /// Probe a remote host for an existing agent binary.
@@ -377,11 +435,24 @@ pub async fn deploy_agent(
     config: RemoteAgentConfig,
     deploy_config: AgentDeployConfig,
     app_handle: tauri::AppHandle,
+    cancellation: State<'_, AgentDeployCancellation>,
 ) -> Result<AgentDeployResult, String> {
     info!(agent_id, host = %config.host, "Deploying agent to remote host");
+    let token = cancellation.register(&agent_id);
+    let registry = cancellation.inner().clone();
+    let complete_id = agent_id.clone();
+    let complete_token = token.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::terminal::agent_deploy::deploy_agent(&agent_id, &config, &deploy_config, &app_handle)
-            .map_err(|e| e.to_string())
+        let result = crate::terminal::agent_deploy::deploy_agent(
+            &agent_id,
+            &config,
+            &deploy_config,
+            &app_handle,
+            Some(&token),
+        )
+        .map_err(|e| e.to_string());
+        registry.complete(&complete_id, &complete_token);
+        result
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()))
@@ -395,19 +466,27 @@ pub async fn update_agent(
     deploy_config: AgentDeployConfig,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    cancellation: State<'_, AgentDeployCancellation>,
 ) -> Result<AgentDeployResult, String> {
     info!(agent_id, host = %config.host, "Updating agent on remote host");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
+    let token = cancellation.register(&agent_id);
+    let registry = cancellation.inner().clone();
+    let complete_id = agent_id.clone();
+    let complete_token = token.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::terminal::agent_deploy::update_agent(
+        let result = crate::terminal::agent_deploy::update_agent(
             &agent_id,
             &config,
             &deploy_config,
             &app_handle,
+            Some(&token),
             || manager.shutdown_agent(&aid, Some("update")),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+        registry.complete(&complete_id, &complete_token);
+        result
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()))

@@ -40,6 +40,10 @@ vi.mock("@/services/api", () => ({
   getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unlocked" })),
 }));
 
+vi.mock("@/components/ui", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), loading: vi.fn(), dismiss: vi.fn() },
+}));
+
 import {
   onCredentialStoreLocked,
   onCredentialStoreUnlocked,
@@ -47,7 +51,10 @@ import {
   onCredentialStoreUnlockNeeded,
 } from "@/services/events";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "@/components/ui";
 import { useCredentialStoreEvents } from "./useCredentialStoreEvents";
+
+const mockedToast = vi.mocked(toast);
 
 const mockOnLocked = vi.mocked(onCredentialStoreLocked);
 const mockOnUnlocked = vi.mocked(onCredentialStoreUnlocked);
@@ -62,7 +69,7 @@ function HookConsumer() {
 describe("useCredentialStoreEvents", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let lockedHandler: (() => void) | undefined;
+  let lockedHandler: ((auto: boolean) => void) | undefined;
   let unlockedHandler: (() => void) | undefined;
   let statusChangedHandler: ((status: unknown) => void) | undefined;
   let unlockNeededHandler: (() => void) | undefined;
@@ -76,7 +83,7 @@ describe("useCredentialStoreEvents", () => {
     useAppStore.setState(useAppStore.getInitialState());
 
     mockOnLocked.mockImplementation((cb) => {
-      lockedHandler = cb;
+      lockedHandler = cb as (auto: boolean) => void;
       return Promise.resolve(unlistenLocked);
     });
     mockOnUnlocked.mockImplementation((cb) => {
@@ -121,10 +128,36 @@ describe("useCredentialStoreEvents", () => {
     expect(useAppStore.getState().unlockDialogOpen).toBe(false);
 
     await act(async () => {
-      lockedHandler?.();
+      lockedHandler?.(true);
     });
 
     expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+  });
+
+  it("shows an auto-lock toast when the store auto-locks (auto=true)", async () => {
+    await act(async () => {
+      root.render(createElement(HookConsumer));
+    });
+
+    await act(async () => {
+      lockedHandler?.(true);
+    });
+
+    expect(mockedToast.success).toHaveBeenCalledWith(
+      "Credential store auto-locked after inactivity"
+    );
+  });
+
+  it("does NOT toast when the store is manually locked (auto=false)", async () => {
+    await act(async () => {
+      root.render(createElement(HookConsumer));
+    });
+
+    await act(async () => {
+      lockedHandler?.(false);
+    });
+
+    expect(mockedToast.success).not.toHaveBeenCalled();
   });
 
   it("opens unlock dialog when unlock-needed event fires", async () => {
@@ -176,7 +209,7 @@ describe("useCredentialStoreEvents", () => {
     const result = await unlockPromise;
     expect(result).toBe(true);
     expect(useAppStore.getState().unlockDialogOpen).toBe(false);
-    expect(useAppStore.getState().unlockResolve).toBeNull();
+    expect(useAppStore.getState().unlockResolvers).toHaveLength(0);
   });
 
   it("resolves requestUnlock() with false when dialog is closed without unlock", async () => {
@@ -194,7 +227,7 @@ describe("useCredentialStoreEvents", () => {
 
     const result = await unlockPromise;
     expect(result).toBe(false);
-    expect(useAppStore.getState().unlockResolve).toBeNull();
+    expect(useAppStore.getState().unlockResolvers).toHaveLength(0);
   });
 
   it("updates credential store status when status-changed event fires", async () => {

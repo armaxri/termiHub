@@ -17,12 +17,16 @@ import {
   NetworkDiagnosticMeta,
   NetworkTool,
   TabGroup,
+  TerminalExitInfo,
 } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import {
   SavedConnection,
   ConnectionFolder,
   FileEntry,
+  SftpStatus,
+  SftpSessionEntry,
+  TransferState,
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
@@ -53,20 +57,23 @@ import {
 import {
   sftpOpen,
   sftpClose,
+  sftpCancelTransfer,
   sftpListDir,
+  sftpRealpath,
   sessionListFiles,
   localListDir,
   vscodeAvailable as checkVscode,
-  monitoringOpen,
-  monitoringClose,
-  monitoringFetchStats,
   sessionGetCapabilities,
   sessionMonitoringOpen,
   sessionMonitoringClose,
+  sessionMonitoringSetPaused,
+  sessionMonitoringSetInterval,
+  sessionMonitoringCancel,
   listAvailableShells,
   getDefaultShell,
   connectAgent as apiConnectAgent,
   disconnectAgent as apiDisconnectAgent,
+  shutdownAgent as apiShutdownAgent,
   applyAgentSettings as apiApplyAgentSettings,
   listAgentSessions,
   listAgentConnections,
@@ -89,6 +96,8 @@ import {
   stopPersistentSession as apiStopPersistentSession,
   attachPersistentTab as apiAttachPersistentTab,
   adoptPersistentSession as apiAdoptPersistentSession,
+  closeTerminal as apiCloseTerminal,
+  detachPersistentTab as apiDetachPersistentTab,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -131,8 +140,17 @@ import {
   clearLastSession as apiClearLastSession,
 } from "@/services/lastSessionApi";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
-import { SystemStats } from "@/types/monitoring";
-import { onSessionMonitoringStats, onPersistentSessionStateChanged } from "@/services/events";
+import {
+  connectTimeoutMessage,
+  connectTimeoutMs,
+  type ConnectTimeoutKind,
+} from "@/utils/connectTimeout";
+import { DEFAULT_MONITORING_INTERVAL_MS, MonitoringEntry, SystemStats } from "@/types/monitoring";
+import {
+  onSessionMonitoringStats,
+  onSessionMonitoringStatus,
+  onPersistentSessionStateChanged,
+} from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
@@ -140,6 +158,7 @@ import {
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
 import { frontendLog } from "@/utils/frontendLog";
+import { toast } from "@/components/ui";
 import {
   createLeafPanel,
   findLeaf,
@@ -177,6 +196,37 @@ function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
   const { [key]: _, ...rest } = rec;
   return rest;
 }
+
+/**
+ * A per-tab wall-clock deadline for a timed pre-connect state. Stored so the
+ * connect/waiting timeout survives an overlay remount (tab drag, split re-key):
+ * the deadline is set once on entry and the overlay only reads it, so
+ * unmounting/remounting the overlay can never restart the countdown (#1263).
+ */
+type ConnectDeadline = { kind: ConnectTimeoutKind; at: number };
+
+/**
+ * Arm the connect deadline for `tabId`, idempotently: if a deadline for the
+ * same kind already exists it is kept (so re-entering the state — or the
+ * overlay remounting and the effect re-running — does not push the deadline
+ * out). A different kind (connecting -> waiting-for-agent) arms a fresh one.
+ */
+function armConnectDeadline(
+  deadlines: Record<string, ConnectDeadline>,
+  tabId: string,
+  kind: ConnectTimeoutKind
+): Record<string, ConnectDeadline> {
+  const current = deadlines[tabId];
+  if (current && current.kind === kind) return deadlines;
+  return { ...deadlines, [tabId]: { kind, at: Date.now() + connectTimeoutMs(kind) } };
+}
+
+/**
+ * Failed-state message shown when the user aborts an in-flight connect from the
+ * connecting / waiting / auto-retry overlay. The tab stays open on a retryable
+ * Failed state rather than closing (#1128).
+ */
+export const ABORTED_CONNECT_MESSAGE = "Connection aborted.";
 
 /**
  * Strip password from connection configs so it is never persisted,
@@ -474,15 +524,66 @@ interface AppState {
   fileEntries: FileEntry[];
   currentPath: string;
   sftpSessionId: string | null;
-  sftpLoading: boolean;
+  /**
+   * Explicit SFTP session lifecycle status (audit gap A1). Replaces the
+   * overloaded `sftpLoading` boolean so the UI can tell "connecting" apart from
+   * "listing"/"refreshing" and "idle".
+   */
+  sftpStatus: SftpStatus;
   sftpError: string | null;
+  /**
+   * Host label (`user@host:port`) of the session the browser is currently
+   * viewing. Derived from `sftpSessions[sftpSessionId]`; kept as its own field
+   * so the file browser and status UI can read the active host cheaply.
+   */
   sftpConnectedHost: string | null;
+  /**
+   * Every live backend SFTP session, keyed by its session-id / UUID (Decision 1
+   * of the sftp-session-and-transfers concept, issue #1241). `hostLabel` is
+   * display metadata; `owningTabId` binds the session to the tab that opened it
+   * so it can be closed when that tab closes (the L1 leak fix). `sftpSessionId`
+   * above is the derived "active" pointer into this map for the current browser.
+   */
+  sftpSessions: Record<string, SftpSessionEntry>;
+  /**
+   * The last config passed to `connectSftp`, retained so a failed connect can be
+   * retried (audit gap S1). Cleared on `disconnectSftp`.
+   */
+  sftpLastConfig: Record<string, unknown> | null;
   setCurrentPath: (path: string) => void;
   setFileEntries: (entries: FileEntry[]) => void;
-  connectSftp: (config: Record<string, unknown>) => Promise<void>;
+  connectSftp: (config: Record<string, unknown>, owningTabId?: string) => Promise<void>;
   disconnectSftp: () => Promise<void>;
   navigateSftp: (path: string) => Promise<void>;
   refreshSftp: () => Promise<void>;
+  /** Re-invoke `connectSftp` with the persisted last config (audit gap S1). */
+  retrySftp: () => Promise<void>;
+  /** Clear the SFTP error so the failed-connect placeholder resets (audit gap S1). */
+  dismissSftpError: () => void;
+  /**
+   * Close a single tracked SFTP session (`sftp_close`) and drop it from
+   * `sftpSessions`. When it is the active browser session, the browser is reset
+   * to idle. Drives the per-session Kill in the Open Connections panel (#1241).
+   */
+  closeSftpSession: (sessionId: string) => Promise<void>;
+
+  /**
+   * Live in-flight SFTP transfers keyed by `transferId` (concept "SFTP session
+   * tracking + transfers", issue #1247). Fed purely by `transfer-progress`
+   * events (#1245) through {@link applyTransferProgress}; a terminal phase
+   * clears the row. Rendered as the Open Connections "Transfers" section, the
+   * file-browser footer, and the status-bar aggregate.
+   */
+  transfers: Record<string, TransferState>;
+  /**
+   * Apply a `transfer-progress` event to the {@link transfers} map: a
+   * `transferring` phase upserts the row; a terminal phase
+   * (`done`/`cancelled`/`error`) removes it (D2 done/error toasts are handled
+   * separately).
+   */
+  applyTransferProgress: (progress: TransferState) => void;
+  /** Request cancellation of an in-flight transfer (`sftp_cancel_transfer`). */
+  cancelTransfer: (transferId: string) => Promise<void>;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -507,6 +608,13 @@ interface AppState {
   terminalRetryCounters: Record<string, number>;
   /** True while a createTerminal call is in-flight — drives the "Connecting…" overlay. */
   terminalConnecting: Record<string, boolean>;
+  /**
+   * Per-tab wall-clock deadline (epoch ms + kind) for the active timed
+   * pre-connect state. Set on entry to `Connecting` / `WaitingForAgent` and
+   * cleared on every exit; the overlay reads it so the timeout survives a
+   * remount instead of restarting the countdown (#1263).
+   */
+  terminalConnectDeadline: Record<string, ConnectDeadline>;
   setTerminalSpawnError: (tabId: string, error: string | null) => void;
   retryTerminalSpawn: (tabId: string) => void;
   setTerminalConnecting: (tabId: string, connecting: boolean) => void;
@@ -516,9 +624,29 @@ interface AppState {
   terminalWaitingForAgent: Record<string, string>;
   setTerminalAutoRetrying: (tabId: string, count: number) => void;
   setTerminalWaitingForAgent: (tabId: string, agentId: string | null) => void;
+  /**
+   * Client-side timeout for a pre-connect state. Transitions the tab to Failed
+   * with a contextual hint, but only if it is still in the given state — a
+   * stale timer that fires after the tab connected or was woken is a no-op.
+   */
+  failTerminalConnectTimeout: (tabId: string, kind: ConnectTimeoutKind) => void;
+  /**
+   * User-initiated abort of an in-flight connect (from the connecting, waiting,
+   * or auto-retry overlay). Transitions the tab to a retryable Failed state and
+   * keeps the tab open — distinct from Cancel, which closes the tab (#1128).
+   */
+  abortTerminalConnect: (tabId: string) => void;
 
   // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
   terminalExitedTabs: Record<string, boolean>;
+  /** How each exited tab's session ended — drives the disconnect overlay wording (#1121). */
+  terminalExitInfo: Record<string, TerminalExitInfo>;
+  /**
+   * Session IDs the user explicitly killed (e.g. from the Open Connections panel).
+   * Consumed by the exit handler so a user kill is classified as `killed` rather
+   * than an unexpected disconnect (#1121).
+   */
+  intentionallyKilledSessions: Record<string, boolean>;
   /** Error message from a failed reconnect attempt (agent auto-reconnect exhausted). */
   terminalDisconnectErrors: Record<string, string>;
   /** True when the disconnect overlay was dismissed — session is dead but user is browsing scrollback. */
@@ -531,8 +659,72 @@ interface AppState {
   terminalReconnectPrompt: Record<string, boolean>;
   /** Error message that triggered the auto-reconnect, shown during the spinner overlay. */
   terminalReconnectTriggerErrors: Record<string, string>;
-  setTerminalExited: (tabId: string) => void;
+  /**
+   * Mark a tab's session as exited. Pass `info` to record the exit code and
+   * cause so the overlay can branch its wording; a `killed` reason additionally
+   * drops the tab straight into view mode so no disconnect overlay appears (#1121).
+   */
+  setTerminalExited: (tabId: string, info?: TerminalExitInfo) => void;
+  /** Tag a session as intentionally killed by the user (e.g. Open Connections) (#1121). */
+  markSessionKilled: (sessionId: string) => void;
+  /** Return whether a session was intentionally killed, clearing the flag (#1121). */
+  consumeSessionKilled: (sessionId: string) => boolean;
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
+
+  /**
+   * Aggregate feedback for a fan-out restore/launch (#1146, audit G4). When a
+   * restore or workspace launch places N tabs, each reconnects independently
+   * inside its own Terminal.tsx mount, so failures are otherwise only visible
+   * per-tab. This cohort tracks the set of tab ids placed by one restore/launch
+   * and settles them as each connects ({@link setTabSessionId}) or fails
+   * ({@link setTerminalDisconnectWithError}); when the last one settles a single
+   * summary toast is raised. `null` when no restore/launch is in flight.
+   *
+   * `failedTabIds` is the subset of settled tabs that failed and can be
+   * re-driven through the per-tab reconnect path — it feeds the bulk
+   * "Reconnect failed tabs" control (#1227). `toastId`, when present, is the
+   * id of a pending toast this cohort should resolve in place on settle
+   * (used by {@link reconnectFailedRestoreTabs} for pending → result feedback).
+   */
+  restoreCohort: {
+    pending: Set<string>;
+    total: number;
+    failed: number;
+    failedTabIds: Set<string>;
+    toastId?: string | number;
+  } | null;
+  /**
+   * The failed terminal tab ids captured from the most recently settled
+   * restore/launch (or bulk-reconnect) cohort. Drives the bulk "Reconnect
+   * failed tabs" control (#1227, audit M2); empty when there is nothing to
+   * retry. Consumed (cleared) by {@link reconnectFailedRestoreTabs}.
+   */
+  failedRestoreTabIds: string[];
+  /**
+   * Register the cohort of tabs placed by a restore/launch. `pendingTabIds` are
+   * the live terminal tabs that will attempt to connect; `preFailedCount` counts
+   * tabs already known to have failed at build time (e.g. agent-error tabs that
+   * never emit a connect/fail signal). `toastId`, when given, is a pending toast
+   * the settle should resolve in place instead of raising a fresh one. If
+   * nothing is pending, the summary is raised immediately.
+   */
+  beginRestoreCohort: (
+    pendingTabIds: string[],
+    preFailedCount: number,
+    toastId?: string | number
+  ) => void;
+  /** Settle one tab of the active restore cohort; raises the summary once the cohort empties. */
+  settleRestoreTab: (tabId: string, outcome: "connected" | "failed") => void;
+  /** Raise the single aggregate summary toast for the settled cohort and clear it. Internal. */
+  settleRestoreCohort: () => void;
+  /**
+   * Bulk-retry every failed tab remembered from the last partial restore
+   * ({@link failedRestoreTabIds}) in one action (#1227, audit M2). Re-drives
+   * only those tabs through the existing per-tab {@link reconnectTerminal}
+   * path, registers a fresh cohort so the outcome re-summarizes, and shows a
+   * pending toast that resolves into the aggregate result.
+   */
+  reconnectFailedRestoreTabs: () => void;
   setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
   setTerminalReattaching: (tabId: string, reattaching: boolean) => void;
   setTerminalReconnectTriggerError: (tabId: string, error: string | null) => void;
@@ -558,9 +750,15 @@ interface AppState {
   toggleRemoteAgent: (agentId: string) => void;
   connectRemoteAgent: (agentId: string, password?: string) => Promise<void>;
   disconnectRemoteAgent: (agentId: string) => Promise<void>;
+  /**
+   * Gracefully shut down a remote agent (stop remote sessions) and disconnect.
+   * Resolves to the number of sessions the agent reported as detached/killed.
+   */
+  shutdownRemoteAgent: (agentId: string) => Promise<number>;
   setAgentConnectionState: (
     agentId: string,
-    state: RemoteAgentDefinition["connectionState"]
+    state: RemoteAgentDefinition["connectionState"],
+    error?: string
   ) => void;
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
   clearAgentSessions: (agentId: string) => void;
@@ -621,16 +819,42 @@ interface AppState {
   setEditorActions: (actions: EditorActions | null) => void;
 
   // Monitoring
-  monitoringSessionId: string | null;
-  monitoringHost: string | null;
-  monitoringStats: SystemStats | null;
-  monitoringLoading: boolean;
-  monitoringError: string | null;
-  /** Last-known stats per host key, persisted across tab switches for instant display on reconnect. */
+  /**
+   * Per-host/session monitoring state, keyed by {@link MonitoringEntry.key}
+   * (audit gap G6, #1231). Replaces the former global singleton so multiple
+   * hosts can be monitored at once: the status bar renders the active tab's
+   * entry (see {@link selectActiveMonitor}) while Open Connections iterates
+   * every entry.
+   */
+  monitors: Record<string, MonitoringEntry>;
+  /** Last-known stats per MonitorKey, persisted across tab switches for instant display on reconnect. */
   monitoringStatsCache: Record<string, SystemStats>;
-  connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
-  disconnectMonitoring: () => Promise<void>;
-  refreshMonitoring: () => Promise<void>;
+  /**
+   * Subscribe the terminal session `sessionId` to its `MonitoringProvider` push
+   * path, keying the entry by `sessionId`. `host` is the human-readable label
+   * shown in the status bar. All monitors — desktop-direct SSH and
+   * remote-session alike — flow through this single path (#1232).
+   */
+  connectMonitoring: (sessionId: string, host?: string | null) => Promise<void>;
+  /** Disconnect one monitor by key, or every monitor when `key` is omitted. */
+  disconnectMonitoring: (key?: string) => Promise<void>;
+  /** Clear a lingering error on one entry so a stale tooltip cannot persist (audit gap G9). */
+  clearMonitoringError: (key: string) => void;
+  /**
+   * Pause or resume one monitor (#1233). Signals the backend session monitoring
+   * loop to stop/resume collecting; the transport stays open either way.
+   */
+  setMonitoringPaused: (key: string, paused: boolean) => Promise<void>;
+  /**
+   * Change one monitor's refresh interval in milliseconds (#1233), reconfiguring
+   * the backend session monitoring loop cadence.
+   */
+  setMonitoringInterval: (key: string, intervalMs: number) => Promise<void>;
+  /**
+   * Cancel a monitor that is still connecting (#1233). Aborts the backend connect
+   * and tears the entry down so the picker/Retry is reachable again.
+   */
+  cancelMonitoring: (key: string) => Promise<void>;
   /** Per-session capabilities fetched after session creation (keyed by sessionId). */
   sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
   setSessionCapabilities: (
@@ -646,6 +870,8 @@ interface AppState {
   deleteTunnel: (tunnelId: string) => Promise<void>;
   startTunnel: (tunnelId: string) => Promise<void>;
   stopTunnel: (tunnelId: string) => Promise<void>;
+  /** Force-reconnect a connected tunnel (stop + start), for a stale-but-green tunnel (#1243). */
+  reconnectTunnel: (tunnelId: string) => Promise<void>;
   updateTunnelState: (state: TunnelState) => void;
   openTunnelEditorTab: (tunnelId: string | null) => void;
 
@@ -653,6 +879,8 @@ interface AppState {
   embeddedServers: EmbeddedServerConfig[];
   embeddedServerStates: Record<string, EmbeddedServerState>;
   loadEmbeddedServers: () => Promise<void>;
+  /** Refresh only the live runtime states (stats/uptime) without reloading the config list. */
+  refreshEmbeddedServerStates: () => Promise<void>;
   saveEmbeddedServer: (config: EmbeddedServerConfig) => Promise<void>;
   deleteEmbeddedServer: (serverId: string) => Promise<void>;
   startEmbeddedServer: (serverId: string) => Promise<void>;
@@ -668,6 +896,12 @@ interface AppState {
   deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
   duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
   openWorkspaceEditorTab: (workspaceId: string | null) => void;
+  /**
+   * The id of the workspace whose launch is currently in flight, or `null` when
+   * none is launching. Used to guard against re-entrant `launchWorkspace` calls
+   * (double-click / repeated Play) and to disable the Launch controls in the UI.
+   */
+  launchingWorkspaceId: string | null;
   launchWorkspace: (workspaceId: string) => Promise<void>;
   /** scope "all" captures all tab groups; "active" captures only the active group. */
   saveCurrentAsWorkspace: (
@@ -677,6 +911,14 @@ interface AppState {
   ) => Promise<void>;
 
   // Last session (auto-saved layout restored on startup)
+  /**
+   * True while a restore/launch is settling (GAP G5, #1146). While set,
+   * {@link scheduleLastSessionSave} is a no-op so a mid-restore snapshot — where
+   * some tabs are still connecting or in agent-error — cannot be captured and
+   * persisted over the previously-good last session. Cleared once the restored
+   * cohort settles (a short settle window after the layout is placed).
+   */
+  restoreInProgress: boolean;
   /** Capture the current tab groups/layout and persist them as the last session. */
   saveLastSession: () => Promise<void>;
   /** Debounced wrapper around {@link saveLastSession} for high-frequency layout changes. */
@@ -692,20 +934,21 @@ interface AppState {
   loadCredentialStoreStatus: () => Promise<void>;
   unlockDialogOpen: boolean;
   setUnlockDialogOpen: (open: boolean) => void;
-  /** Pending resolver for requestUnlock(). Internal — resolved by resolveUnlock(). */
-  unlockResolve: ((unlocked: boolean) => void) | null;
+  /**
+   * Pending resolvers for in-flight requestUnlock() calls. Internal — settled by
+   * resolveUnlock(). Held as a list so that concurrent connect flows each awaiting
+   * requestUnlock() all settle on a single dialog exit; a single resolver would
+   * be overwritten by the second caller, wedging the first connect forever (G1).
+   */
+  unlockResolvers: ((unlocked: boolean) => void)[];
   /**
    * Opens the unlock dialog and returns a Promise that resolves to `true` when the
    * store is successfully unlocked, or `false` when the user cancels/skips.
    * Callers can `await` this before proceeding with a credential-dependent action.
    */
   requestUnlock: () => Promise<boolean>;
-  /** Resolves (and clears) any pending requestUnlock() promise. */
+  /** Settles (and clears) every pending requestUnlock() promise. Idempotent. */
   resolveUnlock: (unlocked: boolean) => void;
-  masterPasswordSetupOpen: boolean;
-  masterPasswordSetupMode: "setup" | "change";
-  openMasterPasswordSetup: (mode: "setup" | "change") => void;
-  closeMasterPasswordSetup: () => void;
 
   // Portable mode
   isPortableMode: boolean;
@@ -727,8 +970,180 @@ let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 /** Debounce timer for auto-saving the last session on layout changes. */
 let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
 const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
-/** Unlisten function for the active session-based monitoring event subscription. */
-let _monitoringUnlisten: (() => void) | null = null;
+/**
+ * Settle timer for the restore-in-progress guard (GAP G5, #1146). After a
+ * restore/launch places its layout, per-tab connects keep mutating the tree for
+ * a moment; we hold {@link AppState.restoreInProgress} for this window so those
+ * transient (still-connecting / agent-error) states are not auto-saved over the
+ * good session. Comfortably larger than the auto-save debounce.
+ */
+let restoreSettleTimer: ReturnType<typeof setTimeout> | null = null;
+const RESTORE_SETTLE_MS = 2000;
+
+/**
+ * Raise the restore-in-progress guard (GAP G5, #1146) and (re)arm the settle
+ * timer that lowers it. Call immediately after a restore/launch has placed its
+ * layout so the auto-save subscription and any in-flight per-tab connects are
+ * skipped until the cohort settles. Safe to call repeatedly — the timer is
+ * reset each time so overlapping restores extend the window.
+ */
+function beginRestoreGuard(setState: (partial: Partial<AppState>) => void): void {
+  setState({ restoreInProgress: true });
+  if (restoreSettleTimer) clearTimeout(restoreSettleTimer);
+  restoreSettleTimer = setTimeout(() => {
+    restoreSettleTimer = null;
+    setState({ restoreInProgress: false });
+    frontendLog("workspace", "restore settle window elapsed; auto-save re-enabled");
+  }, RESTORE_SETTLE_MS);
+}
+
+/**
+ * Tear down every live backend session currently held by the store (GAP G1,
+ * #1146). `launchWorkspace` / `restoreLastSession` replace the whole layout with
+ * a single `set(...)`; without this, the prior tabs' PTY/SSH/agent sessions are
+ * dropped from the store and orphaned into the Open Connections panel with no
+ * tab to reach them. Call this BEFORE placing the new groups.
+ *
+ * The active group's live tree lives in `rootPanel`; every other group's tree
+ * lives in `group.rootPanel` (mirrors {@link captureAllTabGroups}). Persistent
+ * sessions are detached rather than killed so their background process survives
+ * and can be re-adopted — the same distinction the Terminal unmount cleanup
+ * makes. Failures are swallowed: a best-effort close must never block the
+ * launch/restore that follows.
+ */
+function teardownAllSessions(state: {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+}): void {
+  const trees = state.tabGroups.map((g) =>
+    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
+  );
+  const tabs = trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+  let closed = 0;
+  for (const tab of tabs) {
+    if (!tab.sessionId) continue;
+    closed++;
+    if (tab.persistentConnectionId) {
+      // Persistent session — detach so the background process keeps running.
+      apiDetachPersistentTab(tab.sessionId, tab.id).catch(() => {});
+    } else {
+      apiCloseTerminal(tab.sessionId).catch(() => {});
+    }
+  }
+  if (closed > 0) {
+    frontendLog("workspace", `tore down ${closed} live session(s) before restore/launch`);
+  }
+}
+
+/**
+ * Partition the tabs of freshly-built restore/launch groups into the cohort that
+ * feeds the aggregate partial-restore summary (GAP G4, #1146). Only `terminal`
+ * tabs will attempt a live connect (settling via {@link setTabSessionId} /
+ * {@link setTerminalDisconnectWithError}); `agent-error` tabs are resolved as
+ * failed at build time and never emit a settle signal, so they are pre-counted
+ * as failed. All other content types (editors, settings, …) are not connections
+ * and are ignored.
+ */
+function collectRestoreCohort(groups: TabGroup[]): {
+  pendingTabIds: string[];
+  preFailedCount: number;
+} {
+  const tabs = groups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs));
+  const pendingTabIds = tabs.filter((t) => t.contentType === "terminal").map((t) => t.id);
+  const preFailedCount = tabs.filter((t) => t.contentType === "agent-error").length;
+  return { pendingTabIds, preFailedCount };
+}
+
+/**
+ * Enumerate every live tab across all tab groups (the active group is
+ * represented by the live `rootPanel`, the others by their stored trees). Used
+ * by the bulk-reconnect control to filter captured failed ids down to tabs that
+ * still exist and can actually be re-driven (#1227).
+ */
+function collectLiveTabs(state: {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+}): TerminalTab[] {
+  const trees = state.tabGroups.map((g) =>
+    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
+  );
+  return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+}
+
+/**
+ * Per-key unlisten functions for session-based monitoring subscriptions, keyed
+ * by MonitorKey. Since multiple hosts can be monitored simultaneously (#1231),
+ * each session monitor owns its own stats + status subscription that must be
+ * detached individually when that host is disconnected (or its open fails).
+ */
+const _monitoringStatsUnlisten = new Map<string, () => void>();
+const _monitoringStatusUnlisten = new Map<string, () => void>();
+
+/** Detach and forget both subscriptions for one session-based monitor key. */
+function detachMonitorListeners(key: string): void {
+  _monitoringStatsUnlisten.get(key)?.();
+  _monitoringStatsUnlisten.delete(key);
+  _monitoringStatusUnlisten.get(key)?.();
+  _monitoringStatusUnlisten.delete(key);
+}
+
+/** Build a fresh, idle {@link MonitoringEntry} for a key. */
+function emptyMonitor(key: string, host: string | null): MonitoringEntry {
+  return {
+    key,
+    host,
+    monitorSessionId: null,
+    stats: null,
+    loading: false,
+    error: null,
+    status: null,
+    sampleCount: 0,
+    paused: false,
+    intervalMs: DEFAULT_MONITORING_INTERVAL_MS,
+  };
+}
+
+/** Merge a partial patch into the entry for `key`, creating it if absent. */
+function upsertMonitor(key: string, patch: Partial<MonitoringEntry>): void {
+  useAppStore.setState((state) => {
+    const entry = state.monitors[key] ?? emptyMonitor(key, patch.host ?? key);
+    return { monitors: { ...state.monitors, [key]: { ...entry, ...patch } } };
+  });
+}
+
+/**
+ * Derive the {@link MonitoringEntry} key for a tab: the id of the terminal
+ * session that owns the monitor. Every monitor — desktop-direct SSH and
+ * remote-session alike — routes through the session-based `MonitoringProvider`
+ * push path (#1232), so the key is uniformly the session id. Returns `null`
+ * when the tab has no session yet (so it cannot be monitored).
+ */
+export function monitorKeyForTab(tab: TerminalTab | null | undefined): string | null {
+  return tab?.sessionId ?? null;
+}
+
+/** Select one monitor entry by key, or `null` when none exists. */
+export function selectMonitor(state: AppState, key: string | null): MonitoringEntry | null {
+  if (!key) return null;
+  return state.monitors[key] ?? null;
+}
+
+/** Select the monitor entry for the currently active tab, or `null`. */
+export function selectActiveMonitor(state: AppState): MonitoringEntry | null {
+  return selectMonitor(state, monitorKeyForTab(getActiveTab(state)));
+}
+
+/**
+ * Select every monitor with a live backend subscription (a non-null
+ * `monitorSessionId`) — the set Open Connections lists and can kill. Entries
+ * that only carry a transient error/cancelled state (never connected) are
+ * excluded so nothing unkillable-yet-invisible is shown.
+ */
+export function selectOpenMonitors(state: AppState): MonitoringEntry[] {
+  return Object.values(state.monitors).filter((m) => m.monitorSessionId !== null);
+}
 
 function createTab(
   title: string,
@@ -798,6 +1213,47 @@ export function _resetConnectionReloadSeq(): void {
   _connReloadSeq = 0;
   _connAppliedSeq = 0;
 }
+
+// Monotonic sequencer for SFTP directory-list requests (GAP R1, #1143).
+// navigateSftp/refreshSftp await sftpListDir with no ordering guarantee, so when
+// two navigations overlap the response that resolves LAST wins currentPath/
+// fileEntries — leaving the path and displayed list desynced. Each list request
+// captures the next seq; a response only commits state if it is still the latest
+// request, so a stale (superseded) response is ignored.
+let _sftpListSeq = 0;
+
+/** @internal Reset the SFTP list sequencer — for tests only. */
+export function _resetSftpListSeq(): void {
+  _sftpListSeq = 0;
+}
+
+// Detects a mid-browse failure that means the underlying SFTP session is dead
+// (audit gap S2): the Rust side raises "SFTP session not found" when the slot is
+// gone, and russh reports channel/transport drops with these phrasings. On such
+// an error the front end must stop pretending it is connected (clear
+// sftpSessionId) so the auto-connect effect can re-establish and a Reconnect
+// control is offered — as opposed to a recoverable per-directory error (e.g.
+// "permission denied") which must leave the session intact.
+function isSftpSessionDeadError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("session not found") ||
+    m.includes("channel") ||
+    m.includes("disconnected") ||
+    m.includes("connection reset") ||
+    m.includes("broken pipe") ||
+    m.includes("not connected") ||
+    m.includes("transport")
+  );
+}
+
+// In-flight guards for tunnel start/stop (GAP 4, #1141). A rapid double-click on
+// Start/Stop for a tunnel that is already `connecting` must not fire a second
+// backend call — that produces spurious "already active/connecting" error toasts
+// and can flip the visible state. We track the id of each tunnel whose start/stop
+// call has not yet resolved and no-op any re-entrant call for the same id.
+const _tunnelStartInFlight = new Set<string>();
+const _tunnelStopInFlight = new Set<string>();
 
 export const useAppStore = create<AppState>((set, get) => {
   // Reload connections from the backend, applying the result only if this
@@ -1524,6 +1980,9 @@ export const useAppStore = create<AppState>((set, get) => {
           })),
         };
       });
+      // A non-null session id means this tab has connected — settle it in any
+      // in-flight restore/launch cohort so the aggregate summary can fire (#1146).
+      if (sessionId) get().settleRestoreTab(tabId, "connected");
     },
 
     addTab: (
@@ -1866,7 +2325,17 @@ export const useAppStore = create<AppState>((set, get) => {
     pendingShortcutCloseConfirm: null,
     setPendingShortcutCloseConfirm: (req) => set({ pendingShortcutCloseConfirm: req }),
 
-    closeTab: (tabId, panelId) =>
+    closeTab: (tabId, panelId) => {
+      // Close every SFTP session owned by this tab and drop it from the map —
+      // the L1 leak fix (#1241). Fire the async closes here (fire-and-forget)
+      // so the state updater below stays pure; the entries are removed regardless.
+      const ownedSftp = Object.entries(useAppStore.getState().sftpSessions)
+        .filter(([, entry]) => entry.owningTabId === tabId)
+        .map(([sessionId]) => sessionId);
+      ownedSftp.forEach((sessionId) => {
+        sftpClose(sessionId).catch(() => {});
+      });
+
       set((state) => {
         // Clean up per-tab state for the closed tab
         const remainingCwds = omitKey(state.tabCwds, tabId);
@@ -1878,7 +2347,9 @@ export const useAppStore = create<AppState>((set, get) => {
         const remainingSpawnErrors = omitKey(state.terminalSpawnErrors, tabId);
         const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
         const remainingConnecting = omitKey(state.terminalConnecting, tabId);
+        const remainingConnectDeadline = omitKey(state.terminalConnectDeadline, tabId);
         const remainingExited = omitKey(state.terminalExitedTabs, tabId);
+        const remainingExitInfo = omitKey(state.terminalExitInfo, tabId);
         const remainingDiscErr = omitKey(state.terminalDisconnectErrors, tabId);
         const remainingView = omitKey(state.terminalViewMode, tabId);
         const remainingReconn = omitKey(state.terminalReconnectingTabs, tabId);
@@ -1886,6 +2357,25 @@ export const useAppStore = create<AppState>((set, get) => {
         const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
         const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
         const remainingWaiting = omitKey(state.terminalWaitingForAgent, tabId);
+
+        // Drop the SFTP sessions owned by this tab (closed above) from the map,
+        // and reset the browser when the active session was one of them (#1241).
+        const remainingSftp = ownedSftp.reduce(
+          (acc, sessionId) => omitKey(acc, sessionId),
+          state.sftpSessions
+        );
+        const activeSftpClosed =
+          state.sftpSessionId != null && ownedSftp.includes(state.sftpSessionId);
+        const sftpBrowserReset = activeSftpClosed
+          ? {
+              sftpSessionId: null,
+              sftpConnectedHost: null,
+              sftpStatus: "idle" as SftpStatus,
+              fileEntries: [],
+              currentPath: "/",
+              sftpError: null,
+            }
+          : {};
 
         // Remove this tab from any persistent session's attachedTabIds
         const persistentSessions = { ...state.persistentSessions };
@@ -1928,7 +2418,9 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalSpawnErrors: remainingSpawnErrors,
             terminalRetryCounters: remainingRetryCounters,
             terminalConnecting: remainingConnecting,
+            terminalConnectDeadline: remainingConnectDeadline,
             terminalExitedTabs: remainingExited,
+            terminalExitInfo: remainingExitInfo,
             terminalDisconnectErrors: remainingDiscErr,
             terminalViewMode: remainingView,
             terminalReconnectingTabs: remainingReconn,
@@ -1936,6 +2428,8 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalReconnectPrompt: remainingPrompt,
             terminalAutoRetryCount: remainingAutoRetry,
             terminalWaitingForAgent: remainingWaiting,
+            sftpSessions: remainingSftp,
+            ...sftpBrowserReset,
           };
         }
 
@@ -1952,7 +2446,9 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalSpawnErrors: remainingSpawnErrors,
           terminalRetryCounters: remainingRetryCounters,
           terminalConnecting: remainingConnecting,
+          terminalConnectDeadline: remainingConnectDeadline,
           terminalExitedTabs: remainingExited,
+          terminalExitInfo: remainingExitInfo,
           terminalDisconnectErrors: remainingDiscErr,
           terminalViewMode: remainingView,
           terminalReconnectingTabs: remainingReconn,
@@ -1960,8 +2456,11 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalReconnectPrompt: remainingPrompt,
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
+          sftpSessions: remainingSftp,
+          ...sftpBrowserReset,
         };
-      }),
+      });
+    },
 
     setActiveTab: (tabId, panelId) =>
       set((state) => {
@@ -2494,9 +2993,15 @@ export const useAppStore = create<AppState>((set, get) => {
       persistConnection(stripPassword(connection))
         .then((persistedId) => {
           reconcileConnectionId(connection.id, persistedId);
+          toast.success(`Saved ${connection.name}`);
           return applyConnectionReload();
         })
-        .catch((err) => console.error("Failed to persist new connection:", err));
+        .catch((err) => {
+          console.error("Failed to persist new connection:", err);
+          toast.error(
+            `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     updateConnection: (connection) => {
@@ -2509,9 +3014,15 @@ export const useAppStore = create<AppState>((set, get) => {
           // A rename changes the name-derived persisted id; reconcile so a connect
           // before the reload stores its credential under the new id (#875).
           reconcileConnectionId(connection.id, persistedId);
+          toast.success(`Saved ${connection.name}`);
           return applyConnectionReload();
         })
-        .catch((err) => console.error("Failed to persist connection update:", err));
+        .catch((err) => {
+          console.error("Failed to persist connection update:", err);
+          toast.error(
+            `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     deleteConnection: (connectionId) => {
@@ -2523,9 +3034,15 @@ export const useAppStore = create<AppState>((set, get) => {
       removeConnection(connectionId, conn?.sourceFile)
         .then(() => {
           frontendLog("connection_sync", `deleteConnection: backend confirmed, reloading`);
+          toast.success(`Deleted ${conn?.name ?? "connection"}`);
           return applyConnectionReload();
         })
-        .catch((err) => console.error("Failed to persist connection deletion:", err));
+        .catch((err) => {
+          console.error("Failed to persist connection deletion:", err);
+          toast.error(
+            `Failed to delete ${conn?.name ?? "connection"}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     bulkDeleteConnections: (connectionIds) => {
@@ -2646,37 +3163,88 @@ export const useAppStore = create<AppState>((set, get) => {
     fileEntries: [],
     currentPath: "/",
     sftpSessionId: null,
-    sftpLoading: false,
+    sftpStatus: "idle",
     sftpError: null,
     sftpConnectedHost: null,
+    sftpSessions: {},
+    sftpLastConfig: null,
+    transfers: {},
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
 
-    connectSftp: async (config: Record<string, unknown>) => {
-      set({ sftpLoading: true, sftpError: null });
+    connectSftp: async (config: Record<string, unknown>, owningTabId?: string) => {
+      // Host switch: do not silently overwrite the previous active session.
+      // Close it only when its owning tab is gone (orphan cleanup); otherwise
+      // leave it registered so it stays visible/killable (issue #1241, L1).
+      const prev = useAppStore.getState();
+      const prevId = prev.sftpSessionId;
+      if (prevId) {
+        const prevEntry = prev.sftpSessions[prevId];
+        const ownerAlive =
+          prevEntry != null && collectLiveTabs(prev).some((t) => t.id === prevEntry.owningTabId);
+        if (!ownerAlive) {
+          try {
+            await sftpClose(prevId);
+          } catch {
+            // Ignore close errors — the entry is dropped regardless.
+          }
+          set((state) => ({ sftpSessions: omitKey(state.sftpSessions, prevId) }));
+        }
+      }
+      // Retain the config so a failed connect can be retried (audit gap S1).
+      set({ sftpStatus: "connecting", sftpError: null, sftpLastConfig: config });
       try {
         const sessionId = await sftpOpen(config);
-        const homePath = `/home/${config.username as string}`;
+        // Resolve the real remote home via SFTP realpath(".") instead of the
+        // fragile /home/<user> guess, which is wrong for non-Linux layouts and
+        // custom home paths (audit GAP C2, issue #1143). Fall back to root if
+        // realpath is unsupported or the resolved home cannot be listed.
         let entries: FileEntry[];
-        let activePath = homePath;
+        let activePath = "/";
         try {
+          const homePath = await sftpRealpath(sessionId, ".");
           entries = await sftpListDir(sessionId, homePath);
-        } catch {
-          // Fall back to root if home dir doesn't exist
-          activePath = "/";
+          activePath = homePath;
+        } catch (homeErr) {
+          frontendLog(
+            "sftp",
+            `connectSftp: home resolution failed, falling back to root: ${
+              homeErr instanceof Error ? homeErr.message : String(homeErr)
+            }`
+          );
           entries = await sftpListDir(sessionId, "/");
         }
-        set({
-          sftpSessionId: sessionId,
-          sftpLoading: false,
-          currentPath: activePath,
-          fileEntries: entries,
-          sftpConnectedHost: `${config.username as string}@${config.host as string}:${config.port as number}`,
+        const hostLabel = `${config.username as string}@${config.host as string}:${config.port as number}`;
+        // One SFTP session per owning tab: close any prior session the same tab
+        // owned (e.g. revisiting the tab or reconnecting to a new host) so
+        // sessions don't accumulate for a single browser (#1241).
+        const staleForTab = owningTabId
+          ? Object.entries(useAppStore.getState().sftpSessions)
+              .filter(([sid, e]) => e.owningTabId === owningTabId && sid !== sessionId)
+              .map(([sid]) => sid)
+          : [];
+        staleForTab.forEach((sid) => {
+          sftpClose(sid).catch(() => {});
+        });
+        set((state) => {
+          let sessions = state.sftpSessions;
+          if (owningTabId) {
+            sessions = staleForTab.reduce((acc, sid) => omitKey(acc, sid), sessions);
+            sessions = { ...sessions, [sessionId]: { hostLabel, owningTabId } };
+          }
+          return {
+            sftpSessionId: sessionId,
+            sftpStatus: "connected" as SftpStatus,
+            currentPath: activePath,
+            fileEntries: entries,
+            sftpConnectedHost: hostLabel,
+            sftpSessions: sessions,
+          };
         });
       } catch (err) {
         set({
-          sftpLoading: false,
+          sftpStatus: "error",
           sftpError: err instanceof Error ? err.message : String(err),
         });
       }
@@ -2691,42 +3259,187 @@ export const useAppStore = create<AppState>((set, get) => {
           // Ignore close errors
         }
       }
-      set({
+      set((state) => ({
         sftpSessionId: null,
+        sftpStatus: "idle",
         fileEntries: [],
         currentPath: "/",
         sftpError: null,
         sftpConnectedHost: null,
+        sftpLastConfig: null,
+        sftpSessions: sessionId ? omitKey(state.sftpSessions, sessionId) : state.sftpSessions,
+      }));
+    },
+
+    closeSftpSession: async (sessionId: string) => {
+      // Kill-cascade (concept "Edge cases"): cancel every in-flight transfer
+      // owned by this session *before* closing it, so no transfer keeps a dead
+      // session's channel alive. The `cancelled` events D1 emits back clear the
+      // rows; we also drop them optimistically below.
+      const owned = Object.values(useAppStore.getState().transfers).filter(
+        (t) => t.sessionId === sessionId
+      );
+      await Promise.all(
+        owned.map((t) =>
+          sftpCancelTransfer(t.transferId).catch((err) => {
+            frontendLog(
+              "sftp_transfer",
+              `closeSftpSession: cancel of ${t.transferId} failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+          })
+        )
+      );
+      if (owned.length > 0) {
+        const cancelledIds = new Set(owned.map((t) => t.transferId));
+        set((state) => ({
+          transfers: Object.fromEntries(
+            Object.entries(state.transfers).filter(([id]) => !cancelledIds.has(id))
+          ),
+        }));
+      }
+      try {
+        await sftpClose(sessionId);
+      } catch {
+        // Ignore close errors — the entry is dropped regardless.
+      }
+      set((state) => {
+        const isActive = state.sftpSessionId === sessionId;
+        return {
+          sftpSessions: omitKey(state.sftpSessions, sessionId),
+          // When the killed session was the one the browser is viewing, reset
+          // the browser to idle so it stops looking connected.
+          ...(isActive
+            ? {
+                sftpSessionId: null,
+                sftpConnectedHost: null,
+                sftpStatus: "idle" as SftpStatus,
+                fileEntries: [],
+                currentPath: "/",
+                sftpError: null,
+              }
+            : {}),
+        };
       });
     },
+
+    applyTransferProgress: (progress: TransferState) =>
+      set((state) => {
+        // A terminal phase clears the row (D1 already removed any partial local
+        // file on cancel/error). done/error toasts are the D2 follow-up.
+        if (progress.phase !== "transferring") {
+          if (!(progress.transferId in state.transfers)) return {};
+          return { transfers: omitKey(state.transfers, progress.transferId) };
+        }
+        return {
+          transfers: { ...state.transfers, [progress.transferId]: progress },
+        };
+      }),
+
+    cancelTransfer: async (transferId: string) => {
+      try {
+        await sftpCancelTransfer(transferId);
+      } catch (err) {
+        frontendLog(
+          "sftp_transfer",
+          `cancelTransfer: cancel of ${transferId} failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        throw err;
+      }
+    },
+
+    retrySftp: async () => {
+      const config = useAppStore.getState().sftpLastConfig;
+      if (!config) {
+        frontendLog("sftp", "retrySftp: no persisted config to retry with");
+        return;
+      }
+      frontendLog("sftp", "retrySftp: re-attempting SFTP connect");
+      await useAppStore.getState().connectSftp(config);
+    },
+
+    dismissSftpError: () =>
+      // Clearing the error must also leave a coherent status: fall back to
+      // `connected` when a live session survived the error (a recoverable
+      // listing error), otherwise `idle`. Leaving it on `error` would keep the
+      // failed-connect placeholder up even after the message is dismissed.
+      set((state) => ({
+        sftpError: null,
+        sftpStatus: state.sftpSessionId ? "connected" : "idle",
+      })),
 
     navigateSftp: async (path: string) => {
       const sessionId = useAppStore.getState().sftpSessionId;
       if (!sessionId) return;
-      set({ sftpLoading: true, sftpError: null });
+      const seq = ++_sftpListSeq;
+      set({ sftpStatus: "listing", sftpError: null });
       try {
         const entries = await sftpListDir(sessionId, path);
-        set({ fileEntries: entries, currentPath: path, sftpLoading: false });
+        // Ignore a stale response: a newer navigate/refresh superseded this one.
+        if (seq !== _sftpListSeq) {
+          frontendLog("sftp", `navigateSftp: dropping stale list for ${path} (seq ${seq})`);
+          return;
+        }
+        set({ fileEntries: entries, currentPath: path, sftpStatus: "connected" });
       } catch (err) {
-        set({
-          sftpLoading: false,
-          sftpError: err instanceof Error ? err.message : String(err),
-        });
+        if (seq !== _sftpListSeq) return;
+        const message = err instanceof Error ? err.message : String(err);
+        // A dead session (audit gap S2) must drop sftpSessionId so the UI stops
+        // looking connected and the auto-connect effect / Reconnect can recover.
+        const sessionDead = isSftpSessionDeadError(message);
+        if (sessionDead) {
+          frontendLog("sftp", `navigateSftp: session appears dead — clearing session (${message})`);
+        }
+        set((state) => ({
+          sftpStatus: "error",
+          sftpError: message,
+          ...(sessionDead
+            ? {
+                sftpSessionId: null,
+                sftpConnectedHost: null,
+                sftpSessions: omitKey(state.sftpSessions, sessionId),
+              }
+            : {}),
+        }));
       }
     },
 
     refreshSftp: async () => {
       const { sftpSessionId, currentPath } = useAppStore.getState();
       if (!sftpSessionId) return;
-      set({ sftpLoading: true, sftpError: null });
+      const seq = ++_sftpListSeq;
+      set({ sftpStatus: "listing", sftpError: null });
       try {
         const entries = await sftpListDir(sftpSessionId, currentPath);
-        set({ fileEntries: entries, sftpLoading: false });
+        // Ignore a stale response: a newer navigate/refresh superseded this one.
+        if (seq !== _sftpListSeq) {
+          frontendLog("sftp", `refreshSftp: dropping stale list for ${currentPath} (seq ${seq})`);
+          return;
+        }
+        set({ fileEntries: entries, sftpStatus: "connected" });
       } catch (err) {
-        set({
-          sftpLoading: false,
-          sftpError: err instanceof Error ? err.message : String(err),
-        });
+        if (seq !== _sftpListSeq) return;
+        const message = err instanceof Error ? err.message : String(err);
+        const sessionDead = isSftpSessionDeadError(message);
+        if (sessionDead) {
+          frontendLog("sftp", `refreshSftp: session appears dead — clearing session (${message})`);
+        }
+        set((state) => ({
+          sftpStatus: "error",
+          sftpError: message,
+          ...(sessionDead
+            ? {
+                sftpSessionId: null,
+                sftpConnectedHost: null,
+                sftpSessions: sftpSessionId
+                  ? omitKey(state.sftpSessions, sftpSessionId)
+                  : state.sftpSessions,
+              }
+            : {}),
+        }));
       }
     },
 
@@ -2769,6 +3482,7 @@ export const useAppStore = create<AppState>((set, get) => {
     terminalSpawnErrors: {},
     terminalRetryCounters: {},
     terminalConnecting: {},
+    terminalConnectDeadline: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
     setTerminalSpawnError: (tabId, error) =>
@@ -2783,6 +3497,7 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+        terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalRetryCounters: {
           ...state.terminalRetryCounters,
           [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
@@ -2793,10 +3508,14 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalConnecting: connecting
           ? { ...state.terminalConnecting, [tabId]: true }
           : omitKey(state.terminalConnecting, tabId),
+        terminalConnectDeadline: connecting
+          ? armConnectDeadline(state.terminalConnectDeadline, tabId, "connecting")
+          : omitKey(state.terminalConnectDeadline, tabId),
       })),
     setTerminalAutoRetrying: (tabId, count) =>
       set((state) => ({
         terminalConnecting: omitKey(state.terminalConnecting, tabId),
+        terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalAutoRetryCount:
           count === 0
             ? omitKey(state.terminalAutoRetryCount, tabId)
@@ -2809,28 +3528,110 @@ export const useAppStore = create<AppState>((set, get) => {
           agentId === null
             ? omitKey(state.terminalWaitingForAgent, tabId)
             : { ...state.terminalWaitingForAgent, [tabId]: agentId },
+        terminalConnectDeadline:
+          agentId === null
+            ? omitKey(state.terminalConnectDeadline, tabId)
+            : armConnectDeadline(state.terminalConnectDeadline, tabId, "waiting-for-agent"),
       })),
+    failTerminalConnectTimeout: (tabId, kind) =>
+      set((state) => {
+        // Guard against stale timers: only fail the tab if it is still in the
+        // state the timeout was armed for. A connect that succeeded, an agent
+        // that came online, or a cancelled tab all clear the relevant flag
+        // first, making this a no-op.
+        const stillArmed =
+          kind === "waiting-for-agent"
+            ? state.terminalWaitingForAgent[tabId] !== undefined
+            : state.terminalConnecting[tabId] === true;
+        if (!stillArmed) {
+          return {};
+        }
+        frontendLog(
+          "disconnect",
+          `connect timeout (${kind}) for tab=${tabId} — transitioning to Failed`
+        );
+        return {
+          terminalConnecting: omitKey(state.terminalConnecting, tabId),
+          terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
+          terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+          terminalSpawnErrors: {
+            ...state.terminalSpawnErrors,
+            [tabId]: connectTimeoutMessage(kind),
+          },
+        };
+      }),
+    abortTerminalConnect: (tabId) =>
+      set((state) => {
+        frontendLog(
+          "disconnect",
+          `connect aborted by user for tab=${tabId} — transitioning to Failed`
+        );
+        // Clear every in-flight pre-connect flag and land on a retryable Failed
+        // state (spawn error set) so the overlay shows Retry and the tab stays
+        // open. Distinct from closeTab, which tears the tab down entirely.
+        return {
+          terminalConnecting: omitKey(state.terminalConnecting, tabId),
+          terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
+          terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+          terminalSpawnErrors: {
+            ...state.terminalSpawnErrors,
+            [tabId]: ABORTED_CONNECT_MESSAGE,
+          },
+        };
+      }),
 
     // Per-tab terminal session disconnects (runtime-only)
     terminalExitedTabs: {},
+    terminalExitInfo: {},
+    intentionallyKilledSessions: {},
     terminalDisconnectErrors: {},
     terminalViewMode: {},
     terminalReconnectingTabs: {},
     terminalReattaching: {},
     terminalReconnectPrompt: {},
     terminalReconnectTriggerErrors: {},
-    setTerminalExited: (tabId) => {
+    setTerminalExited: (tabId, info) => {
       set((state) => ({
         terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+        // Record the exit cause/code so the overlay can branch its wording (#1121).
+        terminalExitInfo: info
+          ? { ...state.terminalExitInfo, [tabId]: info }
+          : state.terminalExitInfo,
+        // A user-initiated kill goes straight to view mode: the session is dead
+        // and scrollback is preserved, but no "unexpected disconnect" overlay is
+        // shown for something the user asked for (#1121).
+        terminalViewMode:
+          info?.reason === "killed"
+            ? { ...state.terminalViewMode, [tabId]: true }
+            : state.terminalViewMode,
         // Clear any stale reconnecting flag — session is definitively dead now
         terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
         terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
       }));
-      // Stop monitoring when the terminal session dies — the stats are no
-      // longer being updated and the overlay hides the terminal anyway.
-      if (get().monitoringSessionId) {
-        get().disconnectMonitoring();
+      // Stop monitoring the dying tab's host — its stats are no longer updated
+      // and the overlay hides the terminal anyway. Other hosts keep monitoring.
+      const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
+      if (deadKey && get().monitors[deadKey]) {
+        get().disconnectMonitoring(deadKey);
       }
+    },
+    markSessionKilled: (sessionId) =>
+      set((state) => ({
+        intentionallyKilledSessions: {
+          ...state.intentionallyKilledSessions,
+          [sessionId]: true,
+        },
+      })),
+    consumeSessionKilled: (sessionId) => {
+      const wasKilled = !!get().intentionallyKilledSessions[sessionId];
+      if (wasKilled) {
+        set((state) => ({
+          intentionallyKilledSessions: omitKey(state.intentionallyKilledSessions, sessionId),
+        }));
+      }
+      return wasKilled;
     },
     setTerminalDisconnectWithError: (tabId, error) => {
       set((state) => ({
@@ -2838,8 +3639,109 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalDisconnectErrors: { ...state.terminalDisconnectErrors, [tabId]: error },
         terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
       }));
-      if (get().monitoringSessionId) {
-        get().disconnectMonitoring();
+      // A failed (re)connect settles this tab as failed in any in-flight
+      // restore/launch cohort so the aggregate summary reflects it (#1146).
+      get().settleRestoreTab(tabId, "failed");
+      const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
+      if (deadKey && get().monitors[deadKey]) {
+        get().disconnectMonitoring(deadKey);
+      }
+    },
+
+    // Aggregate partial-restore feedback (#1146, audit G4) + bulk retry (#1227, M2).
+    restoreCohort: null,
+    failedRestoreTabIds: [],
+    beginRestoreCohort: (pendingTabIds, preFailedCount, toastId) => {
+      const pending = new Set(pendingTabIds);
+      const total = pending.size + preFailedCount;
+      if (total === 0) return;
+      frontendLog(
+        "workspace_restore",
+        `restore cohort started: ${total} tab(s), ${pending.size} pending, ${preFailedCount} pre-failed`
+      );
+      // A fresh cohort supersedes any leftover retry set from the prior one.
+      set({
+        restoreCohort: { pending, total, failed: preFailedCount, failedTabIds: new Set(), toastId },
+        failedRestoreTabIds: [],
+      });
+      // A cohort with no live tabs to wait on (e.g. all agent-error) settles now.
+      if (pending.size === 0) get().settleRestoreCohort();
+    },
+    settleRestoreTab: (tabId, outcome) => {
+      const cohort = get().restoreCohort;
+      if (!cohort || !cohort.pending.has(tabId)) return;
+      const pending = new Set(cohort.pending);
+      pending.delete(tabId);
+      const failed = cohort.failed + (outcome === "failed" ? 1 : 0);
+      // Remember which terminal tabs failed so they can be bulk-reconnected.
+      const failedTabIds = new Set(cohort.failedTabIds);
+      if (outcome === "failed") failedTabIds.add(tabId);
+      set({ restoreCohort: { ...cohort, pending, failed, failedTabIds } });
+      if (pending.size === 0) get().settleRestoreCohort();
+    },
+    settleRestoreCohort: () => {
+      const cohort = get().restoreCohort;
+      if (!cohort) return;
+      // Restrict the retry set to tabs that still exist as live terminal tabs.
+      const liveTerminalIds = new Set(
+        collectLiveTabs(get())
+          .filter((t) => t.contentType === "terminal")
+          .map((t) => t.id)
+      );
+      const retryTabIds = [...cohort.failedTabIds].filter((id) => liveTerminalIds.has(id));
+      // Clear first (and record the retry set) so this fires exactly once even
+      // if a stray settle races in.
+      set({ restoreCohort: null, failedRestoreTabIds: retryTabIds });
+      const { total, failed, toastId } = cohort;
+      const restored = total - failed;
+      frontendLog(
+        "workspace_restore",
+        `restore cohort settled: ${restored}/${total} connected, ${failed} failed`
+      );
+      if (failed === 0) {
+        // Resolve the pending bulk-retry toast in place when present.
+        toast.success(`Restored ${total} ${total === 1 ? "tab" : "tabs"}`, { id: toastId });
+      } else {
+        // No toast.warning primitive — use info for the partial-failure case.
+        // Offer a one-tap bulk retry when there are reconnectable failed tabs.
+        const action =
+          retryTabIds.length > 0
+            ? { label: "Reconnect failed tabs", onClick: () => get().reconnectFailedRestoreTabs() }
+            : undefined;
+        toast.info(`Restored ${restored} of ${total} tabs — ${failed} could not reconnect`, {
+          id: toastId,
+          action,
+          // Persist while a bulk retry is offered so the action is not lost to
+          // auto-dismiss (matches the "recoverable" feedback pillar).
+          duration: action ? Infinity : undefined,
+        });
+      }
+    },
+    reconnectFailedRestoreTabs: () => {
+      const captured = get().failedRestoreTabIds;
+      // Consume the captured set regardless of outcome.
+      set({ failedRestoreTabIds: [] });
+      if (captured.length === 0) return;
+      // Only re-drive tabs that still exist as live terminal tabs.
+      const liveTerminalIds = new Set(
+        collectLiveTabs(get())
+          .filter((t) => t.contentType === "terminal")
+          .map((t) => t.id)
+      );
+      const targets = captured.filter((id) => liveTerminalIds.has(id));
+      if (targets.length === 0) return;
+      frontendLog(
+        "workspace_restore",
+        `bulk reconnect: re-driving ${targets.length} failed tab(s)`
+      );
+      // Pending feedback that resolves into the aggregate cohort summary.
+      const toastId = toast.loading(
+        `Reconnecting ${targets.length} ${targets.length === 1 ? "tab" : "tabs"}…`
+      );
+      // Register the fresh cohort before re-driving so each settle lands in it.
+      get().beginRestoreCohort(targets, 0, toastId);
+      for (const id of targets) {
+        get().reconnectTerminal(id);
       }
     },
     setTerminalReconnecting: (tabId, reconnecting) =>
@@ -2873,6 +3775,7 @@ export const useAppStore = create<AppState>((set, get) => {
     reconnectTerminal: (tabId) =>
       set((state) => ({
         terminalExitedTabs: omitKey(state.terminalExitedTabs, tabId),
+        terminalExitInfo: omitKey(state.terminalExitInfo, tabId),
         terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
         terminalViewMode: omitKey(state.terminalViewMode, tabId),
         terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),
@@ -2885,6 +3788,12 @@ export const useAppStore = create<AppState>((set, get) => {
         // without a gap between the disconnect overlay disappearing and the effect
         // re-running to call setTerminalConnecting().
         terminalConnecting: { ...state.terminalConnecting, [tabId]: true },
+        // Fresh reconnect attempt: arm a new connecting deadline (any prior one
+        // was cleared on disconnect) so the wall-clock timeout starts now.
+        terminalConnectDeadline: {
+          ...state.terminalConnectDeadline,
+          [tabId]: { kind: "connecting" as const, at: Date.now() + connectTimeoutMs("connecting") },
+        },
         terminalRetryCounters: {
           ...state.terminalRetryCounters,
           [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
@@ -2978,12 +3887,14 @@ export const useAppStore = create<AppState>((set, get) => {
       const agent = state.remoteAgents.find((a) => a.id === agentId);
       if (!agent) return;
 
-      set((s) => ({
-        remoteAgents: s.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState: "connecting" as const } : a
-        ),
-      }));
-
+      // Single-writer rule (G4/#1234): `connectionState` is written ONLY by the
+      // backend `agent-state-change` event (via `setAgentConnectionState`). This
+      // action just kicks off the request and consumes the returned
+      // `capabilities` — it writes no `connecting`/`connected`/`disconnected`
+      // states. The backend is authoritative for every transition (it emits
+      // "connecting" up front and "connected"/"disconnected" on the outcome),
+      // so an optimistic write here could clobber a fast drop → "reconnecting"
+      // event that arrives before this promise settles.
       try {
         const config: RemoteAgentConfig = { ...agent.config };
         if (password && config.authMethod === "password") {
@@ -2991,28 +3902,21 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         const result = await apiConnectAgent(agentId, config, agent.agentSettings);
 
+        // Consume capabilities only (no connectionState write). Use a functional
+        // update so a state the event set in the meantime is preserved.
         set((s) => ({
           remoteAgents: s.remoteAgents.map((a) =>
-            a.id === agentId
-              ? {
-                  ...a,
-                  connectionState: "connected" as const,
-                  capabilities: result.capabilities,
-                  isExpanded: true,
-                }
-              : a
+            a.id === agentId ? { ...a, capabilities: result.capabilities, isExpanded: true } : a
           ),
         }));
 
-        // Fetch sessions and definitions
-        await get().refreshAgentSessions(agentId);
+        // The session/definition refresh is owned by the "connected" event
+        // (`setAgentConnectionState`), so it runs exactly once per connect and
+        // also covers the reconnect path — do not refresh here (de-dup, G4).
       } catch (err) {
         console.error(`Failed to connect agent ${agentId}:`, err);
-        set((s) => ({
-          remoteAgents: s.remoteAgents.map((a) =>
-            a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
-          ),
-        }));
+        // No optimistic "disconnected" write: the backend emits "disconnected"
+        // on every connect-failure path, so the event will drive the state.
         throw err;
       }
     },
@@ -3032,12 +3936,49 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
     },
 
-    setAgentConnectionState: (agentId, connectionState) => {
+    shutdownRemoteAgent: async (agentId) => {
+      // Unlike disconnect (detach), shutdown stops the remote sessions and then
+      // drops the transport. The backend returns how many sessions were
+      // detached/killed so the UI can report the impact.
+      const detached = await apiShutdownAgent(agentId);
+      set((s) => ({
+        remoteAgents: s.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
+        ),
+        agentSessions: { ...s.agentSessions, [agentId]: [] },
+        agentFolders: { ...s.agentFolders, [agentId]: [] },
+      }));
+      return detached;
+    },
+
+    setAgentConnectionState: (agentId, connectionState, error) => {
+      // Single writer for `connectionState` (G4/#1234): only the backend
+      // `agent-state-change` event reaches this setter.
+      const previous = get().remoteAgents.find((a) => a.id === agentId)?.connectionState;
+      // Track the terminal error across auto-reconnect exhaustion (G3/#1236):
+      // record it on `disconnected` so the header's Reconnect button can surface
+      // it, and clear it once a fresh attempt starts (`connecting`) or succeeds
+      // (`connected`). Other transitions leave the stored value untouched.
+      const nextLastError = (agent: RemoteAgentDefinition): string | undefined => {
+        if (connectionState === "disconnected") return error ?? agent.lastError;
+        if (connectionState === "connecting" || connectionState === "connected") return undefined;
+        return agent.lastError;
+      };
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState } : a
+          a.id === agentId ? { ...a, connectionState, lastError: nextLastError(a) } : a
         ),
       }));
+
+      // The refresh of sessions/definitions is owned by the transition INTO
+      // "connected" — this is the single, de-duped refresh per connect (G4).
+      // Guarding on the previous state keeps a redundant/duplicate "connected"
+      // event from triggering a second refresh, and it also covers the
+      // reconnect path (reconnecting → connected) which never runs
+      // `connectRemoteAgent`.
+      if (connectionState === "connected" && previous !== "connected") {
+        void get().refreshAgentSessions(agentId);
+      }
     },
 
     clearAgentSessions: (agentId) => {
@@ -3161,12 +4102,17 @@ export const useAppStore = create<AppState>((set, get) => {
             [agentId]: [...(s.agentFolders[agentId] ?? []), folder],
           },
         }));
+        toast.success(`Created folder ${folder.name}`);
       } catch (err) {
         console.error(`Failed to create agent folder on ${agentId}:`, err);
+        toast.error(`Failed to create folder: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
 
     updateAgentFolder: async (agentId, params) => {
+      // A rename carries a new `name`; other prop updates (e.g. expansion state)
+      // stay silent so we do not toast on bookkeeping writes.
+      const isRename = typeof params.name === "string";
       try {
         const updated = await apiUpdateAgentFolder(agentId, params);
         set((s) => ({
@@ -3177,8 +4123,14 @@ export const useAppStore = create<AppState>((set, get) => {
             ),
           },
         }));
+        if (isRename) toast.success(`Renamed folder to ${updated.name}`);
       } catch (err) {
         console.error(`Failed to update agent folder on ${agentId}:`, err);
+        if (isRename) {
+          toast.error(
+            `Failed to rename folder: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
     },
 
@@ -3374,134 +4326,174 @@ export const useAppStore = create<AppState>((set, get) => {
     editorActions: null,
     setEditorActions: (actions) => set({ editorActions: actions }),
 
-    // Monitoring
-    monitoringSessionId: null,
-    monitoringHost: null,
-    monitoringStats: null,
-    monitoringLoading: false,
-    monitoringError: null,
+    // Monitoring — per-host/session keyed slice (audit gap G6, #1231).
+    monitors: {},
     monitoringStatsCache: {},
     sessionCapabilities: {},
+
+    clearMonitoringError: (key) =>
+      set((state) => {
+        const entry = state.monitors[key];
+        if (!entry || entry.error === null) return {};
+        return { monitors: { ...state.monitors, [key]: { ...entry, error: null } } };
+      }),
 
     setSessionCapabilities: (sessionId, caps) =>
       set((state) => ({
         sessionCapabilities: { ...state.sessionCapabilities, [sessionId]: caps },
       })),
 
-    connectMonitoring: async (config: Record<string, unknown>) => {
-      const { monitoringStatsCache } = useAppStore.getState();
+    connectMonitoring: async (sessionId: string, host: string | null = null) => {
+      const { monitoringStatsCache, monitors } = useAppStore.getState();
+
+      // Unified session-based (push) monitoring: the key is the id of the
+      // terminal session that owns the monitor. The backend subscribes the
+      // session's `MonitoringProvider` and pushes stats/status as
+      // "session-monitoring-stats" / "session-monitoring-status" events (#1232).
+      const key = sessionId;
+      const cachedStats = monitoringStatsCache[key] ?? null;
+
+      // Preserve a previously-chosen refresh interval across a reconnect so the
+      // user's rate selection is not silently reset (#1233).
+      const intervalMs = monitors[key]?.intervalMs ?? DEFAULT_MONITORING_INTERVAL_MS;
+
+      // Upsert a fresh loading entry keyed by MonitorKey. monitorSessionId stays
+      // null until the backend subscription is established, which the UI reads as
+      // "not yet connected".
+      upsertMonitor(key, {
+        ...emptyMonitor(key, host ?? key),
+        stats: cachedStats,
+        loading: true,
+        status: "connecting",
+        intervalMs,
+      });
+
       try {
-        // Session-based monitoring: config carries sessionId for "remote-session" tabs.
-        // The agent pushes stats via "session-monitoring-stats" Tauri events.
-        if (config._sessionBased) {
-          const sessionId = config._sessionId as string;
-          const cachedStats = monitoringStatsCache[sessionId] ?? null;
-          set({
-            monitoringLoading: true,
-            monitoringError: null,
-            monitoringStats: cachedStats,
-            monitoringHost: cachedStats ? sessionId : null,
+        // Attach the stats listener; it filters by sessionId and folds fresh
+        // samples into this entry + the shared cache.
+        const statsUnlisten = await onSessionMonitoringStats((sid, stats) => {
+          if (sid !== key) return;
+          useAppStore.setState((state) => {
+            const entry = state.monitors[key];
+            if (!entry) return {};
+            return {
+              monitors: {
+                ...state.monitors,
+                [key]: { ...entry, stats, error: null, sampleCount: entry.sampleCount + 1 },
+              },
+              monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
+            };
           });
-
-          const unlisten = await onSessionMonitoringStats((sid, stats) => {
-            if (sid === sessionId) {
-              useAppStore.setState((state) => ({
-                monitoringStats: stats,
-                monitoringError: null,
-                monitoringStatsCache: { ...state.monitoringStatsCache, [sessionId]: stats },
-              }));
-            }
-          });
-          // Store unlisten in a module-level variable so disconnectMonitoring can call it.
-          _monitoringUnlisten = unlisten;
-
-          await sessionMonitoringOpen(sessionId);
-          set({
-            monitoringSessionId: sessionId,
-            monitoringHost: sessionId,
-            monitoringLoading: false,
-          });
-          return;
-        }
-
-        // Standard SSH-based monitoring (direct connection from desktop).
-        const hostKey = `${config.username as string}@${config.host as string}:${config.port as number}`;
-        const cachedStats = monitoringStatsCache[hostKey] ?? null;
-        set({
-          monitoringLoading: true,
-          monitoringError: null,
-          monitoringStats: cachedStats,
-          monitoringHost: cachedStats ? hostKey : null,
         });
+        _monitoringStatsUnlisten.set(key, statsUnlisten);
 
-        const sessionId = await monitoringOpen(config);
-        const stats = await monitoringFetchStats(sessionId);
-        set((state) => ({
-          monitoringSessionId: sessionId,
-          monitoringHost: hostKey,
-          monitoringStats: stats,
-          monitoringLoading: false,
-          monitoringStatsCache: { ...state.monitoringStatsCache, [hostKey]: stats },
-        }));
+        // The status stream flips the indicator to `stale` on a mid-stream
+        // drop (and back to `live` on recovery) so frozen stats are never
+        // shown as live (#1229, audit gap G1).
+        const statusUnlisten = await onSessionMonitoringStatus((sid, status) => {
+          if (sid !== key) return;
+          useAppStore.setState((state) => {
+            const entry = state.monitors[key];
+            if (!entry) return {};
+            return { monitors: { ...state.monitors, [key]: { ...entry, status } } };
+          });
+        });
+        _monitoringStatusUnlisten.set(key, statusUnlisten);
+
+        await sessionMonitoringOpen(key, intervalMs);
+        upsertMonitor(key, { monitorSessionId: key, loading: false, status: "live" });
       } catch (err) {
-        set({
-          monitoringLoading: false,
-          monitoringError: err instanceof Error ? err.message : String(err),
+        // The stats/status listeners are attached before the open that may throw
+        // here. Detach them so a failed open never leaks a dangling Tauri
+        // listener (monitorSessionId stays null, so disconnectMonitoring would
+        // not clean it up either). See audit gap G5.
+        frontendLog("monitoring", "detaching monitoring listeners after failed open");
+        detachMonitorListeners(key);
+        upsertMonitor(key, {
+          monitorSessionId: null,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+          status: null,
         });
       }
     },
 
-    disconnectMonitoring: async () => {
-      const { monitoringSessionId, monitoringHost, monitoringStats, sessionCapabilities } =
-        useAppStore.getState();
-      if (monitoringSessionId) {
-        try {
-          // If this was a session-based monitoring, stop it; otherwise close SSH session.
-          if (sessionCapabilities[monitoringSessionId] !== undefined) {
-            await sessionMonitoringClose(monitoringSessionId);
-          } else {
-            await monitoringClose(monitoringSessionId);
+    disconnectMonitoring: async (key) => {
+      // Kill exactly one entry when a key is given, or every entry otherwise
+      // (Open Connections "Kill All", global toggle-off).
+      const { monitors } = useAppStore.getState();
+      const keys = key !== undefined ? [key] : Object.keys(monitors);
+
+      for (const k of keys) {
+        const entry = monitors[k];
+        if (entry?.monitorSessionId) {
+          try {
+            await sessionMonitoringClose(entry.monitorSessionId);
+          } catch {
+            // Ignore close errors — the entry is torn down regardless.
           }
-        } catch {
-          // Ignore close errors
         }
+        detachMonitorListeners(k);
       }
-      if (_monitoringUnlisten) {
-        _monitoringUnlisten();
-        _monitoringUnlisten = null;
-      }
-      set((state) => ({
-        monitoringSessionId: null,
-        monitoringHost: null,
-        monitoringStats: null,
-        monitoringError: null,
-        // Preserve last-known stats so the UI can show them instantly on reconnect.
-        monitoringStatsCache:
-          monitoringHost && monitoringStats
-            ? { ...state.monitoringStatsCache, [monitoringHost]: monitoringStats }
-            : state.monitoringStatsCache,
-      }));
+
+      set((state) => {
+        const nextMonitors = { ...state.monitors };
+        const nextCache = { ...state.monitoringStatsCache };
+        for (const k of keys) {
+          const entry = state.monitors[k];
+          // Preserve last-known stats so the UI can show them instantly on reconnect.
+          if (entry?.stats) nextCache[k] = entry.stats;
+          delete nextMonitors[k];
+        }
+        return { monitors: nextMonitors, monitoringStatsCache: nextCache };
+      });
     },
 
-    refreshMonitoring: async () => {
-      const { monitoringSessionId, monitoringHost, sessionCapabilities } = useAppStore.getState();
-      if (!monitoringSessionId) return;
-      // Session-based monitoring is push-based; no explicit refresh needed.
-      if (sessionCapabilities[monitoringSessionId] !== undefined) return;
-      try {
-        const stats = await monitoringFetchStats(monitoringSessionId);
-        set((state) => ({
-          monitoringStats: stats,
-          monitoringError: null,
-          monitoringStatsCache: monitoringHost
-            ? { ...state.monitoringStatsCache, [monitoringHost]: stats }
-            : state.monitoringStatsCache,
-        }));
-      } catch (err) {
-        set({
-          monitoringError: err instanceof Error ? err.message : String(err),
-        });
+    setMonitoringPaused: async (key, paused) => {
+      const entry = useAppStore.getState().monitors[key];
+      if (!entry) return;
+      // Optimistically flag the entry; the backend session loop drives the
+      // authoritative `status`, but the flag gates the local UI (neutral badge +
+      // dimmed stats) immediately (#1233).
+      upsertMonitor(key, { paused, status: paused ? "paused" : "live" });
+      if (entry.monitorSessionId) {
+        try {
+          await sessionMonitoringSetPaused(entry.monitorSessionId, paused);
+        } catch (err) {
+          frontendLog("monitoring", `set paused failed for ${key}: ${err}`);
+          // Roll back the optimistic flag so the UI reflects reality.
+          upsertMonitor(key, { paused: !paused });
+          throw err;
+        }
       }
+    },
+
+    setMonitoringInterval: async (key, intervalMs) => {
+      const entry = useAppStore.getState().monitors[key];
+      if (!entry) return;
+      upsertMonitor(key, { intervalMs });
+      if (entry.monitorSessionId) {
+        try {
+          await sessionMonitoringSetInterval(entry.monitorSessionId, intervalMs);
+        } catch (err) {
+          frontendLog("monitoring", `set interval failed for ${key}: ${err}`);
+          throw err;
+        }
+      }
+    },
+
+    cancelMonitoring: async (key) => {
+      const entry = useAppStore.getState().monitors[key];
+      if (!entry) return;
+      // Abort the backend monitor connect (keyed by session id) so a stuck
+      // handshake stops promptly (#1233); ignore errors — torn down anyway.
+      try {
+        await sessionMonitoringCancel(key);
+      } catch (err) {
+        frontendLog("monitoring", `cancel failed for ${key}: ${err}`);
+      }
+      // Tear the entry down so the picker / Retry affordance is reachable again.
+      await useAppStore.getState().disconnectMonitoring(key);
     },
 
     // SSH Tunnels
@@ -3539,6 +4531,8 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     deleteTunnel: async (tunnelId) => {
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Deleting ${name}…`);
       try {
         await apiDeleteTunnel(tunnelId);
         set((state) => ({
@@ -3547,26 +4541,84 @@ export const useAppStore = create<AppState>((set, get) => {
             Object.entries(state.tunnelStates).filter(([k]) => k !== tunnelId)
           ),
         }));
+        toast.success(`Deleted ${name}`, { id: toastId });
       } catch (err) {
-        console.error("Failed to delete tunnel:", err);
+        toast.error(
+          `Failed to delete ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
       }
     },
 
     startTunnel: async (tunnelId) => {
+      // GAP 4 (#1141): ignore a re-entrant start while a prior start for the
+      // same tunnel is still in flight, so a rapid double-click can't fire a
+      // second backend call (spurious "already connecting/active" toast).
+      if (_tunnelStartInFlight.has(tunnelId)) return;
+      _tunnelStartInFlight.add(tunnelId);
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Starting ${name}…`);
       try {
         await apiStartTunnel(tunnelId);
+        toast.success(`Started ${name}`, { id: toastId });
       } catch (err) {
         console.error("Failed to start tunnel:", err);
+        toast.error(
+          `Failed to start ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
         throw err;
+      } finally {
+        _tunnelStartInFlight.delete(tunnelId);
       }
     },
 
     stopTunnel: async (tunnelId) => {
+      // GAP 4 (#1141): ignore a re-entrant stop while a prior stop for the same
+      // tunnel is still in flight (see startTunnel).
+      if (_tunnelStopInFlight.has(tunnelId)) return;
+      _tunnelStopInFlight.add(tunnelId);
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Stopping ${name}…`);
       try {
         await apiStopTunnel(tunnelId);
+        toast.success(`Stopped ${name}`, { id: toastId });
       } catch (err) {
         console.error("Failed to stop tunnel:", err);
+        toast.error(`Failed to stop ${name}: ${err instanceof Error ? err.message : String(err)}`, {
+          id: toastId,
+        });
         throw err;
+      } finally {
+        _tunnelStopInFlight.delete(tunnelId);
+      }
+    },
+
+    reconnectTunnel: async (tunnelId) => {
+      // Force-reconnect a connected tunnel: tear it down and start it again,
+      // even if the backend supervisor's liveness has not fired yet — covers a
+      // stale-but-green tunnel (#1243). Guarded by the same in-flight sets as
+      // start/stop so a rapid double-click cannot overlap the sequence.
+      if (_tunnelStartInFlight.has(tunnelId) || _tunnelStopInFlight.has(tunnelId)) return;
+      _tunnelStopInFlight.add(tunnelId);
+      _tunnelStartInFlight.add(tunnelId);
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Reconnecting ${name}…`);
+      try {
+        await apiStopTunnel(tunnelId);
+        await apiStartTunnel(tunnelId);
+        toast.success(`Reconnected ${name}`, { id: toastId });
+      } catch (err) {
+        console.error("Failed to reconnect tunnel:", err);
+        toast.error(
+          `Failed to reconnect ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
+      } finally {
+        _tunnelStopInFlight.delete(tunnelId);
+        _tunnelStartInFlight.delete(tunnelId);
       }
     },
 
@@ -3638,6 +4690,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    refreshEmbeddedServerStates: async () => {
+      try {
+        const stateList = await getEmbeddedServerStates();
+        const embeddedServerStates: Record<string, EmbeddedServerState> = {};
+        for (const s of stateList) {
+          embeddedServerStates[s.serverId] = s;
+        }
+        set({ embeddedServerStates });
+      } catch (err) {
+        frontendLog("embedded_server", `Failed to refresh embedded server states: ${err}`);
+      }
+    },
+
     saveEmbeddedServer: async (config) => {
       try {
         await apiSaveEmbeddedServer(config);
@@ -3672,7 +4737,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiStartEmbeddedServer(serverId);
       } catch (err) {
-        console.error("Failed to start embedded server:", err);
+        frontendLog("embedded_server", `Failed to start embedded server ${serverId}: ${err}`);
         throw err;
       }
     },
@@ -3681,7 +4746,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiStopEmbeddedServer(serverId);
       } catch (err) {
-        console.error("Failed to stop embedded server:", err);
+        frontendLog("embedded_server", `Failed to stop embedded server ${serverId}: ${err}`);
         throw err;
       }
     },
@@ -3713,6 +4778,7 @@ export const useAppStore = create<AppState>((set, get) => {
     // Workspaces
     workspaces: [],
     activeWorkspaceName: null,
+    launchingWorkspaceId: null,
 
     loadWorkspaces: async () => {
       try {
@@ -3734,14 +4800,14 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     deleteWorkspaceFromBackend: async (workspaceId) => {
-      try {
-        await apiDeleteWorkspace(workspaceId);
-        set((state) => ({
-          workspaces: state.workspaces.filter((ws) => ws.id !== workspaceId),
-        }));
-      } catch (err) {
-        console.error("Failed to delete workspace:", err);
-      }
+      // Only mutate local state after the backend delete resolves, and rethrow
+      // on failure so the caller can surface the error (GAP G7). A swallowed
+      // failure would optimistically remove the item, then silently "un-delete"
+      // it on the next loadWorkspaces with no explanation.
+      await apiDeleteWorkspace(workspaceId);
+      set((state) => ({
+        workspaces: state.workspaces.filter((ws) => ws.id !== workspaceId),
+      }));
     },
 
     duplicateWorkspaceInBackend: async (workspaceId) => {
@@ -3800,6 +4866,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }),
 
     launchWorkspace: async (workspaceId) => {
+      // In-flight guard (GAP G6, #1146): launching a workspace awaits several
+      // multi-second phases (credential unlock, agent connects). Without this
+      // guard a second double-click / Play press starts a concurrent launch,
+      // racing the two `set(...)` calls and orphaning sessions. Ignore any
+      // re-entrant launch (of this or any other workspace) while one is running.
+      if (get().launchingWorkspaceId !== null) {
+        frontendLog(
+          "workspace",
+          `launchWorkspace(${workspaceId}) ignored: a launch is already in flight`
+        );
+        return;
+      }
+      set({ launchingWorkspaceId: workspaceId });
       try {
         const definition = await apiLoadWorkspace(workspaceId);
         const state = get();
@@ -3846,6 +4925,14 @@ export const useAppStore = create<AppState>((set, get) => {
 
         // Connect any disconnected agents that have stored credentials so that
         // buildTabGroupsFromWorkspace can resolve their tabs to live terminals.
+        //
+        // `connectRemoteAgent` no longer writes `connectionState` or refreshes
+        // sessions (single-writer rule, G4/#1234) — those now flow through the
+        // async `agent-state-change` event, which may not have landed by the
+        // time this returns. This restore path builds the layout synchronously,
+        // so it tracks which agents connected (the request resolved) and drives
+        // the build off that set rather than the not-yet-updated store state.
+        const justConnectedAgentIds = new Set<string>();
         if (disconnectedAgentsNeedingCreds.length > 0) {
           await Promise.all(
             disconnectedAgentsNeedingCreds.map(async (agent) => {
@@ -3860,11 +4947,16 @@ export const useAppStore = create<AppState>((set, get) => {
                     ? resolution.password
                     : undefined;
                 await get().connectRemoteAgent(agent.id, password);
+                justConnectedAgentIds.add(agent.id);
               } catch {
                 // Connection failure is surfaced as agent-error tabs below
               }
             })
           );
+          // Populate sessions/definitions for the agents we just connected so
+          // buildTabGroupsFromWorkspace can resolve their tabs now — the
+          // event-driven refresh is fire-and-forget and may not have run yet.
+          await Promise.all([...justConnectedAgentIds].map((id) => get().refreshAgentSessions(id)));
         }
 
         // After the store is unlocked (or was already unlocked), resolve stored
@@ -3893,13 +4985,17 @@ export const useAppStore = create<AppState>((set, get) => {
           })
         );
 
-        // Re-read agent state so newly-connected agents are reflected in tab resolution.
+        // Re-read agent state so newly-connected agents are reflected in tab
+        // resolution. Agents we connected in this pass are treated as connected
+        // even if their `agent-state-change` "connected" event has not yet
+        // updated the store (single-writer rule, G4/#1234): a resolved connect
+        // request means the backend is connected.
         const freshState = get();
         const agentContext = {
           agents: freshState.remoteAgents.map((a) => ({
             id: a.id,
             name: a.name,
-            connected: a.connectionState === "connected",
+            connected: a.connectionState === "connected" || justConnectedAgentIds.has(a.id),
           })),
           definitions: freshState.agentDefinitions,
         };
@@ -3910,8 +5006,33 @@ export const useAppStore = create<AppState>((set, get) => {
           state.defaultShell,
           agentContext
         );
-        if (builtGroups.length === 0) return;
+        // GAP G3 (#1146): a workspace that builds no launchable tabs (e.g. its
+        // referenced connections were all deleted, or it was saved empty) used
+        // to return silently, leaving the user with an unchanged window and no
+        // explanation. `buildTabGroupsFromWorkspace` maps one group per def, so
+        // "empty" means either zero groups or zero tabs across every group.
+        const builtTabCount = builtGroups.reduce(
+          (n, g) => n + getAllLeaves(g.rootPanel).reduce((m, leaf) => m + leaf.tabs.length, 0),
+          0
+        );
+        if (builtGroups.length === 0 || builtTabCount === 0) {
+          frontendLog(
+            "workspace",
+            `launchWorkspace(${workspaceId}): "${definition.name}" produced no launchable tabs`
+          );
+          toast.info(`Workspace "${definition.name}" had no launchable tabs`);
+          return;
+        }
         const firstGroup = builtGroups[0];
+        // GAP G1 (#1146): tear down the currently-open live sessions BEFORE the
+        // `set` replaces the layout, otherwise their PTY/SSH/agent sessions are
+        // dropped from the store and orphaned into the Open Connections panel.
+        teardownAllSessions(get());
+        // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
+        // auto-save subscription that fires from this `set` — and the per-tab
+        // connects that follow — do not persist a mid-launch snapshot over the
+        // previously-good session.
+        beginRestoreGuard(set);
         set({
           tabGroups: builtGroups,
           activeTabGroupId: firstGroup.id,
@@ -3919,8 +5040,17 @@ export const useAppStore = create<AppState>((set, get) => {
           activePanelId: firstGroup.activePanelId,
           activeWorkspaceName: definition.name,
         });
+        // GAP G4 (#1146): register the placed tabs as a cohort so a single
+        // summary toast fires once every tab has connected or failed.
+        const { pendingTabIds, preFailedCount } = collectRestoreCohort(builtGroups);
+        get().beginRestoreCohort(pendingTabIds, preFailedCount);
       } catch (err) {
-        console.error("Failed to launch workspace:", err);
+        // GAP G3 (#1146): a failed load used to be a silent console.error, so a
+        // launch that could not open anything looked like nothing happened.
+        frontendLog("workspace", `Failed to launch workspace ${workspaceId}: ${String(err)}`);
+        toast.error("Could not launch workspace");
+      } finally {
+        set({ launchingWorkspaceId: null });
       }
     },
 
@@ -3951,6 +5081,8 @@ export const useAppStore = create<AppState>((set, get) => {
         throw err;
       }
     },
+
+    restoreInProgress: false,
 
     saveLastSession: async () => {
       const state = get();
@@ -3984,6 +5116,12 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     scheduleLastSessionSave: () => {
+      // GAP G5 (#1146): while a restore/launch is settling, a manual tab action
+      // or an in-flight per-tab connect fires this via the layout subscription.
+      // Saving now would recapture the whole live tree — including tabs still
+      // connecting or in agent-error — over the previously-good session. Skip it
+      // until the restored cohort settles (see beginRestoreGuard).
+      if (get().restoreInProgress) return;
       if (lastSessionPersistTimer) clearTimeout(lastSessionPersistTimer);
       lastSessionPersistTimer = setTimeout(() => {
         lastSessionPersistTimer = null;
@@ -4012,18 +5150,50 @@ export const useAppStore = create<AppState>((set, get) => {
           state.defaultShell,
           agentContext
         );
-        if (builtGroups.length === 0) return false;
+        // GAP G3 (#1146): a stored session whose tabs all fail to build (e.g.
+        // every referenced connection was deleted) used to return silently,
+        // leaving the user at an empty window indistinguishable from "nothing
+        // was saved". `buildTabGroupsFromWorkspace` maps one group per def, so
+        // "empty" means either zero groups or zero tabs across every group.
+        const builtTabCount = builtGroups.reduce(
+          (n, g) => n + getAllLeaves(g.rootPanel).reduce((m, leaf) => m + leaf.tabs.length, 0),
+          0
+        );
+        if (builtGroups.length === 0 || builtTabCount === 0) {
+          frontendLog(
+            "workspace",
+            "restoreLastSession: stored session produced no launchable tabs"
+          );
+          toast.info("Previous session had no launchable tabs");
+          return false;
+        }
         const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
         const activeGroup = builtGroups[idx];
+        // GAP G1 (#1146): tear down any currently-open live sessions BEFORE the
+        // `set` replaces the layout (e.g. a CLI-opened workspace at startup that
+        // runs before restore), otherwise those sessions are orphaned.
+        teardownAllSessions(get());
+        // GAP G5 (#1146): raise the guard BEFORE placing the layout so the
+        // auto-save subscription that fires from this very `set` — and the
+        // per-tab connects that follow — are skipped until the cohort settles.
+        beginRestoreGuard(set);
         set({
           tabGroups: builtGroups,
           activeTabGroupId: activeGroup.id,
           rootPanel: activeGroup.rootPanel,
           activePanelId: activeGroup.activePanelId,
         });
+        // GAP G4 (#1146): register the placed tabs as a cohort so a single
+        // summary toast fires once every tab has connected or failed.
+        const { pendingTabIds, preFailedCount } = collectRestoreCohort(builtGroups);
+        get().beginRestoreCohort(pendingTabIds, preFailedCount);
         return true;
       } catch (err) {
-        console.error("Failed to restore last session:", err);
+        // GAP G3 (#1146): a corrupt/failed last-session load used to be a silent
+        // console.error, so a user who had a populated session opened to a blank
+        // window with no explanation. Surface a recoverable error toast.
+        frontendLog("workspace", `Failed to restore last session: ${String(err)}`);
+        toast.error("Could not restore last session");
         return false;
       }
     },
@@ -4061,23 +5231,28 @@ export const useAppStore = create<AppState>((set, get) => {
         get().resolveUnlock(false);
       }
     },
-    unlockResolve: null,
+    unlockResolvers: [],
     requestUnlock: () =>
       new Promise<boolean>((resolve) => {
-        set({ unlockDialogOpen: true, unlockResolve: resolve });
+        // Append rather than replace: two concurrent connect flows may both await
+        // requestUnlock() before the dialog resolves. Every awaiting caller must
+        // settle on the single dialog exit (G1) — overwriting a single resolver
+        // would leave the earlier connect wedged forever.
+        set((state) => ({
+          unlockDialogOpen: true,
+          unlockResolvers: [...state.unlockResolvers, resolve],
+        }));
       }),
     resolveUnlock: (unlocked) => {
-      const { unlockResolve } = get();
-      if (unlockResolve) {
-        unlockResolve(unlocked);
-        set({ unlockResolve: null });
+      const { unlockResolvers } = get();
+      if (unlockResolvers.length === 0) return;
+      // Clear first so a re-entrant resolveUnlock() (e.g. the unlocked event and a
+      // dialog-close both firing) is a harmless no-op — every promise settles once.
+      set({ unlockResolvers: [] });
+      for (const resolve of unlockResolvers) {
+        resolve(unlocked);
       }
     },
-    masterPasswordSetupOpen: false,
-    masterPasswordSetupMode: "setup",
-    openMasterPasswordSetup: (mode) =>
-      set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
-    closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
 
     // Portable mode
     isPortableMode: false,

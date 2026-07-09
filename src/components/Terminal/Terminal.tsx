@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
@@ -28,6 +29,8 @@ import {
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveLineEnding } from "@/utils/lineEndings";
+import { getAllLeaves } from "@/utils/panelTree";
+import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 
 const HORIZONTAL_SCROLL_COLS = 500;
@@ -48,6 +51,20 @@ const DEFAULT_CURSOR_BLINK = true;
  * remote command is gone) does not retry forever.
  */
 const MAX_AGENT_SPAWN_ATTEMPTS = 5;
+
+/**
+ * Resolves a tab's display title from the current store so the connect success
+ * toast can name the connection. Falls back to a generic label if the tab has
+ * been removed by the time the connect resolves.
+ */
+function resolveTabTitle(tabId: string): string {
+  const state = useAppStore.getState();
+  const tab = [
+    ...getAllLeaves(state.rootPanel).flatMap((l) => l.tabs),
+    ...state.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+  ].find((t) => t.id === tabId);
+  return tab?.title?.trim() || "Session";
+}
 
 /**
  * Wait until the xterm element is sitting in a real slot (large parent
@@ -226,9 +243,19 @@ export function Terminal({
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  // Serialized scrollback of the previous xterm instance, captured just before
+  // it is disposed on a reconnect (retryCount bump re-runs the creation effect
+  // and tears the instance down). Replayed into the fresh xterm so the
+  // scrollback the disconnect overlay promises survives — and, if the reconnect
+  // itself fails, is still visible under the "Reconnect failed" overlay (#1126).
+  const scrollbackSnapshotRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  // True only while a backend connect is in flight, so teardown can abort it (#952).
-  const connectInFlightRef = useRef(false);
+  // The set of connect ids (`${tabId}:${retryCount}`) whose backend handshake is
+  // currently in flight, so teardown can abort them (#952). Tracked PER attempt
+  // rather than as a single shared boolean: overlapping attempts each add/remove
+  // their own id, so a stale attempt that settles late can no longer clear the
+  // flag out from under a live attempt and skip its cancel on teardown (#1214).
+  const connectInFlightRef = useRef<Set<string>>(new Set());
   const horizontalScrollingRef = useRef(false);
   const userScrolledUpRef = useRef(false);
   const lastInputTimeRef = useRef(0);
@@ -243,6 +270,17 @@ export function Terminal({
   // destroying the live xterm and leaving a blank terminal. Using a mount-time
   // ref keeps setupTerminal stable after the initial connect.
   const initialSessionIdRef = useRef(existingSessionId);
+  // Keep the latest persistentConnectionId in a ref so the terminal-creation
+  // effect below can read it without listing it as a dependency. Adding it to
+  // that effect's deps would dispose and recreate the live xterm instance and
+  // its backend session whenever the prop changed — the same churn we avoid for
+  // existingSessionId above. The value is only read on (re)connect to decide
+  // whether to replay the local scrollback snapshot, so a ref preserves the
+  // exact behavior while satisfying react-hooks/exhaustive-deps (#1271).
+  const persistentConnectionIdRef = useRef(persistentConnectionId);
+  useEffect(() => {
+    persistentConnectionIdRef.current = persistentConnectionId;
+  }, [persistentConnectionId]);
   const {
     register,
     unregister,
@@ -264,7 +302,7 @@ export function Terminal({
   }, [tabId]);
 
   const setupTerminal = useCallback(
-    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
+    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean, connectId: string) => {
       // Cancel any pending session close from a StrictMode unmount cycle
       if (pendingCloseTimerRef.current !== null) {
         clearTimeout(pendingCloseTimerRef.current);
@@ -422,23 +460,29 @@ export function Terminal({
               // createTerminal is awaiting if a container resize fires).
               ptyCols = xterm.cols;
               ptyRows = xterm.rows;
-              // Pass the tab id as the connect id so closing the tab while
-              // connecting can abort the in-flight handshake (#952).
-              connectInFlightRef.current = true;
+              // Pass a UNIQUE per-attempt connect id so closing the tab while
+              // connecting can abort the in-flight handshake (#952) — and so an
+              // overlapping retry/reconnect never shares the previous attempt's
+              // id. If it did, the old effect's cleanup would cancel the fresh
+              // attempt's token instead of its own (#1125).
+              connectInFlightRef.current.add(connectId);
               try {
-                resolved = await createTerminal(sessionConfig, tabId);
+                resolved = await createTerminal(sessionConfig, connectId);
               } finally {
-                connectInFlightRef.current = false;
+                connectInFlightRef.current.delete(connectId);
               }
 
               if (isCanceled()) {
                 closeTerminal(resolved);
                 return;
               }
-              // Success — clear all pre-connect overlay state.
+              // Success — clear all pre-connect overlay state and give the user
+              // a brief, non-intrusive confirmation that the session is live so
+              // the connect does not resolve silently (#1127).
               useAppStore.getState().setTerminalConnecting(tabId, false);
               useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
               useAppStore.getState().setTerminalSpawnError(tabId, null);
+              toast.success("Connected", { description: resolveTabTitle(tabId) });
               break;
             } catch (err) {
               if (isCanceled()) return;
@@ -615,12 +659,25 @@ export function Terminal({
 
         // Subscribe to exit events via singleton dispatcher
         frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
-        const unsubExit = terminalDispatcher.subscribeExit(sessionId, () => {
-          frontendLog("disconnect", `terminal-exit fired session=${sessionId} tab=${tabId}`);
-          xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
+        const unsubExit = terminalDispatcher.subscribeExit(sessionId, (exitCode) => {
+          // Classify why the session ended so the disconnect overlay can tailor
+          // its wording (#1121). A user-initiated kill (e.g. from the Open
+          // Connections panel) was tagged beforehand; otherwise exit code 0 is a
+          // clean exit and anything else (or an unknown code) is a dropped/failed
+          // session.
+          const store = useAppStore.getState();
+          const wasKilled = store.consumeSessionKilled(sessionId);
+          const reason = wasKilled ? "killed" : exitCode === 0 ? "clean" : "dropped";
+          frontendLog(
+            "disconnect",
+            `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason}`
+          );
+          const exitLabel =
+            exitCode === null ? "[Process exited]" : `[Process exited with code ${exitCode}]`;
+          xterm.writeln(`\r\n\x1b[90m${exitLabel}\x1b[0m`);
           sessionIdRef.current = null;
           unregisterSession(tabId);
-          useAppStore.getState().setTerminalExited(tabId);
+          store.setTerminalExited(tabId, { code: exitCode, reason });
         });
 
         // Send user input to backend
@@ -726,6 +783,20 @@ export function Terminal({
     // second mount, which would send input to the wrong backend session.
     let canceled = false;
 
+    // Unique connect id for THIS effect run's connect attempt. Keyed by the
+    // retry generation so an overlapping retry/reconnect (which re-runs the
+    // effect via the retryCount dep) gets a distinct id. The cleanup below
+    // cancels only this id, so a stale cleanup can never abort a newer
+    // attempt's in-flight handshake (#1125).
+    const connectId = `${tabId}:${retryCount}`;
+
+    // Capture the in-flight connect-id set for the cleanup below. The ref's
+    // `.current` identity is stable for the tab's lifetime (it is never
+    // reassigned, only mutated), so this local is the same Set the connect loop
+    // adds/removes ids on — and reading it in cleanup avoids the
+    // react-hooks/exhaustive-deps stale-ref warning.
+    const inFlightConnects = connectInFlightRef.current;
+
     // Create an imperative DOM element for xterm (not managed by React rendering)
     const el = document.createElement("div");
     el.style.position = "absolute";
@@ -781,7 +852,25 @@ export function Terminal({
     xterm.loadAddon(searchAddon);
     registerSearchAddon(tabId, searchAddon);
 
+    const serializeAddon = new SerializeAddon();
+    xterm.loadAddon(serializeAddon);
+
     xterm.open(scrollViewport);
+
+    // Replay the previous instance's scrollback captured on the last teardown
+    // (a reconnect disposes the old xterm — see cleanup below). Writing it here,
+    // before the new session connects, means a failed reconnect still shows the
+    // prior scrollback under the disconnect overlay instead of a blank pane
+    // (#1126). Persistent/agent tabs re-fetch an authoritative buffer from the
+    // server during reattach, so replaying the local snapshot too would double
+    // the scrollback — skip it for those and rely on the server buffer.
+    // Always clear the ref so an unrelated re-run starts empty.
+    if (scrollbackSnapshotRef.current) {
+      if (!persistentConnectionIdRef.current) {
+        xterm.write(scrollbackSnapshotRef.current);
+      }
+      scrollbackSnapshotRef.current = null;
+    }
 
     // The terminal's vertical scrollbar lives in the gutter in every mode (xterm's
     // own overlay scrollbar is hidden via CSS), so it looks and behaves the same
@@ -899,7 +988,7 @@ export function Terminal({
     fitAddonRef.current = fitAddon;
 
     // Wire to backend
-    setupTerminal(xterm, fitAddon, () => canceled);
+    setupTerminal(xterm, fitAddon, () => canceled, connectId);
 
     // Re-fit once web fonts finish loading. The terminal font (Nerd Font
     // Mono) ships via @font-face with `font-display: swap`, so xterm's
@@ -997,9 +1086,11 @@ export function Terminal({
       canceled = true;
       // If the tab is torn down while a connect is in flight (e.g. the user hit
       // Cancel on the connecting overlay), abort the backend's handshake instead
-      // of leaving it to run to completion (#952).
-      if (connectInFlightRef.current) {
-        void cancelConnecting(tabId).catch(() => {});
+      // of leaving it to run to completion (#952). Cancel only THIS effect run's
+      // connect id — never the bare tabId — so an overlapping newer attempt is
+      // not aborted by this stale cleanup (#1125).
+      if (inFlightConnects.has(connectId)) {
+        void cancelConnecting(connectId).catch(() => {});
       }
       resizeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);
@@ -1013,6 +1104,18 @@ export function Terminal({
       }
       scrollbar.dispose();
       scrollbarRef.current = null;
+      // Snapshot the scrollback so the next effect run (a reconnect re-runs this
+      // effect via the retryCount dep) can replay it into the fresh xterm. This
+      // is what makes the disconnect overlay's "Scrollback is preserved below"
+      // hold true even when the reconnect fails (#1126). Serialize before
+      // dispose; guard so a serialize failure never blocks teardown.
+      try {
+        const snapshot = serializeAddon.serialize();
+        scrollbackSnapshotRef.current = snapshot.length > 0 ? snapshot : null;
+      } catch (err) {
+        frontendLog("terminal", `Failed to snapshot scrollback tab=${tabId}: ${String(err)}`);
+        scrollbackSnapshotRef.current = null;
+      }
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
+import { deriveTabStatus } from "@/utils/tabStatus";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
@@ -24,7 +25,12 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const renameTab = useAppStore((s) => s.renameTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
-  const remoteStates = useAppStore((s) => s.remoteStates);
+  // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
+  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
+  const terminalReconnectingTabs = useAppStore((s) => s.terminalReconnectingTabs);
+  const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
+  const terminalDisconnectErrors = useAppStore((s) => s.terminalDisconnectErrors);
+  const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard, openTerminalInEditor } =
     useTerminalRegistry();
 
@@ -75,7 +81,20 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               tabColor={tabColors[tab.id]}
               onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}
-              remoteState={tab.connectionType === "remote" ? remoteStates[tab.id] : undefined}
+              status={
+                tab.contentType === "terminal"
+                  ? deriveTabStatus(
+                      {
+                        terminalConnecting,
+                        terminalReconnectingTabs,
+                        terminalSpawnErrors,
+                        terminalDisconnectErrors,
+                        terminalExitedTabs,
+                      },
+                      tab.id
+                    )
+                  : undefined
+              }
             />
           ))}
         </div>

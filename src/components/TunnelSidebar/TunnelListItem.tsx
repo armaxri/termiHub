@@ -1,4 +1,5 @@
-import { Play, Square, Pencil, Copy, Trash2 } from "lucide-react";
+import { Play, Square, Pencil, Copy, Trash2, RotateCw, Info, AlertTriangle } from "lucide-react";
+import { Button, Tooltip, toast } from "@/components/ui";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
@@ -7,8 +8,16 @@ interface TunnelListItemProps {
   tunnel: TunnelConfig;
   state: TunnelState | undefined;
   connections: SavedConnection[];
-  onStart: (tunnelId: string) => void;
-  onStop: (tunnelId: string) => void;
+  /** Start (also Retry) the tunnel. May be async so the button shows a pending state. */
+  onStart: (tunnelId: string) => void | Promise<void>;
+  /** Stop the tunnel. May be async so the button shows a pending state. */
+  onStop: (tunnelId: string) => void | Promise<void>;
+  /**
+   * Force-reconnect a connected tunnel (tear down + restart) even if liveness
+   * has not fired yet — covers a stale-but-green tunnel the supervisor is slow
+   * to notice (#1243). May be async so the button shows a pending state.
+   */
+  onReconnect: (tunnelId: string) => void | Promise<void>;
   onEdit: (tunnelId: string) => void;
   onDuplicate: (tunnelId: string) => void;
   onDelete: (tunnelId: string) => void;
@@ -32,20 +41,30 @@ export function TunnelListItem({
   connections,
   onStart,
   onStop,
+  onReconnect,
   onEdit,
   onDuplicate,
   onDelete,
 }: TunnelListItemProps) {
   const status = state?.status ?? "disconnected";
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
+  const isError = status === "error";
+  const lastError = state?.error;
   const sshConn = connections.find((c) => c.id === tunnel.sshConnectionId);
   const sshLabel = sshConn?.name ?? "Unknown";
   const typeLabel =
     tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
 
+  /** Surface the persisted last-error message (View last error affordance). */
+  const handleViewError = () => {
+    toast.error(`${tunnel.name}: tunnel error`, {
+      description: lastError ?? "No error details were recorded.",
+    });
+  };
+
   return (
     <div
-      className="tunnel-item"
+      className={`tunnel-item${isError ? " tunnel-item--error" : ""}`}
       data-testid={`tunnel-item-${tunnel.id}`}
       onDoubleClick={() => onEdit(tunnel.id)}
     >
@@ -61,64 +80,134 @@ export function TunnelListItem({
           {typeLabel}
         </span>
         <div className="tunnel-item__actions">
-          {isActive ? (
-            <button
-              className="tunnel-item__action"
-              title="Stop"
-              data-testid={`tunnel-stop-${tunnel.id}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onStop(tunnel.id);
-              }}
-            >
-              <Square size={12} />
-            </button>
-          ) : (
-            <button
-              className="tunnel-item__action"
-              title="Start"
-              data-testid={`tunnel-start-${tunnel.id}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onStart(tunnel.id);
-              }}
-            >
-              <Play size={12} />
-            </button>
+          {status === "connected" && (
+            <Tooltip content="Reconnect (force)" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Reconnect"
+                data-testid={`tunnel-reconnect-${tunnel.id}`}
+                icon={<RotateCw size={12} />}
+                errorToast={false}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  return onReconnect(tunnel.id);
+                }}
+              />
+            </Tooltip>
           )}
-          <button
-            className="tunnel-item__action"
-            title="Edit"
-            data-testid={`tunnel-edit-${tunnel.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(tunnel.id);
-            }}
-          >
-            <Pencil size={12} />
-          </button>
-          <button
-            className="tunnel-item__action"
-            title="Duplicate"
-            data-testid={`tunnel-duplicate-${tunnel.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate(tunnel.id);
-            }}
-          >
-            <Copy size={12} />
-          </button>
-          <button
-            className="tunnel-item__action"
-            title="Delete"
-            data-testid={`tunnel-delete-${tunnel.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(tunnel.id);
-            }}
-          >
-            <Trash2 size={12} />
-          </button>
+          {isActive && (
+            <Tooltip content="Stop" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Stop"
+                data-testid={`tunnel-stop-${tunnel.id}`}
+                icon={<Square size={12} />}
+                // The store surfaces its own start/stop toast; suppress the
+                // Button's duplicate error toast and keep the pending spinner.
+                errorToast={false}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  return onStop(tunnel.id);
+                }}
+              />
+            </Tooltip>
+          )}
+          {isError && (
+            <>
+              <Tooltip content="View last error" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="View last error"
+                  data-testid={`tunnel-view-error-${tunnel.id}`}
+                  icon={<Info size={12} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleViewError();
+                  }}
+                />
+              </Tooltip>
+              <Tooltip content="Retry" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Retry"
+                  data-testid={`tunnel-retry-${tunnel.id}`}
+                  icon={<RotateCw size={12} />}
+                  errorToast={false}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    return onStart(tunnel.id);
+                  }}
+                />
+              </Tooltip>
+            </>
+          )}
+          {!isActive && !isError && (
+            <Tooltip content="Start" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Start"
+                data-testid={`tunnel-start-${tunnel.id}`}
+                icon={<Play size={12} />}
+                errorToast={false}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  return onStart(tunnel.id);
+                }}
+              />
+            </Tooltip>
+          )}
+          <Tooltip content="Edit" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Edit"
+              data-testid={`tunnel-edit-${tunnel.id}`}
+              icon={<Pencil size={12} />}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(tunnel.id);
+              }}
+            />
+          </Tooltip>
+          <Tooltip content="Duplicate" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Duplicate"
+              data-testid={`tunnel-duplicate-${tunnel.id}`}
+              icon={<Copy size={12} />}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDuplicate(tunnel.id);
+              }}
+            />
+          </Tooltip>
+          <Tooltip content="Delete" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Delete"
+              data-testid={`tunnel-delete-${tunnel.id}`}
+              icon={<Trash2 size={12} />}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(tunnel.id);
+              }}
+            />
+          </Tooltip>
         </div>
       </div>
       <div className="tunnel-item__details">
@@ -131,8 +220,11 @@ export function TunnelListItem({
             <span>{state.stats.activeConnections} conn</span>
           </div>
         )}
-        {status === "error" && state?.error && (
-          <span style={{ color: "var(--color-error)" }}>{state.error}</span>
+        {isError && lastError && (
+          <span className="tunnel-item__error" title={lastError}>
+            <AlertTriangle size={12} className="tunnel-item__error-icon" />
+            <span className="tunnel-item__error-text">{lastError}</span>
+          </span>
         )}
       </div>
     </div>

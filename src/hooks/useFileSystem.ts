@@ -9,8 +9,64 @@ import {
   sftpRename,
   sftpWriteFileContent,
   vscodeOpenRemote,
+  TransferTerminalError,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
+import { toast } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
+
+/** Extract a human-readable message from an unknown transfer error. */
+function transferErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return String(error);
+}
+
+/**
+ * Run an SFTP transfer with user feedback: a pending toast shown while the
+ * transfer runs (audit gap D2 — transfers must never fail silently).
+ *
+ * The **terminal** success/error toast is owned exclusively by the
+ * `transfer-progress` event path (`useTransferEvents`, #1286) so a single
+ * transfer produces exactly one terminal toast. This helper therefore does not
+ * emit its own success/error toast for a transfer that reached the backend:
+ *   - success → dismiss the pending toast (the event path raises the "Downloaded
+ *     …/Uploaded …" success toast);
+ *   - a {@link TransferTerminalError} (`done`/`cancelled`/`error` from the
+ *     transfer channel) → dismiss the pending toast; the event path already
+ *     surfaced the outcome (and stays quiet on cancel).
+ *
+ * An **early** failure that never produced a transfer event (invalid session,
+ * permission error thrown before the transfer starts, an sftp→sftp temp-file
+ * paste leg that fails synchronously) is still surfaced here via `toast.error`,
+ * since no `transfer-progress` event will cover it. The rejection is always
+ * swallowed so callers never produce an unhandled rejection. Returns whether
+ * the transfer succeeded.
+ */
+async function runTransfer(
+  label: string,
+  action: () => Promise<unknown>,
+  messages: { loading: string }
+): Promise<boolean> {
+  const toastId = toast.loading(messages.loading);
+  try {
+    await action();
+    // Success toast is raised by the transfer-progress event path (#1286).
+    toast.dismiss(toastId);
+    return true;
+  } catch (error) {
+    if (error instanceof TransferTerminalError) {
+      // The event path already surfaced this (success/error toast) or is
+      // intentionally quiet (cancel) — just clear the pending toast.
+      toast.dismiss(toastId);
+      return false;
+    }
+    const message = transferErrorMessage(error);
+    frontendLog("sftp_transfer", `${label} failed: ${message}`);
+    toast.error(`${label} failed: ${message}`, { id: toastId });
+    return false;
+  }
+}
 
 /**
  * Hook for SFTP file system operations.
@@ -19,7 +75,7 @@ export function useFileSystem() {
   const fileEntries = useAppStore((s) => s.fileEntries);
   const currentPath = useAppStore((s) => s.currentPath);
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
-  const sftpLoading = useAppStore((s) => s.sftpLoading);
+  const sftpStatus = useAppStore((s) => s.sftpStatus);
   const sftpError = useAppStore((s) => s.sftpError);
   const navigateSftp = useAppStore((s) => s.navigateSftp);
   const refreshSftp = useAppStore((s) => s.refreshSftp);
@@ -46,7 +102,9 @@ export function useFileSystem() {
       if (!sftpSessionId) return;
       const localPath = await save({ title: "Save file as...", defaultPath: fileName });
       if (!localPath) return;
-      await sftpDownload(sftpSessionId, remotePath, localPath);
+      await runTransfer("Download", () => sftpDownload(sftpSessionId, remotePath, localPath), {
+        loading: `Downloading ${fileName}…`,
+      });
     },
     [sftpSessionId]
   );
@@ -57,8 +115,10 @@ export function useFileSystem() {
     if (!localPath) return;
     const fileName = localPath.split("/").pop() ?? localPath.split("\\").pop() ?? "upload";
     const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
-    await sftpUpload(sftpSessionId, localPath, remotePath);
-    refreshSftp();
+    const ok = await runTransfer("Upload", () => sftpUpload(sftpSessionId, localPath, remotePath), {
+      loading: `Uploading ${fileName}…`,
+    });
+    if (ok) refreshSftp();
   }, [sftpSessionId, currentPath, refreshSftp]);
 
   const uploadFileFromPath = useCallback(
@@ -67,8 +127,12 @@ export function useFileSystem() {
       const parts = localPath.replace(/\\/g, "/").split("/");
       const fileName = parts[parts.length - 1] || "upload";
       const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
-      await sftpUpload(sftpSessionId, localPath, remotePath);
-      refreshSftp();
+      const ok = await runTransfer(
+        "Upload",
+        () => sftpUpload(sftpSessionId, localPath, remotePath),
+        { loading: `Uploading ${fileName}…` }
+      );
+      if (ok) refreshSftp();
     },
     [sftpSessionId, currentPath, refreshSftp]
   );
@@ -153,7 +217,7 @@ export function useFileSystem() {
 
     const destDir = currentPath;
 
-    for (const clipEntry of clipboard.entries) {
+    const pasteOne = async (clipEntry: FileEntry): Promise<void> => {
       const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
 
       if (clipboard.sourceMode === "sftp") {
@@ -179,6 +243,15 @@ export function useFileSystem() {
         // local→sftp: upload local file to remote destination
         await sftpUpload(sftpSessionId, clipEntry.path, destPath);
       }
+    };
+
+    for (const clipEntry of clipboard.entries) {
+      const ok = await runTransfer("Paste", () => pasteOne(clipEntry), {
+        loading: `Pasting ${clipEntry.name}…`,
+      });
+      // Abort on first failure so a cut clipboard is not cleared and the user
+      // is not left with a partial, silently-incomplete paste.
+      if (!ok) return;
     }
 
     if (clipboard.operation === "cut") {
@@ -192,7 +265,10 @@ export function useFileSystem() {
     fileEntries,
     currentPath,
     isConnected: sftpSessionId !== null,
-    isLoading: sftpLoading,
+    // Derived from the explicit status enum (audit gap A1): either the initial
+    // connect or a directory list is in flight. Callers that need to tell
+    // "connecting" apart from "listing" read `sftpStatus` from the store.
+    isLoading: sftpStatus === "connecting" || sftpStatus === "listing",
     error: sftpError,
     navigateTo,
     navigateUp,

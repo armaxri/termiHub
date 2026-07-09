@@ -27,8 +27,11 @@ import {
   FolderSync,
   Globe,
   Terminal,
+  X,
+  Ban,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { Button, Tooltip, Progress, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
@@ -318,15 +321,18 @@ function FileRow({
           </button>
           <div className="file-browser__row-menu">
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="file-browser__btn file-browser__btn--menu"
-                  title="Actions"
-                  data-testid={`file-row-menu-${entry.name}`}
-                >
-                  <MoreHorizontal size={14} />
-                </button>
-              </DropdownMenu.Trigger>
+              <Tooltip content="Actions" side="top">
+                <DropdownMenu.Trigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="file-browser__menu-reveal"
+                    icon={<MoreHorizontal size={14} />}
+                    aria-label="File actions"
+                    data-testid={`file-row-menu-${entry.name}`}
+                  />
+                </DropdownMenu.Trigger>
+              </Tooltip>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="context-menu__content" align="end">
                   <FileMenuItems
@@ -378,7 +384,6 @@ function useFileBrowserSync() {
   const navigateSession = useAppStore((s) => s.navigateSession);
   const setSessionFileBrowserId = useAppStore((s) => s.setSessionFileBrowserId);
   const connectSftp = useAppStore((s) => s.connectSftp);
-  const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
   const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
@@ -575,12 +580,13 @@ function useFileBrowserSync() {
     // Already connected to the right host
     if (sftpSessionId && sftpConnectedHost === hostKey) return;
 
-    // Need to connect (or reconnect to different host)
-    const doConnect = async () => {
-      if (sftpSessionId && sftpConnectedHost !== hostKey) {
-        await disconnectSftp();
-      }
+    const owningTabId = activeTabId ?? undefined;
 
+    // Need to connect (or switch to a different host). We no longer close the
+    // previous session here: each tab owns its own SFTP session, so the store's
+    // connectSftp leaves a still-owned previous session registered (and closes
+    // it only if its owning tab is gone). Sessions are closed on tab close (#1241).
+    const doConnect = async () => {
       let configToUse = cfg;
       const authMethod = cfg.authMethod as string | undefined;
       if (authMethod === "password" && !cfg.password) {
@@ -596,7 +602,7 @@ function useFileBrowserSync() {
         configToUse = { ...baseConfig, password };
       }
 
-      connectSftp(configToUse);
+      connectSftp(configToUse, owningTabId);
     };
 
     doConnect();
@@ -609,7 +615,6 @@ function useFileBrowserSync() {
     sftpConnectedHost,
     connections,
     connectSftp,
-    disconnectSftp,
     requestPassword,
   ]);
 
@@ -695,6 +700,15 @@ export function FileBrowser() {
   const { isDragOver } = useOsFileDrop(containerRef, handleOsDrop);
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
+  const retrySftp = useAppStore((s) => s.retrySftp);
+  const dismissSftpError = useAppStore((s) => s.dismissSftpError);
+  // Explicit SFTP lifecycle status (audit gap A1) — used to pick the SFTP
+  // placeholder label without inferring it from isConnected + isLoading.
+  const sftpStatus = useAppStore((s) => s.sftpStatus);
+  // In-flight SFTP transfers (#1247); the footer shows those owned by the
+  // active browser session, and Cancel fires sftp_cancel_transfer.
+  const transfers = useAppStore((s) => s.transfers);
+  const cancelTransfer = useAppStore((s) => s.cancelTransfer);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const fileClipboard = useAppStore((s) => s.fileClipboard);
   const quickShareServer = useAppStore((s) => s.quickShareServer);
@@ -754,9 +768,8 @@ export function FileBrowser() {
           // session mode: file editing via editor not yet supported for agent sessions
           break;
         case "download":
-          downloadFile(entry.path, entry.name).catch((err: unknown) =>
-            console.error("Download failed:", err)
-          );
+          // downloadFile surfaces its own success/error toast (see useFileSystem).
+          void downloadFile(entry.path, entry.name);
           break;
         case "vscode":
           openInVscode(entry.path).catch((err: unknown) =>
@@ -809,7 +822,8 @@ export function FileBrowser() {
   );
 
   const handlePaste = useCallback(() => {
-    pasteEntry().catch((err: unknown) => console.error("Paste failed:", err));
+    // pasteEntry surfaces its own per-item success/error toast (see useFileSystem).
+    void pasteEntry();
   }, [pasteEntry]);
 
   const handleRowClick = useCallback(
@@ -935,7 +949,7 @@ export function FileBrowser() {
     return (
       <div className="file-browser">
         <div className="file-browser__placeholder" data-testid="file-browser-sftp-connecting">
-          {isLoading ? (
+          {sftpStatus === "connecting" ? (
             <>
               <Loader2 size={20} className="file-browser__spinner" />
               <span>Connecting SFTP...</span>
@@ -944,6 +958,27 @@ export function FileBrowser() {
             <>
               <AlertCircle size={20} />
               <span>{error}</span>
+              {/* Recovery controls for a failed connect (audit gap S1). */}
+              <div className="file-browser__error-actions">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<RefreshCw size={14} />}
+                  onClick={() => retrySftp()}
+                  data-testid="file-browser-sftp-retry"
+                >
+                  Retry
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<X size={14} />}
+                  onClick={dismissSftpError}
+                  data-testid="file-browser-sftp-dismiss"
+                >
+                  Dismiss
+                </Button>
+              </div>
             </>
           ) : (
             <span>Waiting for SFTP connection...</span>
@@ -959,6 +994,22 @@ export function FileBrowser() {
   });
 
   const selectedEntries = sortedEntries.filter((e) => selectedPaths.has(e.path));
+
+  // In-flight transfers owned by the SFTP session this browser is showing
+  // (#1247). Only these belong in the footer; other sessions' transfers live in
+  // the Open Connections panel. The list above stays live regardless.
+  const activeTransfers = sftpSessionId
+    ? Object.values(transfers).filter((t) => t.sessionId === sftpSessionId)
+    : [];
+
+  const handleCancelTransfer = async (transferId: string) => {
+    try {
+      await cancelTransfer(transferId);
+      toast.success("Transfer cancelled");
+    } catch (err) {
+      toast.error(`Failed to cancel transfer: ${err}`);
+    }
+  };
 
   return (
     <div
@@ -980,91 +1031,115 @@ export function FileBrowser() {
           {currentPath}
         </span>
         <div className="file-browser__actions">
-          <button
-            className="file-browser__btn"
-            onClick={navigateUp}
-            disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
-            title="Go Up"
-            data-testid="file-browser-up"
+          <Tooltip content="Go Up" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<ArrowUp size={14} />}
+              onClick={navigateUp}
+              disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
+              aria-label="Go up one directory"
+              data-testid="file-browser-up"
+            />
+          </Tooltip>
+          <Tooltip content="Go to Terminal CWD" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FolderSync size={14} />}
+              onClick={navigateToCwd}
+              disabled={!hasCwd}
+              aria-label="Go to terminal working directory"
+              data-testid="file-browser-go-to-cwd"
+            />
+          </Tooltip>
+          <Tooltip
+            content={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
+            side="top"
           >
-            <ArrowUp size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
-            onClick={navigateToCwd}
-            disabled={!hasCwd}
-            title="Go to Terminal CWD"
-            data-testid="file-browser-go-to-cwd"
-          >
-            <FolderSync size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
-            onClick={cdToCurrentPath}
-            disabled={!canCd}
-            title={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
-            data-testid="file-browser-cd-here"
-          >
-            <Terminal size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
-            onClick={refresh}
-            title="Refresh"
-            data-testid="file-browser-refresh"
-          >
-            <RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />
-          </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Terminal size={14} />}
+              onClick={cdToCurrentPath}
+              disabled={!canCd}
+              aria-label="Send cd for current path to terminal"
+              data-testid="file-browser-cd-here"
+            />
+          </Tooltip>
+          <Tooltip content="Refresh" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />}
+              onClick={refresh}
+              aria-label="Refresh file list"
+              data-testid="file-browser-refresh"
+            />
+          </Tooltip>
           {(mode === "sftp" || mode === "session") && (
-            <button
-              className="file-browser__btn"
-              onClick={uploadFile}
-              title="Upload File"
-              data-testid="file-browser-upload"
-            >
-              <Upload size={14} />
-            </button>
+            <Tooltip content="Upload File" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Upload size={14} />}
+                onClick={uploadFile}
+                aria-label="Upload file"
+                data-testid="file-browser-upload"
+              />
+            </Tooltip>
           )}
-          <button
-            className="file-browser__btn"
-            onClick={handlePaste}
-            disabled={!fileClipboard}
-            title={
+          <Tooltip
+            content={
               fileClipboard
                 ? fileClipboard.entries.length === 1
                   ? `Paste "${fileClipboard.entries[0].name}" (${fileClipboard.operation})`
                   : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
                 : "Paste"
             }
-            data-testid="file-browser-paste"
+            side="top"
           >
-            <ClipboardPaste size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
-            onClick={() => setNewFileName("")}
-            title="New File"
-            data-testid="file-browser-new-file"
-          >
-            <FilePlus size={14} />
-          </button>
-          <button
-            className="file-browser__btn"
-            onClick={() => setNewDirName("")}
-            title="New Folder"
-            data-testid="file-browser-new-folder"
-          >
-            <FolderPlus size={14} />
-          </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<ClipboardPaste size={14} />}
+              onClick={handlePaste}
+              disabled={!fileClipboard}
+              aria-label="Paste"
+              data-testid="file-browser-paste"
+            />
+          </Tooltip>
+          <Tooltip content="New File" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FilePlus size={14} />}
+              onClick={() => setNewFileName("")}
+              aria-label="New file"
+              data-testid="file-browser-new-file"
+            />
+          </Tooltip>
+          <Tooltip content="New Folder" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FolderPlus size={14} />}
+              onClick={() => setNewDirName("")}
+              aria-label="New folder"
+              data-testid="file-browser-new-folder"
+            />
+          </Tooltip>
           {mode === "sftp" && (
-            <button
-              className="file-browser__btn"
-              onClick={disconnectSftp}
-              title="Disconnect"
-              data-testid="file-browser-disconnect"
-            >
-              <Unplug size={14} />
-            </button>
+            <Tooltip content="Disconnect" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Unplug size={14} />}
+                onClick={disconnectSftp}
+                aria-label="Disconnect SFTP"
+                data-testid="file-browser-disconnect"
+              />
+            </Tooltip>
           )}
         </div>
       </div>
@@ -1090,14 +1165,16 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-file-input"
           />
-          <button
-            className="file-browser__btn"
-            onClick={handleCreateFile}
-            title="Create"
-            data-testid="file-browser-new-file-confirm"
-          >
-            <FilePlus size={14} />
-          </button>
+          <Tooltip content="Create" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FilePlus size={14} />}
+              onClick={handleCreateFile}
+              aria-label="Create file"
+              data-testid="file-browser-new-file-confirm"
+            />
+          </Tooltip>
         </div>
       )}
 
@@ -1115,14 +1192,16 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-folder-input"
           />
-          <button
-            className="file-browser__btn"
-            onClick={handleCreateDir}
-            title="Create"
-            data-testid="file-browser-new-folder-confirm"
-          >
-            <FolderPlus size={14} />
-          </button>
+          <Tooltip content="Create" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<FolderPlus size={14} />}
+              onClick={handleCreateDir}
+              aria-label="Create folder"
+              data-testid="file-browser-new-folder-confirm"
+            />
+          </Tooltip>
         </div>
       )}
 
@@ -1191,6 +1270,48 @@ export function FileBrowser() {
         }}
         onCancel={() => setDeleteConfirm(null)}
       />
+      {activeTransfers.length > 0 && (
+        <div className="file-browser__transfers" data-testid="file-browser-transfers">
+          {activeTransfers.map((t) => {
+            const indeterminate = t.total <= 0;
+            const pct = indeterminate ? 0 : Math.round((t.transferred / t.total) * 100);
+            const verb = t.direction === "download" ? "Downloading" : "Uploading";
+            return (
+              <div
+                key={t.transferId}
+                className="file-browser__transfer"
+                data-testid="file-browser-transfer"
+              >
+                <div className="file-browser__transfer-head">
+                  {t.direction === "download" ? <Download size={12} /> : <Upload size={12} />}
+                  <span className="file-browser__transfer-name" title={t.fileName}>
+                    {t.fileName}
+                  </span>
+                  <span className="file-browser__transfer-pct">
+                    {indeterminate ? formatBytes(t.transferred) : `${pct}%`}
+                  </span>
+                  <Tooltip content="Cancel transfer" side="top">
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={<Ban size={12} />}
+                      className="file-browser__transfer-cancel"
+                      onClick={() => handleCancelTransfer(t.transferId)}
+                      aria-label={`Cancel transfer of ${t.fileName}`}
+                    />
+                  </Tooltip>
+                </div>
+                <Progress
+                  value={t.transferred}
+                  max={t.total}
+                  indeterminate={indeterminate}
+                  label={`${verb} ${t.fileName}`}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
+import { TooltipProvider } from "@/components/ui";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
@@ -325,6 +326,46 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
 
     // No stored credential → password dialog must appear
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("prompts to unlock the credential store before resolving when locked (G3, #1144)", async () => {
+    // Regression: Save & Connect was the only connect path missing the
+    // mode===master_password && status===locked unlock gate. With the store
+    // locked it silently fell back to an interactive password prompt instead
+    // of first offering to unlock and use the saved credential. It must now
+    // call requestUnlock() before resolveCredential, matching the sidebar path.
+    const mockRequestUnlock = vi.fn().mockResolvedValue(false); // user dismisses
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+      requestUnlock: mockRequestUnlock,
+    });
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "resolve_credential") return Promise.resolve("vault-secret");
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(SSH_CONN_PASSWORD.id);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The unlock gate must fire on the locked store.
+    expect(mockRequestUnlock).toHaveBeenCalledTimes(1);
+    // Dismissed unlock aborts the connect — no interactive password prompt.
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
   it("prompts for the key passphrase on key auth when the key is encrypted (#879/#885)", async () => {
@@ -749,22 +790,23 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
     renderEditor(CONN_WITHOUT_EXPLICIT_DEFAULTS.id);
     await flushEffects();
 
-    // Checkbox shows as checked because the schema default is true
-    const checkbox = container.querySelector(
+    // Toggle shows as on because the schema default is true (Radix Switch:
+    // read `aria-checked` rather than a native checkbox `.checked`).
+    const toggle = container.querySelector(
       '[data-testid="field-shellIntegration"]'
-    ) as HTMLInputElement;
-    expect(checkbox).not.toBeNull();
-    expect(checkbox.checked).toBe(true);
+    ) as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
 
-    // Uncheck → dirty
+    // Toggle off → dirty
     await act(async () => {
-      checkbox.click();
+      toggle.click();
     });
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
-    // Re-check (back to schema default) → clean
+    // Toggle back on (schema default) → clean
     await act(async () => {
-      checkbox.click();
+      toggle.click();
     });
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
@@ -1097,11 +1139,13 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
   function renderFor(connId: string) {
     act(() => {
       root.render(
-        <ConnectionEditor
-          tabId="tab-jh-1"
-          meta={{ connectionId: connId, folderId: null }}
-          isVisible={true}
-        />
+        <TooltipProvider>
+          <ConnectionEditor
+            tabId="tab-jh-1"
+            meta={{ connectionId: connId, folderId: null }}
+            isVisible={true}
+          />
+        </TooltipProvider>
       );
     });
   }
@@ -1294,5 +1338,71 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
     expect((payload as { config: { initialCommand: string } }).config.initialCommand).toContain(
       "ssh-add"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Storage-file picker — Radix Select forbids empty-string item values (#1105).
+// The "Default (connections.json)" option must use a non-empty sentinel value
+// that maps back to `null` (the default storage file) at the call site.
+// ---------------------------------------------------------------------------
+
+describe("ConnectionEditor — storage-file picker (#1105)", () => {
+  function renderFor(connId: string) {
+    act(() => {
+      root.render(
+        <ConnectionEditor
+          tabId="tab-sf-1"
+          meta={{ connectionId: connId, folderId: null }}
+          isVisible={true}
+        />
+      );
+    });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [EXISTING_CONN],
+      connectionTypes: [SSH_TYPE],
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      // At least one enabled external file makes the storage-file picker render.
+      settings: {
+        ...useAppStore.getInitialState().settings,
+        externalConnectionFiles: [{ path: "/tmp/team.json", enabled: true }],
+      },
+    });
+    mockedInvoke.mockImplementation(() => Promise.resolve(false));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("renders the storage-file picker when an external file is enabled", () => {
+    renderFor(CONN_ID);
+    const select = container.querySelector('[data-testid="connection-editor-source-file"]');
+    expect(select).not.toBeNull();
+  });
+
+  it("uses a non-empty sentinel value for the default option (Radix rejects empty string)", () => {
+    // Regression: the default option previously used value="" and the select's
+    // value fell back to "" when no source file was chosen. Radix Select forbids
+    // empty-string item values, so the default must resolve to a non-empty
+    // sentinel. EXISTING_CONN has no sourceFile, so this is the default case.
+    renderFor(CONN_ID);
+    const trigger = container.querySelector(
+      '[data-testid="connection-editor-source-file"]'
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    // The trigger mirrors the controlled Select value via data-value.
+    expect(trigger?.getAttribute("data-value")).not.toBe("");
+    expect(trigger?.getAttribute("data-value")).toBeTruthy();
   });
 });

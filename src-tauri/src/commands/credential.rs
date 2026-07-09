@@ -7,7 +7,8 @@ use tracing::{debug, info, warn};
 use crate::connection::manager::ConnectionManager;
 use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
-    CredentialKey, CredentialManager, CredentialStore, CredentialType, StorageMode,
+    CredentialKey, CredentialManager, CredentialStore, CredentialType, LockedEventPayload,
+    MasterPasswordStore, StorageMode, UnlockFailure,
 };
 
 /// Event emitted when the credential store is locked.
@@ -43,6 +44,49 @@ pub fn get_credential_store_status(
     Ok(build_status_info(&manager))
 }
 
+/// Error returned to the frontend by [`unlock_credential_store`].
+///
+/// The `corrupted` flag (G8, #1144) lets the UnlockDialog choose the right
+/// recovery: a plain retry for a wrong password vs. a "reset store" affordance
+/// when the credentials file is unreadable/corrupt.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnlockError {
+    /// Human-readable failure message.
+    pub message: String,
+    /// `true` when the credentials file is corrupt (not a wrong password).
+    pub corrupted: bool,
+}
+
+impl From<UnlockFailure> for UnlockError {
+    fn from(failure: UnlockFailure) -> Self {
+        let corrupted = matches!(failure, UnlockFailure::Corrupted(_));
+        UnlockError {
+            message: failure.to_string(),
+            corrupted,
+        }
+    }
+}
+
+/// Unlock a master-password store, treating an already-unlocked store as a
+/// benign no-op and classifying failures as wrong-password vs. corrupt.
+///
+/// - Idempotent (G6, #1144): a second racing unlock returns `Ok(())` instead of
+///   a spurious "already unlocked" error.
+/// - Classified (G8, #1144): a wrong password yields `corrupted: false`; an
+///   unreadable/malformed file yields `corrupted: true`.
+fn unlock_store_classified(store: &MasterPasswordStore, password: &str) -> Result<(), UnlockError> {
+    if store.is_unlocked() {
+        return Ok(());
+    }
+    store.unlock_classified(password).map_err(UnlockError::from)
+}
+
+/// Delete the credentials file so a corrupt store can be set up fresh (G8).
+fn reset_store_file(store: &MasterPasswordStore) -> Result<(), String> {
+    store.reset().map_err(|e| e.to_string())
+}
+
 /// Unlock the master password credential store.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -51,17 +95,15 @@ pub async fn unlock_credential_store(
     password: String,
     app_handle: AppHandle,
     manager: State<'_, Arc<CredentialManager>>,
-) -> Result<(), String> {
+) -> Result<(), UnlockError> {
     info!("Unlocking credential store");
 
     let result = manager
-        .with_master_password_store(|store| {
-            if store.is_unlocked() {
-                return Err("Store is already unlocked".to_string());
-            }
-            store.unlock(&password).map_err(|e| e.to_string())
-        })
-        .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
+        .with_master_password_store(|store| unlock_store_classified(store, &password))
+        .ok_or_else(|| UnlockError {
+            message: "Credential store is not in master password mode".to_string(),
+            corrupted: false,
+        })?;
 
     result?;
 
@@ -70,6 +112,26 @@ pub async fn unlock_credential_store(
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }
+    emit_status_changed(&app_handle, &manager);
+    Ok(())
+}
+
+/// Reset (delete) a corrupt master-password credential store so the user can
+/// set it up again, instead of being stuck in a wrong-password loop (G8, #1144).
+#[tauri::command]
+pub async fn reset_credential_store(
+    app_handle: AppHandle,
+    manager: State<'_, Arc<CredentialManager>>,
+) -> Result<(), String> {
+    info!("Resetting credential store");
+
+    let result = manager
+        .with_master_password_store(reset_store_file)
+        .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
+
+    result?;
+
+    manager.notify_auto_lock_locked();
     emit_status_changed(&app_handle, &manager);
     Ok(())
 }
@@ -90,7 +152,9 @@ pub fn lock_credential_store(
 
     manager.notify_auto_lock_locked();
 
-    if let Err(e) = app_handle.emit(EVENT_STORE_LOCKED, ()) {
+    // Manual lock: auto=false so the frontend does not toast (the indicator
+    // already confirms the manual lock) — avoids a double-toast (G7, #1144).
+    if let Err(e) = app_handle.emit(EVENT_STORE_LOCKED, LockedEventPayload { auto: false }) {
         warn!("Failed to emit {}: {}", EVENT_STORE_LOCKED, e);
     }
     emit_status_changed(&app_handle, &manager);
@@ -358,6 +422,7 @@ pub fn remove_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credential::MasterPasswordStore;
 
     #[test]
     fn parse_credential_type_password() {
@@ -379,5 +444,113 @@ mod tests {
     fn parse_credential_type_unknown() {
         let err = parse_credential_type("invalid").unwrap_err();
         assert!(err.contains("Unknown credential type"));
+    }
+
+    /// Regression test for #1144 (G6): unlocking an already-unlocked store
+    /// must be a benign no-op (`Ok`), not an error, so racing connect flows
+    /// don't surface a spurious "already unlocked" failure.
+    #[test]
+    fn unlock_store_idempotent_when_already_unlocked_returns_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("test-password").unwrap();
+        assert!(store.is_unlocked());
+
+        // Second unlock on the already-unlocked store must succeed idempotently.
+        let result = unlock_store_classified(&store, "test-password");
+        assert!(
+            result.is_ok(),
+            "unlocking an already-unlocked store should be Ok, got {result:?}"
+        );
+        assert!(store.is_unlocked());
+    }
+
+    /// A wrong password on a locked store must still fail (behavior unchanged).
+    #[test]
+    fn unlock_store_idempotent_wrong_password_still_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("correct").unwrap();
+        store.lock();
+        assert!(!store.is_unlocked());
+
+        let result = unlock_store_classified(&store, "wrong");
+        assert!(result.is_err());
+        assert!(!store.is_unlocked());
+    }
+
+    /// A locked store with the correct password unlocks (benign happy path).
+    #[test]
+    fn unlock_store_idempotent_correct_password_unlocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("correct").unwrap();
+        store.lock();
+        assert!(!store.is_unlocked());
+
+        let result = unlock_store_classified(&store, "correct");
+        assert!(result.is_ok());
+        assert!(store.is_unlocked());
+    }
+
+    // --- G8 (#1144): wrong password vs corrupt-file unlock classification ---
+
+    /// A wrong password maps to a non-corruption `UnlockError` so the UI shows
+    /// the retry (wrong password) affordance, not the reset-store one.
+    #[test]
+    fn unlock_store_classified_wrong_password_is_not_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("correct").unwrap();
+        store.lock();
+
+        let err = unlock_store_classified(&store, "wrong").unwrap_err();
+        assert!(!err.corrupted, "wrong password must not be flagged corrupt");
+    }
+
+    /// A corrupt credentials file maps to a corruption `UnlockError` so the UI
+    /// offers the reset-store affordance instead of an endless wrong-pw loop.
+    #[test]
+    fn unlock_store_classified_corrupt_file_is_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.enc");
+        std::fs::write(&path, b"not a valid envelope").unwrap();
+        let store = MasterPasswordStore::new(path);
+
+        let err = unlock_store_classified(&store, "any").unwrap_err();
+        assert!(err.corrupted, "corrupt file must be flagged corrupt");
+    }
+
+    /// An already-unlocked store stays idempotent under the classified path.
+    #[test]
+    fn unlock_store_classified_already_unlocked_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        store.setup("pw").unwrap();
+        assert!(store.is_unlocked());
+
+        assert!(unlock_store_classified(&store, "pw").is_ok());
+    }
+
+    /// Resetting a corrupt store deletes the credentials file so the user can
+    /// start over (Unavailable → setup), rather than being stuck on unlock.
+    #[test]
+    fn reset_store_file_deletes_credentials_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials.enc");
+        std::fs::write(&path, b"corrupt").unwrap();
+        let store = MasterPasswordStore::new(path.clone());
+        assert!(path.exists());
+
+        reset_store_file(&store).unwrap();
+        assert!(!path.exists(), "reset must delete the credentials file");
+    }
+
+    /// Resetting when no file exists is a benign no-op.
+    #[test]
+    fn reset_store_file_no_file_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
+        assert!(reset_store_file(&store).is_ok());
     }
 }

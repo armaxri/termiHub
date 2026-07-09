@@ -7,6 +7,8 @@ import { LogEntry } from "@/types/terminal";
 import { TunnelState, TunnelStats } from "@/types/tunnel";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
+import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
+import type { TransferProgress } from "@/services/api";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -370,10 +372,18 @@ export async function onTunnelStatsUpdated(
 
 // --- Credential store events ---
 
-/** Subscribe to credential store locked events. */
-export async function onCredentialStoreLocked(callback: () => void): Promise<UnlistenFn> {
-  return await listen("credential-store-locked", () => {
-    callback();
+/**
+ * Subscribe to credential store locked events.
+ *
+ * The callback receives `auto`: `true` when the store auto-locked after
+ * inactivity, `false` for a manual/mode-switch lock. This lets callers toast
+ * only on auto-lock (G7, #1144) without double-toasting the manual lock.
+ */
+export async function onCredentialStoreLocked(
+  callback: (auto: boolean) => void
+): Promise<UnlistenFn> {
+  return await listen<{ auto?: boolean } | null>("credential-store-locked", (event) => {
+    callback(event.payload?.auto ?? false);
   });
 }
 
@@ -409,7 +419,7 @@ export async function onEmbeddedServerStatusChanged(
   });
 }
 
-import type { SystemStats } from "@/types/monitoring";
+import type { MonitorStatus, SystemStats } from "@/types/monitoring";
 
 interface SessionMonitoringStatsPayload {
   session_id: string;
@@ -422,6 +432,26 @@ export async function onSessionMonitoringStats(
 ): Promise<UnlistenFn> {
   return await listen<SessionMonitoringStatsPayload>("session-monitoring-stats", (event) => {
     callback(event.payload.session_id, event.payload.stats);
+  });
+}
+
+interface SessionMonitoringStatusPayload {
+  session_id: string;
+  status: MonitorStatus;
+}
+
+/**
+ * Subscribe to session-based monitoring status push events.
+ *
+ * Delivers the collector loop's lifecycle transitions (`connecting` → `live` →
+ * `stale` → …) so the status bar can render an explicit stale indicator on a
+ * mid-stream drop (#1229, audit gap G1).
+ */
+export async function onSessionMonitoringStatus(
+  callback: (sessionId: string, status: MonitorStatus) => void
+): Promise<UnlistenFn> {
+  return await listen<SessionMonitoringStatusPayload>("session-monitoring-status", (event) => {
+    callback(event.payload.session_id, event.payload.status);
   });
 }
 
@@ -504,6 +534,49 @@ export async function onJumpHostProbeComplete(
   callback: (payload: ProbeCompletePayload) => void
 ): Promise<UnlistenFn> {
   return await listen<ProbeCompletePayload>("jump-host-probe-complete", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to per-transfer SFTP progress (#1245). Each in-flight transfer
+ * emits `transferring` updates (with `transferred`/`total`; `total = 0` means
+ * indeterminate) then one terminal `done` / `cancelled` / `error` event. The
+ * store folds these into its `transfers` map (#1247). Returns the unlisten
+ * handle.
+ */
+export async function onTransferProgress(
+  callback: (progress: TransferProgress) => void
+): Promise<UnlistenFn> {
+  return await listen<TransferProgress>("transfer-progress", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to X server provisioning progress emitted during `x_server_ensure`
+ * (download / launch / verify steps). `progress = -1` marks an indeterminate
+ * step. Returns the unlisten handle (#1053).
+ */
+export async function onXServerProgress(
+  callback: (progress: XServerProgress) => void
+): Promise<UnlistenFn> {
+  return await listen<XServerProgress>("x-server-progress", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to connect-time X server download-consent prompts (#1116). Emitted
+ * when opening an X11-forwarding SSH connection would need to download the X
+ * dependency and the user has not consented yet; the connect pauses until the
+ * frontend replies via `xServerConnectConsentReply` with the payload `id`.
+ * Returns the unlisten handle.
+ */
+export async function onXServerConsentNeeded(
+  callback: (request: XServerConsentRequest) => void
+): Promise<UnlistenFn> {
+  return await listen<XServerConsentRequest>("x-server-consent-needed", (event) => {
     callback(event.payload);
   });
 }

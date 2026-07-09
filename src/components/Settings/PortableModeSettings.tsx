@@ -4,6 +4,7 @@ import { CheckCircle2, XCircle, HardDrive, Info } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { listConfigFiles, exportConfigToPortable, importConfigFromPortable } from "@/services/api";
 import type { ConfigFileStatus } from "@/types/connection";
+import { Button } from "@/components/ui";
 import "./PortableModeSettings.css";
 
 const PORTABLE_FILES = [
@@ -80,22 +81,24 @@ function MigrationDialog({
       </div>
 
       <div className="settings-panel__inline-dialog-actions">
-        <button
-          className="settings-panel__btn"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={onCancel}
           disabled={isRunning}
           data-testid="migration-cancel"
         >
           Cancel
-        </button>
-        <button
-          className="settings-panel__btn settings-panel__btn--primary"
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
           onClick={() => onConfirm(Array.from(selected))}
           disabled={selected.size === 0 || isRunning}
           data-testid="migration-confirm"
         >
           {isRunning ? "Copying…" : "Copy"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -274,20 +277,22 @@ export function PortableModeSettings() {
           a portable drive, or Import to bring it back.
         </p>
         <div className="portable-mode__actions">
-          <button
-            className="settings-panel__btn"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleExport}
             data-testid="export-config-btn"
           >
             Export to Directory
-          </button>
-          <button
-            className="settings-panel__btn"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleImport}
             data-testid="import-config-btn"
           >
             Import from Directory
-          </button>
+          </Button>
         </div>
       </div>
 

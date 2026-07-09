@@ -3,6 +3,7 @@ import { Plus, Trash2, RotateCcw, Copy } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
+import { Button, Tooltip } from "@/components/ui";
 
 /** Combined view of a built-in mapping row (shown in the reference table). */
 interface BuiltInRow {
@@ -116,14 +117,15 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               <h3 className="settings-panel__section-title">Custom File Type Mappings</h3>
               {userEntries.length > 0 && (
                 <div className="settings-panel__section-actions">
-                  <button
-                    className="settings-panel__btn"
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon={<RotateCcw size={14} />}
                     onClick={handleResetAll}
                     title="Remove all custom mappings"
                   >
-                    <RotateCcw size={14} />
                     Reset All
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -175,15 +177,16 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                 list="file-type-language-list"
                 data-testid="file-type-language-input"
               />
-              <button
-                className="settings-panel__btn settings-panel__btn--primary"
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus size={14} />}
                 onClick={handleAdd}
                 disabled={!newPattern.trim() || !newLanguage.trim()}
                 data-testid="file-type-add-btn"
               >
-                <Plus size={14} />
                 Add
-              </button>
+              </Button>
             </div>
             {addError && (
               <p className="settings-panel__file-error" data-testid="file-type-add-error">
@@ -207,14 +210,16 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                     >
                       → {language}
                     </span>
-                    <button
-                      className="settings-panel__file-remove"
-                      onClick={() => handleRemove(pattern)}
-                      title={`Remove mapping for ${pattern}`}
-                      data-testid={`file-type-remove-${pattern}`}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <Tooltip content={`Remove mapping for ${pattern}`}>
+                      <button
+                        className="settings-panel__file-remove"
+                        onClick={() => handleRemove(pattern)}
+                        aria-label={`Remove mapping for ${pattern}`}
+                        data-testid={`file-type-remove-${pattern}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </Tooltip>
                   </li>
                 ))}
               </ul>
@@ -256,14 +261,16 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                         overridden
                       </span>
                     )}
-                    <button
-                      className="settings-panel__file-remove"
-                      onClick={() => handlePrefillOverride(pattern, language)}
-                      title={`Copy "${pattern}" into the add form`}
-                      data-testid={`file-type-copy-${pattern}`}
-                    >
-                      <Copy size={14} />
-                    </button>
+                    <Tooltip content={`Copy "${pattern}" into the add form`}>
+                      <button
+                        className="settings-panel__file-remove"
+                        onClick={() => handlePrefillOverride(pattern, language)}
+                        aria-label={`Copy "${pattern}" into the add form`}
+                        data-testid={`file-type-copy-${pattern}`}
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </Tooltip>
                   </li>
                 );
               })}

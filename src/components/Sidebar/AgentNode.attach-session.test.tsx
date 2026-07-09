@@ -12,6 +12,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
+import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo, AgentSessionInfo } from "@/services/api";
 
@@ -148,7 +149,12 @@ describe("AgentNode — Active Sessions reattach", () => {
     });
 
     act(() => {
-      root.render(React.createElement(AgentNode, { agent: makeAgent() }));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(AgentNode, { agent: makeAgent() }),
+        })
+      );
     });
 
     const sessionBtn = container.querySelector<HTMLButtonElement>('button[title^="Build Shell"]');
@@ -182,7 +188,12 @@ describe("AgentNode — Active Sessions reattach", () => {
     });
 
     act(() => {
-      root.render(React.createElement(AgentNode, { agent: makeAgent() }));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(AgentNode, { agent: makeAgent() }),
+        })
+      );
     });
 
     const sessionBtn = container.querySelector<HTMLButtonElement>('button[title^="Build Shell"]');

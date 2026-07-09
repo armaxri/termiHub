@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { HelpCircle, X } from "lucide-react";
+import { HelpCircle, Plus, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { listSerialPorts } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Button, Input, Select, Toggle } from "@/components/ui";
 
 interface DynamicFieldProps {
   field: SettingsField;
@@ -123,7 +124,7 @@ function TextField({ field, value, onChange, onBlur }: FieldProps & { onBlur?: (
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
-      <input
+      <Input
         type="text"
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
@@ -158,7 +159,7 @@ function NumberField({
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
-      <input
+      <Input
         type="number"
         value={value != null ? Number(value) : ""}
         onChange={(e) => {
@@ -196,15 +197,12 @@ function BooleanField({ field, value, onChange }: FieldProps) {
           </button>
         )}
       </span>
-      <label className="settings-panel__toggle">
-        <input
-          type="checkbox"
-          checked={(value as boolean) ?? (field.default as boolean) ?? false}
-          onChange={(e) => onChange(e.target.checked)}
-          data-testid={`field-${field.key}`}
-        />
-        <span className="settings-panel__toggle-slider" />
-      </label>
+      <Toggle
+        checked={(value as boolean) ?? (field.default as boolean) ?? false}
+        onCheckedChange={(checked) => onChange(checked)}
+        aria-label={field.label}
+        data-testid={`field-${field.key}`}
+      />
       {dialogOpen && field.helpText && (
         <FieldHelpDialog
           title={field.label}
@@ -258,18 +256,15 @@ function SelectField({
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
-      <select
-        value={(value as string) ?? ""}
-        onChange={(e) => onChange(e.target.value)}
+      <Select
+        value={(value as string) || undefined}
+        onChange={(v) => onChange(v)}
+        options={fieldType.options}
         disabled={isLocked}
+        aria-label={field.label}
+        placeholder={field.placeholder}
         data-testid={`field-${field.key}`}
-      >
-        {fieldType.options.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
+      />
     </>
   );
 }
@@ -278,7 +273,7 @@ function PortField({ field, value, onChange }: FieldProps) {
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
-      <input
+      <Input
         type="number"
         value={value != null ? Number(value) : ""}
         onChange={(e) => {
@@ -321,7 +316,7 @@ function SerialPortField({
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
-      <input
+      <Input
         type="text"
         value={currentValue}
         onChange={(e) => onChange(e.target.value || undefined)}
@@ -380,22 +375,22 @@ function FilePathField({
     <>
       <span className="settings-form__label">{field.label}</span>
       <div className="settings-form__file-row">
-        <input
+        <Input
           type="text"
           value={(value as string) ?? ""}
           onChange={(e) => onChange(e.target.value || undefined)}
           placeholder={field.placeholder}
           data-testid={`field-${field.key}`}
         />
-        <button
-          type="button"
-          className="settings-form__list-browse"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={handleBrowse}
           title="Browse"
           data-testid={`field-${field.key}-browse`}
         >
           ...
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -428,7 +423,7 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
       <span className="settings-form__label">{field.label}</span>
       {items.map((item, index) => (
         <div key={index} className="settings-form__list-row">
-          <input
+          <Input
             type="text"
             value={item.key}
             onChange={(e) => handleUpdate(index, "key", e.target.value)}
@@ -436,7 +431,7 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
             className="settings-form__list-input"
             data-testid={`field-${field.key}-key-${index}`}
           />
-          <input
+          <Input
             type="text"
             value={item.value}
             onChange={(e) => handleUpdate(index, "value", e.target.value)}
@@ -444,25 +439,28 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
             className="settings-form__list-input"
             data-testid={`field-${field.key}-value-${index}`}
           />
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             className="settings-form__list-remove"
             onClick={() => handleRemove(index)}
             title="Remove"
+            aria-label="Remove"
             data-testid={`field-${field.key}-remove-${index}`}
           >
-            &times;
-          </button>
+            <X size={14} />
+          </Button>
         </div>
       ))}
-      <button
-        type="button"
-        className="settings-form__list-add"
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<Plus size={14} />}
         onClick={handleAdd}
         data-testid={`field-${field.key}-add`}
       >
-        + Add
-      </button>
+        Add
+      </Button>
     </>
   );
 }
@@ -519,10 +517,10 @@ function ObjectListField({
                   className="settings-form__list-checkbox"
                   title={subField.label}
                 >
-                  <input
-                    type="checkbox"
+                  <Toggle
                     checked={(item[subField.key] as boolean) ?? false}
-                    onChange={(e) => handleUpdate(index, subField.key, e.target.checked)}
+                    onCheckedChange={(checked) => handleUpdate(index, subField.key, checked)}
+                    aria-label={subField.label}
                     data-testid={`field-${field.key}-${subField.key}-${index}`}
                   />
                   {subField.label.length <= 3 ? subField.label : subField.label.slice(0, 2)}
@@ -532,7 +530,7 @@ function ObjectListField({
             if (subField.fieldType.type === "filePath" && subField.fieldType.kind === "directory") {
               return (
                 <span key={subField.key} style={{ display: "contents" }}>
-                  <input
+                  <Input
                     type="text"
                     value={(item[subField.key] as string) ?? ""}
                     onChange={(e) => handleUpdate(index, subField.key, e.target.value)}
@@ -540,20 +538,20 @@ function ObjectListField({
                     className="settings-form__list-input"
                     data-testid={`field-${field.key}-${subField.key}-${index}`}
                   />
-                  <button
-                    type="button"
-                    className="settings-form__list-browse"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => handleBrowseDir(index, subField.key)}
                     title="Browse"
                     data-testid={`field-${field.key}-${subField.key}-browse-${index}`}
                   >
                     ...
-                  </button>
+                  </Button>
                 </span>
               );
             }
             return (
-              <input
+              <Input
                 key={subField.key}
                 type="text"
                 value={(item[subField.key] as string) ?? ""}
@@ -564,25 +562,28 @@ function ObjectListField({
               />
             );
           })}
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             className="settings-form__list-remove"
             onClick={() => handleRemove(index)}
             title="Remove"
+            aria-label="Remove"
             data-testid={`field-${field.key}-remove-${index}`}
           >
-            &times;
-          </button>
+            <X size={14} />
+          </Button>
         </div>
       ))}
-      <button
-        type="button"
-        className="settings-form__list-add"
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<Plus size={14} />}
         onClick={handleAdd}
         data-testid={`field-${field.key}-add`}
       >
-        + Add
-      </button>
+        Add
+      </Button>
     </>
   );
 }

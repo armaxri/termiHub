@@ -2,8 +2,10 @@ mod commands;
 mod connection;
 mod credential;
 mod embedded_servers;
-mod files;
-mod monitoring;
+/// File-system access: local FS, SFTP sessions, and the cancellable transfer
+/// subsystem (public so integration tests can drive `SftpSession` /
+/// `TransferRegistry` directly — issue #1245).
+pub mod files;
 mod network;
 mod session;
 mod terminal;
@@ -23,12 +25,48 @@ use connection::recovery::RecoveryWarning;
 use connection::settings::{AppSettings, SettingsStorage};
 use credential::{AutoLockTimer, CredentialManager, StorageMode};
 use files::sftp::SftpManager;
-use monitoring::MonitoringManager;
+use files::transfer::TransferRegistry;
 use network::NetworkManager;
 use session::manager::SessionManager;
 use session::registry::build_desktop_registry;
 use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
 use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer};
+
+/// Build the shared X server lifecycle manager (issue #1049).
+///
+/// On Windows it provides a managed VcXsrv instance; on other platforms it is a
+/// report-only no-op that adopts the system's existing X server. The default
+/// policy is to stop the managed server once the last X11 session closes.
+///
+/// A placeholder `vcxsrv.exe` resolver is injected: adoption of an
+/// already-running X server works today, while spawning a managed server
+/// surfaces a clear error. The acquisition module (`xserver::acquire`, #1048)
+/// exists, but resolving it downloads VcXsrv, which the concept gates behind a
+/// user consent prompt — so the real resolver is wired by the provisioning
+/// orchestrator (#1052) once the consent flow exists, not here.
+///
+/// The cookie provider (#1050) writes `.Xauthority` files under a temp
+/// subdirectory; the files are ephemeral, regenerated per server start and
+/// removed on stop.
+fn build_xserver_manager() -> terminal::xserver::XServerManager {
+    use terminal::xserver::auth::FileXAuthProvider;
+    use terminal::xserver::manager::{CommandLauncher, TcpPortProbe};
+
+    let auth_dir = std::env::temp_dir().join("termihub-xserver");
+
+    terminal::xserver::XServerManager::new(
+        Box::new(TcpPortProbe),
+        Box::new(CommandLauncher),
+        Box::new(|| {
+            anyhow::bail!(
+                "managed X server provisioning is not wired yet (awaiting consent flow, #1052)"
+            )
+        }),
+        Box::new(FileXAuthProvider::new(auth_dir)),
+        cfg!(windows),
+        true,
+    )
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -42,6 +80,15 @@ pub fn run() {
         .with(capture_layer)
         .init();
 
+    // Shared X server manager (#1049), held as an `Arc` so the provisioner
+    // (#1052) and the Tauri commands can both reference the same instance.
+    let x_server_manager = Arc::new(build_xserver_manager());
+
+    // Registry routing connect-time X server download-consent replies (#1116)
+    // from the `x_server_connect_consent_reply` command back to the paused
+    // connect. Shared between that command and the provisioner.
+    let x_server_consent_registry = Arc::new(terminal::xserver::ConnectConsentRegistry::new());
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -49,9 +96,12 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_cli::init())
         .manage(SftpManager::new())
-        .manage(MonitoringManager::new())
+        .manage(TransferRegistry::new())
         .manage(NetworkManager::new())
+        .manage(x_server_manager.clone())
+        .manage(x_server_consent_registry.clone())
         .manage(commands::connection_path::ProbeRegistry::default())
+        .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
@@ -239,6 +289,15 @@ pub fn run() {
             let session_manager = SessionManager::new(registry, agent_manager.clone());
             app.manage(session_manager);
             app.manage(agent_manager);
+
+            // X server provisioning (#1052): register the provisioner so the SSH
+            // connect path can ensure a local X server before X11 forwarding
+            // starts. The manager itself (#1049) is created and managed above.
+            terminal::xserver::init(
+                app.handle(),
+                x_server_manager.clone(),
+                x_server_consent_registry.clone(),
+            );
 
             // Initialize tunnel manager with recovery loading.
             // On failure, the app still starts but tunnels are unavailable.
@@ -434,6 +493,9 @@ pub fn run() {
             commands::session::session_get_capabilities,
             commands::session::session_monitoring_open,
             commands::session::session_monitoring_close,
+            commands::session::session_monitoring_set_paused,
+            commands::session::session_monitoring_set_interval,
+            commands::session::session_monitoring_cancel,
             // Persistent session management
             commands::session::start_persistent_session,
             commands::session::adopt_persistent_session,
@@ -466,8 +528,10 @@ pub fn run() {
             commands::files::sftp_open,
             commands::files::sftp_close,
             commands::files::sftp_list_dir,
+            commands::files::sftp_realpath,
             commands::files::sftp_download,
             commands::files::sftp_upload,
+            commands::files::sftp_cancel_transfer,
             commands::files::sftp_mkdir,
             commands::files::sftp_delete,
             commands::files::sftp_rename,
@@ -485,13 +549,11 @@ pub fn run() {
             commands::files::vscode_open_local,
             commands::files::vscode_open_remote,
             commands::files::write_cheatsheet,
-            // Monitoring (kept temporarily — will migrate to session-based monitoring)
-            commands::monitoring::monitoring_open,
-            commands::monitoring::monitoring_close,
-            commands::monitoring::monitoring_fetch_stats,
             // Agent management
             commands::agent::connect_agent,
+            commands::agent::cancel_connect_agent,
             commands::agent::disconnect_agent,
+            commands::agent::prune_dead_agents,
             commands::agent::shutdown_agent,
             commands::agent::get_agent_capabilities,
             commands::agent::apply_agent_settings,
@@ -507,6 +569,7 @@ pub fn run() {
             commands::agent::delete_agent_folder,
             commands::agent::detect_agent_arch,
             commands::agent::setup_remote_agent,
+            commands::agent::cancel_agent_setup,
             commands::agent::probe_remote_agent,
             commands::agent::deploy_agent,
             commands::agent::update_agent,
@@ -548,6 +611,10 @@ pub fn run() {
             commands::network::network_wol_device_delete,
             commands::network::network_http_monitor_start,
             commands::network::network_http_monitor_stop,
+            commands::network::network_http_monitor_remove,
+            commands::network::network_http_monitor_pause,
+            commands::network::network_http_monitor_resume,
+            commands::network::network_http_monitor_stop_all,
             commands::network::network_http_monitor_list,
             // Embedded servers
             commands::embedded_servers::list_embedded_servers,
@@ -561,6 +628,7 @@ pub fn run() {
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,
+            commands::credential::reset_credential_store,
             commands::credential::lock_credential_store,
             commands::credential::setup_master_password,
             commands::credential::change_master_password,
@@ -582,6 +650,12 @@ pub fn run() {
             commands::update::clear_skipped_version,
             commands::update::set_update_auto_check,
             commands::update::get_update_settings,
+            // X server provisioning
+            commands::xserver::x_server_status,
+            commands::xserver::x_server_ensure,
+            commands::xserver::x_server_stop,
+            commands::xserver::x_server_install_dependency,
+            commands::xserver::x_server_connect_consent_reply,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -606,6 +680,27 @@ pub fn run() {
                         .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
                     {
                         mgr.stop_all();
+                    }
+                    // Stop the managed X server so no orphan vcxsrv.exe is left
+                    // behind (issue #1049). Adopted external servers are untouched.
+                    if let Some(mgr) = handle.try_state::<Arc<terminal::xserver::XServerManager>>() {
+                        mgr.stop();
+                    }
+                    // Cancel all HTTP monitor poll loops so in-flight reqwest
+                    // requests are aborted rather than abandoned on exit (#1147).
+                    if let Some(mgr) = handle.try_state::<NetworkManager>() {
+                        mgr.stop_all_http_monitors();
+                    }
+                    // Cancel every in-flight transfer *before* closing sessions,
+                    // so no half-written file keeps a dedicated channel open
+                    // during teardown (#1245).
+                    if let Some(reg) = handle.try_state::<TransferRegistry>() {
+                        reg.cancel_all();
+                    }
+                    // Close every open SFTP session so no SSH+SFTP connection is
+                    // left dangling on the server until it times out (#1244).
+                    if let Some(mgr) = handle.try_state::<SftpManager>() {
+                        mgr.close_all();
                     }
                 });
             }

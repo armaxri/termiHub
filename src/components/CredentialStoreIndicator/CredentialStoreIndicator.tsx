@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { KeyRound, Lock, LockOpen } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { lockCredentialStore } from "@/services/api";
+import { toast } from "@/components/ui";
 import "./CredentialStoreIndicator.css";
 
 /**
@@ -24,8 +25,11 @@ export function CredentialStoreIndicator() {
     } else {
       try {
         await lockCredentialStore();
+        toast.success("Credential store locked");
       } catch (err) {
-        console.error("Failed to lock credential store:", err);
+        toast.error(
+          `Failed to lock credential store: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     }
   }, [status, setUnlockDialogOpen]);

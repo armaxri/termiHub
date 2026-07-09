@@ -11,6 +11,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { TooltipProvider } from "@/components/ui";
 import type { ConnectionFolder } from "@/types/connection";
 import type { RemoteAgentDefinition } from "@/types/connection";
 
@@ -79,7 +80,12 @@ describe("ConnectionList — folder chevron placement", () => {
     useAppStore.setState({ folders: [makeFolder()] });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const folderButton = container.querySelector('[data-testid="folder-toggle-folder-1"]');
@@ -98,7 +104,12 @@ describe("ConnectionList — folder chevron placement", () => {
     useAppStore.setState({ folders: [makeFolder()] });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const folderButton = container.querySelector('[data-testid="folder-toggle-folder-1"]');
@@ -114,7 +125,12 @@ describe("ConnectionList — folder chevron placement", () => {
     useAppStore.setState({ folders: [parent, child] });
 
     act(() => {
-      root.render(React.createElement(ConnectionList));
+      root.render(
+        React.createElement(TooltipProvider, {
+          delayDuration: 0,
+          children: React.createElement(ConnectionList),
+        })
+      );
     });
 
     const childButton = container.querySelector('[data-testid="folder-toggle-folder-child"]');

@@ -324,23 +324,34 @@ graph LR
 | **DynamicForm**       | `src/components/DynamicForm/`      | Generic schema-driven form renderer — renders `SettingsField` definitions as UI widgets (text, password, select, file picker, key-value list, etc.)                                                                                                                                |
 | **Settings Panel**    | `src/components/Settings/`         | Two-panel settings with categories: General, Appearance, Terminal, External Files, Security, plus Customize Layout dialog                                                                                                                                                          |
 | **Theme Engine**      | `src/themes/`                      | Dark/Light/System theme management, CSS variable application, xterm.js live re-theming                                                                                                                                                                                             |
+| **Design System**     | `src/components/ui/`               | Shared UI primitives (Button, Input, Field, Select, Modal, Toggle) + Toast feedback hub — token-driven skins over Radix / react-hook-form / sonner. All dialogs and forms compose from these.                                                                                      |
 | **App Store**         | `src/store/appStore.ts`            | Zustand store managing all frontend state (panels, tabs, connections, tunnels, agents, themes, layout, credentials)                                                                                                                                                                |
 | **API Service**       | `src/services/api.ts`              | Tauri command wrappers                                                                                                                                                                                                                                                             |
 | **Event Service**     | `src/services/events.ts`           | Tauri event listeners and dispatcher                                                                                                                                                                                                                                               |
 
+### Design System
+
+The frontend is built on a shared **design system** (`src/components/ui/`) that keeps every screen visually and behaviorally consistent:
+
+- **Primitives** — `Button`, `Input`, `Field`, `Select`, `Modal`, `Toggle`: thin, token-driven skins over installed libraries (Radix for `Modal`/`Select`, `@radix-ui/react-switch` for `Toggle`, `react-hook-form` + `zod` for forms). Dialogs and forms compose from these instead of hand-rolling CSS.
+- **Feedback** — a `Toast` hub (`src/components/ui/Toast/`, over `sonner`) plus an async `Button` lifecycle (idle → pending → success/error). Every mutating/async action gives immediate feedback; nothing resolves silently.
+- **Tokens** — all visual values come from `src/styles/variables.css` (colors, spacing, radii, shadows, control heights, z-index, transitions). No raw hex, per-component overlays, or ad-hoc scrollbars.
+
+The system is authoritative: its concept lives at [`docs/concepts/backlog/ui-modernization.html`](concepts/backlog/ui-modernization.html), the rules are in `.claude/CLAUDE.md` (UI / Design System), and the `ui-design` subagent (`.claude/agents/ui-design.md`) enforces them. New UI must compose from the primitives and use tokens only.
+
 ### Level 2: Backend Modules
 
-| Module         | Location                    | Responsibility                                                                                                                       |
-| -------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Terminal**   | `src-tauri/src/terminal/`   | Agent manager (deploy, version check, setup), remote backend proxy, X11 forwarding, JSON-RPC client                                  |
-| **Session**    | `src-tauri/src/session/`    | Desktop `SessionManager` — wraps core `ConnectionType` instances, manages lifecycle via the registry                                 |
-| **Connection** | `src-tauri/src/connection/` | Config persistence, CRUD operations, connection file I/O                                                                             |
-| **Tunnel**     | `src-tauri/src/tunnel/`     | SSH tunnel manager — local, remote, and dynamic (SOCKS5) forwarding with session pooling, auto-start, and `tunnels.json` persistence |
-| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — master password backend, Argon2id + AES-256-GCM encryption, auto-lock                                 |
-| **Files**      | `src-tauri/src/files/`      | Local and SFTP file browsing, upload/download                                                                                        |
-| **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime)                                                                             |
-| **Commands**   | `src-tauri/src/commands/`   | Tauri IPC command handlers (session, connection, agent, files, monitoring, credentials, tunnels, logs)                               |
-| **Utils**      | `src-tauri/src/utils/`      | Shell detection, Docker detection, VS Code detection, env expansion, error helpers                                                   |
+| Module         | Location                    | Responsibility                                                                                                                                                      |
+| -------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal**   | `src-tauri/src/terminal/`   | Agent manager (deploy, version check, setup), remote backend proxy, X11 forwarding, cross-platform X server provisioning orchestrator (`xserver/`), JSON-RPC client |
+| **Session**    | `src-tauri/src/session/`    | Desktop `SessionManager` — wraps core `ConnectionType` instances, manages lifecycle via the registry                                                                |
+| **Connection** | `src-tauri/src/connection/` | Config persistence, CRUD operations, connection file I/O                                                                                                            |
+| **Tunnel**     | `src-tauri/src/tunnel/`     | SSH tunnel manager — local, remote, and dynamic (SOCKS5) forwarding with session pooling, auto-start, and `tunnels.json` persistence                                |
+| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — master password backend, Argon2id + AES-256-GCM encryption, auto-lock                                                                |
+| **Files**      | `src-tauri/src/files/`      | Local and SFTP file browsing, upload/download                                                                                                                       |
+| **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime)                                                                                                            |
+| **Commands**   | `src-tauri/src/commands/`   | Tauri IPC command handlers (session, connection, agent, files, monitoring, credentials, tunnels, logs)                                                              |
+| **Utils**      | `src-tauri/src/utils/`      | Shell detection, Docker detection, VS Code detection, env expansion, error helpers                                                                                  |
 
 ### Level 2: Shared Core Modules
 
@@ -1046,6 +1057,74 @@ if (!experimental) return null;
 
 Experimental features may ship in public releases. The flag is not a hidden developer tool — it is a user-visible opt-in that makes the lack of guarantees explicit.
 
+### X Server Provisioning (SSH X11 Forwarding)
+
+SSH **X11 forwarding** renders a remote GUI app (`xeyes`, a graphical IDE) as a native window on the machine running termiHub. That requires a **local X server** — something Linux users usually already have, macOS users install (XQuartz), and Windows users historically had to source and configure by hand. The X-server provisioning subsystem (epic #1047, concept `docs/concepts/backlog/x-server-provisioning.html`) makes a usable local X server available, forwards to it, and tears it down cleanly — with the acquisition **strategy chosen per platform** (see [ADR-10](#adr-10-per-platform-x-server-provisioning)).
+
+#### Where it lives
+
+The subsystem straddles the core/desktop boundary because core cannot provision servers itself — process lifecycle, VcXsrv acquisition, and the native install flows are desktop concerns:
+
+| Layer                                                  | Responsibility                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core/src/backends/ssh/x11.rs`                         | The forwarding mechanism (russh reverse `tcpip_forward` → local X socket/TCP), the `XServerProvisioner` **seam** (trait + `set_x_server_provisioner`), `ResolvedXServer`/`XServerLease`, and the no-provisioner fallback `detect_local_x_server` for a user-run server |
+| `src-tauri/src/terminal/xserver/`                      | The desktop provisioner: `orchestrator` (cross-platform decision), `manager` (managed-server lifecycle + session refcount), `acquire` (Windows VcXsrv), `macos` (XQuartz), `linux_gap` (Linux hint classifier), `consent` (connect-time gate), `auth` (MIT cookie)     |
+| `src-tauri/src/commands/xserver.rs`                    | Tauri command surface: `x_server_status`, `x_server_ensure`, `x_server_stop`, `x_server_install_dependency`, `x_server_connect_consent_reply`                                                                                                                          |
+| `src/components/OpenConnections/XServer*`, `Settings/` | Frontend: settings toggles (`provideXServerAutomatically`, `stopXServerWhenIdle`), the Open Connections **X Servers** section, the manual **Set up** dialog, and the connect-time consent dialog                                                                       |
+
+Core stays transport-only: at startup the desktop registers `XServerProvisionerImpl` via `set_x_server_provisioner`, and `SshConnector` consults it whenever `enable_x11_forwarding` is set. With no provisioner registered (core standalone / tests), behavior is unchanged — the forwarder falls back to detecting a user-run server.
+
+#### Per-platform strategy
+
+- **Windows — bundle / download VcXsrv.** No native X server exists, so termiHub provides one. `acquire.rs` resolves a pinned, minimal VcXsrv install in order **cache → bundled resource → download**, SHA-256-verifies the `.zip`, and extracts it atomically under `<data>/xserver/vcxsrv-<version>/` (portable mode uses the `data/` folder). The download source is termiHub's own GitHub releases (same host as the agent binaries). The server runs as a separate process. _Current status:_ managed auto-acquisition is being wired incrementally (#1048); the pinned artifact SHA-256 is a placeholder until published (#1076), so a real download is intentionally rejected by verification until then — a user-run/already-running VcXsrv is still adopted via the TCP probe.
+- **macOS — detect + guide XQuartz.** macOS cannot embed an X server. `macos.rs` detects XQuartz (`/opt/X11`, `/Applications/Utilities/XQuartz.app`); on connect it best-effort launches it (`open -a XQuartz`) and polls for readiness (≤ ~4 s, cancellable, #1260). An install **never runs silently** — only the explicit `x_server_install_dependency` action runs `brew install --cask xquartz` (or returns xquartz.org guidance when Homebrew is absent).
+- **Linux — native X, guide-only.** termiHub never bundles or installs anything. It adopts the running server; when forwarding fails, `linux_gap.rs` snapshots the environment (`DISPLAY`, `WAYLAND_DISPLAY`, sockets, `Xwayland`/`Xorg` on PATH, Flatpak/Snap sandbox) and classifies the gap into a **targeted, actionable hint** (install XWayland; grant the `--socket=x11` sandbox permission; start a graphical session / Xvfb) rather than a generic error.
+
+#### Managed-server lifecycle
+
+At most one managed X server exists per termiHub instance, shared across sessions and reference-counted (#1107). The manager either **adopts** an already-reachable server (TCP `127.0.0.1:6000`, never terminated by termiHub) or, on a provider platform, **spawns** one on the first free display with a fresh MIT-MAGIC-COOKIE-1 (falling back to loopback-only `-ac`). Each X11-forwarding session holds a RAII `SessionGuard`; when the last one drops **and** "shut down when idle" is set, a termiHub-spawned server is stopped — so a clean disconnect leaves **no orphan process**.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Absent
+    Absent --> Adopted: external server<br/>reachable on :6000
+    Absent --> Running: spawn managed<br/>(Windows / provider)
+    Absent --> Failed: no server + typed<br/>per-platform error
+    Adopted --> Adopted: sessions acquire / release<br/>(never terminated)
+    Running --> Running: reuse across sessions<br/>(refcount > 0)
+    Running --> Absent: refcount → 0 &&<br/>stop-when-idle
+    Failed --> Absent: retry / dependency installed
+    Running --> [*]: app exit (child reaped)
+```
+
+#### Connect-time consent handshake
+
+Downloading an X dependency on someone's behalf requires consent. On a first-time, download-backed Windows connect with automatic provisioning **undecided** and no server already present, the provisioner pauses the connect: it emits `x-server-consent-needed`, streams `x-server-progress`, and awaits the frontend's `x_server_connect_consent_reply`. **Enable** provisions and persists the decision (later connects never re-prompt); **Not now** continues the SSH connection without X forwarding; **Stop** while the prompt is up aborts the connect promptly (#1260). macOS/Linux never download, so they never prompt — they only gain progress feedback.
+
+```mermaid
+sequenceDiagram
+    participant UI as Frontend
+    participant Conn as SSH connect (core)
+    participant Prov as XServerProvisionerImpl
+    participant Mgr as XServerManager
+
+    Conn->>Prov: ensure(cancel)
+    Prov->>Prov: consent required?<br/>(Windows · undecided · no server)
+    alt prompt needed
+        Prov-->>UI: x-server-consent-needed {id}
+        UI-->>Prov: x_server_connect_consent_reply(id, Enable | NotNow)
+    end
+    alt Enable / not needed
+        Prov->>Mgr: ensure_running() + acquire lease
+        Mgr-->>Prov: ResolvedXServer + SessionGuard
+        Prov-->>Conn: XServerLease (forward here)
+    else Not now
+        Prov-->>Conn: empty lease (connect without X)
+    else Stop during prompt
+        Prov-->>Conn: Err (connect aborted)
+    end
+```
+
 ---
 
 ## 9. Architecture Decisions
@@ -1218,6 +1297,27 @@ flowchart LR
 - External connection files and plugin-provided types work without schema changes
 
 **Trade-off:** Loss of compile-time type safety for connection settings. The settings are `serde_json::Value` / `Record<string, unknown>` rather than strongly-typed structs. Validation happens at runtime via the schema, not at compile time.
+
+### ADR-10: Per-Platform X Server Provisioning
+
+**Context:** SSH X11 forwarding needs a local X server to render remote GUI apps (see [X Server Provisioning](#x-server-provisioning-ssh-x11-forwarding)). The three desktop platforms differ fundamentally: Linux almost always has a running X (or Wayland+XWayland) server; macOS needs XQuartz, which Apple does not ship and which cannot be embedded; Windows has no native X server at all and no first-class package manager we can assume. A single strategy ("bundle an X server", or "tell the user to install one") is wrong on at least two of the three, and silently downloading or installing software is a trust violation.
+
+**Decision:** Provision **per platform**, behind one `XServerProvisioner` seam in `termihub-core` that the desktop implements:
+
+- **Windows — bundle / download.** Ship (or fetch on first use) a pinned, minimal, SHA-256-verified VcXsrv, cached under the app data dir and run as a managed process. termiHub owns the whole lifecycle because the user has nothing to fall back on.
+- **macOS — detect / guide.** Detect XQuartz and offer an **explicit, consent-gated** install (`brew install --cask xquartz`, else a link). Never install silently; launch and wait for XQuartz on connect, cancellably.
+- **Linux — native, guide-only.** Adopt the running server; never bundle or install. On failure, classify the environment into a specific, actionable hint (missing XWayland, sandbox socket, headless).
+
+A first-time, download-backed Windows provision is gated on a connect-time consent prompt; the decision is persisted so later connects are silent. Adopted (user-run) servers are never terminated; only termiHub-spawned servers are stopped when idle.
+
+**Rationale:**
+
+- Matches each platform's reality and user expectations instead of forcing one model everywhere.
+- Keeps core transport-agnostic — the provisioning policy and OS-specific flows live in `src-tauri`, registered via a trait, so core (and the agent) carry no X-server code.
+- Consent + verified download + "adopt but never kill external servers" keeps the trust and resource-cleanup contracts explicit (no silent installs, no orphan processes).
+- The per-platform decision, lifecycle, and consent gate are pure/injectable, so they are covered by host-agnostic unit tests; only the irreducible "a real window renders" step stays manual (per [ADR-5](#adr-5-e2e-system-tests-run-in-docker-linux-only); see the X11 matrix in [testing.md](testing.md#x11--gui-forwarding)).
+
+**Trade-off:** Three code paths instead of one, and the Windows path carries a redistribution concern (VcXsrv is GPL-3.0, shipped as a pinned artifact with license notices). Full E2E rendering cannot be automated in CI, so the cross-platform release matrix is a documented human step. Windows managed auto-acquisition is being wired incrementally (#1048) and depends on publishing the pinned artifact (#1076); until then Windows adopts a user-run VcXsrv via the TCP probe.
 
 ---
 

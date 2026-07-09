@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { SerialPortScanPrefix } from "@/types/connection";
+import { Button, Tooltip } from "@/components/ui";
 
 interface SerialPortSettingsProps {
   visibleFields?: Set<string>;
@@ -125,13 +126,15 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
                 >
                   {p.prefix}
                 </code>
-                <button
-                  className="settings-panel__file-remove"
-                  onClick={() => handleDelete(p.prefix)}
-                  title="Remove custom prefix"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <Tooltip content="Remove custom prefix">
+                  <button
+                    className="settings-panel__file-remove"
+                    onClick={() => handleDelete(p.prefix)}
+                    aria-label="Remove custom prefix"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </Tooltip>
               </li>
             ))}
           </ul>
@@ -152,14 +155,15 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
             if (e.key === "Enter") handleAdd();
           }}
         />
-        <button
-          className="settings-panel__btn settings-panel__btn--primary"
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Plus size={14} />}
           onClick={handleAdd}
           disabled={!newPrefix.trim()}
         >
-          <Plus size={14} />
           Add
-        </button>
+        </Button>
       </div>
       {addError && <p className="settings-panel__error">{addError}</p>}
     </div>

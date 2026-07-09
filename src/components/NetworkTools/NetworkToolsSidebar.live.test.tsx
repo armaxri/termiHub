@@ -17,6 +17,7 @@ import { networkHttpMonitorList, onHttpMonitorCheck } from "@/services/networkAp
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { useAppStore } from "@/store/appStore";
 import { NetworkToolsSidebar } from "./NetworkToolsSidebar";
+import { withTooltip } from "@/test/tooltip";
 
 vi.mock("@/services/networkApi", () => ({
   networkHttpMonitorList: vi.fn(() => Promise.resolve([])),
@@ -37,6 +38,7 @@ function makeMonitor(id: string): HttpMonitorState {
       timeoutMs: 10_000,
     },
     running: true,
+    paused: false,
   };
 }
 
@@ -66,7 +68,7 @@ describe("NetworkToolsSidebar — live monitor updates (#986)", () => {
 
   it("subscribes to the http-monitor-check event on mount", async () => {
     await act(async () => {
-      root.render(<NetworkToolsSidebar />);
+      root.render(withTooltip(<NetworkToolsSidebar />));
     });
     await flush();
 
@@ -77,7 +79,7 @@ describe("NetworkToolsSidebar — live monitor updates (#986)", () => {
     // Sidebar mounts with no monitors running.
     vi.mocked(networkHttpMonitorList).mockResolvedValueOnce([]);
     await act(async () => {
-      root.render(<NetworkToolsSidebar />);
+      root.render(withTooltip(<NetworkToolsSidebar />));
     });
     await flush();
 
@@ -108,7 +110,7 @@ describe("NetworkToolsSidebar — live monitor updates (#986)", () => {
     const unlisten = vi.fn();
     vi.mocked(onHttpMonitorCheck).mockResolvedValueOnce(unlisten);
     await act(async () => {
-      root.render(<NetworkToolsSidebar />);
+      root.render(withTooltip(<NetworkToolsSidebar />));
     });
     await flush();
 

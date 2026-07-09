@@ -3,9 +3,12 @@ import { Plus, Save, Download, Upload } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { toast, Tooltip } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
+import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import "./WorkspaceSidebar.css";
 
 export function WorkspaceSidebar() {
@@ -14,11 +17,14 @@ export function WorkspaceSidebar() {
   const duplicateWorkspace = useAppStore((s) => s.duplicateWorkspaceInBackend);
   const openWorkspaceEditorTab = useAppStore((s) => s.openWorkspaceEditorTab);
   const launchWorkspace = useAppStore((s) => s.launchWorkspace);
+  const launchingWorkspaceId = useAppStore((s) => s.launchingWorkspaceId);
   const saveCurrentAsWorkspace = useAppStore((s) => s.saveCurrentAsWorkspace);
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  // The workspace pending deletion once the user confirms the destructive action.
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   const handleNew = useCallback(() => {
     openWorkspaceEditorTab(null);
@@ -45,17 +51,46 @@ export function WorkspaceSidebar() {
     [duplicateWorkspace]
   );
 
+  // Open the confirmation dialog rather than deleting immediately — delete is a
+  // destructive one-click action on a named workspace (GAP G7).
   const handleDelete = useCallback(
     (workspaceId: string) => {
-      deleteWorkspace(workspaceId);
+      const workspace = workspaces.find((ws) => ws.id === workspaceId);
+      if (!workspace) return;
+      setPendingDelete({ id: workspace.id, name: workspace.name });
     },
-    [deleteWorkspace]
+    [workspaces]
   );
 
+  const handleConfirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+    const { id, name } = pendingDelete;
+    setPendingDelete(null);
+    try {
+      // The store only removes the item from local state after the backend
+      // resolves, so a failed delete leaves the workspace visible.
+      await deleteWorkspace(id);
+      toast.success(`Deleted workspace ${name}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to delete workspace: ${message}`);
+    }
+  }, [pendingDelete, deleteWorkspace]);
+
   const handleSaveCurrent = useCallback(
-    (name: string, scope: SaveWorkspaceScope, description?: string) => {
-      saveCurrentAsWorkspace(name, scope, description);
-      setShowSaveDialog(false);
+    async (name: string, scope: SaveWorkspaceScope, description?: string) => {
+      try {
+        await saveCurrentAsWorkspace(name, scope, description);
+        setShowSaveDialog(false);
+        toast.success(`Saved workspace ${name}`);
+      } catch (err) {
+        // Keep the dialog open so the user does not falsely believe the save
+        // succeeded (disk full / permission / lock poisoned would otherwise
+        // vanish silently — GAP G2).
+        const message = err instanceof Error ? err.message : String(err);
+        frontendLog("workspace", `Failed to save workspace "${name}": ${message}`);
+        toast.error(`Failed to save workspace: ${message}`);
+      }
     },
     [saveCurrentAsWorkspace]
   );
@@ -63,6 +98,8 @@ export function WorkspaceSidebar() {
   const loadWorkspaces = useAppStore((s) => s.loadWorkspaces);
 
   const handleExport = useCallback(async () => {
+    // A cancelled file dialog returns null before any write happens — treat it
+    // as a no-op (no toast). Only a genuine failure surfaces an error (GAP G8).
     try {
       const json = await exportWorkspaces();
       const filePath = await save({
@@ -71,23 +108,30 @@ export function WorkspaceSidebar() {
       });
       if (!filePath) return;
       await writeTextFile(filePath, json);
-    } catch {
-      // Export cancelled or failed
+      toast.success("Exported workspaces");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to export workspaces: ${message}`);
     }
   }, []);
 
   const handleImport = useCallback(async () => {
+    // A cancelled file dialog returns null before any work happens — treat it as
+    // a no-op (no toast). A parse failure or duplicate-skip must be reported so
+    // the user can tell if 0, some, or all workspaces imported (GAP G8).
+    const filePath = await open({
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!filePath) return;
     try {
-      const filePath = await open({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
       const json = await readTextFile(filePath);
-      await importWorkspaces(json);
+      const count = await importWorkspaces(json);
       await loadWorkspaces();
-    } catch {
-      // Import cancelled or failed
+      toast.success(`Imported ${count} workspace${count === 1 ? "" : "s"}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to import workspaces: ${message}`);
     }
   }, [loadWorkspaces]);
 
@@ -97,40 +141,48 @@ export function WorkspaceSidebar() {
   return (
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
       <div className="workspace-sidebar__actions">
-        <button
-          className="workspace-sidebar__add-btn"
-          onClick={handleNew}
-          title="New Workspace"
-          data-testid="workspace-new-btn"
-        >
-          <Plus size={14} />
-          New Workspace
-        </button>
-        <button
-          className="workspace-sidebar__add-btn"
-          onClick={() => setShowSaveDialog(true)}
-          title="Save Current Layout"
-          data-testid="workspace-save-current-btn"
-        >
-          <Save size={14} />
-          Save Current
-        </button>
-        <button
-          className="workspace-sidebar__add-btn"
-          onClick={handleExport}
-          title="Export Workspaces"
-          data-testid="workspace-export-btn"
-        >
-          <Download size={14} />
-        </button>
-        <button
-          className="workspace-sidebar__add-btn"
-          onClick={handleImport}
-          title="Import Workspaces"
-          data-testid="workspace-import-btn"
-        >
-          <Upload size={14} />
-        </button>
+        <Tooltip content="New Workspace" side="top">
+          <button
+            className="workspace-sidebar__add-btn"
+            onClick={handleNew}
+            aria-label="New Workspace"
+            data-testid="workspace-new-btn"
+          >
+            <Plus size={14} />
+            New Workspace
+          </button>
+        </Tooltip>
+        <Tooltip content="Save Current Layout" side="top">
+          <button
+            className="workspace-sidebar__add-btn"
+            onClick={() => setShowSaveDialog(true)}
+            aria-label="Save Current Layout"
+            data-testid="workspace-save-current-btn"
+          >
+            <Save size={14} />
+            Save Current
+          </button>
+        </Tooltip>
+        <Tooltip content="Export Workspaces" side="top">
+          <button
+            className="workspace-sidebar__add-btn"
+            onClick={handleExport}
+            aria-label="Export Workspaces"
+            data-testid="workspace-export-btn"
+          >
+            <Download size={14} />
+          </button>
+        </Tooltip>
+        <Tooltip content="Import Workspaces" side="top">
+          <button
+            className="workspace-sidebar__add-btn"
+            onClick={handleImport}
+            aria-label="Import Workspaces"
+            data-testid="workspace-import-btn"
+          >
+            <Upload size={14} />
+          </button>
+        </Tooltip>
       </div>
       {workspaces.length === 0 ? (
         <div className="workspace-sidebar__empty" data-testid="workspace-empty-message">
@@ -147,6 +199,7 @@ export function WorkspaceSidebar() {
               onEdit={handleEdit}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
+              launchDisabled={launchingWorkspaceId !== null}
             />
           ))}
         </div>
@@ -159,6 +212,14 @@ export function WorkspaceSidebar() {
           onCancel={() => setShowSaveDialog(false)}
         />
       )}
+      <ConfirmDeleteDialog
+        open={pendingDelete !== null}
+        message={
+          pendingDelete ? `Delete workspace "${pendingDelete.name}"? This cannot be undone.` : ""
+        }
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

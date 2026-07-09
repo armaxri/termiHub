@@ -176,7 +176,38 @@ impl SshConnector for RusshSshConnector {
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
         if config.enable_x11_forwarding {
-            match X11Forwarder::start(config, &mut session, registry, alive.clone()).await {
+            // Ensure a usable local X server via the app-registered provisioner
+            // (epic #1047). It resolves the concrete server (managed or adopted)
+            // so the forwarder does not re-probe. When none is registered (core
+            // standalone / tests) `resolved` is `None` and the forwarder falls
+            // back to detecting a user-run server. A provisioning failure is
+            // logged with its actionable message and the session continues
+            // without display forwarding rather than aborting the whole connect.
+            use super::x11::x_server_provisioner;
+            let resolved = match x_server_provisioner() {
+                // Thread the connect-abort token so a Stop while XQuartz is still
+                // coming up (macOS) short-cuts the readiness wait promptly (#1260).
+                Some(provisioner) => match provisioner.ensure(cancel.cloned()).await {
+                    Ok(lease) => {
+                        // Hold the desktop session-lifetime guard (dependent-session
+                        // refcount lease, #1107) for the whole session. Pushing it
+                        // into `extensions` now — before the forwarder even starts —
+                        // means it is released on session end *or* if the connect
+                        // fails afterwards, so the refcount matches acquire exactly.
+                        if let Some(guard) = lease.guard {
+                            extensions.push(guard);
+                        }
+                        lease.resolved
+                    }
+                    Err(message) => {
+                        tracing::warn!("X server provisioning failed: {message}");
+                        None
+                    }
+                },
+                None => None,
+            };
+            match X11Forwarder::start(config, &mut session, registry, alive.clone(), resolved).await
+            {
                 Ok((forwarder, display_num, cookie)) => {
                     x11_display = Some(display_num);
                     x11_cookie = cookie;

@@ -101,9 +101,9 @@
 }
 
 /* Theme the horizontal scrollbar to match the vertical gutter thumb, and pin its
-   height to --hscroll-bar so the bottom reserve above matches exactly. Defining
-   ::-webkit-scrollbar makes it a consistent, always-visible bar (not a
-   fading overlay), matching the vertical scrollbar. */
+   height to --hscroll-bar so the bottom reserve above matches exactly. The thumb
+   is hidden until the terminal is hovered, matching the app-wide subtle,
+   auto-hide scrollbars (see global.css) and the vertical gutter thumb below. */
 .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar {
   height: var(--hscroll-bar);
 }
@@ -113,11 +113,17 @@
 }
 
 .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb {
-  background-color: var(--scrollbar-thumb);
+  background-color: transparent;
   border-radius: 5px;
 }
 
-.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb:hover {
+.terminal-container:hover
+  .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+}
+
+.terminal-container:hover
+  .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb:hover {
   background-color: var(--scrollbar-thumb-hover);
 }
 
@@ -140,9 +146,18 @@
   top: 0;
   right: 2px;
   width: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background-color: var(--scrollbar-thumb);
   cursor: default;
+  /* Subtle, auto-hide: fade in only while the terminal is hovered or the thumb
+     is being dragged, matching the app-wide scrollbar behaviour (global.css). */
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.terminal-container:hover .terminal-vscroll-thumb,
+.terminal-vscroll-thumb--dragging {
+  opacity: 1;
 }
 
 .terminal-vscroll-thumb:hover {

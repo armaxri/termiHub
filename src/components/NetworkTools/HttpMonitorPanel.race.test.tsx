@@ -18,6 +18,7 @@ import { createRoot, Root } from "react-dom/client";
 import { networkHttpMonitorStart, onHttpMonitorCheck } from "@/services/networkApi";
 import type { HttpCheckResult } from "@/types/network";
 import { HttpMonitorPanel } from "./HttpMonitorPanel";
+import { withTooltip } from "@/test/tooltip";
 
 vi.mock("@/services/networkApi", () => ({
   networkHttpMonitorStart: vi.fn(() => Promise.resolve("mon-1")),
@@ -86,7 +87,7 @@ describe("HttpMonitorPanel — first-check race", () => {
 
   it("registers the check listener before starting the monitor", async () => {
     await act(async () => {
-      root.render(<HttpMonitorPanel />);
+      root.render(withTooltip(<HttpMonitorPanel />));
     });
     await flush();
 
@@ -102,7 +103,7 @@ describe("HttpMonitorPanel — first-check race", () => {
 
   it("shows the immediate first check for the started monitor", async () => {
     await act(async () => {
-      root.render(<HttpMonitorPanel />);
+      root.render(withTooltip(<HttpMonitorPanel />));
     });
     await flush();
 
@@ -123,7 +124,7 @@ describe("HttpMonitorPanel — first-check race", () => {
 
   it("ignores checks for a different monitor id", async () => {
     await act(async () => {
-      root.render(<HttpMonitorPanel />);
+      root.render(withTooltip(<HttpMonitorPanel />));
     });
     await flush();
 

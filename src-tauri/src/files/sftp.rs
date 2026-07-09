@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use russh_sftp::client::SftpSession as RusshSftp;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,6 +13,36 @@ use termihub_core::files::{FileBackend, FileEntry};
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
+
+/// Lock a mutex, mapping a poisoned lock to a recoverable [`TerminalError`]
+/// instead of panicking.
+///
+/// A prior SFTP op that panicked while holding the lock poisons the `Mutex`;
+/// a raw `.lock().unwrap()` would then abort the whole process on every
+/// subsequent command. Mapping the error keeps the session recoverable
+/// (audit GAP C1, issue #1143). Mirrors the error mapping already used by the
+/// [`SftpFileBackend`] impl.
+pub fn lock_session<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, TerminalError> {
+    mutex
+        .lock()
+        .map_err(|_| TerminalError::SshError("SFTP session lock poisoned".to_string()))
+}
+
+/// Drain every entry from a keyed session map, poison-safe, and drop the values.
+///
+/// Recovers the guard even if the map mutex is poisoned — draining is cleanup
+/// (e.g. on app quit) and must never itself panic, mirroring
+/// [`SftpManager::close_session`]'s handling (audit GAP C1, issues #1143/#1244).
+/// Returns the number of sessions removed. Values are dropped as the map clears,
+/// tearing down each underlying connection.
+fn drain_sessions<V>(sessions: &Mutex<HashMap<String, V>>) -> usize {
+    let mut guard = sessions
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let count = guard.len();
+    guard.clear();
+    count
+}
 
 /// SFTP session backed by a dedicated SSH connection.
 ///
@@ -50,6 +80,39 @@ impl SftpSession {
             _session: session,
             sftp,
         })
+    }
+
+    /// Open a **dedicated** SFTP session on a fresh channel off the same
+    /// authenticated SSH connection.
+    ///
+    /// Used by the cancellable transfer subsystem (#1245): the returned
+    /// [`RusshSftp`] owns its own channel, so a chunked copy can run on it
+    /// without holding this session's `Mutex` — keeping directory listing /
+    /// navigation live on the browsing channel during a transfer.
+    pub async fn open_dedicated_sftp(&self) -> Result<RusshSftp, TerminalError> {
+        let channel = self
+            ._session
+            .channel_open_session()
+            .await
+            .map_err(|e| TerminalError::SshError(format!("transfer channel open: {e}")))?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| TerminalError::SshError(format!("transfer subsystem request: {e}")))?;
+        RusshSftp::new(channel.into_stream())
+            .await
+            .map_err(|e| TerminalError::SshError(format!("transfer SFTP init: {e}")))
+    }
+
+    /// Best-effort size (in bytes) of a remote file via SFTP `stat`.
+    ///
+    /// Returns `0` when the size is unavailable — the UI treats `total == 0` as
+    /// indeterminate and shows a spinner rather than a percentage.
+    pub async fn remote_size(&self, remote_path: &str) -> u64 {
+        match self.sftp.metadata(remote_path).await {
+            Ok(meta) => meta.size.unwrap_or(0),
+            Err(_) => 0,
+        }
     }
 
     /// List directory contents, filtering out `.` and `..`.
@@ -258,6 +321,23 @@ impl SftpSession {
         })
     }
 
+    /// Resolve a remote path to its canonical absolute form via SFTP realpath.
+    ///
+    /// Passing `"."` yields the session's home directory, avoiding the fragile
+    /// `/home/<user>` guess that breaks on non-Linux layouts (audit GAP C2,
+    /// issue #1143).
+    pub fn realpath(&self, path: &str) -> Result<String, TerminalError> {
+        let path = path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.sftp
+                    .canonicalize(&path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("realpath failed: {e}")))
+            })
+        })
+    }
+
     /// Read a remote file's contents as raw bytes.
     #[allow(dead_code)]
     pub fn read_bytes(&self, remote_path: &str) -> Result<Vec<u8>, TerminalError> {
@@ -436,6 +516,12 @@ pub struct SftpManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SftpSession>>>>>,
 }
 
+impl Default for SftpManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SftpManager {
     pub fn new() -> Self {
         Self {
@@ -447,7 +533,7 @@ impl SftpManager {
     pub fn open_session(&self, config: &SshConfig) -> Result<String, TerminalError> {
         let session = SftpSession::new(config)?;
         let id = uuid::Uuid::new_v4().to_string();
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = lock_session(&self.sessions)?;
         sessions.insert(id.clone(), Arc::new(Mutex::new(session)));
         Ok(id)
     }
@@ -455,16 +541,106 @@ impl SftpManager {
     /// Close and drop an SFTP session.
     pub fn close_session(&self, id: &str) {
         info!(session_id = id, "Closing SFTP session");
-        let mut sessions = self.sessions.lock().unwrap();
+        // Recover the guard even if the map mutex is poisoned — removing a
+        // session is cleanup and must not itself panic (audit GAP C1, #1143).
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         sessions.remove(id);
+    }
+
+    /// Close and drop every open SFTP session, tearing down each SSH+SFTP
+    /// connection.
+    ///
+    /// Called on app quit so no session is left dangling on the server until it
+    /// times out. Poison-safe: a prior panic that poisoned the sessions mutex
+    /// does not abort teardown (mirrors [`Self::close_session`], issue #1244).
+    pub fn close_all(&self) {
+        let count = drain_sessions(&self.sessions);
+        info!(session_count = count, "Closing all SFTP sessions");
     }
 
     /// Get a session Arc for use outside the manager lock.
     pub fn get_session(&self, id: &str) -> Result<Arc<Mutex<SftpSession>>, TerminalError> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = lock_session(&self.sessions)?;
         sessions
             .get(id)
             .cloned()
             .ok_or_else(|| TerminalError::SftpSessionNotFound(id.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    /// The lock helper must map a poisoned mutex to a recoverable
+    /// `TerminalError` instead of panicking (audit GAP C1, #1143).
+    #[test]
+    fn lock_session_maps_poisoned_mutex_to_error() {
+        let mutex = Arc::new(Mutex::new(0i32));
+
+        // Poison the mutex by panicking while holding the lock.
+        let poisoner = Arc::clone(&mutex);
+        let handle = thread::spawn(move || {
+            let _guard = poisoner.lock().expect("first lock should succeed");
+            panic!("intentional panic to poison the mutex");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+
+        // A raw `.lock().unwrap()` would panic here; the helper must not.
+        let result = lock_session(&mutex);
+        assert!(
+            matches!(result, Err(TerminalError::SshError(_))),
+            "poisoned lock should return a recoverable SshError, got {result:?}"
+        );
+    }
+
+    /// On a healthy mutex the helper returns a usable guard.
+    #[test]
+    fn lock_session_returns_guard_when_healthy() {
+        let mutex = Mutex::new(41i32);
+        let mut guard = lock_session(&mutex).expect("healthy lock should succeed");
+        *guard += 1;
+        assert_eq!(*guard, 42);
+    }
+
+    /// `close_all`'s drain must empty the map even when the map mutex is
+    /// poisoned by a prior panic — teardown on quit must never itself abort
+    /// (mirrors `close_session`'s poison handling, issue #1244). Uses a
+    /// `String`-valued map so no real SSH/SFTP session is required.
+    #[test]
+    fn drain_sessions_empties_map_despite_poisoned_mutex() {
+        let sessions: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut guard = sessions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.insert("session-a".to_string(), "a".to_string());
+            guard.insert("session-b".to_string(), "b".to_string());
+        }
+
+        // Poison the sessions mutex by panicking while holding the lock.
+        let poisoner = Arc::clone(&sessions);
+        let handle = thread::spawn(move || {
+            let _guard = poisoner.lock().expect("first lock should succeed");
+            panic!("intentional panic to poison the sessions mutex");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+
+        // A raw `.lock().unwrap()` inside the drain would panic here.
+        let drained = drain_sessions(&sessions);
+        assert_eq!(drained, 2, "drain should report the two removed sessions");
+
+        let guard = sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            guard.is_empty(),
+            "drain should empty the sessions map, still had {} entries",
+            guard.len()
+        );
     }
 }

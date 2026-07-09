@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { Button, toast } from "@/components/ui";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -64,6 +65,7 @@ const AUTO_LOCK_OPTIONS: AutoLockOption[] = [
 export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
   const loadCredentialStoreStatus = useAppStore((s) => s.loadCredentialStoreStatus);
+  const requestUnlock = useAppStore((s) => s.requestUnlock);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
@@ -121,6 +123,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
   const handleConfirmSwitch = useCallback(async () => {
     if (!confirmSwitch) return;
+    const targetMode = confirmSwitch;
 
     if (confirmSwitch === "master_password") {
       if (!newPassword) {
@@ -150,8 +153,17 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       setNewPassword("");
       setConfirmPassword("");
       await loadCredentialStoreStatus();
+      toast.success(
+        result.migratedCount > 0
+          ? `Switched to ${modeLabel(targetMode)} — ${result.migratedCount} credential${
+              result.migratedCount !== 1 ? "s" : ""
+            } migrated`
+          : `Switched to ${modeLabel(targetMode)}`
+      );
     } catch (err) {
-      setPasswordError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setPasswordError(message);
+      toast.error(`Failed to switch credential store: ${message}`);
     } finally {
       setSwitching(false);
     }
@@ -178,10 +190,26 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     try {
       await changeMasterPassword(currentPasswordInput, changeNewPassword);
       resetChangePasswordDialog();
+      toast.success("Master password changed");
     } catch (err) {
       setChangePasswordError(err instanceof Error ? err.message : String(err));
     }
   }, [currentPasswordInput, changeNewPassword, changeConfirmPassword, resetChangePasswordDialog]);
+
+  /**
+   * Opens the change-master-password dialog. changeMasterPassword requires an unlocked
+   * store, so when the store is locked this routes through the shared unlock flow first
+   * (matching the connect-flow gate) and only opens the dialog once the unlock succeeds —
+   * avoiding the dead-end where submitting yields a raw "Store is locked" error with no
+   * unlock affordance (audit GAP G4).
+   */
+  const handleOpenChangePassword = useCallback(async () => {
+    if (credentialStoreStatus?.status === "locked") {
+      const unlocked = await requestUnlock();
+      if (!unlocked) return;
+    }
+    setChangingPassword(true);
+  }, [credentialStoreStatus?.status, requestUnlock]);
 
   const handleAutoLockChange = useCallback(
     (value: number) => {
@@ -250,17 +278,18 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
               )}
               <div className="settings-panel__inline-dialog-actions">
-                <button
-                  className="settings-panel__btn settings-panel__btn--primary"
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
                   data-testid="master-password-confirm-btn"
                 >
                   {switching ? "Switching…" : "Confirm"}
-                </button>
-                <button className="settings-panel__btn" onClick={resetSwitchDialogs}>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -279,17 +308,18 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
               )}
               <div className="settings-panel__inline-dialog-actions">
-                <button
-                  className="settings-panel__btn settings-panel__btn--primary"
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
                   data-testid="confirm-switch-confirm-btn"
                 >
                   {switching ? "Switching…" : "Confirm"}
-                </button>
-                <button className="settings-panel__btn" onClick={resetSwitchDialogs}>
+                </Button>
+                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -337,13 +367,19 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               </label>
 
               <div className="settings-panel__field">
-                <button
-                  className="settings-panel__btn"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   data-testid="change-master-password-btn"
-                  onClick={() => setChangingPassword(true)}
+                  onClick={handleOpenChangePassword}
+                  title={
+                    credentialStoreStatus?.status === "locked"
+                      ? "The credential store is locked — you'll be asked to unlock it first."
+                      : undefined
+                  }
                 >
                   Change Master Password
-                </button>
+                </Button>
               </div>
 
               {changingPassword && (
@@ -378,16 +414,17 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     <p className="settings-panel__inline-dialog-error">{changePasswordError}</p>
                   )}
                   <div className="settings-panel__inline-dialog-actions">
-                    <button
-                      className="settings-panel__btn settings-panel__btn--primary"
+                    <Button
+                      variant="primary"
+                      size="sm"
                       onClick={handleChangePassword}
                       data-testid="change-master-password-confirm-btn"
                     >
                       Change
-                    </button>
-                    <button className="settings-panel__btn" onClick={resetChangePasswordDialog}>
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={resetChangePasswordDialog}>
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}

@@ -8,6 +8,8 @@ vi.mock("lucide-react", () => ({
   ServerCrash: () => null,
   RefreshCw: () => null,
   Loader2: () => null,
+  Zap: () => null,
+  Ban: () => null,
 }));
 
 const TAB_ID = "tab-test";
@@ -73,6 +75,164 @@ describe("TerminalConnectionOverlay — connecting state", () => {
     });
     const el = container.querySelector("[data-testid='terminal-connection-overlay']");
     expect(el?.className).toContain("--hidden");
+  });
+});
+
+describe("TerminalConnectionOverlay — abort action (keeps the tab)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetStore();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("shows an Abort button (distinct from Cancel) while connecting", () => {
+    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
+    // Cancel (closes the tab) is still offered alongside Abort.
+    expect(
+      container.querySelector("[data-testid='terminal-connection-cancel-btn']")
+    ).not.toBeNull();
+  });
+
+  it("Abort calls abortTerminalConnect (not closeTab) while connecting", () => {
+    const abortFn = vi.fn();
+    const closeFn = vi.fn();
+    useAppStore.setState({
+      terminalConnecting: { [TAB_ID]: true },
+      abortTerminalConnect: abortFn,
+      closeTab: closeFn,
+    } as never);
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    act(() => {
+      (
+        container.querySelector("[data-testid='terminal-connection-abort-btn']") as HTMLElement
+      ).click();
+    });
+    expect(abortFn).toHaveBeenCalledWith(TAB_ID);
+    expect(closeFn).not.toHaveBeenCalled();
+  });
+
+  it("offers Abort in the waiting-for-agent state", () => {
+    useAppStore.setState({ terminalWaitingForAgent: { [TAB_ID]: "agent-1" } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
+  });
+
+  it("offers Abort in the auto-retrying state", () => {
+    useAppStore.setState({ terminalAutoRetryCount: { [TAB_ID]: 2 } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
+  });
+});
+
+describe("TerminalConnectionOverlay — Retry now (skip the wait)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetStore();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("waiting-for-agent Retry now fires retryTerminalSpawn immediately", () => {
+    const retryFn = vi.fn();
+    useAppStore.setState({
+      terminalWaitingForAgent: { [TAB_ID]: "agent-1" },
+      retryTerminalSpawn: retryFn,
+    } as never);
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    act(() => {
+      (
+        container.querySelector("[data-testid='terminal-connection-retry-now-btn']") as HTMLElement
+      ).click();
+    });
+    expect(retryFn).toHaveBeenCalledWith(TAB_ID);
+  });
+
+  it("auto-retrying Retry now fires reconnectTerminal immediately", () => {
+    const reconnectFn = vi.fn();
+    useAppStore.setState({
+      terminalAutoRetryCount: { [TAB_ID]: 2 },
+      reconnectTerminal: reconnectFn,
+    } as never);
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    act(() => {
+      (
+        container.querySelector("[data-testid='terminal-connection-retry-now-btn']") as HTMLElement
+      ).click();
+    });
+    expect(reconnectFn).toHaveBeenCalledWith(TAB_ID);
   });
 });
 
@@ -407,5 +567,65 @@ describe("TerminalConnectionOverlay — failed state", () => {
       ).click();
     });
     expect(closeFn).toHaveBeenCalledWith(TAB_ID, PANEL_ID);
+  });
+});
+
+describe("TerminalConnectionOverlay — elapsed time", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetStore();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
+  it("shows an elapsed-time readout while connecting", () => {
+    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    // Starts at 0s.
+    expect(container.textContent).toContain("0s");
+    // Advances one second at a time.
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(container.textContent).toContain("3s");
+  });
+
+  it("surfaces a slow-connection hint once the connect drags on", () => {
+    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    // No hint early on.
+    expect(container.textContent).not.toContain("Taking longer than usual");
+    act(() => {
+      vi.advanceTimersByTime(20000);
+    });
+    expect(container.textContent).toContain("Taking longer than usual");
   });
 });

@@ -1,20 +1,37 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Activity, RefreshCw, Unplug, Loader2, Server, Route } from "lucide-react";
-import { useAppStore, getActiveTab } from "@/store/appStore";
+import {
+  Activity,
+  AlertTriangle,
+  Unplug,
+  Loader2,
+  Server,
+  Route,
+  RotateCw,
+  ArrowDownUp,
+  Pause,
+  Play,
+  X,
+  Check,
+} from "lucide-react";
+import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
+import { frontendLog } from "@/utils/frontendLog";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
-import { ConnectionConfig } from "@/types/terminal";
-import { SavedConnection } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/services/api";
-import { SystemStats } from "@/types/monitoring";
+import {
+  SystemStats,
+  MonitorStatus,
+  MONITORING_INTERVAL_OPTIONS,
+  DEFAULT_MONITORING_INTERVAL_MS,
+} from "@/types/monitoring";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
+import { Tooltip, toast } from "@/components/ui";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
-const REFRESH_INTERVAL_MS = 5000;
 
 /** Format seconds into a human-readable uptime string. */
 function formatUptime(seconds: number): string {
@@ -26,18 +43,16 @@ function formatUptime(seconds: number): string {
   return `${mins}m`;
 }
 
+/** Format a monitoring refresh interval (ms) as a compact label like "2s" (#1233). */
+function formatIntervalLabel(intervalMs: number): string {
+  return `${Math.round(intervalMs / 1000)}s`;
+}
+
 /** Format kB into a human-readable size. */
 function formatKb(kb: number): string {
   if (kb < 1024) return `${kb} KB`;
   if (kb < 1024 * 1024) return `${(kb / 1024).toFixed(1)} MB`;
   return `${(kb / (1024 * 1024)).toFixed(1)} GB`;
-}
-
-/** Extract monitoring-relevant connection settings (host, port, username, authMethod, password). */
-function extractMonitoringConfig(config: ConnectionConfig): Record<string, unknown> | null {
-  const cfg = config.config;
-  if (cfg.host && cfg.username) return cfg;
-  return null;
 }
 
 /** Check if a connection type supports monitoring.
@@ -87,6 +102,7 @@ export function StatusBar() {
         <JumpHostStatus />
         <MonitoringStatus />
         <ServicesIndicator />
+        <TransfersIndicator />
         <CredentialStoreIndicator />
       </div>
       <div className="status-bar__section status-bar__section--center">
@@ -104,15 +120,17 @@ export function StatusBar() {
               Ln {editorStatus.line}, Col {editorStatus.column}
             </span>
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="status-bar__item status-bar__item--interactive"
-                  title="Select indentation"
-                  data-testid="status-bar-tab-size"
-                >
-                  {indentLabel}
-                </button>
-              </DropdownMenu.Trigger>
+              <Tooltip content="Select indentation" side="top">
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    className="status-bar__item status-bar__item--interactive"
+                    aria-label="Select indentation"
+                    data-testid="status-bar-tab-size"
+                  >
+                    {indentLabel}
+                  </button>
+                </DropdownMenu.Trigger>
+              </Tooltip>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
                   className="indent-menu__content"
@@ -151,14 +169,16 @@ export function StatusBar() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
             <span className="status-bar__item">{editorStatus.encoding}</span>
-            <button
-              className="status-bar__item status-bar__item--interactive"
-              onClick={() => editorActions?.toggleEol()}
-              title="Toggle line endings"
-              data-testid="status-bar-eol"
-            >
-              {editorStatus.eol}
-            </button>
+            <Tooltip content="Toggle line endings" side="top">
+              <button
+                className="status-bar__item status-bar__item--interactive"
+                onClick={() => editorActions?.toggleEol()}
+                aria-label="Toggle line endings"
+                data-testid="status-bar-eol"
+              >
+                {editorStatus.eol}
+              </button>
+            </Tooltip>
             <LanguageSelector
               currentLanguage={editorStatus.language}
               languages={editorStatus.availableLanguages}
@@ -206,16 +226,52 @@ function ServicesIndicator() {
 
   if (runningCount === 0) return null;
 
+  const servicesLabel = `${runningCount} service${runningCount !== 1 ? "s" : ""} running — click to open Services`;
+
   return (
-    <button
-      className="status-bar__item status-bar__item--interactive"
-      title={`${runningCount} service${runningCount !== 1 ? "s" : ""} running — click to open Services`}
-      data-testid="services-indicator"
-      onClick={() => setSidebarView("services")}
-    >
-      <Server size={12} />
-      {runningCount}
-    </button>
+    <Tooltip content={servicesLabel} side="top">
+      <button
+        className="status-bar__item status-bar__item--interactive"
+        aria-label={servicesLabel}
+        data-testid="services-indicator"
+        onClick={() => setSidebarView("services")}
+      >
+        <Server size={12} />
+        {runningCount}
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * Aggregate SFTP transfer indicator (#1247). Shows `N transfers · P%` where P is
+ * the aggregate percentage across sized transfers; when every transfer is
+ * indeterminate (unknown total), the percentage is omitted. Renders nothing
+ * when no transfers are in flight.
+ */
+function TransfersIndicator() {
+  const transfers = useAppStore((s) => s.transfers);
+
+  const list = Object.values(transfers);
+  const count = list.length;
+  if (count === 0) return null;
+
+  const sized = list.filter((t) => t.total > 0);
+  const totalBytes = sized.reduce((sum, t) => sum + t.total, 0);
+  const doneBytes = sized.reduce((sum, t) => sum + t.transferred, 0);
+  const pct = totalBytes > 0 ? Math.round((doneBytes / totalBytes) * 100) : null;
+
+  const noun = count === 1 ? "transfer" : "transfers";
+  const label = pct !== null ? `${count} ${noun} · ${pct}%` : `${count} ${noun}`;
+  const tooltip = `${count} active SFTP ${count === 1 ? "transfer" : "transfers"}`;
+
+  return (
+    <Tooltip content={tooltip} side="top">
+      <span className="status-bar__item" data-testid="status-bar-transfers" aria-label={tooltip}>
+        <ArrowDownUp size={12} />
+        {label}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -225,63 +281,61 @@ function ServicesIndicator() {
  */
 function MonitoringStatus() {
   const globalMonitoringEnabled = useAppStore((s) => s.settings.powerMonitoringEnabled);
-  const monitoringSessionId = useAppStore((s) => s.monitoringSessionId);
-  const monitoringHost = useAppStore((s) => s.monitoringHost);
-  const monitoringStats = useAppStore((s) => s.monitoringStats);
-  const monitoringLoading = useAppStore((s) => s.monitoringLoading);
-  const monitoringError = useAppStore((s) => s.monitoringError);
-  const connectMonitoring = useAppStore((s) => s.connectMonitoring);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
-  const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
+  const setMonitoringPaused = useAppStore((s) => s.setMonitoringPaused);
+  const setMonitoringInterval = useAppStore((s) => s.setMonitoringInterval);
+  const cancelMonitoring = useAppStore((s) => s.cancelMonitoring);
   const sessionCapabilities = useAppStore((s) => s.sessionCapabilities);
 
-  const connections = useAppStore((s) => s.connections);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
-  const activeTabSessionId = useAppStore((s) => getActiveTab(s)?.sessionId ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
   const activeTabExited = useAppStore((s) => !!(activeTabId && s.terminalExitedTabs[activeTabId]));
+
+  // Per-host keying (#1231, audit gap G6): the status bar renders the entry for
+  // the active tab's monitor key — the owning terminal session id (#1232).
+  // Switching tabs just changes which entry we show — other hosts keep
+  // monitoring independently.
+  const activeMonitorKey = useAppStore((s) => monitorKeyForTab(getActiveTab(s)));
+  const activeMonitor = useAppStore((s) => selectMonitor(s, monitorKeyForTab(getActiveTab(s))));
+  const monitoringConnected = !!activeMonitor?.monitorSessionId;
+  const monitoringHost = activeMonitor?.host ?? null;
+  const monitoringStats = activeMonitor?.stats ?? null;
+  const monitoringSampleCount = activeMonitor?.sampleCount ?? 0;
+  const monitoringLoading = activeMonitor?.loading ?? false;
+  const monitoringError = activeMonitor?.error ?? null;
+  const monitoringStatus = activeMonitor?.status ?? null;
+  const monitoringPaused = activeMonitor?.paused ?? false;
+  const monitoringInterval = activeMonitor?.intervalMs ?? DEFAULT_MONITORING_INTERVAL_MS;
 
   const activeTabSupportsMonitoring = typeSupportsMonitoring(
     connectionTypes,
     activeTabConnectionType ?? "",
     sessionCapabilities,
-    activeTabSessionId
+    activeMonitorKey
   );
   const monitoringEnabled = activeTabSupportsMonitoring
     ? resolveFeatureEnabled(activeTabConfig, "enableMonitoring", globalMonitoringEnabled)
     : false;
 
-  const isRemoteSession = activeTabConnectionType === "remote-session";
-
-  /** Tracks which host key already failed auto-connect to prevent retry loops. */
+  /** Tracks which monitor key already failed auto-connect to prevent retry loops. */
   const autoConnectFailedRef = useRef<string | null>(null);
 
-  const monitorableConnections = useMemo(() => {
-    return connections.filter((c) =>
-      typeSupportsMonitoring(connectionTypes, c.config.type, sessionCapabilities, null)
-    );
-  }, [connections, connectionTypes, sessionCapabilities]);
+  /**
+   * Bumped by the Retry control to re-run the auto-connect effect after clearing
+   * the failed-host latch, so a failed auto-connect is not a dead-end (audit
+   * gaps G7 + G9).
+   */
+  const [retryNonce, setRetryNonce] = useState(0);
 
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Auto-refresh polling (SSH-based monitoring only; session-based is push).
-  useEffect(() => {
-    if (monitoringSessionId && !isRemoteSession) {
-      intervalRef.current = setInterval(() => {
-        refreshMonitoring();
-      }, REFRESH_INTERVAL_MS);
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [monitoringSessionId, isRemoteSession, refreshMonitoring]);
-
-  // Auto-connect monitoring when active tab supports monitoring
+  // Auto-connect monitoring when the active tab supports it. Every monitorable
+  // tab — desktop-direct SSH and remote-session alike — subscribes to its own
+  // terminal session's MonitoringProvider push path, keyed by that session id
+  // (#1232). No credentials are prompted: the provider reuses the already
+  // authenticated terminal session. Collection cadence and pause are driven by
+  // the backend loop via setMonitoringInterval / setMonitoringPaused (#1233),
+  // so there is no frontend poll timer.
   useEffect(() => {
     if (!monitoringEnabled) return;
 
@@ -294,73 +348,24 @@ function MonitoringStatus() {
     const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab) return;
 
-    // ── Remote-session: use session-based (push) monitoring ───────────
-    if (activeTab.connectionType === "remote-session") {
-      const sessionId = activeTab.sessionId;
-      if (!sessionId) return;
+    // The monitor key is the owning terminal session id (#1232), so it doubles
+    // as the sessionId passed to connectMonitoring.
+    const key = monitorKeyForTab(activeTab);
+    if (!key) return;
 
-      // Already monitoring this session
-      if (monitoringSessionId === sessionId) return;
-      if (autoConnectFailedRef.current === sessionId) return;
-      autoConnectFailedRef.current = sessionId;
-
-      const doConnect = async () => {
-        const { disconnectMonitoring: disconnect, connectMonitoring: connect } =
-          useAppStore.getState();
-        if (monitoringSessionId && monitoringSessionId !== sessionId) {
-          await disconnect();
-        }
-        await connect({ _sessionBased: true, _sessionId: sessionId });
-        if (useAppStore.getState().monitoringSessionId) {
-          autoConnectFailedRef.current = null;
-        }
-      };
-      doConnect();
-      return;
-    }
-
-    // ── Standard SSH-based monitoring ────────────────────────────────
-    const { sessionCapabilities: caps, connectionTypes: types } = useAppStore.getState();
-    if (!typeSupportsMonitoring(types, activeTab.config.type, caps, activeTab.sessionId)) return;
+    // Already monitoring this session (connected or in flight) → nothing to do.
+    // Switching tabs no longer tears down other hosts (#1231, audit gap G6).
+    const existing = useAppStore.getState().monitors[key];
+    if (existing && (existing.monitorSessionId || existing.loading)) return;
+    if (autoConnectFailedRef.current === key) return;
+    autoConnectFailedRef.current = key;
 
     const cfg = activeTab.config.config;
-    const host = (cfg.host as string) ?? "";
-    const port = (cfg.port as number) ?? 0;
-    const username = (cfg.username as string) ?? "";
-    const hostKey = `${username}@${host}:${port}`;
-
-    if (monitoringSessionId && monitoringHost === hostKey) return;
-    if (autoConnectFailedRef.current === hostKey) return;
-    autoConnectFailedRef.current = hostKey;
+    const hostLabel = (cfg.host as string) || activeTab.title || key;
 
     const doConnect = async () => {
-      const {
-        connections: conns,
-        disconnectMonitoring: disconnect,
-        connectMonitoring: connect,
-        requestPassword,
-      } = useAppStore.getState();
-
-      if (monitoringSessionId && monitoringHost !== hostKey) {
-        await disconnect();
-      }
-
-      let configToUse = cfg;
-      const authMethod = cfg.authMethod as string | undefined;
-      if (authMethod === "password" && !cfg.password) {
-        const savedConn = conns.find((c) => {
-          const sc = c.config.config;
-          return sc.host === host && sc.port === port && sc.username === username;
-        });
-        const baseConfig = savedConn ? savedConn.config.config : cfg;
-        const password = await requestPassword(host, username);
-        if (password === null) return;
-        configToUse = { ...baseConfig, password };
-      }
-
-      await connect(configToUse);
-
-      if (useAppStore.getState().monitoringSessionId) {
+      await useAppStore.getState().connectMonitoring(key, hostLabel);
+      if (useAppStore.getState().monitors[key]?.monitorSessionId) {
         autoConnectFailedRef.current = null;
       }
     };
@@ -368,22 +373,69 @@ function MonitoringStatus() {
     doConnect();
   }, [
     activeTabId,
-    activeTabSessionId,
-    monitoringSessionId,
-    monitoringHost,
+    activeMonitorKey,
+    monitoringConnected,
     monitoringEnabled,
     activeTabExited,
+    // Re-run auto-connect when the user hits Retry (audit gaps G7 + G9).
+    retryNonce,
   ]);
 
-  const handleConnect = useCallback(
-    (connection: SavedConnection) => {
-      const monitorConfig = extractMonitoringConfig(connection.config);
-      if (monitorConfig) {
-        connectMonitoring(monitorConfig);
+  /**
+   * Retry auto-connect after a failure. Clears the failed-host latch and the
+   * stale error, then bumps the nonce so the auto-connect effect fires again
+   * (audit gaps G7 + G9).
+   */
+  const handleRetry = useCallback(() => {
+    frontendLog("monitoring", "user retrying monitoring auto-connect");
+    autoConnectFailedRef.current = null;
+    if (activeMonitorKey) {
+      useAppStore.getState().clearMonitoringError(activeMonitorKey);
+    }
+    setRetryNonce((n) => n + 1);
+  }, [activeMonitorKey]);
+
+  /** Toggle pause/resume for the active monitor with toast feedback (#1233). */
+  const handleSetPaused = useCallback(
+    async (paused: boolean) => {
+      if (!activeMonitorKey) return;
+      try {
+        await setMonitoringPaused(activeMonitorKey, paused);
+        toast.success(paused ? "Monitoring paused" : "Monitoring resumed");
+      } catch (err) {
+        frontendLog("monitoring", `Failed to ${paused ? "pause" : "resume"} monitoring: ${err}`);
+        toast.error(`Failed to ${paused ? "pause" : "resume"} monitoring: ${err}`);
       }
     },
-    [connectMonitoring]
+    [activeMonitorKey, setMonitoringPaused]
   );
+
+  /** Change the active monitor's refresh interval with toast feedback (#1233). */
+  const handleSetInterval = useCallback(
+    async (intervalMs: number) => {
+      if (!activeMonitorKey) return;
+      try {
+        await setMonitoringInterval(activeMonitorKey, intervalMs);
+        toast.success(`Refresh interval set to ${formatIntervalLabel(intervalMs)}`);
+      } catch (err) {
+        frontendLog("monitoring", `Failed to set monitoring interval: ${err}`);
+        toast.error(`Failed to set interval: ${err}`);
+      }
+    },
+    [activeMonitorKey, setMonitoringInterval]
+  );
+
+  /** Cancel an in-flight monitoring connect with toast feedback (#1233). */
+  const handleCancel = useCallback(async () => {
+    if (!activeMonitorKey) return;
+    try {
+      await cancelMonitoring(activeMonitorKey);
+      toast.success("Monitoring connect cancelled");
+    } catch (err) {
+      frontendLog("monitoring", `Failed to cancel monitoring: ${err}`);
+      toast.error(`Failed to cancel: ${err}`);
+    }
+  }, [activeMonitorKey, cancelMonitoring]);
 
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
@@ -391,27 +443,45 @@ function MonitoringStatus() {
   // While reconnecting we already have cached stats — skip the "Connecting" block
   // so the last-known data is shown immediately instead of a blank loading state.
   const isReconnectingWithCache =
-    !monitoringSessionId && monitoringLoading && monitoringStats !== null;
+    !monitoringConnected && monitoringLoading && monitoringStats !== null;
 
-  // Not connected: show connect button (or loading/error state)
-  if (!monitoringSessionId && !isReconnectingWithCache) {
-    // Remote-session tabs auto-connect; show loading indicator while connecting.
-    if (isRemoteSession) {
-      if (!monitoringLoading && !monitoringError) return null;
-    } else if (monitorableConnections.length === 0) {
-      return null;
-    }
+  // Not connected: show connect button (or loading/error/cancelled state)
+  if (!monitoringConnected && !isReconnectingWithCache) {
+    // Monitoring auto-connects for every monitorable tab, so the disconnected
+    // arm only ever surfaces transient feedback: the connecting spinner, or a
+    // failed-connect error with a reachable Retry (audit gaps G7 + G9). When
+    // there is nothing to show, render nothing and let auto-connect run.
+    if (!monitoringLoading && !monitoringError) return null;
+
+    const showRetry = !monitoringLoading && monitoringError !== null;
 
     return (
       <>
         {monitoringLoading && (
-          <span
-            className="status-bar__item monitoring-status__loading"
-            data-testid="monitoring-loading"
-          >
-            <Loader2 size={12} className="monitoring-status__spinner" />
-            Connecting...
-          </span>
+          <>
+            <span
+              className="status-bar__item monitoring-status__loading"
+              data-testid="monitoring-loading"
+            >
+              <Loader2 size={12} className="monitoring-status__spinner" />
+              Connecting...
+            </span>
+            {/*
+              Cancel aborts the in-flight connect and tears the entry down so a
+              stuck handshake is never a dead-end (#1233).
+            */}
+            <Tooltip content="Cancel monitoring connect" side="top">
+              <button
+                className="status-bar__item status-bar__item--interactive"
+                aria-label="Cancel monitoring connect"
+                data-testid="monitoring-cancel-btn"
+                onClick={handleCancel}
+              >
+                <X size={12} />
+                Cancel
+              </button>
+            </Tooltip>
+          </>
         )}
 
         {monitoringError && (
@@ -424,74 +494,121 @@ function MonitoringStatus() {
           </span>
         )}
 
-        {!monitoringLoading && (
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                className="status-bar__item status-bar__item--interactive"
-                title="Connect monitoring"
-                data-testid="monitoring-connect-btn"
-              >
-                <Activity size={12} />
-                Monitor
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                className="monitoring-picker__content"
-                side="top"
-                align="start"
-                sideOffset={4}
-              >
-                <DropdownMenu.Label className="monitoring-picker__label">
-                  Connect Monitoring
-                </DropdownMenu.Label>
-                {monitorableConnections.map((conn) => (
-                  <DropdownMenu.Item
-                    key={conn.id}
-                    className="monitoring-picker__item"
-                    onSelect={() => handleConnect(conn)}
-                    data-testid={`monitoring-connect-${conn.id}`}
-                  >
-                    {conn.name}
-                  </DropdownMenu.Item>
-                ))}
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
+        {showRetry && (
+          <Tooltip content="Retry monitoring connection" side="top">
+            <button
+              className="status-bar__item status-bar__item--interactive"
+              aria-label="Retry monitoring connection"
+              data-testid="monitoring-retry-btn"
+              onClick={handleRetry}
+            >
+              <RotateCw size={12} />
+              Retry
+            </button>
+          </Tooltip>
         )}
       </>
     );
   }
 
-  // Connected (or reconnecting with cached stats): show compact stats
+  // Connected (or reconnecting with cached stats): show compact stats.
+  // A "stale" status (mid-stream drop) dims the numbers and shows a warning
+  // badge so frozen data is never rendered as live (#1229, audit gap G1).
+  const isStale = monitoringStatus === "stale";
+  const isOffline = monitoringStatus === "offline";
+  // Paused dims the numbers like stale (they are frozen), but is signalled with a
+  // neutral badge rather than a warning one (#1233).
+  const staleModifier = isStale || monitoringPaused ? " monitoring-status__stat--stale" : "";
   return (
     <>
       <MonitoringDetailDropdown
         host={monitoringHost}
         stats={monitoringStats}
         loading={monitoringLoading}
-        onRefresh={refreshMonitoring}
-        onDisconnect={disconnectMonitoring}
+        monitorKey={activeMonitorKey}
+        status={monitoringStatus}
+        paused={monitoringPaused}
+        intervalMs={monitoringInterval}
+        onDisconnect={() => activeMonitorKey && disconnectMonitoring(activeMonitorKey)}
+        onSetPaused={handleSetPaused}
+        onSetInterval={handleSetInterval}
+        onCancel={handleCancel}
+        onRetry={handleRetry}
       />
+      {monitoringPaused && (
+        <span
+          className="status-bar__item monitoring-status__paused-badge"
+          title="Monitoring is paused — collection is stopped but the connection stays open."
+          data-testid="monitoring-paused"
+        >
+          <Pause size={12} />
+          Paused
+        </span>
+      )}
+      {isOffline && (
+        <Tooltip content="Retry monitoring connection" side="top">
+          <button
+            className="status-bar__item status-bar__item--interactive monitoring-status__error"
+            aria-label="Retry monitoring connection"
+            data-testid="monitoring-retry-btn"
+            onClick={handleRetry}
+          >
+            <RotateCw size={12} />
+            Offline — Retry
+          </button>
+        </Tooltip>
+      )}
       {monitoringStats && (
         <>
+          {/*
+            A mid-stream transport drop moves the collector loop to "stale"
+            (#1229, audit gap G1). The last-known numbers are kept but dimmed and
+            prefixed with a warning badge so frozen data is never shown as live.
+            Recovery flips the status back to "live" and un-dims them.
+          */}
+          {isStale && (
+            <span
+              className="status-bar__item monitoring-status__stale-badge"
+              title="Monitoring data is stale — the connection dropped and the numbers below are frozen at their last-known values."
+              data-testid="monitoring-stale"
+            >
+              <AlertTriangle size={12} />
+              Stale
+            </span>
+          )}
+          {/*
+            The remote collectors report CPU 0% on the first sample because there
+            is no prior delta to compute a rate from (audit gap G10). Until the
+            second sample arrives, show a priming indicator so the placeholder is
+            not mistaken for a real 0% reading. Memory and disk are correct on
+            the first sample and always render numerically.
+          */}
+          {monitoringSampleCount < 2 ? (
+            <span
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--priming${staleModifier}`}
+              title="CPU: priming (waiting for second sample)"
+              data-testid="monitoring-cpu"
+            >
+              CPU —
+            </span>
+          ) : (
+            <span
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.cpuUsagePercent)}${staleModifier}`}
+              title={`CPU: ${monitoringStats.cpuUsagePercent.toFixed(1)}%`}
+              data-testid="monitoring-cpu"
+            >
+              CPU {monitoringStats.cpuUsagePercent.toFixed(0)}%
+            </span>
+          )}
           <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.cpuUsagePercent)}`}
-            title={`CPU: ${monitoringStats.cpuUsagePercent.toFixed(1)}%`}
-            data-testid="monitoring-cpu"
-          >
-            CPU {monitoringStats.cpuUsagePercent.toFixed(0)}%
-          </span>
-          <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}`}
+            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.memoryUsedPercent)}${staleModifier}`}
             title={`Memory: ${formatKb(monitoringStats.memoryTotalKb - monitoringStats.memoryAvailableKb)} / ${formatKb(monitoringStats.memoryTotalKb)}`}
             data-testid="monitoring-mem"
           >
             Mem {monitoringStats.memoryUsedPercent.toFixed(0)}%
           </span>
           <span
-            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.diskUsedPercent)}`}
+            className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.diskUsedPercent)}${staleModifier}`}
             title={`Disk: ${formatKb(monitoringStats.diskUsedKb)} / ${formatKb(monitoringStats.diskTotalKb)}`}
             data-testid="monitoring-disk"
           >
@@ -503,28 +620,62 @@ function MonitoringStatus() {
   );
 }
 
+/** Props for {@link MonitoringDetailDropdown}. */
+interface MonitoringDetailDropdownProps {
+  host: string | null;
+  stats: SystemStats | null;
+  loading: boolean;
+  /** Active monitor key, or null when none is resolvable. */
+  monitorKey: string | null;
+  /** Observable collector-loop status of the active monitor. */
+  status: MonitorStatus | null;
+  /** Whether collection is currently paused (#1233). */
+  paused: boolean;
+  /** Current per-entry refresh interval in ms (#1233). */
+  intervalMs: number;
+  onDisconnect: () => void;
+  /** Pause/resume collection (#1233). */
+  onSetPaused: (paused: boolean) => void | Promise<void>;
+  /** Change the refresh interval (#1233). */
+  onSetInterval: (intervalMs: number) => void | Promise<void>;
+  /** Abort an in-flight connect (#1233). */
+  onCancel: () => void | Promise<void>;
+  /** Retry after an offline/failed connect (#1233). */
+  onRetry: () => void;
+}
+
 /**
- * Hostname button with dropdown showing full monitoring details.
+ * Hostname button with dropdown showing full monitoring details plus lifecycle
+ * controls: Pause/Resume, a refresh-interval selector, and — depending on the
+ * collector status — a Cancel (connecting) or Retry (offline) affordance, in
+ * addition to the existing Refresh + Disconnect (#1233).
  */
 function MonitoringDetailDropdown({
   host,
   stats,
   loading,
-  onRefresh,
+  monitorKey,
+  status,
+  paused,
+  intervalMs,
   onDisconnect,
-}: {
-  host: string | null;
-  stats: SystemStats | null;
-  loading: boolean;
-  onRefresh: () => void;
-  onDisconnect: () => void;
-}) {
+  onSetPaused,
+  onSetInterval,
+  onCancel,
+  onRetry,
+}: MonitoringDetailDropdownProps) {
+  const isConnecting = status === "connecting" || (loading && !stats);
+  const isOffline = status === "offline";
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button
           className="status-bar__item status-bar__item--interactive monitoring-status__host"
-          title={loading ? `Reconnecting to ${host ?? "monitor"}…` : (host ?? "Monitoring")}
+          // Intentional no-tooltip (#1163): the visible label already shows the
+          // hostname, so a normal-state hover would only duplicate it. Keep a
+          // title only while reconnecting, where it conveys transient state the
+          // collapsed spinner label does not spell out.
+          title={loading ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
           data-testid="monitoring-host"
         >
           {loading ? (
@@ -569,15 +720,73 @@ function MonitoringDetailDropdown({
               <DropdownMenu.Separator className="monitoring-menu__separator" />
             </>
           )}
+          {/* Pause / Resume — keeps the transport open, toggles collection (#1233). */}
           <DropdownMenu.Item
             className="monitoring-menu__action"
-            onSelect={onRefresh}
-            disabled={loading}
-            data-testid="monitoring-refresh"
+            onSelect={() => onSetPaused(!paused)}
+            disabled={!monitorKey}
+            data-testid={paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}
           >
-            <RefreshCw size={14} className={loading ? "monitoring-status__spinner" : ""} />
-            Refresh
+            {paused ? <Play size={14} /> : <Pause size={14} />}
+            {paused ? "Resume monitoring" : "Pause monitoring"}
           </DropdownMenu.Item>
+
+          {/* Cancel an in-flight connect, or Retry after going offline (#1233). */}
+          {isConnecting && (
+            <DropdownMenu.Item
+              className="monitoring-menu__action"
+              onSelect={() => onCancel()}
+              disabled={!monitorKey}
+              data-testid="monitoring-cancel-btn"
+            >
+              <X size={14} />
+              Cancel connect
+            </DropdownMenu.Item>
+          )}
+          {isOffline && (
+            <DropdownMenu.Item
+              className="monitoring-menu__action"
+              onSelect={onRetry}
+              data-testid="monitoring-retry-btn"
+            >
+              <RotateCw size={14} />
+              Retry
+            </DropdownMenu.Item>
+          )}
+
+          <DropdownMenu.Separator className="monitoring-menu__separator" />
+
+          {/* Refresh-interval selector — radio-style items (#1233). */}
+          <DropdownMenu.Label className="monitoring-menu__label monitoring-menu__interval-label">
+            Refresh interval
+          </DropdownMenu.Label>
+          <DropdownMenu.RadioGroup
+            value={String(intervalMs)}
+            onValueChange={(v) => onSetInterval(Number(v))}
+          >
+            {MONITORING_INTERVAL_OPTIONS.map((opt) => (
+              <DropdownMenu.RadioItem
+                key={opt}
+                className="monitoring-menu__action monitoring-menu__radio"
+                value={String(opt)}
+                disabled={!monitorKey}
+                data-testid={`monitoring-interval-${opt}`}
+              >
+                <DropdownMenu.ItemIndicator className="monitoring-menu__radio-indicator">
+                  <Check size={14} />
+                </DropdownMenu.ItemIndicator>
+                <span className="monitoring-menu__radio-label">
+                  Refresh every {formatIntervalLabel(opt)}
+                </span>
+                {opt === DEFAULT_MONITORING_INTERVAL_MS && (
+                  <span className="monitoring-menu__radio-default">default</span>
+                )}
+              </DropdownMenu.RadioItem>
+            ))}
+          </DropdownMenu.RadioGroup>
+
+          <DropdownMenu.Separator className="monitoring-menu__separator" />
+
           <DropdownMenu.Item
             className="monitoring-menu__action"
             onSelect={onDisconnect}
@@ -625,15 +834,17 @@ function LanguageSelector({
         if (!isOpen) setSearch("");
       }}
     >
-      <DropdownMenu.Trigger asChild>
-        <button
-          className="status-bar__item status-bar__item--interactive"
-          title="Select language mode"
-          data-testid="status-bar-language"
-        >
-          {displayName}
-        </button>
-      </DropdownMenu.Trigger>
+      <Tooltip content="Select language mode" side="top">
+        <DropdownMenu.Trigger asChild>
+          <button
+            className="status-bar__item status-bar__item--interactive"
+            aria-label="Select language mode"
+            data-testid="status-bar-language"
+          >
+            {displayName}
+          </button>
+        </DropdownMenu.Trigger>
+      </Tooltip>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className="lang-menu__content"

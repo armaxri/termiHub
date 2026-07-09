@@ -1,6 +1,8 @@
-import { useCallback } from "react";
-import { ServerCrash, RefreshCw, Loader2 } from "lucide-react";
+import { useCallback, useEffect } from "react";
+import { ServerCrash, RefreshCw, Loader2, Zap, Ban } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 import { useAppStore } from "@/store/appStore";
+import { useElapsed } from "@/hooks/useElapsed";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -23,6 +25,17 @@ const SERIAL_NOT_FOUND_PATTERNS = ["No such file", "cannot find", "not found"];
 const SERIAL_PERMISSION_PATTERN = "Permission denied";
 const SERIAL_BUSY_PATTERNS = ["busy", "in use", "Access is denied"];
 
+/** Seconds after which a still-pending connect is flagged as unusually slow. */
+const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
+
+/** Formats whole seconds as a compact `mm:ss`-ish readout: `5s`, `1m 05s`. */
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${String(secs).padStart(2, "0")}s`;
+}
+
 /**
  * Shown over a terminal slot while the backend session is being established.
  *
@@ -44,11 +57,52 @@ export function TerminalConnectionOverlay({
 }: TerminalConnectionOverlayProps) {
   const closeTab = useAppStore((s) => s.closeTab);
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
+  const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
+  const abortTerminalConnect = useAppStore((s) => s.abortTerminalConnect);
   const isConnecting = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
   const isReattaching = useAppStore((s) => s.terminalReattaching[tabId] ?? false);
   const error = useAppStore((s) => s.terminalSpawnErrors[tabId] ?? "");
+
+  // Tick a wall-clock timer while any active connect attempt is in flight so the
+  // overlay can show elapsed time and flag an unusually slow connect (#1127).
+  const isActivelyConnecting = isConnecting || autoRetryCount > 0 || !!waitingForAgent;
+  const elapsedSeconds = useElapsed(isActivelyConnecting);
+  const elapsedLabel = formatElapsed(elapsedSeconds);
+  const isSlowConnect = elapsedSeconds >= SLOW_CONNECT_THRESHOLD_SECONDS;
+
+  // Client-side timeout: bound the WaitingForAgent and Connecting waits so a tab
+  // can never park on an indefinite spinner. WaitingForAgent has no backend
+  // timeout at all; Connecting relies on the backend one, so this is a safety
+  // net that outlasts it. On expiry the tab transitions to Failed with a
+  // contextual hint (#1129). auto-retry manages its own visible-failure cadence,
+  // so it is intentionally not timed here.
+  const failTerminalConnectTimeout = useAppStore((s) => s.failTerminalConnectTimeout);
+  // The timeout is anchored to a wall-clock deadline held in the store (set on
+  // entry to the timed state), not to this component's lifetime. The overlay
+  // only reads it, so unmounting and remounting mid-connect (dragging the tab to
+  // another panel/split, a zoom re-key) re-arms the timer for the REMAINING time
+  // rather than restarting the countdown from zero (#1263).
+  const connectDeadline = useAppStore((s) => s.terminalConnectDeadline[tabId]);
+  const deadlineAt = connectDeadline?.at;
+  const deadlineKind = connectDeadline?.kind;
+
+  useEffect(() => {
+    if (deadlineAt === undefined || !deadlineKind) return;
+    const id = setTimeout(
+      () => failTerminalConnectTimeout(tabId, deadlineKind),
+      Math.max(0, deadlineAt - Date.now())
+    );
+    return () => clearTimeout(id);
+  }, [tabId, deadlineAt, deadlineKind, failTerminalConnectTimeout]);
+
+  // Whole seconds remaining before the timeout fires (>= 0), for the visible
+  // countdown. Derived from the same stored deadline as the timer above and
+  // recomputed on the per-second elapsed tick (elapsedSeconds), so the display
+  // and the actual fire share one clock and both survive a remount.
+  const remainingSeconds =
+    deadlineAt !== undefined ? Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)) : 0;
 
   const handleCancel = useCallback(() => {
     closeTab(tabId, panelId);
@@ -57,6 +111,25 @@ export function TerminalConnectionOverlay({
   const handleRetry = useCallback(() => {
     retryTerminalSpawn(tabId);
   }, [tabId, retryTerminalSpawn]);
+
+  // Abort: stop the in-flight connect and land on a retryable Failed state,
+  // keeping the tab open — distinct from Cancel, which closes the tab (#1128).
+  const handleAbort = useCallback(() => {
+    abortTerminalConnect(tabId);
+  }, [tabId, abortTerminalConnect]);
+
+  // Retry now (waiting-for-agent): stop parking on the agent and re-run the
+  // spawn immediately, mirroring the wake path when the agent comes online.
+  // retryTerminalSpawn already clears the waiting flag as part of the retry.
+  const handleRetryNowWaiting = useCallback(() => {
+    retryTerminalSpawn(tabId);
+  }, [tabId, retryTerminalSpawn]);
+
+  // Retry now (auto-retrying): cancel the pending retry-delay loop and kick a
+  // fresh attempt at once, mirroring the agent-reconnect restart path.
+  const handleRetryNowAutoRetry = useCallback(() => {
+    reconnectTerminal(tabId);
+  }, [tabId, reconnectTerminal]);
 
   const isSerial = sessionType === "serial";
   const isAgentAuth = error.includes(SSH_AGENT_PATTERN);
@@ -97,14 +170,39 @@ export function TerminalConnectionOverlay({
           <p className="terminal-connection-overlay__subheading">
             Waiting for the agent to connect before starting the session.
           </p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-timeout"
+          >
+            Times out in {remainingSeconds}s
+          </p>
           <div className="terminal-connection-overlay__actions">
-            <button
-              className="terminal-connection-overlay__cancel-btn"
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Zap size={14} />}
+              onClick={handleRetryNowWaiting}
+              data-testid="terminal-connection-retry-now-btn"
+            >
+              Retry now
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Ban size={14} />}
+              onClick={handleAbort}
+              data-testid="terminal-connection-abort-btn"
+            >
+              Abort
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -123,14 +221,44 @@ export function TerminalConnectionOverlay({
             Connecting… (attempt {autoRetryCount + 1})
           </p>
           <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-elapsed"
+          >
+            Elapsed {elapsedLabel}
+          </p>
+          {isSlowConnect && (
+            <p className="terminal-connection-overlay__hint-text">
+              Taking longer than usual — the host may be slow to respond or unreachable.
+            </p>
+          )}
           <div className="terminal-connection-overlay__actions">
-            <button
-              className="terminal-connection-overlay__cancel-btn"
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Zap size={14} />}
+              onClick={handleRetryNowAutoRetry}
+              data-testid="terminal-connection-retry-now-btn"
+            >
+              Retry now
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Ban size={14} />}
+              onClick={handleAbort}
+              data-testid="terminal-connection-abort-btn"
+            >
+              Abort
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -147,14 +275,35 @@ export function TerminalConnectionOverlay({
           />
           <p className="terminal-connection-overlay__heading">Connecting…</p>
           <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
+          <p
+            className="terminal-connection-overlay__elapsed"
+            data-testid="terminal-connection-elapsed"
+          >
+            Elapsed {elapsedLabel} · times out in {remainingSeconds}s
+          </p>
+          {isSlowConnect && (
+            <p className="terminal-connection-overlay__hint-text">
+              Taking longer than usual — the host may be slow to respond or unreachable.
+            </p>
+          )}
           <div className="terminal-connection-overlay__actions">
-            <button
-              className="terminal-connection-overlay__cancel-btn"
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Ban size={14} />}
+              onClick={handleAbort}
+              data-testid="terminal-connection-abort-btn"
+            >
+              Abort
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={handleCancel}
               data-testid="terminal-connection-cancel-btn"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -217,21 +366,23 @@ export function TerminalConnectionOverlay({
         )}
 
         <div className="terminal-connection-overlay__actions">
-          <button
-            className="terminal-connection-overlay__retry-btn"
+          <Button
+            size="sm"
+            variant="primary"
+            icon={<RefreshCw size={14} />}
             onClick={handleRetry}
             data-testid="terminal-connection-retry-btn"
           >
-            <RefreshCw size={14} />
             Retry
-          </button>
-          <button
-            className="terminal-connection-overlay__cancel-btn"
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={handleCancel}
             data-testid="terminal-connection-cancel-btn"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </div>

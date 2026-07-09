@@ -11,7 +11,7 @@ import {
   TerminalOptions,
   LineEnding,
 } from "@/types/terminal";
-import { SystemStats } from "@/types/monitoring";
+import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
   SavedConnection,
@@ -97,7 +97,10 @@ export async function cancelConnectionPathProbe(probeId: string): Promise<boolea
  * and forwards the rest as settings. For other types: passes config directly.
  *
  * `connectId` (when provided) lets the caller cancel a still-connecting session
- * via {@link cancelConnecting} — pass a stable per-attempt id such as the tab id.
+ * via {@link cancelConnecting}. Pass a UNIQUE per-attempt id (e.g.
+ * `${tabId}:${retryCount}`), not the bare tab id: overlapping retry/reconnect
+ * attempts for the same tab must not share an id, or a stale attempt's cancel
+ * would abort a newer in-flight connect (#1125).
  */
 export async function createTerminal(
   config: ConnectionConfig,
@@ -260,6 +263,48 @@ export async function getDefaultShell(): Promise<string | null> {
 /** Check if a local X server is available for X11 forwarding */
 export async function checkX11Available(): Promise<boolean> {
   return await invoke<boolean>("check_x11_available");
+}
+
+/** Get the status of the shared X server that termiHub manages or has adopted. */
+export async function xServerStatus(): Promise<XServerStatusReport> {
+  return await invoke<XServerStatusReport>("x_server_status");
+}
+
+/** Stop the termiHub-managed X server. Rejects with an XServerError on failure. */
+export async function xServerStop(): Promise<void> {
+  return await invoke<void>("x_server_stop");
+}
+
+/**
+ * Resolve or provision the shared X server (adopt an external one, or download
+ * and launch the managed one). Emits `x-server-progress` events while running
+ * and resolves with the final status. Rejects with a typed `XServerError` on
+ * failure.
+ */
+export async function xServerEnsure(): Promise<XServerStatusReport> {
+  return await invoke<XServerStatusReport>("x_server_ensure");
+}
+
+/**
+ * Install the platform X server dependency (e.g. VcXsrv) when provisioning
+ * reported it missing. Rejects with a typed `XServerError` carrying guidance
+ * when the install cannot proceed automatically.
+ */
+export async function xServerInstallDependency(): Promise<void> {
+  await invoke("x_server_install_dependency");
+}
+
+/**
+ * Reply to a connect-time X server download-consent prompt (#1116), waking the
+ * SSH connect paused on `id`. `decision` is `enable` (download/provision and
+ * remember) or `notNow` (skip X forwarding this connect). Resolves `true` when a
+ * paused connect matched the id, `false` when it was already resolved or unknown.
+ */
+export async function xServerConnectConsentReply(
+  id: string,
+  decision: XServerConsentDecision
+): Promise<boolean> {
+  return await invoke<boolean>("x_server_connect_consent_reply", { id, decision });
 }
 
 /** Check whether the SSH agent is running, stopped, or not installed. */
@@ -469,22 +514,128 @@ export async function sftpListDir(sessionId: string, path: string): Promise<File
   return await invoke<FileEntry[]>("sftp_list_dir", { sessionId, path });
 }
 
-/** Download a remote file to a local path. Returns bytes transferred. */
+/**
+ * Resolve a remote path to its canonical absolute form via SFTP realpath.
+ *
+ * Pass `"."` to resolve the session's home directory instead of guessing
+ * `/home/<user>` (audit GAP C2).
+ */
+export async function sftpRealpath(sessionId: string, path: string): Promise<string> {
+  return await invoke<string>("sftp_realpath", { sessionId, path });
+}
+
+/** Lifecycle phase of an SFTP transfer (see `transfer-progress` event). */
+export type TransferPhase = "transferring" | "done" | "cancelled" | "error";
+
+/** Payload of the `transfer-progress` event emitted per SFTP transfer (#1245). */
+export interface TransferProgress {
+  transferId: string;
+  sessionId: string;
+  direction: "download" | "upload";
+  fileName: string;
+  transferred: number;
+  total: number;
+  phase: TransferPhase;
+  message?: string;
+}
+
+/**
+ * Rejection raised by {@link awaitTransfer} when a transfer settles via a
+ * terminal `transfer-progress` event (`cancelled` / `error`), as opposed to an
+ * early/synchronous failure that never reached the background transfer.
+ *
+ * The terminal success/error toast is owned exclusively by the
+ * `transfer-progress` event path (`useTransferEvents`, #1286) so a single
+ * transfer yields exactly one toast. Callers such as `runTransfer` use this
+ * marker to recognise "the event path already surfaced this outcome" and skip
+ * their own terminal toast (they just dismiss their pending toast), while still
+ * surfacing early failures that produced no transfer event.
+ */
+export class TransferTerminalError extends Error {
+  /** `"cancelled"` when the user aborted; `"error"` on a real failure. */
+  readonly phase: "cancelled" | "error";
+
+  constructor(phase: "cancelled" | "error", message: string) {
+    super(message);
+    this.name = "TransferTerminalError";
+    this.phase = phase;
+  }
+}
+
+/**
+ * Await the terminal `transfer-progress` event for `transferId`.
+ *
+ * The backend now runs transfers in the background on a dedicated channel and
+ * returns a `transferId` synchronously (#1245). This bridges that fire-and-return
+ * command to the existing await-completion callers: it resolves with the bytes
+ * transferred on `done`, and rejects with a {@link TransferTerminalError} on
+ * `cancelled` / `error`. The D3 UI can instead subscribe to `transfer-progress`
+ * directly for live progress.
+ */
+async function awaitTransfer(transferId: string): Promise<number> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return await new Promise<number>((resolve, reject) => {
+    let unlisten: (() => void) | undefined;
+    void listen<TransferProgress>("transfer-progress", (event) => {
+      const p = event.payload;
+      if (p.transferId !== transferId) return;
+      if (p.phase === "done") {
+        unlisten?.();
+        resolve(p.transferred);
+      } else if (p.phase === "cancelled") {
+        unlisten?.();
+        reject(new TransferTerminalError("cancelled", "Transfer cancelled"));
+      } else if (p.phase === "error") {
+        unlisten?.();
+        reject(new TransferTerminalError("error", p.message ?? "Transfer failed"));
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+  });
+}
+
+/**
+ * Download a remote file to a local path.
+ *
+ * Registers a background transfer on a dedicated channel and resolves with the
+ * bytes transferred once it completes (#1245).
+ */
 export async function sftpDownload(
   sessionId: string,
   remotePath: string,
   localPath: string
 ): Promise<number> {
-  return await invoke<number>("sftp_download", { sessionId, remotePath, localPath });
+  const transferId = await invoke<string>("sftp_download", {
+    sessionId,
+    remotePath,
+    localPath,
+  });
+  return await awaitTransfer(transferId);
 }
 
-/** Upload a local file to a remote path. Returns bytes transferred. */
+/**
+ * Upload a local file to a remote path.
+ *
+ * Registers a background transfer on a dedicated channel and resolves with the
+ * bytes transferred once it completes (#1245).
+ */
 export async function sftpUpload(
   sessionId: string,
   localPath: string,
   remotePath: string
 ): Promise<number> {
-  return await invoke<number>("sftp_upload", { sessionId, localPath, remotePath });
+  const transferId = await invoke<string>("sftp_upload", {
+    sessionId,
+    localPath,
+    remotePath,
+  });
+  return await awaitTransfer(transferId);
+}
+
+/** Cancel an in-flight SFTP transfer. Unknown/finished ids are a no-op (#1245). */
+export async function sftpCancelTransfer(transferId: string): Promise<void> {
+  await invoke("sftp_cancel_transfer", { transferId });
 }
 
 /** Create a directory on the remote host. */
@@ -705,6 +856,27 @@ export async function disconnectAgent(agentId: string): Promise<void> {
   await invoke("disconnect_agent", { agentId });
 }
 
+/**
+ * Sweep every agent whose backend I/O task has already died (`alive=false`).
+ *
+ * Manual resource-hygiene escape hatch for the Open Connections panel. Returns
+ * the ids that were pruned.
+ */
+export async function pruneDeadAgents(): Promise<string[]> {
+  return await invoke<string[]>("prune_dead_agents");
+}
+
+/**
+ * Cancel an in-flight (still connecting) agent connect. Aborts the blocking
+ * SSH + initialize handshake promptly instead of waiting out the connect
+ * timeout; the backend then emits `disconnected` (single writer). No-op if the
+ * connect already finished. Returns whether a connecting agent was found (G1,
+ * #1235).
+ */
+export async function cancelConnectAgent(agentId: string): Promise<boolean> {
+  return await invoke<boolean>("cancel_connect_agent", { agentId });
+}
+
 /** Gracefully shut down a remote agent and disconnect. Returns detached session count. */
 export async function shutdownAgent(agentId: string, reason?: string): Promise<number> {
   return await invoke<number>("shutdown_agent", { agentId, reason: reason ?? null });
@@ -845,6 +1017,15 @@ export async function setupRemoteAgent(
   });
 }
 
+/**
+ * Cancel an in-flight agent deploy/setup, aborting the background SFTP upload /
+ * script injection between steps and rolling back the partial upload (#1242).
+ * No-op if no run is in flight. Returns whether a run was found.
+ */
+export async function cancelAgentSetup(agentId: string): Promise<boolean> {
+  return await invoke<boolean>("cancel_agent_setup", { agentId });
+}
+
 // --- Agent deployment commands ---
 
 /** Result of probing a remote host for the agent binary. */
@@ -919,23 +1100,6 @@ export async function reorderRemoteAgents(agentIds: string[]): Promise<void> {
   await invoke("reorder_remote_agents", { agentIds });
 }
 
-// --- Monitoring commands ---
-
-/** Open a new monitoring session. Returns session ID. */
-export async function monitoringOpen(config: Record<string, unknown>): Promise<string> {
-  return await invoke<string>("monitoring_open", { config });
-}
-
-/** Close a monitoring session. */
-export async function monitoringClose(sessionId: string): Promise<void> {
-  await invoke("monitoring_close", { sessionId });
-}
-
-/** Fetch system stats from a monitoring session. */
-export async function monitoringFetchStats(sessionId: string): Promise<SystemStats> {
-  return await invoke<SystemStats>("monitoring_fetch_stats", { sessionId });
-}
-
 // --- Session-based monitoring commands ---
 
 /** Return the capabilities of an active session. */
@@ -947,14 +1111,39 @@ export async function sessionGetCapabilities(
   });
 }
 
-/** Start session-based monitoring; stats arrive as `session-monitoring-stats` Tauri events. */
-export async function sessionMonitoringOpen(sessionId: string): Promise<void> {
-  await invoke("session_monitoring_open", { sessionId });
+/**
+ * Start session-based monitoring; stats arrive as `session-monitoring-stats` Tauri events.
+ *
+ * `intervalMs` sets the collection cadence; when omitted the backend default is used (#1233).
+ */
+export async function sessionMonitoringOpen(sessionId: string, intervalMs?: number): Promise<void> {
+  await invoke("session_monitoring_open", { sessionId, intervalMs });
 }
 
 /** Stop session-based monitoring. */
 export async function sessionMonitoringClose(sessionId: string): Promise<void> {
   await invoke("session_monitoring_close", { sessionId });
+}
+
+/** Pause or resume a session monitor's collection loop (#1233). */
+export async function sessionMonitoringSetPaused(
+  sessionId: string,
+  paused: boolean
+): Promise<void> {
+  await invoke("session_monitoring_set_paused", { sessionId, paused });
+}
+
+/** Change a session monitor's refresh interval in milliseconds (#1233). */
+export async function sessionMonitoringSetInterval(
+  sessionId: string,
+  intervalMs: number
+): Promise<void> {
+  await invoke("session_monitoring_set_interval", { sessionId, intervalMs });
+}
+
+/** Cancel a session monitor's in-flight connect / collect (#1233). */
+export async function sessionMonitoringCancel(sessionId: string): Promise<void> {
+  await invoke("session_monitoring_cancel", { sessionId });
 }
 
 // --- Log commands ---
@@ -976,9 +1165,29 @@ export async function getCredentialStoreStatus(): Promise<CredentialStoreStatusI
   return await invoke<CredentialStoreStatusInfo>("get_credential_store_status");
 }
 
+/**
+ * Error thrown by {@link unlockCredentialStore} when unlock fails.
+ *
+ * `corrupted` is `true` when the credentials file is unreadable/corrupt (G8,
+ * #1144), so the UI can offer a "reset store" recovery instead of an endless
+ * wrong-password loop.
+ */
+export interface UnlockCredentialStoreError {
+  message: string;
+  corrupted: boolean;
+}
+
 /** Unlock the master password credential store. */
 export async function unlockCredentialStore(password: string): Promise<void> {
   await invoke("unlock_credential_store", { password });
+}
+
+/**
+ * Reset (delete) a corrupt master password credential store so it can be set up
+ * again. Used to recover from an unreadable credentials file (G8, #1144).
+ */
+export async function resetCredentialStore(): Promise<void> {
+  await invoke("reset_credential_store");
 }
 
 /** Lock the master password credential store. */

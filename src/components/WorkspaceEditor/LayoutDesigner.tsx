@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { SplitSquareHorizontal, SplitSquareVertical, Plus, X, RotateCcw } from "lucide-react";
+import { Tooltip } from "@/components/ui";
 import { WorkspaceLayoutNode, WorkspaceSplitNode, WorkspaceTabDef } from "@/types/workspace";
 import {
   getWorkspaceLeaves,
@@ -184,29 +185,35 @@ function LayoutNodePreview({
         </span>
         <div className="layout-split-container__actions">
           {hasSizes && (
+            <Tooltip content="Reset to Equal" side="top">
+              <button
+                className="layout-split-container__action-btn"
+                onClick={() => onUpdateSizes(node, null)}
+                aria-label="Reset to Equal"
+                data-testid="layout-size-reset"
+              >
+                <RotateCcw size={10} />
+              </button>
+            </Tooltip>
+          )}
+          <Tooltip content="Split Horizontal" side="top">
             <button
               className="layout-split-container__action-btn"
-              onClick={() => onUpdateSizes(node, null)}
-              title="Reset to Equal"
-              data-testid="layout-size-reset"
+              onClick={() => onSplitContainer(node, "horizontal")}
+              aria-label="Split Horizontal"
             >
-              <RotateCcw size={10} />
+              <SplitSquareHorizontal size={10} />
             </button>
-          )}
-          <button
-            className="layout-split-container__action-btn"
-            onClick={() => onSplitContainer(node, "horizontal")}
-            title="Split Horizontal"
-          >
-            <SplitSquareHorizontal size={10} />
-          </button>
-          <button
-            className="layout-split-container__action-btn"
-            onClick={() => onSplitContainer(node, "vertical")}
-            title="Split Vertical"
-          >
-            <SplitSquareVertical size={10} />
-          </button>
+          </Tooltip>
+          <Tooltip content="Split Vertical" side="top">
+            <button
+              className="layout-split-container__action-btn"
+              onClick={() => onSplitContainer(node, "vertical")}
+              aria-label="Split Vertical"
+            >
+              <SplitSquareVertical size={10} />
+            </button>
+          </Tooltip>
         </div>
       </div>
       <div
@@ -311,14 +318,16 @@ function SizeBadge({ size, isCustom, splitNode, childIndex, onUpdateSizes }: Siz
   }
 
   return (
-    <button
-      className={`layout-size-badge ${isCustom ? "layout-size-badge--custom" : ""}`}
-      onClick={handleStartEdit}
-      title="Click to edit size"
-      data-testid="layout-size-badge"
-    >
-      {Math.round(size)}%
-    </button>
+    <Tooltip content="Click to edit size" side="top">
+      <button
+        className={`layout-size-badge ${isCustom ? "layout-size-badge--custom" : ""}`}
+        onClick={handleStartEdit}
+        aria-label="Click to edit size"
+        data-testid="layout-size-badge"
+      >
+        {Math.round(size)}%
+      </button>
+    </Tooltip>
   );
 }
 
@@ -355,52 +364,60 @@ function LeafPanel({
     <div className={className} onClick={onSelect} data-testid={`layout-leaf-${idx}`}>
       <div className="layout-leaf__header">
         <div className="layout-leaf__actions">
-          <button
-            className="layout-leaf__action-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSplitH();
-            }}
-            title="Split Horizontal"
-            data-testid={`layout-leaf-split-h-${idx}`}
-          >
-            <SplitSquareHorizontal size={10} />
-          </button>
-          <button
-            className="layout-leaf__action-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSplitV();
-            }}
-            title="Split Vertical"
-            data-testid={`layout-leaf-split-v-${idx}`}
-          >
-            <SplitSquareVertical size={10} />
-          </button>
-          <button
-            className="layout-leaf__action-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddTab();
-            }}
-            title="Add Connection"
-            data-testid={`layout-leaf-add-tab-${idx}`}
-          >
-            <Plus size={10} />
-          </button>
+          <Tooltip content="Split Horizontal" side="top">
+            <button
+              className="layout-leaf__action-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSplitH();
+              }}
+              aria-label="Split Horizontal"
+              data-testid={`layout-leaf-split-h-${idx}`}
+            >
+              <SplitSquareHorizontal size={10} />
+            </button>
+          </Tooltip>
+          <Tooltip content="Split Vertical" side="top">
+            <button
+              className="layout-leaf__action-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSplitV();
+              }}
+              aria-label="Split Vertical"
+              data-testid={`layout-leaf-split-v-${idx}`}
+            >
+              <SplitSquareVertical size={10} />
+            </button>
+          </Tooltip>
+          <Tooltip content="Add Connection" side="top">
+            <button
+              className="layout-leaf__action-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddTab();
+              }}
+              aria-label="Add Connection"
+              data-testid={`layout-leaf-add-tab-${idx}`}
+            >
+              <Plus size={10} />
+            </button>
+          </Tooltip>
         </div>
         {leafCount > 1 && (
-          <button
-            className="layout-leaf__remove"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-            title="Remove Panel"
-            data-testid={`layout-remove-leaf-${idx}`}
-          >
-            <X size={10} />
-          </button>
+          <Tooltip content="Remove Panel" side="top">
+            <button
+              className="layout-leaf__remove"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+              aria-label="Remove Panel"
+              data-testid={`layout-remove-leaf-${idx}`}
+            >
+              <X size={10} />
+            </button>
+          </Tooltip>
         )}
       </div>
       <div className="layout-leaf__tabs">
@@ -412,17 +429,19 @@ function LeafPanel({
               <span className="layout-tab__name">
                 {tab.title ?? tab.connectionRef ?? "Inline Connection"}
               </span>
-              <button
-                className="layout-tab__remove"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemoveTab(tabIdx);
-                }}
-                title="Remove Tab"
-                data-testid={`layout-remove-tab-${idx}-${tabIdx}`}
-              >
-                <X size={10} />
-              </button>
+              <Tooltip content="Remove Tab" side="top">
+                <button
+                  className="layout-tab__remove"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveTab(tabIdx);
+                  }}
+                  aria-label="Remove Tab"
+                  data-testid={`layout-remove-tab-${idx}-${tabIdx}`}
+                >
+                  <X size={10} />
+                </button>
+              </Tooltip>
             </div>
           ))
         )}

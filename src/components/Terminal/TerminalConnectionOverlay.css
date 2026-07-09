@@ -58,6 +58,15 @@
   margin: 0;
 }
 
+.terminal-connection-overlay__elapsed {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs, var(--font-size-sm));
+  color: var(--text-secondary);
+  letter-spacing: var(--letter-spacing-ui, normal);
+  opacity: 0.85;
+  margin: 0;
+}
+
 .terminal-connection-overlay__error-box {
   max-width: 520px;
   width: 100%;
@@ -129,49 +138,4 @@
   margin-top: var(--spacing-xs);
   flex-wrap: wrap;
   justify-content: center;
-}
-
-.terminal-connection-overlay__retry-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm) var(--spacing-lg);
-  background-color: var(--accent-color);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    opacity var(--transition-fast);
-}
-
-.terminal-connection-overlay__retry-btn:hover {
-  background-color: var(--accent-hover);
-}
-
-.terminal-connection-overlay__cancel-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm) var(--spacing-lg);
-  background-color: transparent;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast),
-    border-color var(--transition-fast);
-}
-
-.terminal-connection-overlay__cancel-btn:hover {
-  background-color: var(--bg-hover, rgba(255, 255, 255, 0.08));
-  color: var(--text-primary);
-  border-color: var(--border-color-hover, rgba(255, 255, 255, 0.25));
 }

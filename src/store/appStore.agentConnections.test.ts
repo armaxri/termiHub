@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const {
+  mockConnectAgent,
   mockListAgentSessions,
   mockListAgentConnections,
   mockCreateAgentFolder,
@@ -8,6 +9,7 @@ const {
   mockDeleteAgentFolder,
   mockUpdateAgentDefinition,
 } = vi.hoisted(() => ({
+  mockConnectAgent: vi.fn(),
   mockListAgentSessions: vi.fn(() => Promise.resolve([])),
   mockListAgentConnections: vi.fn(() =>
     Promise.resolve({
@@ -47,7 +49,7 @@ vi.mock("@/services/storage", () => ({
 }));
 
 vi.mock("@/services/api", () => ({
-  connectAgent: vi.fn(),
+  connectAgent: mockConnectAgent,
   disconnectAgent: vi.fn(),
   listAgentSessions: mockListAgentSessions,
   listAgentDefinitions: vi.fn(() => Promise.resolve([])),
@@ -382,6 +384,175 @@ describe("appStore — agent connection management", () => {
 
       const result = useAppStore.getState().remoteAgents;
       expect(result.map((a) => a.id)).toEqual(["a1", "a2"]);
+    });
+  });
+
+  describe("connectRemoteAgent — single-writer connectionState + de-duped refresh (#1234)", () => {
+    const CAPS = { connectionTypes: [], maxSessions: 5 };
+
+    function makeAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentDefinition {
+      return {
+        id: AGENT_ID,
+        name: "Test Agent",
+        config: {
+          host: "test.local",
+          port: 22,
+          username: "user",
+          authMethod: "password",
+        },
+        isExpanded: false,
+        // Simulate the backend already having emitted "connecting" (the single writer).
+        connectionState: "connecting",
+        agentSettings: DEFAULT_AGENT_SETTINGS,
+        ...overrides,
+      };
+    }
+
+    it("does not clobber an event-written 'reconnecting' state with a late-settling connect", async () => {
+      useAppStore.setState({ remoteAgents: [makeAgent()] });
+
+      // Hold the connect request open so we can interleave a state-change event.
+      let resolveConnect!: (value: {
+        capabilities: typeof CAPS;
+        agentVersion: string;
+        protocolVersion: string;
+      }) => void;
+      mockConnectAgent.mockReturnValue(
+        new Promise((res) => {
+          resolveConnect = res;
+        })
+      );
+
+      const connectPromise = useAppStore.getState().connectRemoteAgent(AGENT_ID);
+
+      // A fast drop arrives through the single-writer event while the connect
+      // promise is still settling.
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "reconnecting");
+
+      // The connect request now resolves (late).
+      resolveConnect({ capabilities: CAPS, agentVersion: "1", protocolVersion: "1" });
+      await connectPromise;
+
+      // The late connect must NOT overwrite the event-written "reconnecting".
+      expect(useAppStore.getState().remoteAgents[0].connectionState).toBe("reconnecting");
+    });
+
+    it("consumes capabilities without writing connectionState", async () => {
+      useAppStore.setState({ remoteAgents: [makeAgent()] });
+      mockConnectAgent.mockResolvedValue({
+        capabilities: CAPS,
+        agentVersion: "1",
+        protocolVersion: "1",
+      });
+
+      await useAppStore.getState().connectRemoteAgent(AGENT_ID);
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.capabilities).toEqual(CAPS);
+      // The action performs no terminal-state write; the event remains authoritative.
+      expect(agent.connectionState).toBe("connecting");
+    });
+
+    it("does not refresh agent sessions from the connect action (de-duped)", async () => {
+      useAppStore.setState({ remoteAgents: [makeAgent()] });
+      mockConnectAgent.mockResolvedValue({
+        capabilities: CAPS,
+        agentVersion: "1",
+        protocolVersion: "1",
+      });
+
+      await useAppStore.getState().connectRemoteAgent(AGENT_ID);
+
+      // The refresh is owned by the "connected" event, not the connect action.
+      expect(mockListAgentConnections).not.toHaveBeenCalled();
+      expect(mockListAgentSessions).not.toHaveBeenCalled();
+    });
+
+    it("refreshes agent sessions exactly once when the event writes 'connected'", async () => {
+      useAppStore.setState({ remoteAgents: [makeAgent()] });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
+      // The refresh is fired fire-and-forget; let its microtasks flush.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockListAgentConnections).toHaveBeenCalledTimes(1);
+    });
+
+    it("refreshes only on the transition into 'connected', not on a repeat event", async () => {
+      useAppStore.setState({ remoteAgents: [makeAgent()] });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockListAgentConnections).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("setAgentConnectionState — lastError (G3, #1236)", () => {
+    function makeAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentDefinition {
+      return {
+        id: AGENT_ID,
+        name: "Test Agent",
+        config: {
+          host: "test.local",
+          port: 22,
+          username: "user",
+          authMethod: "password",
+        },
+        isExpanded: false,
+        connectionState: "connected",
+        agentSettings: DEFAULT_AGENT_SETTINGS,
+        ...overrides,
+      };
+    }
+
+    it("stores lastError when transitioning to 'disconnected' with an error", () => {
+      useAppStore.setState({ remoteAgents: [makeAgent({ connectionState: "reconnecting" })] });
+
+      useAppStore
+        .getState()
+        .setAgentConnectionState(AGENT_ID, "disconnected", "Failed to reconnect after 10 attempts");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("disconnected");
+      expect(agent.lastError).toBe("Failed to reconnect after 10 attempts");
+    });
+
+    it("leaves lastError unset when 'disconnected' arrives without an error", () => {
+      useAppStore.setState({ remoteAgents: [makeAgent({ connectionState: "connected" })] });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "disconnected");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("disconnected");
+      expect(agent.lastError).toBeUndefined();
+    });
+
+    it("clears a stored lastError on the next 'connecting' attempt", () => {
+      useAppStore.setState({
+        remoteAgents: [makeAgent({ connectionState: "disconnected", lastError: "old failure" })],
+      });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "connecting");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("connecting");
+      expect(agent.lastError).toBeUndefined();
+    });
+
+    it("clears a stored lastError once the agent reaches 'connected'", () => {
+      useAppStore.setState({
+        remoteAgents: [makeAgent({ connectionState: "reconnecting", lastError: "old failure" })],
+      });
+
+      useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
+
+      const agent = useAppStore.getState().remoteAgents[0];
+      expect(agent.connectionState).toBe("connected");
+      expect(agent.lastError).toBeUndefined();
     });
   });
 

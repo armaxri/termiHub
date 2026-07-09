@@ -4,10 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
+import { Tooltip } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { TestBridge } from "@/testbridge/TestBridge";
 import { Terminal } from "./Terminal";
+import { applyAgentReconnecting } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
@@ -25,7 +27,18 @@ export function TerminalView() {
     terminalDispatcher.init();
   }, []);
 
-  // Update global remote-connection state in the store (drives tab state dots).
+  // Handle backend-reported remote-connection state changes: a "disconnected"
+  // state marks the owning tab exited (which drives the per-tab status dot via
+  // the tab-id-keyed lifecycle maps — see deriveTabStatus).
+  //
+  // NOTE (#1123): direct sessions (SSH / telnet / serial) do NOT currently
+  // reach this path — the backend never emits `remote-state-change` for them.
+  // Their disconnects — including half-open TCP drops (cable pull, NAT timeout,
+  // crashed host) — surface via `terminal-exit`: TCP keepalive on the socket
+  // (`core::net::enable_tcp_keepalive`) tears the dead connection down, the
+  // reader thread sees the error, and `terminal-exit` fires the overlay. This
+  // listener is retained as the forward-compatible hook for any future backend
+  // that emits explicit `remote-state-change` transitions.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("remote-state-change", (event) => {
@@ -42,7 +55,8 @@ export function TerminalView() {
         const tab = allTabs.find((t) => t.sessionId === session_id);
         if (tab) {
           frontendLog("disconnect", `remote-state-change: marking tab=${tab.id} as exited`);
-          store.setTerminalExited(tab.id);
+          // Remote peer dropped the connection — no exit code available (#1121).
+          store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
         } else {
           frontendLog("disconnect", `remote-state-change: no tab found for session=${session_id}`);
         }
@@ -66,7 +80,8 @@ export function TerminalView() {
         const store = useAppStore.getState();
         store.setAgentConnectionState(
           session_id,
-          state as "disconnected" | "connecting" | "connected" | "reconnecting"
+          state as "disconnected" | "connecting" | "connected" | "reconnecting",
+          error
         );
 
         // Build the full tab list once and reuse across all branches.
@@ -84,6 +99,14 @@ export function TerminalView() {
           const cfg = tab.config.config as { agentId?: string };
           return cfg.agentId === session_id;
         });
+
+        // G5 (#1236): mirror the agent state into the session-id-keyed
+        // `remoteStates` map for every active-session tab so the compact
+        // tab-strip dot agrees with the terminal overlay. The agent path used
+        // to skip this, leaving the dot stale-green through a drop/reconnect.
+        for (const tab of agentTerminalTabs) {
+          if (tab.sessionId) store.setRemoteState(tab.sessionId, state);
+        }
 
         if (state === "connected") {
           // Query the agent for sessions it actually recovered. Daemons that
@@ -125,7 +148,8 @@ export function TerminalView() {
                 "disconnect",
                 `agent connected after reconnect: marking tab=${tab.id} as exited (session not recovered)`
               );
-              store.setTerminalExited(tab.id);
+              // Agent lost the session across the reconnect — a dropped session (#1121).
+              store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
               markedExited++;
             }
           }
@@ -171,21 +195,14 @@ export function TerminalView() {
           }
           frontendLog("disconnect", `agent connected: restarted ${restartedRetryCount} retry tabs`);
 
-          store.refreshAgentSessions(session_id);
+          // The sessions/definitions refresh is owned by `setAgentConnectionState`
+          // (called above for the "connected" transition), so it runs exactly
+          // once per connect (G4/#1234) — do not refresh again here.
         } else if (state === "reconnecting") {
-          // Show the reconnecting spinner overlay on all tabs with an active
-          // session for this agent.
-          let markedCount = 0;
-          for (const tab of agentTerminalTabs) {
-            if (!tab.sessionId) continue;
-            frontendLog("disconnect", `agent reconnecting: marking tab=${tab.id}`);
-            store.setTerminalReconnecting(tab.id, true);
-            if (error) {
-              store.setTerminalReconnectTriggerError(tab.id, error);
-            }
-            markedCount++;
-          }
-          frontendLog("disconnect", `agent reconnecting: ${markedCount} tabs marked`);
+          // Live-session tabs show the reconnecting spinner; spawning tabs (no
+          // sessionId yet) are parked on the waiting-for-agent path so every
+          // agent tab gets honest feedback during a drop (G8, #1242).
+          applyAgentReconnecting(session_id, agentTerminalTabs, error);
         } else if (state === "disconnected") {
           // Mark all tabs with an active session for this agent as exited so
           // the disconnect overlay appears.
@@ -197,7 +214,8 @@ export function TerminalView() {
               // Auto-reconnect exhausted its retries — surface the reason.
               store.setTerminalDisconnectWithError(tab.id, error);
             } else {
-              store.setTerminalExited(tab.id);
+              // Agent connection dropped without a specific error — a dropped session (#1121).
+              store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
             }
             markedCount++;
           }
@@ -253,48 +271,58 @@ export function TerminalView() {
         <div className="terminal-view__toolbar">
           <TabGroupChips />
           <div className="terminal-view__toolbar-actions">
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleNewTerminal}
-              title="New Terminal"
-              data-testid="terminal-view-new-terminal"
-            >
-              <Plus size={16} />
-            </button>
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleSplitHorizontal}
-              title="Split Terminal Right"
-              data-testid="terminal-view-split-horizontal"
-            >
-              <Columns2 size={16} />
-            </button>
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleSplitVertical}
-              title="Split Terminal Down"
-              data-testid="terminal-view-split-vertical"
-            >
-              <Rows2 size={16} />
-            </button>
-            {allLeaves.length > 1 && (
+            <Tooltip content="New Terminal" side="bottom">
               <button
                 className="terminal-view__toolbar-btn"
-                onClick={handleClosePanel}
-                title="Close Panel"
-                data-testid="terminal-view-close-panel"
+                onClick={handleNewTerminal}
+                aria-label="New Terminal"
+                data-testid="terminal-view-new-terminal"
               >
-                <X size={16} />
+                <Plus size={16} />
               </button>
+            </Tooltip>
+            <Tooltip content="Split Terminal Right" side="bottom">
+              <button
+                className="terminal-view__toolbar-btn"
+                onClick={handleSplitHorizontal}
+                aria-label="Split Terminal Right"
+                data-testid="terminal-view-split-horizontal"
+              >
+                <Columns2 size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip content="Split Terminal Down" side="bottom">
+              <button
+                className="terminal-view__toolbar-btn"
+                onClick={handleSplitVertical}
+                aria-label="Split Terminal Down"
+                data-testid="terminal-view-split-vertical"
+              >
+                <Rows2 size={16} />
+              </button>
+            </Tooltip>
+            {allLeaves.length > 1 && (
+              <Tooltip content="Close Panel" side="bottom">
+                <button
+                  className="terminal-view__toolbar-btn"
+                  onClick={handleClosePanel}
+                  aria-label="Close Panel"
+                  data-testid="terminal-view-close-panel"
+                >
+                  <X size={16} />
+                </button>
+              </Tooltip>
             )}
-            <button
-              className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
-              onClick={toggleSidebar}
-              title={sidebarToggleTitle}
-              data-testid="terminal-view-toggle-sidebar"
-            >
-              <PanelLeft size={16} />
-            </button>
+            <Tooltip content={sidebarToggleTitle} side="bottom">
+              <button
+                className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
+                onClick={toggleSidebar}
+                aria-label={sidebarToggleTitle}
+                data-testid="terminal-view-toggle-sidebar"
+              >
+                <PanelLeft size={16} />
+              </button>
+            </Tooltip>
           </div>
         </div>
         <div className="terminal-view__content">

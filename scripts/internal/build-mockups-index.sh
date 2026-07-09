@@ -1,9 +1,10 @@
 #!/bin/bash
-# Regenerate docs/concepts/mockups-index.html — a single browsable page linking
-# every concept mockup. Part of the AI-driven concept workflow.
+# Regenerate docs/concepts/mockups-index.html — a single browsable gallery linking
+# every concept's visual surface. Part of the AI-driven concept workflow.
 #
-# Scans docs/concepts/<status>/<concept>/mockups/*.html, groups by concept,
-# and writes a static index. No server, no dependencies beyond a POSIX shell.
+# Scans for single-file concepts (docs/concepts/<status>/<name>.html) and any
+# legacy folder mockups (docs/concepts/<status>/<name>/mockups/*.html), groups by
+# concept, and writes a static index. No server, no deps beyond a POSIX shell.
 #
 # Usage: scripts/internal/build-mockups-index.sh   (runnable from anywhere in the repo)
 
@@ -17,8 +18,24 @@ OUT="$CONCEPTS_DIR/mockups-index.html"
 
 cd "$CONCEPTS_DIR"
 
-# Collect mockup files (sorted, portable — no GNU-only flags).
-mockups=$(find . -type f -path '*/mockups/*.html' | sed 's|^\./||' | sort)
+# Collect visual surfaces (portable — no GNU-only flags):
+#   - single-file concepts:  <status>/<name>.html
+#   - legacy folder mockups: <status>/<name>/mockups/*.html
+# Exclude shared assets and this generated index itself. Emit "group<TAB>file"
+# then sort by group so each concept's entries stay contiguous.
+mockups=$(find . -type f -name '*.html' \
+  ! -path './_assets/*' ! -name 'mockups-index.html' \
+  | sed 's|^\./||' \
+  | while IFS= read -r f; do
+      # NB: avoid `case ... ;;` here — macOS bash 3.2 has a parser bug where a
+      # `case` inside $(...) command substitution fails ("syntax error near `;;'").
+      if [ "$f" != "${f%/mockups/*}" ]; then
+        g="${f%%/mockups/*}"   # legacy folder mockup
+      else
+        g="$(dirname "$f")"    # single-file concept
+      fi
+      printf '%s\t%s\n' "$g" "$f"
+    done | sort)
 
 {
   cat <<'HTML'
@@ -42,10 +59,10 @@ mockups=$(find . -type f -path '*/mockups/*.html' | sed 's|^\./||' | sort)
     </style>
   </head>
   <body class="mockup-doc">
-    <h1>termiHub Concept Mockups</h1>
+    <h1>termiHub Concept Gallery</h1>
     <p class="mockup-meta">
-      Hand-written, layout-altitude mockups across all concepts. Regenerate with
-      <code>scripts/internal/build-mockups-index.sh</code>.
+      Every concept's visual surface — single-file concepts and any legacy folder mockups.
+      Regenerate with <code>scripts/internal/build-mockups-index.sh</code>.
     </p>
 HTML
 
@@ -53,10 +70,12 @@ HTML
     echo '    <p class="idx-empty">No mockups found yet.</p>'
   else
     current_concept=""
-    while IFS= read -r file; do
-      # file looks like: backlog/broadcast-input/mockups/toolbar.html
-      concept_path="${file%%/mockups/*}"   # backlog/broadcast-input
-      name="${file##*/mockups/}"           # toolbar.html
+    while IFS="$(printf '\t')" read -r concept_path file; do
+      [ -n "$file" ] || continue
+      case "$file" in
+        */mockups/*) name="${file##*/mockups/}" ;;   # legacy: toolbar.html
+        *) name="$(basename "$file")" ;;             # single-file concept
+      esac
       if [ "$concept_path" != "$current_concept" ]; then
         [ -n "$current_concept" ] && echo '      </ul></div>'
         current_concept="$concept_path"

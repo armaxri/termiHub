@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { TooltipProvider } from "@/components/ui";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 
 vi.mock("@/themes", () => ({
@@ -20,7 +21,11 @@ let root: Root;
 
 function render(props: { visibleFields?: Set<string> } = {}) {
   act(() => {
-    root.render(<LanguagePackagesSettings {...props} />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <LanguagePackagesSettings {...props} />
+      </TooltipProvider>
+    );
   });
 }
 

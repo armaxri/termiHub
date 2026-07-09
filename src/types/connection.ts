@@ -2,6 +2,57 @@ import { ConnectionConfig, RemoteAgentConfig, TerminalOptions, LineEnding } from
 import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
 
+/**
+ * Explicit lifecycle status of the single desktop SFTP session (audit gap A1).
+ *
+ * Replaces the previously-overloaded `sftpLoading` boolean, which could not
+ * distinguish "connecting" from "listing"/"refreshing" from "idle". The UI reads
+ * this to pick the right placeholder (e.g. "Connecting SFTP…" vs "Loading…").
+ *
+ * - `idle`      — no session, no error (initial / after disconnect)
+ * - `connecting`— `connectSftp` in flight, no session yet
+ * - `connected` — session established, no operation in flight
+ * - `listing`   — a `navigateSftp` / `refreshSftp` list request is in flight
+ * - `error`     — the last connect or list operation failed (see `sftpError`)
+ */
+export type SftpStatus = "idle" | "connecting" | "connected" | "listing" | "error";
+
+/**
+ * A live backend SFTP session tracked in the keyed session map (issue #1241).
+ *
+ * Sessions are keyed by their session-id / UUID; this record holds only the
+ * display metadata and the binding needed for lifecycle cleanup.
+ *
+ * - `hostLabel`   — `user@host:port`, shown in the Open Connections panel
+ * - `owningTabId` — the tab that opened the session; when that tab closes the
+ *   session is closed (`sftp_close`) and removed (the L1 leak fix)
+ */
+export interface SftpSessionEntry {
+  hostLabel: string;
+  owningTabId: string;
+}
+
+/**
+ * Live state of a single in-flight SFTP transfer, keyed by its `transferId` in
+ * the store's `transfers` map (concept "SFTP session tracking + transfers",
+ * issue #1247). Built purely from `transfer-progress` events (#1245): a
+ * `transferring` phase upserts the row; a terminal phase
+ * (`done`/`cancelled`/`error`) clears it.
+ *
+ * - `sessionId`   — the owning SFTP session, used by the kill-cascade to cancel
+ *   a session's transfers before closing it
+ * - `total = 0`   — indeterminate size (render a spinner instead of a bar)
+ */
+export interface TransferState {
+  transferId: string;
+  sessionId: string;
+  direction: "download" | "upload";
+  fileName: string;
+  transferred: number;
+  total: number;
+  phase: "transferring" | "done" | "cancelled" | "error";
+}
+
 export interface SavedConnection {
   id: string;
   name: string;
@@ -123,6 +174,13 @@ export interface RemoteAgentDefinition {
   isExpanded: boolean;
   connectionState: "disconnected" | "connecting" | "connected" | "reconnecting";
   capabilities?: AgentCapabilities;
+  /**
+   * The last error reported when the agent transitioned to `disconnected` after
+   * auto-reconnect exhausted its retries (G3, #1236). Surfaced as the tooltip on
+   * the disconnected header's Reconnect button. Cleared on the next connect
+   * attempt (`connecting`) or a successful `connected` transition.
+   */
+  lastError?: string;
 }
 
 // ── Persistent connection session state ──────────────────────────────────
@@ -233,6 +291,10 @@ export interface AppSettings {
   askOpenSavedFileInTab?: boolean;
   defaultShellIntegration?: boolean;
   defaultX11Forwarding?: boolean;
+  /** Start/provide a local X server automatically for SSH X11 forwarding. Unset → platform default (on for Windows). */
+  provideXServerAutomatically?: boolean;
+  /** Stop the auto-provided X server once no connection is using it. */
+  stopXServerWhenIdle?: boolean;
   /**
    * When true (default), the open tab groups and layout are auto-saved on every
    * change and restored on the next startup. When false, the app always starts

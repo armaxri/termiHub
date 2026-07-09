@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { LayoutDesigner } from "./LayoutDesigner";
+import { withTooltip } from "@/test/tooltip";
 import { WorkspaceLayoutNode, WorkspaceLeafNode, WorkspaceTabDef } from "@/types/workspace";
 import { getWorkspaceLeaves } from "@/utils/workspaceLayout";
 
@@ -53,7 +54,7 @@ describe("LayoutDesigner", () => {
   it("renders with a single leaf", () => {
     const onChange = vi.fn();
     act(() => {
-      root.render(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />));
     });
 
     expect(query("layout-designer")).not.toBeNull();
@@ -63,7 +64,7 @@ describe("LayoutDesigner", () => {
   it("does not show X button when only one leaf exists", () => {
     const onChange = vi.fn();
     act(() => {
-      root.render(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />));
     });
 
     expect(query("layout-remove-leaf-0")).toBeNull();
@@ -73,7 +74,7 @@ describe("LayoutDesigner", () => {
     const onChange = vi.fn();
     const layout = hsplit(leaf(tab("a")), leaf(tab("b")));
     act(() => {
-      root.render(<LayoutDesigner layout={layout} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={layout} onChange={onChange} />));
     });
 
     expect(query("layout-remove-leaf-0")).not.toBeNull();
@@ -87,7 +88,7 @@ describe("LayoutDesigner", () => {
     });
 
     act(() => {
-      root.render(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />));
     });
 
     act(() => {
@@ -107,7 +108,7 @@ describe("LayoutDesigner", () => {
     });
 
     act(() => {
-      root.render(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />));
     });
 
     act(() => {
@@ -116,7 +117,7 @@ describe("LayoutDesigner", () => {
 
     // Re-render with new layout — new leaf (index 1) should be selected
     act(() => {
-      root.render(<LayoutDesigner layout={lastLayout!} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={lastLayout!} onChange={onChange} />));
     });
 
     const leaf1 = query("layout-leaf-1");
@@ -131,7 +132,7 @@ describe("LayoutDesigner", () => {
 
     const layout = hsplit(leaf(tab("a")), leaf(tab("b")));
     act(() => {
-      root.render(<LayoutDesigner layout={layout} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={layout} onChange={onChange} />));
     });
 
     // Split the second panel using its inline button
@@ -151,7 +152,7 @@ describe("LayoutDesigner", () => {
     const onChange = vi.fn();
     const layout = hsplit(leaf(tab("a")), leaf(tab("b")));
     act(() => {
-      root.render(<LayoutDesigner layout={layout} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={layout} onChange={onChange} />));
     });
 
     const allText = container.textContent ?? "";
@@ -162,7 +163,7 @@ describe("LayoutDesigner", () => {
   it("shows empty state prompt for empty leaf", () => {
     const onChange = vi.fn();
     act(() => {
-      root.render(<LayoutDesigner layout={leaf()} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={leaf()} onChange={onChange} />));
     });
 
     const emptyEl = container.querySelector(".layout-leaf__empty");
@@ -173,7 +174,7 @@ describe("LayoutDesigner", () => {
     const onChange = vi.fn();
     const layout = hsplit(leaf(tab("a")), leaf(tab("b")));
     act(() => {
-      root.render(<LayoutDesigner layout={layout} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={layout} onChange={onChange} />));
     });
 
     expect(query("layout-leaf-split-h-0")).not.toBeNull();
@@ -191,7 +192,7 @@ describe("LayoutDesigner", () => {
       { connectionRef: "other-conn" }
     );
     act(() => {
-      root.render(<LayoutDesigner layout={layout} onChange={onChange} />);
+      root.render(withTooltip(<LayoutDesigner layout={layout} onChange={onChange} />));
     });
 
     const tabNames = container.querySelectorAll(".layout-tab__name");
@@ -207,7 +208,9 @@ describe("LayoutDesigner", () => {
     });
 
     act(() => {
-      root.render(<LayoutDesigner layout={leaf(tab("a"), tab("b"))} onChange={onChange} />);
+      root.render(
+        withTooltip(<LayoutDesigner layout={leaf(tab("a"), tab("b"))} onChange={onChange} />)
+      );
     });
 
     act(() => {

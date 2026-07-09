@@ -4,7 +4,8 @@ use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
 use crate::connection::manager::ConnectionManager;
-use crate::files::sftp::SftpManager;
+use crate::files::sftp::{lock_session, SftpManager};
+use crate::files::transfer::{self, TransferContext, TransferDirection, TransferRegistry};
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
 use crate::utils::vscode;
@@ -53,46 +54,161 @@ pub async fn sftp_list_dir(
 ) -> Result<Vec<FileEntry>, TerminalError> {
     debug!(session_id, path, "SFTP list directory");
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().list_dir(&path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.list_dir(&path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
-/// Download a remote file to a local path. Returns bytes transferred.
+/// Resolve a remote path to its canonical absolute form via SFTP realpath.
+///
+/// Passing `"."` yields the session's home directory so the file browser can
+/// land there without guessing `/home/<user>` (audit GAP C2, issue #1143).
+#[tauri::command]
+pub async fn sftp_realpath(
+    session_id: String,
+    path: String,
+    manager: State<'_, SftpManager>,
+) -> Result<String, TerminalError> {
+    debug!(session_id, path, "SFTP realpath");
+    let session = manager.get_session(&session_id)?;
+    tokio::task::spawn_blocking(move || lock_session(&session)?.realpath(&path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+}
+
+/// Extract the display file name from a path (falls back to the whole path).
+fn file_name_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Open a dedicated SFTP channel off `session` and (for downloads) stat the
+/// remote size, on a blocking-pool thread — the SFTP calls use `block_in_place`,
+/// which is invalid on the async command thread. Returns the dedicated session
+/// plus the known total size (`0` = indeterminate).
+async fn open_transfer_channel(
+    session: std::sync::Arc<std::sync::Mutex<crate::files::sftp::SftpSession>>,
+    remote_path: Option<String>,
+) -> Result<(russh_sftp::client::SftpSession, u64), TerminalError> {
+    tokio::task::spawn_blocking(move || {
+        let session = lock_session(&session)?;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let dedicated = session.open_dedicated_sftp().await?;
+                let total = match &remote_path {
+                    Some(path) => session.remote_size(path).await,
+                    None => 0,
+                };
+                Ok::<_, TerminalError>((dedicated, total))
+            })
+        })
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+}
+
+/// Start a download (remote → local). Registers a `transfer_id`, runs a chunked
+/// copy on a dedicated SFTP channel in the background, and returns the id
+/// immediately (issue #1245).
+///
+/// Progress and completion are reported via `transfer-progress` events; the
+/// copy does not hold the session mutex, so listing / navigating the same
+/// session stays live during the transfer.
 #[tauri::command]
 pub async fn sftp_download(
     session_id: String,
     remote_path: String,
     local_path: String,
     manager: State<'_, SftpManager>,
-) -> Result<u64, TerminalError> {
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, TerminalError> {
     debug!(session_id, remote_path, local_path, "SFTP download");
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
-        session.lock().unwrap().read_file(&remote_path, &local_path)
-    })
-    .await
-    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+    let (dedicated, total) = open_transfer_channel(session, Some(remote_path.clone())).await?;
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let token = registry.register(&transfer_id);
+    let ctx = TransferContext {
+        transfer_id: transfer_id.clone(),
+        session_id,
+        direction: TransferDirection::Download,
+        file_name: file_name_of(&remote_path),
+        total,
+    };
+    let registry = (*registry).clone();
+    let sink = transfer::app_progress_sink(app_handle);
+    tauri::async_runtime::spawn(async move {
+        transfer::run_download(
+            dedicated,
+            remote_path,
+            local_path,
+            ctx,
+            token,
+            registry,
+            sink,
+        )
+        .await;
+    });
+    Ok(transfer_id)
 }
 
-/// Upload a local file to a remote path. Returns bytes transferred.
+/// Start an upload (local → remote). Registers a `transfer_id`, runs a chunked
+/// copy on a dedicated SFTP channel in the background, and returns the id
+/// immediately (issue #1245). Mirrors [`sftp_download`].
 #[tauri::command]
 pub async fn sftp_upload(
     session_id: String,
     local_path: String,
     remote_path: String,
     manager: State<'_, SftpManager>,
-) -> Result<u64, TerminalError> {
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, TerminalError> {
     debug!(session_id, local_path, remote_path, "SFTP upload");
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || {
-        session
-            .lock()
-            .unwrap()
-            .write_file(&local_path, &remote_path)
-    })
-    .await
-    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+    let (dedicated, _total) = open_transfer_channel(session, None).await?;
+
+    // Local files are cheap to stat, so we can report a real total for uploads.
+    let total = tokio::fs::metadata(&local_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let token = registry.register(&transfer_id);
+    let ctx = TransferContext {
+        transfer_id: transfer_id.clone(),
+        session_id,
+        direction: TransferDirection::Upload,
+        file_name: file_name_of(&local_path),
+        total,
+    };
+    let registry = (*registry).clone();
+    let sink = transfer::app_progress_sink(app_handle);
+    tauri::async_runtime::spawn(async move {
+        transfer::run_upload(
+            dedicated,
+            local_path,
+            remote_path,
+            ctx,
+            token,
+            registry,
+            sink,
+        )
+        .await;
+    });
+    Ok(transfer_id)
+}
+
+/// Cancel an in-flight transfer by id. Unknown / already-finished ids are a
+/// harmless no-op (issue #1245).
+#[tauri::command]
+pub fn sftp_cancel_transfer(transfer_id: String, registry: State<'_, TransferRegistry>) {
+    debug!(transfer_id, "SFTP cancel transfer");
+    registry.cancel(&transfer_id);
 }
 
 /// Create a directory on the remote host.
@@ -103,7 +219,7 @@ pub async fn sftp_mkdir(
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().mkdir(&path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.mkdir(&path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
@@ -118,7 +234,7 @@ pub async fn sftp_delete(
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
-        let session = session.lock().unwrap();
+        let session = lock_session(&session)?;
         if is_directory {
             session.remove_dir(&path)
         } else {
@@ -138,7 +254,7 @@ pub async fn sftp_rename(
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().rename(&old_path, &new_path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.rename(&old_path, &new_path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
@@ -205,7 +321,7 @@ pub async fn sftp_read_file_content(
     manager: State<'_, SftpManager>,
 ) -> Result<String, TerminalError> {
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().read_file_content(&remote_path))
+    tokio::task::spawn_blocking(move || lock_session(&session)?.read_file_content(&remote_path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
@@ -220,10 +336,7 @@ pub async fn sftp_write_file_content(
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
-        session
-            .lock()
-            .unwrap()
-            .write_file_content(&remote_path, &content)
+        lock_session(&session)?.write_file_content(&remote_path, &content)
     })
     .await
     .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
@@ -289,10 +402,7 @@ pub async fn vscode_open_remote(
         let remote_path = remote_path.clone();
         let temp_path_str = temp_path_str.clone();
         tokio::task::spawn_blocking(move || {
-            session
-                .lock()
-                .unwrap()
-                .read_file(&remote_path, &temp_path_str)
+            lock_session(&session)?.read_file(&remote_path, &temp_path_str)
         })
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))??;
@@ -307,10 +417,8 @@ pub async fn vscode_open_remote(
         let event = match result {
             Ok(()) => {
                 // Re-upload the edited file
-                let upload_result = {
-                    let session = session_arc.lock().unwrap();
-                    session.write_file(&temp_path_str, &remote_path)
-                };
+                let upload_result = lock_session(&session_arc)
+                    .and_then(|session| session.write_file(&temp_path_str, &remote_path));
                 match upload_result {
                     Ok(_) => VscodeEditCompleteEvent {
                         remote_path,

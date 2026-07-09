@@ -35,9 +35,6 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
-  monitoringOpen: vi.fn(),
-  monitoringClose: vi.fn(() => Promise.resolve()),
-  monitoringFetchStats: vi.fn(),
   // Update checker mocks — these return controlled values per test
   checkForUpdates: vi.fn(),
   skipUpdateVersion: vi.fn(() => Promise.resolve()),

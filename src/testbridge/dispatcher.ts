@@ -115,6 +115,46 @@ function clickSequence(el: Element, x: number, y: number): void {
   (el as HTMLElement).click();
 }
 
+/**
+ * Drive the design-system {@link Select} (a Radix `Select` skin) from the bridge.
+ *
+ * The visible testid sits on the button trigger, so a native `.value` set is not
+ * available. Instead reproduce a real interaction: open the listbox via the
+ * realistic pointer sequence, then click the option whose `data-value` matches.
+ * Radix portals its content, so options are searched in both the bridge root and
+ * the owning document (where the portal lands under `<body>`).
+ */
+function selectRadixOption(root: ParentNode, trigger: Element, value: string): string | null {
+  const escaped =
+    typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(value)
+      : value.replace(/["\\]/g, "\\$&");
+  // Scope to `.ui-select__item` so the trigger's own `data-value` mirror never
+  // matches — only the mounted listbox options do.
+  const optionSelector = `.ui-select__item[data-value="${escaped}"]`;
+
+  const findOption = (): Element | null =>
+    root.querySelector(optionSelector) ?? ownerDocument(root).querySelector(optionSelector);
+
+  // Open the listbox. Radix Select opens reliably on keyboard activation across
+  // both a real WebView and jsdom (its pointerdown-to-open path depends on
+  // pointer-capture APIs that behave inconsistently), so focus + Enter.
+  (trigger as HTMLElement).focus();
+  trigger.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
+  );
+
+  // When the option has mounted, click it — otherwise return an error message so
+  // the harness (which wraps `select` in a retry) can try again on the next poll.
+  const option = findOption();
+  if (!option) {
+    return `option "${value}" not found in the open Radix listbox`;
+  }
+  const optAnchor = centerOf(option);
+  clickSequence(option, optAnchor.x, optAnchor.y);
+  return null;
+}
+
 /** Named DOM keys whose `code` / legacy `keyCode` aren't derivable from the char. */
 const NAMED_KEYS: Record<string, { code: string; keyCode: number }> = {
   Enter: { code: "Enter", keyCode: 13 },
@@ -239,6 +279,11 @@ export async function dispatchCommand(
     case "getValue": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("getValue", `no element with data-testid="${command.testId}"`);
+      // Radix `Select` primitive: the value lives in the trigger's `data-value`
+      // (there is no native `.value`), mirrored by the `Select` component.
+      if (el.classList.contains("ui-select__trigger")) {
+        return ok("getValue", el.getAttribute("data-value") ?? "");
+      }
       if (
         !(el instanceof HTMLInputElement) &&
         !(el instanceof HTMLTextAreaElement) &&
@@ -423,6 +468,15 @@ export async function dispatchCommand(
     case "select": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("select", `no element with data-testid="${command.testId}"`);
+
+      // Radix `Select` primitive (the `ui/` design-system control): its testid
+      // lands on the button trigger, not a native <select>. Drive it like a real
+      // user — open the listbox, then click the option whose `data-value` matches.
+      if (el.classList.contains("ui-select__trigger")) {
+        const err = selectRadixOption(deps.root, el, command.value);
+        return err ? fail("select", err) : ok("select");
+      }
+
       if (!(el instanceof HTMLSelectElement)) {
         return fail("select", `element data-testid="${command.testId}" is not a select`);
       }

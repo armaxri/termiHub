@@ -12,23 +12,30 @@ Design documents are sorted into four folders based on **implementation status**
 Each partially implemented concept has an **## Implementation Status** section at the bottom
 of its document that lists exactly what exists and what is still missing.
 
-## Two forms: single-file vs. folder
+## Concept forms
 
-A concept is either a single `.md` file or a **folder** — both live in the same status
-directories.
+A concept is either a single `.md` file or a single **HTML** file — chosen by whether it has a
+visual surface. Both live in the same status directories.
 
-- **Single file** (`<name>.md`) — the default. Prose + inline Mermaid diagrams.
-- **Folder form** (`<name>/`) — used when a concept has a **visual surface worth mocking up**.
-  It co-locates `concept.md` (prose), `behavior.md` (diagrams), `mockups/*.html` (hand-written,
-  layout-altitude HTML), and `sync.md` (the concept↔code reconciliation ledger).
+- **Markdown** (`<name>.md`) — the default for features with **no** visual surface. Prose + inline
+  Mermaid diagrams.
+- **Single-file HTML** (`<name>.html`) — used when a concept has a **visual surface worth mocking
+  up**. One self-contained file holds everything: prose, Mermaid diagrams (rendered client-side),
+  the mockups (inline, using the real app class names), and the concept↔code reconciliation ledger
+  (`<section id="sync">`). Open it in a browser to review it — it does not render on github.com.
 
-The folder form is part of the **AI-driven concept workflow** — design-first artifacts that
-double as Claude Code's implementation target, reconciled via the `/sync-concept <name>` skill
-where the **concept is the source of truth**. See
+The HTML form is part of the **AI-driven concept workflow** — a design-first artifact that doubles
+as Claude Code's implementation target, reconciled via the `/sync-concept <name>` skill where the
+**concept is the source of truth**. See
 [`backlog/ai-driven-concept-workflow.md`](backlog/ai-driven-concept-workflow.md) for the full
-design, [`_assets/`](_assets/) for the shared mockup kit, and
-[`mockups-index.html`](mockups-index.html) for a browsable index of every mockup.
-[`backlog/broadcast-input/`](backlog/broadcast-input/) is the first worked example.
+design, [`_assets/`](_assets/) for the shared kit (`concept-template.html`, `concept.css`,
+`mockup.css`, `mermaid.min.js`), and [`mockups-index.html`](mockups-index.html) for a browsable
+gallery. [`backlog/x-server-provisioning.html`](backlog/x-server-provisioning.html) is the worked
+example.
+
+> **Folder form fully retired.** Every concept with a visual surface is now a single-file HTML
+> concept. The old folder form (`<name>/` with `concept.md` + `behavior.md` + `mockups/*.html` +
+> `sync.md`) is no longer used anywhere.
 
 ---
 
@@ -84,15 +91,15 @@ Not started yet — realistic and planned for the near to medium term.
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
 | [ai-driven-concept-workflow.md](backlog/ai-driven-concept-workflow.md)                                 | Design-first loop — per-concept mockups + diagrams as source of truth, human-triggered `/sync-concept` |
 | [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones           |
-| [broadcast-input/](backlog/broadcast-input/) _(folder form)_                                           | Synchronised input across multiple terminals simultaneously — first folder-form concept + mockups      |
+| [broadcast-input.html](backlog/broadcast-input.html)                                                   | Synchronised input across multiple terminals simultaneously                                            |
 | [cross-platform-testing.md](backlog/cross-platform-testing.md)                                         | Platform-divergent test modules and `XPLAT-*` identifiers for CI                                       |
-| [embedded-unix-windows/](backlog/embedded-unix-windows/) _(folder form)_                               | Bundle BusyBox-w32 + Unix tools with the Windows build                                                 |
-| [ftp-client/](backlog/ftp-client/) _(folder form)_                                                     | FTP client sessions (distinct from the embedded FTP server)                                            |
-| [macro-recording/](backlog/macro-recording/) _(folder form)_                                           | Record and replay terminal input sequences                                                             |
+| [embedded-unix-windows.html](backlog/embedded-unix-windows.html)                                       | Bundle BusyBox-w32 + Unix tools with the Windows build                                                 |
+| [ftp-client.html](backlog/ftp-client.html)                                                             | FTP client sessions (distinct from the embedded FTP server)                                            |
+| [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                             |
 | [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                               |
-| [remote-agent-update-strategy/](backlog/remote-agent-update-strategy/) _(folder form)_                 | Deliver updated agent binaries to remote hosts                                                         |
-| [shell-context-menu-integration/](backlog/shell-context-menu-integration/) _(folder form)_             | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                              |
-| [ssh-jump-host/](backlog/ssh-jump-host/) _(folder form)_                                               | First-class ProxyJump / gateway chains in the connection editor                                        |
+| [remote-agent-update-strategy.html](backlog/remote-agent-update-strategy.html)                         | Deliver updated agent binaries to remote hosts                                                         |
+| [shell-context-menu-integration.html](backlog/shell-context-menu-integration.html)                     | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                              |
+| [ssh-jump-host.html](backlog/ssh-jump-host.html)                                                       | First-class ProxyJump / gateway chains in the connection editor                                        |
 
 ---
 
@@ -101,12 +108,12 @@ Not started yet — realistic and planned for the near to medium term.
 Speculative features, long-horizon research, or low-priority legacy protocols.
 These may eventually be implemented, but there is no active plan.
 
-| Document                                                          | Summary                                           | Why future                                          |
-| ----------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
-| [package-manager/](future/package-manager/) _(folder form)_       | Plugin/tool repository with dependency resolution | Blocked on plugin system                            |
-| [plugin-system/](future/plugin-system/) _(folder form)_           | Dynamic extension API (Rust + JS)                 | Very high complexity, no active demand              |
-| [rdp-sessions/](future/rdp-sessions/) _(folder form)_             | Embedded RDP client sessions                      | Requires native RDP library or FreeRDP binding      |
-| [remote-client-mode/](future/remote-client-mode/) _(folder form)_ | termiHub as a browser/iPad app via WebSocket      | Significant architectural change                    |
-| [rlogin-rsh.md](future/rlogin-rsh.md)                             | Legacy BSD rlogin/rsh protocol support            | Superseded by SSH; rarely needed                    |
-| [vnc-sessions/](future/vnc-sessions/) _(folder form)_             | Embedded noVNC client with WebSocket-to-TCP proxy | High complexity, niche use case                     |
-| [xdmcp-sessions.md](future/xdmcp-sessions.md)                     | XDMCP remote desktop sessions                     | Requires X11 server embedding; very high complexity |
+| Document                                                  | Summary                                           | Why future                                          |
+| --------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
+| [package-manager.html](future/package-manager.html)       | Plugin/tool repository with dependency resolution | Blocked on plugin system                            |
+| [plugin-system.html](future/plugin-system.html)           | Dynamic extension API (Rust + JS)                 | Very high complexity, no active demand              |
+| [rdp-sessions.html](future/rdp-sessions.html)             | Embedded RDP client sessions                      | Requires native RDP library or FreeRDP binding      |
+| [remote-client-mode.html](future/remote-client-mode.html) | termiHub as a browser/iPad app via WebSocket      | Significant architectural change                    |
+| [rlogin-rsh.md](future/rlogin-rsh.md)                     | Legacy BSD rlogin/rsh protocol support            | Superseded by SSH; rarely needed                    |
+| [vnc-sessions.html](future/vnc-sessions.html)             | Embedded noVNC client with WebSocket-to-TCP proxy | High complexity, niche use case                     |
+| [xdmcp-sessions.md](future/xdmcp-sessions.md)             | XDMCP remote desktop sessions                     | Requires X11 server embedding; very high complexity |

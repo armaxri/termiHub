@@ -564,7 +564,8 @@ async fn ssh_jump_05_monitoring_through_jump_host() {
     let mut rx = monitoring
         .subscribe()
         .await
-        .expect("SSH-JUMP-05: monitoring subscribe should succeed");
+        .expect("SSH-JUMP-05: monitoring subscribe should succeed")
+        .stats;
 
     let stats = tokio::time::timeout(Duration::from_secs(20), rx.recv())
         .await

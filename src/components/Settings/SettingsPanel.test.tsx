@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
+import { TooltipProvider } from "@/components/ui";
 import { SettingsPanel } from "./SettingsPanel";
 
 vi.mock("@/themes", () => ({
@@ -33,6 +34,8 @@ const FULL_SETTINGS: AppSettings = {
   ...SPARSE_SETTINGS,
   defaultShellIntegration: true,
   defaultX11Forwarding: true,
+  provideXServerAutomatically: true,
+  stopXServerWhenIdle: true,
   updates: { autoCheck: true },
 };
 
@@ -43,13 +46,29 @@ let root: Root;
 
 function render() {
   act(() => {
-    root.render(<SettingsPanel tabId={TAB_ID} isVisible={true} />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <SettingsPanel tabId={TAB_ID} isVisible={true} />
+      </TooltipProvider>
+    );
   });
 }
 
 function findShellIntegrationCheckbox(): HTMLInputElement | null {
   return container.querySelector(
     "[data-testid='settings-default-shell-integration']"
+  ) as HTMLInputElement | null;
+}
+
+function findProvideXServerCheckbox(): HTMLInputElement | null {
+  return container.querySelector(
+    "[data-testid='settings-provide-x-server']"
+  ) as HTMLInputElement | null;
+}
+
+function findStopXServerIdleCheckbox(): HTMLInputElement | null {
+  return container.querySelector(
+    "[data-testid='settings-stop-x-server-idle']"
   ) as HTMLInputElement | null;
 }
 
@@ -62,6 +81,15 @@ async function clickCheckbox(checkbox: HTMLInputElement) {
 
 describe("SettingsPanel — dirty state on revert to default", () => {
   beforeEach(() => {
+    // Use fake timers so the panel's 300ms debounced save (SAVE_DEBOUNCE_MS)
+    // never fires on its own during a test. With real timers, a starved parallel
+    // worker can let the debounce elapse between the two clicks of a
+    // toggle-then-revert flow: the save would rewrite `savedSettings` to the
+    // intermediate value, shifting the dirty baseline, so the revert click would
+    // wrongly leave the tab dirty. Fake timers make the flow order-independent —
+    // the debounce only advances when a test explicitly asks it to.
+    vi.useFakeTimers();
+
     globalThis.ResizeObserver = class {
       observe() {}
       unobserve() {}
@@ -89,6 +117,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     });
     container.remove();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it("clears dirty flag when setting is reverted to its last-saved value", async () => {
@@ -158,5 +187,69 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     // Dirty flag must still be true — the external update must not have reset the baseline
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+  });
+
+  it("marks settings dirty when toggling Provide X Server Automatically", async () => {
+    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    render();
+
+    const checkbox = findProvideXServerCheckbox();
+    expect(checkbox).not.toBeNull();
+    expect(checkbox!.checked).toBe(true);
+
+    // User disables auto-provisioning → dirty
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(false);
+    expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(false);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+
+    // User reverts to original (enabled) value → clean
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(true);
+    expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(true);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+  });
+
+  it("reflects consent persisted on connect in the Provide X Server toggle (#1296)", async () => {
+    // After a connect-time Enable, the backend persists
+    // provide_x_server_automatically = Some(true); the Settings toggle must show
+    // that as checked so the decision is visible and reversible in one place.
+    useAppStore.setState({
+      settings: { ...FULL_SETTINGS, provideXServerAutomatically: true },
+      savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: true },
+    });
+    render();
+    expect(findProvideXServerCheckbox()!.checked).toBe(true);
+
+    // A persisted decline (Some(false)) shows as unchecked.
+    act(() => root.unmount());
+    root = createRoot(container);
+    useAppStore.setState({
+      settings: { ...FULL_SETTINGS, provideXServerAutomatically: false },
+      savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: false },
+    });
+    render();
+    expect(findProvideXServerCheckbox()!.checked).toBe(false);
+  });
+
+  it("marks settings dirty when toggling Stop X Server When Idle", async () => {
+    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    render();
+
+    const checkbox = findStopXServerIdleCheckbox();
+    expect(checkbox).not.toBeNull();
+    expect(checkbox!.checked).toBe(true);
+
+    // User disables idle shutdown → dirty
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(false);
+    expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(false);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+
+    // User reverts to original (enabled) value → clean
+    await clickCheckbox(checkbox!);
+    expect(checkbox!.checked).toBe(true);
+    expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(true);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 });

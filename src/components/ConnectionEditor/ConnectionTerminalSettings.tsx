@@ -1,11 +1,19 @@
 import { useAppStore } from "@/store/appStore";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
+import { Input, Select, Toggle } from "@/components/ui";
 
 interface ConnectionTerminalSettingsProps {
   options: TerminalOptions;
   onChange: (options: TerminalOptions) => void;
 }
+
+/**
+ * Sentinel for the "use global default" option. Radix Select reserves the empty
+ * string to clear the selection, so an explicit non-empty value is required and
+ * mapped back to `undefined` (inherit the global setting) at the call site.
+ */
+const GLOBAL_DEFAULT = "__global__";
 
 export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerminalSettingsProps) {
   const globalSettings = useAppStore((s) => s.settings);
@@ -25,7 +33,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <label className="settings-form__field">
         <span className="settings-form__label">Font Family</span>
-        <input
+        <Input
           type="text"
           value={options.fontFamily ?? ""}
           onChange={(e) => onChange({ ...options, fontFamily: e.target.value || undefined })}
@@ -36,7 +44,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <label className="settings-form__field">
         <span className="settings-form__label">Font Size</span>
-        <input
+        <Input
           type="number"
           min={8}
           max={72}
@@ -52,7 +60,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <label className="settings-form__field">
         <span className="settings-form__label">Scrollback Buffer</span>
-        <input
+        <Input
           type="number"
           min={100}
           max={1000000}
@@ -74,40 +82,43 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <label className="settings-form__field">
         <span className="settings-form__label">Cursor Style</span>
-        <select
-          value={options.cursorStyle ?? ""}
-          onChange={(e) =>
+        <Select
+          value={options.cursorStyle ?? GLOBAL_DEFAULT}
+          onChange={(v) =>
             onChange({
               ...options,
-              cursorStyle: (e.target.value as "block" | "underline" | "bar") || undefined,
+              cursorStyle: v === GLOBAL_DEFAULT ? undefined : (v as "block" | "underline" | "bar"),
             })
           }
-        >
-          <option value="">Use global default ({globalCursorStyle})</option>
-          <option value="block">Block</option>
-          <option value="underline">Underline</option>
-          <option value="bar">Bar</option>
-        </select>
+          options={[
+            { value: GLOBAL_DEFAULT, label: `Use global default (${globalCursorStyle})` },
+            { value: "block", label: "Block" },
+            { value: "underline", label: "Underline" },
+            { value: "bar", label: "Bar" },
+          ]}
+          aria-label="Cursor Style"
+        />
       </label>
 
       <label className="settings-form__field">
         <span className="settings-form__label">Line Ending (Enter &amp; Paste)</span>
-        <select
-          value={options.lineEnding ?? ""}
-          onChange={(e) =>
+        <Select
+          value={options.lineEnding ?? GLOBAL_DEFAULT}
+          onChange={(v) =>
             onChange({
               ...options,
-              lineEnding: (e.target.value as LineEnding) || undefined,
+              lineEnding: v === GLOBAL_DEFAULT ? undefined : (v as LineEnding),
             })
           }
-        >
-          <option value="">Use global default ({lineEndingLabel(globalLineEnding)})</option>
-          {LINE_ENDING_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+          options={[
+            {
+              value: GLOBAL_DEFAULT,
+              label: `Use global default (${lineEndingLabel(globalLineEnding)})`,
+            },
+            ...LINE_ENDING_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
+          ]}
+          aria-label="Line Ending (Enter & Paste)"
+        />
         <span className="settings-form__hint">
           Sequence sent on Enter and used to normalize pasted text for this connection.
         </span>
@@ -115,14 +126,11 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <div className="settings-form__field">
         <span className="settings-form__label">Cursor Blink</span>
-        <label className="settings-panel__toggle">
-          <input
-            type="checkbox"
-            checked={options.cursorBlink ?? globalCursorBlink}
-            onChange={(e) => onChange({ ...options, cursorBlink: e.target.checked })}
-          />
-          <span className="settings-panel__toggle-slider" />
-        </label>
+        <Toggle
+          checked={options.cursorBlink ?? globalCursorBlink}
+          onCheckedChange={(v) => onChange({ ...options, cursorBlink: v })}
+          aria-label="Cursor Blink"
+        />
         <span className="settings-form__hint">
           Whether the terminal cursor blinks.
           {options.cursorBlink != null && (
@@ -139,14 +147,11 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <div className="settings-form__field">
         <span className="settings-form__label">Horizontal Scrolling</span>
-        <label className="settings-panel__toggle">
-          <input
-            type="checkbox"
-            checked={options.horizontalScrolling ?? globalHorizontalScrolling}
-            onChange={(e) => onChange({ ...options, horizontalScrolling: e.target.checked })}
-          />
-          <span className="settings-panel__toggle-slider" />
-        </label>
+        <Toggle
+          checked={options.horizontalScrolling ?? globalHorizontalScrolling}
+          onCheckedChange={(v) => onChange({ ...options, horizontalScrolling: v })}
+          aria-label="Horizontal Scrolling"
+        />
         <span className="settings-form__hint">
           Enable horizontal scrolling for this connection.
           {options.horizontalScrolling != null && (

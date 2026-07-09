@@ -5,11 +5,13 @@ import { UnlockDialog } from "./UnlockDialog";
 
 vi.mock("@/services/api", () => ({
   unlockCredentialStore: vi.fn(),
+  resetCredentialStore: vi.fn(),
 }));
 
-import { unlockCredentialStore } from "@/services/api";
+import { unlockCredentialStore, resetCredentialStore } from "@/services/api";
 
 const mockedUnlock = vi.mocked(unlockCredentialStore);
+const mockedReset = vi.mocked(resetCredentialStore);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -130,5 +132,66 @@ describe("UnlockDialog", () => {
 
     const unlockBtn = query("unlock-dialog-unlock") as HTMLButtonElement;
     expect(unlockBtn.disabled).toBe(true);
+  });
+
+  // --- G8 (#1144): corrupt store surfaces a reset affordance, not a wrong-pw loop ---
+
+  async function submitPassword(value: string) {
+    const input = query("unlock-dialog-input") as HTMLInputElement;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const unlockBtn = query("unlock-dialog-unlock") as HTMLButtonElement;
+    await act(async () => {
+      unlockBtn.click();
+    });
+  }
+
+  it("shows the reset affordance (not wrong-password) when the store is corrupt", async () => {
+    mockedUnlock.mockRejectedValueOnce({ message: "corrupt", corrupted: true });
+    act(() => {
+      root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+    });
+
+    await submitPassword("anything");
+
+    expect(query("unlock-dialog-reset")).not.toBeNull();
+    // Must NOT tell the user their password is wrong in the corruption case.
+    expect(query("unlock-dialog-error")?.textContent ?? "").not.toContain(
+      "Incorrect master password"
+    );
+  });
+
+  it("does NOT show the reset affordance on an ordinary wrong password", async () => {
+    mockedUnlock.mockRejectedValueOnce({ message: "wrong", corrupted: false });
+    act(() => {
+      root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+    });
+
+    await submitPassword("wrong-password");
+
+    expect(query("unlock-dialog-reset")).toBeNull();
+    expect(query("unlock-dialog-error")).not.toBeNull();
+  });
+
+  it("reset affordance calls resetCredentialStore and closes the dialog", async () => {
+    mockedUnlock.mockRejectedValueOnce({ message: "corrupt", corrupted: true });
+    mockedReset.mockResolvedValueOnce(undefined);
+    const onOpenChange = vi.fn();
+    act(() => {
+      root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
+    });
+
+    await submitPassword("anything");
+
+    const resetBtn = query("unlock-dialog-reset") as HTMLButtonElement;
+    await act(async () => {
+      resetBtn.click();
+    });
+
+    expect(mockedReset).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

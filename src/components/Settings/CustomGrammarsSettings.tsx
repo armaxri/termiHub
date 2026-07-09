@@ -5,6 +5,7 @@ import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import { registerCustomGrammars } from "@/utils/monacoCustomLanguages";
 import type { CustomLanguageGrammar } from "@/types/connection";
+import { Button, Tooltip } from "@/components/ui";
 
 interface CustomGrammarsSettingsProps {
   visibleFields?: Set<string>;
@@ -170,14 +171,15 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
               <h3 className="settings-panel__section-title">Imported Grammars</h3>
               {!draft && (
                 <div className="settings-panel__section-actions">
-                  <button
-                    className="settings-panel__btn settings-panel__btn--primary"
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={<FileCode size={14} />}
                     onClick={() => void handleImport()}
                     data-testid="custom-grammar-import-btn"
                   >
-                    <FileCode size={14} />
                     Import Grammar File
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -227,21 +229,23 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                     placeholder="Display name"
                     data-testid="custom-grammar-name-input"
                   />
-                  <button
-                    className="settings-panel__btn settings-panel__btn--primary"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={() => void handleDraftConfirm()}
                     disabled={!draft.id.trim()}
                     data-testid="custom-grammar-confirm-btn"
                   >
                     Save
-                  </button>
-                  <button
-                    className="settings-panel__btn"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={handleDraftCancel}
                     data-testid="custom-grammar-cancel-btn"
                   >
                     Cancel
-                  </button>
+                  </Button>
                 </div>
                 {draft.error && (
                   <p
@@ -269,14 +273,16 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                     >
                       {g.name}
                     </span>
-                    <button
-                      className="settings-panel__file-remove"
-                      onClick={() => handleRemove(g.id)}
-                      title={`Remove grammar "${g.name}"`}
-                      data-testid={`custom-grammar-remove-${g.id}`}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <Tooltip content={`Remove grammar "${g.name}"`}>
+                      <button
+                        className="settings-panel__file-remove"
+                        onClick={() => handleRemove(g.id)}
+                        aria-label={`Remove grammar "${g.name}"`}
+                        data-testid={`custom-grammar-remove-${g.id}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </Tooltip>
                   </li>
                 ))}
               </ul>
