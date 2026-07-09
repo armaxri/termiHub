@@ -14,7 +14,7 @@ use crate::config::expand_config_value;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
-use super::handler::{ForwardedChannelRegistry, SshSession, TermiHubHandler};
+use super::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession, TermiHubHandler};
 use super::legacy_pem;
 
 /// Connect to an SSH server, perform handshake, and authenticate.
@@ -42,6 +42,20 @@ pub async fn connect_and_authenticate_cancellable(
     config: &SshConfig,
     cancel: Option<CancellationToken>,
 ) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    let (session, registry, _liveness) =
+        connect_and_authenticate_cancellable_with_liveness(config, cancel).await?;
+    Ok((session, registry))
+}
+
+/// Like [`connect_and_authenticate_cancellable`], but also returns the native
+/// session-[`LivenessWatch`] (#1297) so a tunnel supervisor can observe true
+/// session death (transport failure / peer disconnect / keepalive miss) without
+/// polling a throwaway channel. Non-tunnel callers use the plain variant, which
+/// drops the watch.
+pub async fn connect_and_authenticate_cancellable_with_liveness(
+    config: &SshConfig,
+    cancel: Option<CancellationToken>,
+) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
     let timeout = config.connect_timeout();
     let connect = async {
         tokio::time::timeout(timeout, do_connect_and_authenticate(config))
@@ -70,11 +84,11 @@ pub async fn connect_and_authenticate_cancellable(
 
 /// Establish the TCP connection, run the SSH handshake, and authenticate.
 ///
-/// Kept separate so [`connect_and_authenticate_cancellable`] can wrap it in a
-/// timeout and an optional cancellation `select!`.
+/// Kept separate so [`connect_and_authenticate_cancellable_with_liveness`] can
+/// wrap it in a timeout and an optional cancellation `select!`.
 async fn do_connect_and_authenticate(
     config: &SshConfig,
-) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
     let addr = format!("{}:{}", config.host, config.port);
 
     // Async connect so the surrounding connect timeout / cancellation token can
@@ -100,18 +114,20 @@ async fn do_connect_and_authenticate(
 async fn handshake_and_authenticate<S>(
     config: &SshConfig,
     stream: S,
-) -> Result<(SshSession, ForwardedChannelRegistry), SessionError>
+) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let russh_config = Arc::new(russh::client::Config {
-        // SSH-level keepalives: send every 30 s, abort after 3 unanswered.
+        // SSH-level keepalives: send every 30 s, abort after 3 unanswered. On
+        // exhaustion russh ends the session task and fires the handler's
+        // `disconnected`, which drives the native liveness watch (#1297).
         keepalive_interval: Some(Duration::from_secs(30)),
         keepalive_max: 3,
         ..Default::default()
     });
 
-    let (handler, registry) = TermiHubHandler::new();
+    let (handler, registry, liveness) = TermiHubHandler::new();
 
     let mut session = russh::client::connect_stream(russh_config, stream, handler)
         .await
@@ -119,7 +135,7 @@ where
 
     authenticate(&mut session, config).await?;
 
-    Ok((session, registry))
+    Ok((session, registry, liveness))
 }
 
 /// Establish and authenticate an SSH session over an existing forwarded channel.
@@ -138,6 +154,18 @@ pub async fn connect_and_authenticate_over_channel(
     config: &SshConfig,
     channel: russh::Channel<russh::client::Msg>,
 ) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    let (session, registry, _liveness) =
+        connect_and_authenticate_over_channel_with_liveness(config, channel).await?;
+    Ok((session, registry))
+}
+
+/// Like [`connect_and_authenticate_over_channel`], but also returns the native
+/// session-[`LivenessWatch`] (#1297) for the jump-host tunnel path. Non-tunnel
+/// jump-host callers use the plain variant, which drops the watch.
+pub async fn connect_and_authenticate_over_channel_with_liveness(
+    config: &SshConfig,
+    channel: russh::Channel<russh::client::Msg>,
+) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
     handshake_and_authenticate(config, channel.into_stream()).await
 }
 
