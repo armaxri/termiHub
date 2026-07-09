@@ -140,12 +140,25 @@ impl XServerProvisionerImpl {
             .app
             .try_state::<ConnectionManager>()
             .and_then(|m| m.get_settings().provide_x_server_automatically);
-        // Side-effect-free probe: a server already reachable means adoption with
-        // no download, so no consent is needed.
-        let server_present = matches!(
-            current_status(&self.manager).state,
-            XServerState::Running | XServerState::Adopted
-        );
+
+        // A prompt is only possible on a Windows, undecided connect — expressed
+        // via the same authority function with `server_present = false`. Only
+        // then is it worth probing for an already-running server (which would
+        // make it an adoption, not a download). The probe does a brief blocking
+        // TCP check, so run it off the async reactor.
+        let server_present = if connect_consent_required(platform, provide_setting, false) {
+            let manager = self.manager.clone();
+            tokio::task::spawn_blocking(move || {
+                matches!(
+                    current_status(&manager).state,
+                    XServerState::Running | XServerState::Adopted
+                )
+            })
+            .await
+            .unwrap_or(false)
+        } else {
+            false
+        };
 
         if !connect_consent_required(platform, provide_setting, server_present) {
             return ConsentGate::Proceed;
