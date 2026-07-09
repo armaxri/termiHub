@@ -481,19 +481,7 @@ Fixed strings — match exactly.
 | `workspace-save-current-btn` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
 | `workspace-sidebar` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
 | `x-server-connect-consent-body` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
-| `x-server-connect-consent-dialog` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
-| `x-server-connect-consent-enable` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
-| `x-server-connect-consent-not-now` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
-| `x-server-connect-consent-progress` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
-| `x-server-setup-cancel` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
-| `x-server-setup-close` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
 | `x-server-setup-consent` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
-| `x-server-setup-dialog` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
-| `x-server-setup-enable` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
-| `x-server-setup-error` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
-| `x-server-setup-install-dep` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
-| `x-server-setup-progress` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
-| `x-server-setup-retry` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
 | `zoom-context-clear` | `src/components/SplitView/SplitView.tsx` |
 | `zoom-context-copy` | `src/components/SplitView/SplitView.tsx` |
 | `zoom-context-horizontal-scroll` | `src/components/SplitView/SplitView.tsx` |
@@ -509,16 +497,24 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | pattern | example template | source |
 | ------- | ---------------- | ------ |
 | `*-*` | `${rowTestIdPrefix}-${index}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
+| `*-close` | `${testIdPrefix}-close` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-copy` | `${testIdPrefix}-copy` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-name` | `${testIdPrefix}-copy-name` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-path` | `${testIdPrefix}-copy-path` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-cut` | `${testIdPrefix}-cut` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-delete` | `${testIdPrefix}-delete` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-dialog` | `${testIdPrefix}-dialog` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-download` | `${testIdPrefix}-download` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-edit` | `${testIdPrefix}-edit` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-enable` | `${testIdPrefix}-enable` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-error` | `${testIdPrefix}-error` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-install-dep` | `${testIdPrefix}-install-dep` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-not-now` | `${testIdPrefix}-not-now` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-open` | `${testIdPrefix}-open` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-paste` | `${testIdPrefix}-paste` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-progress` | `${testIdPrefix}-progress` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-rename` | `${testIdPrefix}-rename` | `src/components/Sidebar/FileBrowser.tsx` |
+| `*-retry` | `${testIdPrefix}-retry` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-share-ftp` | `${testIdPrefix}-share-ftp` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-share-http` | `${testIdPrefix}-share-http` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-share-tftp` | `${testIdPrefix}-share-tftp` | `src/components/Sidebar/FileBrowser.tsx` |

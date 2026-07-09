@@ -983,6 +983,12 @@ server automatically" left at its default/undecided):
    aborts promptly rather than hanging.
 5. Sanity: a non-Windows connect, or a connect with a server already running, is
    unaffected apart from gaining progress feedback (no prompt).
+6. Force a provisioning **failure** after choosing Enable (e.g. block the VcXsrv
+   download, or use a fault-injected environment). Confirm the dialog now shows a
+   **recoverable error screen** with **Retry** — not a toast-and-close (#1296) —
+   and that Retry re-provisions in place; on a missing-dependency failure an
+   **Install** action appears. The screen must match the manual "X Servers → Set
+   up" dialog (`XServerSetupContent.tsx`).
 
 #### Monitoring auto-reconnect on a mid-stream drop (#1230)
 
