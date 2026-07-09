@@ -283,6 +283,23 @@ pub struct XServerProgress {
 /// The Tauri event name for X server provisioning progress.
 pub const X_SERVER_PROGRESS_EVENT: &str = "x-server-progress";
 
+/// Emitted when opening an X11-forwarding SSH connection needs the user to
+/// consent to downloading the X dependency before provisioning proceeds (#1116).
+///
+/// The connect pauses after this event until the frontend replies via the
+/// `x_server_connect_consent_reply` command with the matching [`id`](Self::id).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XServerConsentRequest {
+    /// Opaque id correlating this prompt with the reply command that resolves it.
+    pub id: String,
+    /// Host platform, so the UI can tailor the consent copy (download size, name).
+    pub platform: XServerPlatform,
+}
+
+/// The Tauri event name for a connect-time X server download-consent prompt.
+pub const X_SERVER_CONSENT_NEEDED_EVENT: &str = "x-server-consent-needed";
+
 #[cfg(test)]
 mod tests {
     use super::*;

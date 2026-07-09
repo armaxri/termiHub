@@ -7,7 +7,7 @@ import { LogEntry } from "@/types/terminal";
 import { TunnelState, TunnelStats } from "@/types/tunnel";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
-import { XServerProgress } from "@/types/xserver";
+import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
 import type { TransferProgress } from "@/services/api";
 
 interface TerminalOutputPayload {
@@ -562,6 +562,21 @@ export async function onXServerProgress(
   callback: (progress: XServerProgress) => void
 ): Promise<UnlistenFn> {
   return await listen<XServerProgress>("x-server-progress", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to connect-time X server download-consent prompts (#1116). Emitted
+ * when opening an X11-forwarding SSH connection would need to download the X
+ * dependency and the user has not consented yet; the connect pauses until the
+ * frontend replies via `xServerConnectConsentReply` with the payload `id`.
+ * Returns the unlisten handle.
+ */
+export async function onXServerConsentNeeded(
+  callback: (request: XServerConsentRequest) => void
+): Promise<UnlistenFn> {
+  return await listen<XServerConsentRequest>("x-server-consent-needed", (event) => {
     callback(event.payload);
   });
 }
