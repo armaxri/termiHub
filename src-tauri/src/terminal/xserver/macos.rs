@@ -167,17 +167,33 @@ pub(super) fn launch_xquartz_and_wait(cancel: Option<&CancellationToken>) {
 /// itself); otherwise returns the actionable download guidance the UI surfaces as
 /// an "Open xquartz.org" action. Never installs anything silently.
 pub(crate) async fn install_xquartz() -> Result<(), XServerError> {
-    if xquartz_installed() {
-        return Ok(());
+    match decide_install_action(xquartz_installed(), super::binary_on_path("brew")) {
+        InstallAction::AlreadyInstalled => Ok(()),
+        InstallAction::InstallViaBrew => run_brew_install().await,
+        // Homebrew absent → guide the user through installing it (the UI opens a
+        // terminal with the installer), never a hosted/silent install (#1117).
+        InstallAction::HomebrewRequired => Err(XServerError::homebrew_required()),
     }
-    if !super::binary_on_path("brew") {
-        // No automated path available (the hosted `.pkg` installer is a follow-up)
-        // → hand back post-click download guidance rather than doing anything
-        // silently. Distinct from the detect-path `xquartz_missing` (no brew
-        // command, since brew is what's missing here).
-        return Err(XServerError::xquartz_manual_install_required());
-    }
-    run_brew_install().await
+}
+
+/// What [`install_xquartz`] should do given the detected state. Pure over its
+/// inputs so the branch is unit-testable without touching the real filesystem or
+/// `PATH`, matching this module's injectable-detection style.
+#[derive(Debug, PartialEq, Eq)]
+enum InstallAction {
+    /// XQuartz is already present — nothing to do.
+    AlreadyInstalled,
+    /// XQuartz missing but Homebrew present — install the cask automatically.
+    InstallViaBrew,
+    /// XQuartz missing and Homebrew absent — guide the user through installing
+    /// Homebrew first (#1117), rather than hosting a `.pkg` or installing
+    /// silently.
+    HomebrewRequired,
+}
+
+/// Decide how to satisfy the XQuartz dependency from the two detected booleans.
+fn decide_install_action(_xquartz_installed: bool, _brew_present: bool) -> InstallAction {
+    todo!("decide_install_action — implemented in the follow-up commit")
 }
 
 /// Run `brew install --cask xquartz` off the async reactor, mapping a spawn
@@ -433,5 +449,29 @@ mod tests {
     #[test]
     fn brew_install_args_target_the_xquartz_cask() {
         assert_eq!(BREW_INSTALL_ARGS, ["install", "--cask", "xquartz"]);
+    }
+
+    // ── Install decision (#1117) ─────────────────────────────────────────────
+    //
+    // `decide_install_action` is pure over its two detected booleans, so the
+    // brew-absent → guided-Homebrew branch is unit-testable on any CI host
+    // without a real XQuartz / Homebrew install.
+
+    #[test]
+    fn already_installed_short_circuits_regardless_of_brew() {
+        assert_eq!(decide_install_action(true, true), InstallAction::AlreadyInstalled);
+        assert_eq!(decide_install_action(true, false), InstallAction::AlreadyInstalled);
+    }
+
+    #[test]
+    fn missing_xquartz_with_brew_installs_via_brew() {
+        assert_eq!(decide_install_action(false, true), InstallAction::InstallViaBrew);
+    }
+
+    #[test]
+    fn missing_xquartz_without_brew_requires_homebrew_first() {
+        // The core #1117 change: no Homebrew → guide its install rather than the
+        // old dead-end manual-download error.
+        assert_eq!(decide_install_action(false, false), InstallAction::HomebrewRequired);
     }
 }

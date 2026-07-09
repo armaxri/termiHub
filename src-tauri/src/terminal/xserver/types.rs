@@ -162,27 +162,18 @@ impl XServerError {
         }
     }
 
-    /// macOS: the user asked to install XQuartz but no automated installer is
-    /// available (Homebrew absent, and the hosted `.pkg` path is a follow-up).
+    /// macOS: XQuartz isn't installed and Homebrew — the automatic installer —
+    /// is absent, so the user asked to install XQuartz but there is no `brew` to
+    /// run it with (#1117).
     ///
-    /// Distinct from the detect-path [`xquartz_missing`](Self::xquartz_missing):
-    /// this is a *post-click* response, so its message is phrased accordingly and
-    /// it carries **no** `install_command` (there is no working one without
-    /// Homebrew) — only the download guidance the UI turns into "Open xquartz.org".
-    pub fn xquartz_manual_install_required() -> Self {
-        XServerError::DependencyMissing {
-            message: "XQuartz can't be installed automatically because Homebrew was not found. \
-                Download XQuartz from https://www.xquartz.org, then log out and back in so \
-                DISPLAY is set."
-                .to_string(),
-            dependency: "XQuartz".to_string(),
-            install_hint: Some(
-                "Download XQuartz from https://www.xquartz.org, or install Homebrew first and \
-                retry the automatic install."
-                    .to_string(),
-            ),
-            install_command: None,
-        }
+    /// Rather than hosting/redistributing a notarized `.pkg`, the UI guides the
+    /// user through installing Homebrew first: it opens a local terminal tab
+    /// pre-loaded with `install_command` (the official installer), then a retry
+    /// re-detects `brew` and installs the cask. `dependency: "Homebrew"` is the
+    /// stable discriminator the frontend branches on; if the user declines, the
+    /// hint still points at the manual xquartz.org download (help ends there).
+    pub fn homebrew_required() -> Self {
+        todo!("homebrew_required — implemented in the follow-up commit")
     }
 
     /// macOS: XQuartz is installed but no server is running.
@@ -333,19 +324,28 @@ mod tests {
     }
 
     #[test]
-    fn manual_install_required_has_download_guidance_but_no_brew_command() {
-        // Post-click "no automated installer" response must not hand back a brew
-        // command (Homebrew is absent in this branch) yet must still guide the
-        // download.
-        match XServerError::xquartz_manual_install_required() {
+    fn homebrew_required_carries_the_installer_command_and_manual_fallback() {
+        // Brew-absent post-click response: `dependency: "Homebrew"` (the frontend
+        // discriminator), `install_command` = the official Homebrew installer the
+        // guided terminal runs, and a hint that still points at the manual
+        // xquartz.org download for a user who declines Homebrew.
+        match XServerError::homebrew_required() {
             XServerError::DependencyMissing {
                 dependency,
                 install_hint,
                 install_command,
                 ..
             } => {
-                assert_eq!(dependency, "XQuartz");
-                assert_eq!(install_command, None);
+                assert_eq!(dependency, "Homebrew");
+                let cmd = install_command.expect("Homebrew installer command must be present");
+                assert!(
+                    cmd.contains("curl"),
+                    "installer command should curl the script: {cmd}"
+                );
+                assert!(
+                    cmd.contains("Homebrew/install"),
+                    "installer command should fetch the official Homebrew installer: {cmd}"
+                );
                 assert!(install_hint.unwrap_or_default().contains("xquartz.org"));
             }
             other => panic!("expected DependencyMissing, got {other:?}"),

@@ -42,6 +42,12 @@ interface XServerSetupContentProps {
   onRetry: (event: React.MouseEvent<HTMLButtonElement>) => void | Promise<void>;
   /** Install the missing dependency (dependencyMissing only). Async for feedback. */
   onInstallDependency: () => Promise<void>;
+  /**
+   * Guide a Homebrew install for the macOS brew-absent case (#1117): opens a
+   * local terminal tab pre-loaded with `command` (the official installer). Only
+   * used when the error is the `dependency: "Homebrew"` variant.
+   */
+  onGuideHomebrewInstall: (command: string) => void | Promise<void>;
   /** Close from the error screen. */
   onClose: () => void;
 }
