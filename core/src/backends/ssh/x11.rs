@@ -169,6 +169,45 @@ pub fn x_server_provisioner() -> Option<Arc<dyn XServerProvisioner>> {
     PROVISIONER.get().cloned()
 }
 
+/// First X11 display number to try when allocating a remote forward.
+///
+/// Matches OpenSSH's default `X11DisplayOffset`, keeping the forwarded display
+/// out of the range a directly-attached X server would use (`:0`, `:1`).
+const X11_DISPLAY_OFFSET: u16 = 10;
+
+/// How many consecutive display numbers to probe before giving up (ports
+/// `6000 + X11_DISPLAY_OFFSET ..`). Bounds the scan so a host with every X11
+/// port taken fails promptly instead of walking thousands of ports.
+const X11_MAX_DISPLAYS: u16 = 64;
+
+/// Request a remote X11 listener on a conventional display port.
+///
+/// Scans display numbers `X11_DISPLAY_OFFSET .. + X11_MAX_DISPLAYS`, asking the
+/// SSH server to bind `localhost:6000+display` for each until one succeeds.
+/// Returns `(bound_port, display_number)` with `bound_port == 6000 + display`.
+///
+/// A specific-port `tcpip_forward` request is answered per RFC 4254 with **no**
+/// port (russh returns `0`), so — unlike a `port 0` request whose reply carries
+/// the actual high ephemeral port — success just means the server bound exactly
+/// the port we asked for. We therefore key off the requested port, yielding a
+/// small standard display number every X client accepts (issue #1304).
+async fn request_x11_display_forward(session: &SshSession) -> Result<(u32, u32), SessionError> {
+    for display_num in X11_DISPLAY_OFFSET..(X11_DISPLAY_OFFSET + X11_MAX_DISPLAYS) {
+        let port = 6000 + display_num as u32;
+        match session.tcpip_forward("localhost", port).await {
+            Ok(_) => return Ok((port, display_num as u32)),
+            Err(e) => {
+                debug!("X11 forwarding: display :{display_num} (port {port}) unavailable ({e})");
+            }
+        }
+    }
+    Err(SessionError::SpawnFailed(format!(
+        "X11 tcpip-forward failed: no free X11 display in :{}..:{}",
+        X11_DISPLAY_OFFSET,
+        X11_DISPLAY_OFFSET + X11_MAX_DISPLAYS
+    )))
+}
+
 /// Manages X11 forwarding over an SSH tunnel.
 pub struct X11Forwarder {
     alive: Arc<AtomicBool>,
@@ -218,12 +257,15 @@ impl X11Forwarder {
             );
         }
 
-        // Request the SSH server to listen for X11 connections on a random port.
-        let bound_port = session.tcpip_forward("localhost", 0).await.map_err(|e| {
-            SessionError::SpawnFailed(format!("X11 tcpip-forward request failed: {e}"))
-        })?;
-
-        let display_number = bound_port.saturating_sub(6000);
+        // Request the SSH server to listen for X11 connections on a conventional
+        // X11 display port. Mirroring OpenSSH (X11DisplayOffset / X11MaxDisplays),
+        // we scan display numbers from the offset and bind `6000 + display`, so
+        // the remote `$DISPLAY` is a small, standard number (`:10`, `:11`, …) that
+        // every X client accepts. Deriving the display from an arbitrary ephemeral
+        // port (a `port 0` request) instead yields values like `:26961` that
+        // stricter X clients refuse to connect to — so the forwarded X11
+        // connection is never opened and no channel reaches this forwarder (#1304).
+        let (bound_port, display_number) = request_x11_display_forward(session).await?;
         info!(
             "X11 forwarding: remote listening on port {} (display :{})",
             bound_port, display_number
