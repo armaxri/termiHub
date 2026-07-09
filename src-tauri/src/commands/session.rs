@@ -366,7 +366,10 @@ pub async fn session_monitoring_set_interval(
     interval_ms: u64,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
-    info!(session_id, interval_ms, "Setting session monitoring interval");
+    info!(
+        session_id,
+        interval_ms, "Setting session monitoring interval"
+    );
     manager
         .set_session_monitoring_interval(&session_id, interval_ms)
         .await
