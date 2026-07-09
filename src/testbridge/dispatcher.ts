@@ -124,7 +124,11 @@ function clickSequence(el: Element, x: number, y: number): void {
  * Radix portals its content, so options are searched in both the bridge root and
  * the owning document (where the portal lands under `<body>`).
  */
-function selectRadixOption(root: ParentNode, trigger: Element, value: string): string | null {
+async function selectRadixOption(
+  root: ParentNode,
+  trigger: Element,
+  value: string
+): Promise<string | null> {
   const escaped =
     typeof CSS !== "undefined" && typeof CSS.escape === "function"
       ? CSS.escape(value)
@@ -144,9 +148,16 @@ function selectRadixOption(root: ParentNode, trigger: Element, value: string): s
     new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
   );
 
-  // When the option has mounted, click it — otherwise return an error message so
-  // the harness (which wraps `select` in a retry) can try again on the next poll.
-  const option = findOption();
+  // Radix portals the listbox content asynchronously (open-state re-render +
+  // portal mount + position effect), so the option is usually not in the DOM on
+  // the same tick. Poll across a bounded number of frames before giving up — the
+  // live Python bridge issues a single `select` with no retry, so waiting here is
+  // what makes one call sufficient (SELECT_MOUNT_FRAMES × ~2 rAF ≈ up to ~1s).
+  let option = findOption();
+  for (let i = 0; i < SELECT_MOUNT_FRAMES && !option; i++) {
+    await nextFrame();
+    option = findOption();
+  }
   if (!option) {
     return `option "${value}" not found in the open Radix listbox`;
   }
@@ -154,6 +165,9 @@ function selectRadixOption(root: ParentNode, trigger: Element, value: string): s
   clickSequence(option, optAnchor.x, optAnchor.y);
   return null;
 }
+
+/** Frames to wait for a Radix listbox option to portal-mount before failing. */
+const SELECT_MOUNT_FRAMES = 30;
 
 /** Named DOM keys whose `code` / legacy `keyCode` aren't derivable from the char. */
 const NAMED_KEYS: Record<string, { code: string; keyCode: number }> = {
@@ -473,7 +487,7 @@ export async function dispatchCommand(
       // lands on the button trigger, not a native <select>. Drive it like a real
       // user — open the listbox, then click the option whose `data-value` matches.
       if (el.classList.contains("ui-select__trigger")) {
-        const err = selectRadixOption(deps.root, el, command.value);
+        const err = await selectRadixOption(deps.root, el, command.value);
         return err ? fail("select", err) : ok("select");
       }
 

@@ -416,12 +416,23 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
         Some(ref h) if h.starts_with('/') => {
             #[cfg(unix)]
             {
-                if std::path::Path::new(h).exists()
-                    || std::path::Path::new(&format!("{h}:{display_number}")).exists()
-                {
+                // Connect to whichever socket file actually exists. A bare `<h>`
+                // socket is used directly; XQuartz's launchd socket instead
+                // carries the display suffix (`<h>:<N>`, e.g. `.../org.xquartz:0`)
+                // with no bare file, so we must use that path — connecting to the
+                // bare `<h>` fails with ENOENT (#1311).
+                let with_display = format!("{h}:{display_number}");
+                let socket = if std::path::Path::new(h).exists() {
+                    Some(h.clone())
+                } else if std::path::Path::new(&with_display).exists() {
+                    Some(with_display)
+                } else {
+                    None
+                };
+                if let Some(socket_path) = socket {
                     return LocalXServerInfo {
                         display_number,
-                        connection: LocalXConnection::UnixSocket(h.clone()),
+                        connection: LocalXConnection::UnixSocket(socket_path),
                     };
                 }
             }
@@ -621,6 +632,43 @@ mod tests {
     #[test]
     fn parse_display_empty() {
         assert!(parse_display("").is_none());
+    }
+
+    /// XQuartz's launchd `DISPLAY` is `<dir>/org.xquartz:0`, and the actual
+    /// socket file carries the `:0` suffix — there is no bare `<dir>/org.xquartz`
+    /// socket. The resolved Unix socket must point at the file that exists, or
+    /// the forwarder connects to a missing path and X11 forwarding fails with
+    /// ENOENT (#1311).
+    #[cfg(unix)]
+    #[test]
+    fn xquartz_launchd_socket_resolves_with_display_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("org.xquartz");
+        let base = base.to_str().unwrap().to_string();
+        let socket_with_suffix = format!("{base}:0");
+        std::fs::File::create(&socket_with_suffix).unwrap();
+
+        let info = info_from_parsed(Some(base), 0);
+        match info.connection {
+            LocalXConnection::UnixSocket(path) => assert_eq!(path, socket_with_suffix),
+            other => panic!("expected UnixSocket at the `:0` path, got {other:?}"),
+        }
+    }
+
+    /// A bare Unix socket at the exact `DISPLAY` host path is still used as-is.
+    #[cfg(unix)]
+    #[test]
+    fn bare_unix_socket_path_resolves_directly() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("Xserver");
+        let socket = socket.to_str().unwrap().to_string();
+        std::fs::File::create(&socket).unwrap();
+
+        let info = info_from_parsed(Some(socket.clone()), 3);
+        match info.connection {
+            LocalXConnection::UnixSocket(path) => assert_eq!(path, socket),
+            other => panic!("expected the bare UnixSocket path, got {other:?}"),
+        }
     }
 
     #[test]

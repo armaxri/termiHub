@@ -19,8 +19,10 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{JumpHostConfig, SshConfig};
 use crate::errors::SessionError;
 
-use super::auth::{connect_and_authenticate_cancellable, connect_and_authenticate_over_channel};
-use super::handler::{ForwardedChannelRegistry, SshSession};
+use super::auth::{
+    connect_and_authenticate_cancellable, connect_and_authenticate_over_channel_with_liveness,
+};
+use super::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use super::session_pool::{shared_gateway_pool, PooledRef, SshGateway};
 
 /// A reference-counted hold on a pooled, shared gateway session.
@@ -283,6 +285,22 @@ async fn connect_hop_over_channel(
     label: &str,
     cancel: Option<&CancellationToken>,
 ) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    let (session, registry, _liveness) =
+        connect_hop_over_channel_with_liveness(current, cfg, label, cancel).await?;
+    Ok((session, registry))
+}
+
+/// Like [`connect_hop_over_channel`], but also surfaces the target session's
+/// native [`LivenessWatch`] (#1297). Used for the **final target** hop on the
+/// tunnel path so its supervisor can observe session death; the intermediate
+/// gateway hops use the plain variant (a hop's death surfaces through the target
+/// session that rides over it).
+async fn connect_hop_over_channel_with_liveness(
+    current: &SshSession,
+    cfg: &SshConfig,
+    label: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
     run_hop_step(label, cfg.connect_timeout(), cancel, async {
         let channel = current
             .channel_open_direct_tcpip(&cfg.host, cfg.port as u32, "localhost", 0)
@@ -290,7 +308,7 @@ async fn connect_hop_over_channel(
             .map_err(|e| {
                 SessionError::SpawnFailed(format!("Jump host {label} channel failed: {e}"))
             })?;
-        connect_and_authenticate_over_channel(cfg, channel).await
+        connect_and_authenticate_over_channel_with_liveness(cfg, channel).await
     })
     .await
 }
@@ -386,8 +404,20 @@ async fn open_target_over_gateway(
     target: &SshConfig,
     cancel: Option<&CancellationToken>,
 ) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    let (session, registry, _liveness) =
+        open_target_over_gateway_with_liveness(gateway, target, cancel).await?;
+    Ok((session, registry))
+}
+
+/// Like [`open_target_over_gateway`], but also surfaces the target session's
+/// native [`LivenessWatch`] (#1297) for the jump-host tunnel path.
+async fn open_target_over_gateway_with_liveness(
+    gateway: &SshSession,
+    target: &SshConfig,
+    cancel: Option<&CancellationToken>,
+) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
     let label = format!("target {}:{}", target.host, target.port);
-    connect_hop_over_channel(gateway, target, &label, cancel).await
+    connect_hop_over_channel_with_liveness(gateway, target, &label, cancel).await
 }
 
 /// Connect to `target` through its [`SshConfig::proxy_jump`] chain, reusing a
@@ -417,6 +447,27 @@ pub async fn connect_target_through_pooled_gateway(
     ),
     SessionError,
 > {
+    let (session, registry, gateway, _liveness) =
+        connect_target_through_pooled_gateway_with_liveness(target, cancel).await?;
+    Ok((session, registry, gateway))
+}
+
+/// Like [`connect_target_through_pooled_gateway`], but also returns the target
+/// session's native [`LivenessWatch`] (#1297) so a jump-host tunnel supervisor
+/// can observe true session death without polling. Non-tunnel callers use the
+/// plain variant, which drops the watch.
+pub async fn connect_target_through_pooled_gateway_with_liveness(
+    target: &SshConfig,
+    cancel: Option<&CancellationToken>,
+) -> Result<
+    (
+        SshSession,
+        ForwardedChannelRegistry,
+        PooledRef<Arc<SshGateway>>,
+        LivenessWatch,
+    ),
+    SessionError,
+> {
     let pool = shared_gateway_pool();
     let key = gateway_pool_key(&target.proxy_jump);
 
@@ -428,8 +479,9 @@ pub async fn connect_target_through_pooled_gateway(
         })
         .await?;
 
-    let (session, registry) = open_target_over_gateway(&gateway.session, target, cancel).await?;
-    Ok((session, registry, gateway))
+    let (session, registry, liveness) =
+        open_target_over_gateway_with_liveness(&gateway.session, target, cancel).await?;
+    Ok((session, registry, gateway, liveness))
 }
 
 /// Connect to `target`, honoring its [`SshConfig::proxy_jump`] chain.
