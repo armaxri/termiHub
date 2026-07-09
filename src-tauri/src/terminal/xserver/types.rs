@@ -7,12 +7,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The `dependency` name for the macOS brew-absent error (#1117). It doubles as
-/// the discriminator the frontend branches on to show the guided-Homebrew UI
-/// (opening a terminal) instead of the generic install-and-retry, so it must
-/// stay in sync with the TS `HOMEBREW_DEPENDENCY` (`src/types/xserver.ts`).
-pub(crate) const HOMEBREW_DEPENDENCY: &str = "Homebrew";
-
 /// The official Homebrew installer one-liner (brew.sh). The macOS brew-absent
 /// path hands this back as an [`XServerError::DependencyMissing`] `install_command`
 /// so the UI can open a local terminal tab that runs it, guiding the user through
@@ -95,6 +89,29 @@ pub struct XServerStatusReport {
     pub message: Option<String>,
 }
 
+/// How the frontend should carry out the install action a [`DependencyMissing`]
+/// error offers (#1309).
+///
+/// This is the *typed* discriminator that used to be inferred from the
+/// human-facing `dependency` name (the retired `HOMEBREW_DEPENDENCY` magic
+/// string): it decides whether `install_command` is display-only or executed,
+/// so the `dependency` field can stay purely presentational. Adding a second
+/// guided-install dependency needs no new string-match — just this variant.
+///
+/// [`DependencyMissing`]: XServerError::DependencyMissing
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InstallMode {
+    /// termiHub installs the dependency itself via `x_server_install_dependency`
+    /// (e.g. `brew install --cask xquartz`). Any `install_command` is shown for
+    /// information only; the install button drives the backend command.
+    Backend,
+    /// The user must run `install_command` themselves in a terminal termiHub
+    /// opens for them — the install has interactive prompts termiHub can't drive
+    /// (e.g. the official Homebrew installer's `sudo` / RETURN steps, #1117).
+    GuidedTerminal,
+}
+
 /// A typed, actionable provisioning failure surfaced to the UI.
 ///
 /// Serializes to `{ "kind": "...", "message": "...", ... }` so the frontend can
@@ -117,8 +134,13 @@ pub enum XServerError {
     #[serde(rename_all = "camelCase")]
     DependencyMissing {
         message: String,
-        /// Dependency name (e.g. `XQuartz`).
+        /// Dependency name (e.g. `XQuartz`). Purely presentational — the UI shows
+        /// it in the message and the install button label, never branches on it.
         dependency: String,
+        /// How the frontend should run the install action (#1309): `backend`
+        /// drives `x_server_install_dependency`; `guidedTerminal` opens a terminal
+        /// running `install_command`.
+        install_mode: InstallMode,
         /// Free-text guidance (e.g. a download URL or manual step).
         #[serde(skip_serializing_if = "Option::is_none")]
         install_hint: Option<String>,
@@ -167,6 +189,7 @@ impl XServerError {
         XServerError::DependencyMissing {
             message: "XQuartz is not installed. Install it to use X11 forwarding.".to_string(),
             dependency: "XQuartz".to_string(),
+            install_mode: InstallMode::Backend,
             install_hint: Some(
                 "Download XQuartz from https://www.xquartz.org, then log out and back in so \
                 DISPLAY is set."
@@ -183,16 +206,17 @@ impl XServerError {
     /// Rather than hosting/redistributing a notarized `.pkg`, the UI guides the
     /// user through installing Homebrew first: it opens a local terminal tab
     /// pre-loaded with `install_command` (the official installer), then a retry
-    /// re-detects `brew` and installs the cask. `dependency: "Homebrew"` is the
-    /// stable discriminator the frontend branches on; if the user declines, the
-    /// hint still points at the manual xquartz.org download (help ends there).
+    /// re-detects `brew` and installs the cask. `install_mode: GuidedTerminal`
+    /// is the typed signal the frontend branches on (#1309); if the user declines,
+    /// the hint still points at the manual xquartz.org download (help ends there).
     pub fn homebrew_required() -> Self {
         XServerError::DependencyMissing {
             message: "XQuartz can't be installed automatically because Homebrew is not installed. \
                 Install Homebrew, then retry — or install XQuartz manually from \
                 https://www.xquartz.org."
                 .to_string(),
-            dependency: HOMEBREW_DEPENDENCY.to_string(),
+            dependency: "Homebrew".to_string(),
+            install_mode: InstallMode::GuidedTerminal,
             install_hint: Some(
                 "Installing XQuartz automatically needs Homebrew. \"Install Homebrew\" opens a \
                 terminal with the official installer; once it finishes, retry to install XQuartz. \
@@ -217,6 +241,7 @@ impl XServerError {
         XServerError::DependencyMissing {
             message: "No X server (Xorg/XWayland) was found.".to_string(),
             dependency: "Xorg/XWayland".to_string(),
+            install_mode: InstallMode::Backend,
             install_hint: Some(
                 "Install your distribution's Xorg or XWayland package, or run termiHub inside a \
                 graphical session."
@@ -243,6 +268,7 @@ impl XServerError {
                 X11 forwarding to use."
                 .to_string(),
             dependency: "XWayland".to_string(),
+            install_mode: InstallMode::Backend,
             install_hint: Some(
                 "Install your distribution's XWayland package (e.g. `xwayland`, `xorg-xwayland`, \
                 or `xwayland` via your package manager), then reconnect."
@@ -351,18 +377,21 @@ mod tests {
     }
 
     #[test]
-    fn homebrew_required_carries_the_installer_command_and_manual_fallback() {
-        // Brew-absent post-click response: `dependency: "Homebrew"` (the frontend
-        // discriminator), `install_command` = the official Homebrew installer the
-        // guided terminal runs, and a hint that still points at the manual
+    fn homebrew_required_uses_guided_terminal_install_mode() {
+        // Brew-absent post-click response: the typed `install_mode` (not the
+        // `dependency` name) is what the frontend branches on to open a guided
+        // terminal (#1309); `install_command` = the official Homebrew installer
+        // that terminal runs, and a hint that still points at the manual
         // xquartz.org download for a user who declines Homebrew.
         match XServerError::homebrew_required() {
             XServerError::DependencyMissing {
                 dependency,
+                install_mode,
                 install_hint,
                 install_command,
                 ..
             } => {
+                assert_eq!(install_mode, InstallMode::GuidedTerminal);
                 assert_eq!(dependency, "Homebrew");
                 let cmd = install_command.expect("Homebrew installer command must be present");
                 assert!(
@@ -390,5 +419,17 @@ mod tests {
             err.to_string(),
             "XQuartz is not installed. Install it to use X11 forwarding."
         );
+    }
+
+    #[test]
+    fn install_mode_serializes_camel_case_per_variant() {
+        // The typed discriminator crosses the IPC boundary as `installMode`
+        // (camelCase), mirroring the TS `XServerInstallMode` union (#1309): the
+        // backend-driven XQuartz install vs. the guided-terminal Homebrew install.
+        let backend = serde_json::to_string(&XServerError::xquartz_missing()).unwrap();
+        assert!(backend.contains("\"installMode\":\"backend\""));
+
+        let guided = serde_json::to_string(&XServerError::homebrew_required()).unwrap();
+        assert!(guided.contains("\"installMode\":\"guidedTerminal\""));
     }
 }

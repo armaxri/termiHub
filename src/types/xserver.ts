@@ -92,6 +92,18 @@ export type XServerErrorKind =
   | "unsupported";
 
 /**
+ * How the setup dialog should carry out the install action a `dependencyMissing`
+ * error offers (#1309). The typed signal that replaced the earlier
+ * `dependency === "Homebrew"` magic string; mirrors the Rust `InstallMode`.
+ *
+ * - `backend` — termiHub installs the dependency itself (`x_server_install_dependency`);
+ *   any `installCommand` is shown for information only.
+ * - `guidedTerminal` — the user runs `installCommand` in a terminal termiHub opens
+ *   for them (the install has interactive prompts termiHub can't drive).
+ */
+export type XServerInstallMode = "backend" | "guidedTerminal";
+
+/**
  * Typed error rejected by `x_server_ensure` / `x_server_install_dependency`.
  * Serialized from the tagged Rust `XServerError`; optional fields are omitted
  * when the backend has no value. `dependencyMissing` carries the missing
@@ -102,21 +114,22 @@ export interface XServerError {
   kind: XServerErrorKind;
   /** Human-readable failure detail. */
   message: string;
-  /** Name of the missing dependency (only for `dependencyMissing`). */
+  /**
+   * Name of the missing dependency (only for `dependencyMissing`). Presentational
+   * only — shown in the message and install-button label, never branched on.
+   */
   dependency?: string;
+  /**
+   * How to run the install action (only for `dependencyMissing`, #1309): drives
+   * whether the dialog executes {@link installCommand} in a terminal or triggers
+   * the backend installer.
+   */
+  installMode?: XServerInstallMode;
   /** Human-readable hint on how to install the dependency. */
   installHint?: string;
   /** A concrete shell command that installs the dependency, if available. */
   installCommand?: string;
 }
-
-/**
- * The `dependency` value the macOS brew-absent error carries (#1117). It doubles
- * as the discriminator the setup dialog branches on to offer the guided-Homebrew
- * install (opening a terminal) instead of the generic install-and-retry. Must
- * match the Rust `HOMEBREW_DEPENDENCY` (`src-tauri/src/terminal/xserver/types.rs`).
- */
-export const HOMEBREW_DEPENDENCY = "Homebrew";
 
 /**
  * Type guard for {@link XServerError}: an object carrying a string `kind` and a

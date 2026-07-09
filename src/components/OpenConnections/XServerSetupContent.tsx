@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Modal, Button } from "@/components/ui";
-import { HOMEBREW_DEPENDENCY, type XServerError, type XServerProgress } from "@/types/xserver";
+import type { XServerError, XServerProgress } from "@/types/xserver";
 import "./XServerSetupDialog.css";
 
 /** Which screen of the setup flow is showing. */
@@ -11,16 +11,18 @@ export type XServerSetupPhase = "consent" | "provisioning" | "error";
 const XQUARTZ_DOWNLOAD_URL = "https://www.xquartz.org";
 
 /**
- * Whether an error is the macOS brew-absent case (#1117), where the recovery is
- * a guided Homebrew install (opening a terminal with `installCommand`) rather
- * than the generic "Install {dependency}" retry.
+ * Whether the recovery is a guided-terminal install (#1309): the user runs
+ * `installCommand` in a terminal termiHub opens, rather than the generic
+ * backend "Install {dependency}" retry. Driven by the typed `installMode`, not
+ * the dependency name — so a second guided-install dependency needs no new
+ * string-match here.
  */
-function isHomebrewRequired(error: XServerError | null): error is XServerError & {
+function isGuidedTerminalInstall(error: XServerError | null): error is XServerError & {
   installCommand: string;
 } {
   return (
     error?.kind === "dependencyMissing" &&
-    error.dependency === HOMEBREW_DEPENDENCY &&
+    error.installMode === "guidedTerminal" &&
     typeof error.installCommand === "string"
   );
 }
@@ -62,9 +64,9 @@ interface XServerSetupContentProps {
   /** Install the missing dependency (dependencyMissing only). Async for feedback. */
   onInstallDependency: () => Promise<void>;
   /**
-   * Guide a Homebrew install for the macOS brew-absent case (#1117): opens a
-   * local terminal tab pre-loaded with `command` (the official installer). Only
-   * used when the error is the `dependency: "Homebrew"` variant.
+   * Run a guided-terminal install (#1309): opens a local terminal tab pre-loaded
+   * with `command` (e.g. the official Homebrew installer) so the user can drive
+   * its interactive prompts. Used for a `guidedTerminal` install-mode error.
    */
   onGuideHomebrewInstall: (command: string) => void | Promise<void>;
   /** Close from the error screen. */
@@ -190,13 +192,13 @@ export function XServerSetupContent({
   }
 
   /**
-   * The dependency-recovery action(s) on the error screen. For the macOS
-   * brew-absent case (#1117) this is a guided Homebrew install (opens a terminal
-   * with the installer) plus a manual xquartz.org fallback for a user who
-   * declines; for any other missing dependency it's the plain install-and-retry.
+   * The dependency-recovery action(s) on the error screen. A `guidedTerminal`
+   * install (#1309, today the macOS brew-absent case) opens a terminal running
+   * the installer plus a manual xquartz.org fallback for a user who declines; a
+   * `backend` install is the plain install-and-retry against the backend.
    */
   function renderInstallAction() {
-    if (isHomebrewRequired(error)) {
+    if (isGuidedTerminalInstall(error)) {
       const command = error.installCommand;
       return (
         <>
@@ -212,7 +214,7 @@ export function XServerSetupContent({
             onClick={() => onGuideHomebrewInstall(command)}
             data-testid={`${testIdPrefix}-install-homebrew`}
           >
-            Install Homebrew
+            Install {error.dependency ?? "dependency"}
           </Button>
         </>
       );

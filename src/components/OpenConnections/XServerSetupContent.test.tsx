@@ -146,7 +146,7 @@ describe("XServerSetupContent", () => {
     expect(onInstallDependency).toHaveBeenCalledTimes(1);
   });
 
-  it("offers a guided Homebrew install for the Homebrew dependencyMissing error", async () => {
+  it("offers a guided terminal install for an installMode:guidedTerminal error", async () => {
     const onGuideHomebrewInstall = vi.fn(() => Promise.resolve());
     const onInstallDependency = vi.fn(() => Promise.resolve());
     const cmd = '/bin/bash -c "$(curl -fsSL https://example.test/install.sh)"';
@@ -156,13 +156,14 @@ describe("XServerSetupContent", () => {
         kind: "dependencyMissing",
         message: "Homebrew is not installed",
         dependency: "Homebrew",
+        installMode: "guidedTerminal",
         installHint: "Install Homebrew, or install XQuartz manually from xquartz.org",
         installCommand: cmd,
       },
       onGuideHomebrewInstall,
       onInstallDependency,
     });
-    // The generic "Install <dep>" action is replaced by a guided Homebrew action
+    // The generic "Install <dep>" action is replaced by a guided install action
     // (which opens a terminal) plus a manual xquartz.org fallback link.
     expect(query("x-server-setup-install-dep")).toBeNull();
     const brew = query("x-server-setup-install-homebrew");
@@ -175,6 +176,53 @@ describe("XServerSetupContent", () => {
     });
     expect(onGuideHomebrewInstall).toHaveBeenCalledWith(cmd);
     expect(onInstallDependency).not.toHaveBeenCalled();
+  });
+
+  it("keys the guided path on installMode, not the dependency name", async () => {
+    const onGuideHomebrewInstall = vi.fn(() => Promise.resolve());
+    const onInstallDependency = vi.fn(() => Promise.resolve());
+    const cmd = "curl -fsSL https://example.test/install.sh | sh";
+    // A dependency named anything but "Homebrew": the retired magic-string branch
+    // would miss it, but the typed installMode drives the guided terminal (#1309).
+    renderContent({
+      phase: "error",
+      error: {
+        kind: "dependencyMissing",
+        message: "Toolchain is not installed",
+        dependency: "Toolchain",
+        installMode: "guidedTerminal",
+        installCommand: cmd,
+      },
+      onGuideHomebrewInstall,
+      onInstallDependency,
+    });
+    expect(query("x-server-setup-install-dep")).toBeNull();
+    const guided = query("x-server-setup-install-homebrew");
+    expect(guided?.textContent).toContain("Install Toolchain");
+    await act(async () => {
+      click("x-server-setup-install-homebrew");
+      await Promise.resolve();
+    });
+    expect(onGuideHomebrewInstall).toHaveBeenCalledWith(cmd);
+    expect(onInstallDependency).not.toHaveBeenCalled();
+  });
+
+  it("uses the backend install action when dependency is Homebrew but installMode is backend", () => {
+    // The name alone no longer forces the guided terminal: a `backend` install
+    // mode gets the plain install-and-retry, even for a "Homebrew" dependency.
+    renderContent({
+      phase: "error",
+      error: {
+        kind: "dependencyMissing",
+        message: "Homebrew is not installed",
+        dependency: "Homebrew",
+        installMode: "backend",
+        installCommand: "brew install --cask xquartz",
+      },
+    });
+    expect(query("x-server-setup-install-homebrew")).toBeNull();
+    expect(query("x-server-setup-open-xquartz")).toBeNull();
+    expect(query("x-server-setup-install-dep")?.textContent).toContain("Install Homebrew");
   });
 
   it("falls back to the raw error message when no typed error is present", () => {
