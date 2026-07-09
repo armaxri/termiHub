@@ -8,12 +8,42 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::watch;
 use tracing::debug;
 
 /// Convenience alias for the connected session handle.
 ///
-/// `Handle` is cheaply `Clone + Send + Sync` — share it freely.
+/// In russh 0.61 `Handle` is **not** `Clone` (it owns the session task's join
+/// handle and reply receiver); share it via `Arc<SshSession>`, as the pooled
+/// endpoint / gateway sessions do.
 pub type SshSession = russh::client::Handle<TermiHubHandler>;
+
+/// A watch on an SSH session's liveness (#1297).
+///
+/// Resolves once the session's russh background task has ended — a transport
+/// failure, a peer `SSH_MSG_DISCONNECT`, or keepalive exhaustion (configured at
+/// 30 s × 3 in `auth.rs`). Event-driven: [`TermiHubHandler`] fires it from russh's
+/// `disconnected` callback; and because the handler owns the sender, the sender
+/// dropping with the handler (when the session task ends) closes the channel as a
+/// backstop. Either way the tunnel supervisor observes true session death without
+/// polling a throwaway channel every ~20 s. `Clone` fans one shared pooled session
+/// out to every tunnel supervising it.
+#[derive(Clone)]
+pub struct LivenessWatch {
+    rx: watch::Receiver<bool>,
+}
+
+impl LivenessWatch {
+    /// Resolve once the session is dead. Returns immediately if it already died.
+    ///
+    /// `true` means dead — the handler flips it on disconnect. A dropped sender
+    /// (the handler was dropped without an explicit `disconnected`, e.g. the last
+    /// handle went away) makes `wait_for` return `Err` and is likewise treated as
+    /// death, so the watch never hangs a supervisor on a vanished session.
+    pub async fn dead(&mut self) {
+        let _ = self.rx.wait_for(|&dead| dead).await;
+    }
+}
 
 /// An incoming forwarded channel from the SSH server (remote-port-forward / X11).
 pub struct IncomingChannel {
@@ -35,16 +65,24 @@ pub type ForwardedChannelRegistry = Arc<Mutex<HashMap<u32, UnboundedSender<Incom
 /// Forwarded-channel notifications are routed via [`ForwardedChannelRegistry`].
 pub struct TermiHubHandler {
     pub forwarded_channel_registry: ForwardedChannelRegistry,
+    /// Fires the session-liveness watch (`true` = dead) when the session dies
+    /// (#1297). Lives in the handler — which russh owns inside the session's
+    /// background task — so `disconnected` signals explicitly, and the sender
+    /// dropping with the handler (task end) closes the channel as a backstop.
+    liveness_tx: watch::Sender<bool>,
 }
 
 impl TermiHubHandler {
-    /// Create a new handler together with the shared channel registry.
-    pub fn new() -> (Self, ForwardedChannelRegistry) {
+    /// Create a new handler together with the shared channel registry and the
+    /// session-liveness watch (#1297) the tunnel supervisor observes.
+    pub fn new() -> (Self, ForwardedChannelRegistry, LivenessWatch) {
         let registry: ForwardedChannelRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let (liveness_tx, liveness_rx) = watch::channel(false);
         let handler = Self {
             forwarded_channel_registry: registry.clone(),
+            liveness_tx,
         };
-        (handler, registry)
+        (handler, registry, LivenessWatch { rx: liveness_rx })
     }
 }
 
@@ -56,6 +94,26 @@ impl Default for TermiHubHandler {
 
 impl russh::client::Handler for TermiHubHandler {
     type Error = russh::Error;
+
+    /// Fire the session-liveness watch on session death, then preserve russh's
+    /// default disconnect semantics (#1297).
+    ///
+    /// russh calls this from the session's run loop on both death paths — a peer
+    /// `SSH_MSG_DISCONNECT` (`ReceivedDisconnect`) and a transport error /
+    /// keepalive timeout (`Error`) — so flipping the watch here surfaces true
+    /// session death to the tunnel supervisor promptly and without polling. The
+    /// returned `Result` mirrors the trait default so we don't alter how russh
+    /// treats the disconnect.
+    async fn disconnected(
+        &mut self,
+        reason: russh::client::DisconnectReason<Self::Error>,
+    ) -> Result<(), Self::Error> {
+        let _ = self.liveness_tx.send(true);
+        match reason {
+            russh::client::DisconnectReason::ReceivedDisconnect(_) => Ok(()),
+            russh::client::DisconnectReason::Error(e) => Err(e),
+        }
+    }
 
     /// Accept the server's host key without verification.
     ///
@@ -96,5 +154,77 @@ impl russh::client::Handler for TermiHubHandler {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Session-liveness watch (#1297). The watch is the native, event-driven
+    //! replacement for the tunnel supervisor's ~20 s `channel_open_session`
+    //! keepalive poll: the handler fires it from russh's `disconnected` callback
+    //! (and its `Drop` as a backstop), so these exercise both firing paths and
+    //! the live-session (never-resolve) contract without a real SSH server.
+
+    use super::*;
+    use russh::client::{DisconnectReason, Handler};
+    use std::time::Duration;
+
+    /// A live session's watch must never resolve — the supervisor keeps waiting
+    /// on it rather than tearing a healthy tunnel down.
+    #[tokio::test]
+    async fn watch_pending_while_session_alive() {
+        let (_handler, _registry, mut watch) = TermiHubHandler::new();
+        let res = tokio::time::timeout(Duration::from_millis(50), watch.dead()).await;
+        assert!(res.is_err(), "a live session must not report dead");
+    }
+
+    /// russh's `disconnected` callback (peer disconnect / transport error /
+    /// keepalive timeout) must flip the watch so the supervisor sees death.
+    #[tokio::test]
+    async fn watch_fires_on_disconnected_callback() {
+        let (mut handler, _registry, mut watch) = TermiHubHandler::new();
+        // A keepalive timeout is the silent-death case S2 targets.
+        let _ = handler
+            .disconnected(DisconnectReason::Error(russh::Error::KeepaliveTimeout))
+            .await;
+        tokio::time::timeout(Duration::from_millis(50), watch.dead())
+            .await
+            .expect("watch must resolve after disconnected fired");
+    }
+
+    /// Dropping the handler (the session task ended by any path) also resolves
+    /// the watch — the backstop so a vanished session never hangs a supervisor.
+    #[tokio::test]
+    async fn watch_fires_on_handler_drop() {
+        let (handler, _registry, mut watch) = TermiHubHandler::new();
+        drop(handler);
+        tokio::time::timeout(Duration::from_millis(50), watch.dead())
+            .await
+            .expect("watch must resolve after the handler is dropped");
+    }
+
+    /// A shared pooled session fans out to many supervisors: a cloned watch must
+    /// observe the same death (`watch::Receiver` is multi-consumer).
+    #[tokio::test]
+    async fn cloned_watch_also_fires() {
+        let (mut handler, _registry, watch) = TermiHubHandler::new();
+        let mut clone = watch.clone();
+        let _ = handler
+            .disconnected(DisconnectReason::Error(russh::Error::KeepaliveTimeout))
+            .await;
+        tokio::time::timeout(Duration::from_millis(50), clone.dead())
+            .await
+            .expect("a cloned watch must also see the session die");
+    }
+
+    /// `disconnected` must preserve russh's default result so we don't change how
+    /// russh treats the disconnect: `Error` propagates, `ReceivedDisconnect` is Ok.
+    #[tokio::test]
+    async fn disconnected_preserves_default_result() {
+        let (mut handler, _registry, _watch) = TermiHubHandler::new();
+        let err = handler
+            .disconnected(DisconnectReason::Error(russh::Error::KeepaliveTimeout))
+            .await;
+        assert!(err.is_err(), "an Error disconnect must propagate the error");
     }
 }
