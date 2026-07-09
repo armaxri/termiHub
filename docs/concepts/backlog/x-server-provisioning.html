@@ -44,6 +44,10 @@
         <path d="M2 8h20" />
         <path d="M6 4v4" />
       </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 17 6-6-6-6" />
+        <path d="M12 19h8" />
+      </symbol>
       <symbol id="i-power" viewBox="0 0 24 24">
         <path d="M12 2v10" />
         <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
@@ -338,6 +342,30 @@ flowchart LR
               <button class="btn">Not now</button>
             </div>
           </div>
+
+          <div class="mockup-note" style="margin-top: 16px">
+            macOS, Homebrew absent — the automatic install needs Homebrew, so termiHub guides its
+            install rather than hosting a <code>.pkg</code>. "Install Homebrew" opens a local
+            terminal tab pre-loaded with the official installer command; the user drives the real
+            <code>sudo</code> / RETURN prompts, then termiHub re-detects <code>brew</code> and
+            continues. Declining leaves only the manual xquartz.org path.
+          </div>
+          <div class="menu" style="width: 360px">
+            <div class="menu__title">
+              <svg class="li"><use href="#i-app-window" /></svg> Homebrew required
+            </div>
+            <div class="menu__row" style="display: block; color: var(--text-secondary)">
+              Installing XQuartz automatically needs <strong>Homebrew</strong>, which isn't
+              installed. Open a terminal and install it now?
+            </div>
+            <div class="menu__footer">
+              <button class="btn btn--primary">
+                <svg class="li"><use href="#i-terminal" /></svg> Install Homebrew
+              </button>
+              <button class="btn btn--link">Open xquartz.org</button>
+              <button class="btn">Not now</button>
+            </div>
+          </div>
         </div>
 
         <!-- Mockup 2 -->
@@ -507,7 +535,7 @@ flowchart LR
     subgraph MAC[macOS]
         M1[No embeddable server] --> M2[Detect XQuartz]
         M2 -->|present| M3[open -a XQuartz]
-        M2 -->|missing| M4[Guided install<br/>brew / .pkg / link]
+        M2 -->|missing| M4[Guided install<br/>brew present: brew --cask xquartz<br/>brew absent: guide Homebrew install<br/>then brew; else xquartz.org link]
     end
     subgraph LIN[Linux]
         L1[Xorg / XWayland<br/>almost always present] --> L2[Detect + adopt]
@@ -920,10 +948,17 @@ flowchart TB
         <ul>
           <li>
             <strong>macOS:</strong> detect <code>/opt/X11</code> + <code>XQuartz.app</code>; if
-            absent, offer <code>brew install --cask xquartz</code>, a downloaded notarized
-            <code>.pkg</code> via <code>installer -pkg … -target /</code> (admin prompt), or a deep
-            link. If present, <code>open -a XQuartz</code> and let <code>ssh -X/-Y</code> set
-            <code>DISPLAY</code> (<code>:0</code> fallback). Cannot bundle.
+            absent, run <code>brew install --cask xquartz</code> when Homebrew is present. When
+            Homebrew is <em>absent</em>, don't host/redistribute a notarized <code>.pkg</code> —
+            instead <strong>guide the user through installing Homebrew</strong> by opening a local
+            terminal tab pre-loaded with the official installer command (the user drives the real
+            <code>sudo</code> / RETURN prompts, never a silent install), then re-detect
+            <code>brew</code> and continue with the cask install. If the user declines Homebrew,
+            fall back to a deep link (xquartz.org) for a manual install — help ends there. If
+            XQuartz is present, <code>open -a XQuartz</code> and let <code>ssh -X/-Y</code> set
+            <code>DISPLAY</code> (<code>:0</code> fallback). Cannot bundle. Because Homebrew or the
+            user fetches XQuartz, termiHub never redistributes it (no APSL-2.0 hosting obligation,
+            #1056).
           </li>
           <li>
             <strong>Linux:</strong> the existing <code>/tmp/.X11-unix</code> detection covers the
