@@ -23,10 +23,11 @@ pub type SshSession = russh::client::Handle<TermiHubHandler>;
 /// Resolves once the session's russh background task has ended — a transport
 /// failure, a peer `SSH_MSG_DISCONNECT`, or keepalive exhaustion (configured at
 /// 30 s × 3 in `auth.rs`). Event-driven: [`TermiHubHandler`] fires it from russh's
-/// `disconnected` callback (and its `Drop` closes the channel as a backstop), so
-/// the tunnel supervisor observes true session death without polling a throwaway
-/// channel every ~20 s. `Clone` fans one shared pooled session out to every
-/// tunnel supervising it.
+/// `disconnected` callback; and because the handler owns the sender, the sender
+/// dropping with the handler (when the session task ends) closes the channel as a
+/// backstop. Either way the tunnel supervisor observes true session death without
+/// polling a throwaway channel every ~20 s. `Clone` fans one shared pooled session
+/// out to every tunnel supervising it.
 #[derive(Clone)]
 pub struct LivenessWatch {
     rx: watch::Receiver<bool>,
@@ -66,7 +67,8 @@ pub struct TermiHubHandler {
     pub forwarded_channel_registry: ForwardedChannelRegistry,
     /// Fires the session-liveness watch (`true` = dead) when the session dies
     /// (#1297). Lives in the handler — which russh owns inside the session's
-    /// background task — so its `disconnected` callback and `Drop` both signal.
+    /// background task — so `disconnected` signals explicitly, and the sender
+    /// dropping with the handler (task end) closes the channel as a backstop.
     liveness_tx: watch::Sender<bool>,
 }
 
