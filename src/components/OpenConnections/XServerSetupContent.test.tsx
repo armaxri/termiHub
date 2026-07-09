@@ -36,6 +36,7 @@ describe("XServerSetupContent", () => {
     onNotNow?: () => void;
     onRetry?: () => void;
     onInstallDependency?: () => Promise<void>;
+    onGuideHomebrewInstall?: (command: string) => void | Promise<void>;
     onClose?: () => void;
   }
 
@@ -56,6 +57,7 @@ describe("XServerSetupContent", () => {
           onNotNow: o.onNotNow ?? (() => {}),
           onRetry: o.onRetry ?? (() => {}),
           onInstallDependency: o.onInstallDependency ?? (() => Promise.resolve()),
+          onGuideHomebrewInstall: o.onGuideHomebrewInstall ?? (() => Promise.resolve()),
           onClose: o.onClose ?? (() => {}),
         })
       );
@@ -142,6 +144,37 @@ describe("XServerSetupContent", () => {
       await Promise.resolve();
     });
     expect(onInstallDependency).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a guided Homebrew install for the Homebrew dependencyMissing error", async () => {
+    const onGuideHomebrewInstall = vi.fn(() => Promise.resolve());
+    const onInstallDependency = vi.fn(() => Promise.resolve());
+    const cmd = '/bin/bash -c "$(curl -fsSL https://example.test/install.sh)"';
+    renderContent({
+      phase: "error",
+      error: {
+        kind: "dependencyMissing",
+        message: "Homebrew is not installed",
+        dependency: "Homebrew",
+        installHint: "Install Homebrew, or install XQuartz manually from xquartz.org",
+        installCommand: cmd,
+      },
+      onGuideHomebrewInstall,
+      onInstallDependency,
+    });
+    // The generic "Install <dep>" action is replaced by a guided Homebrew action
+    // (which opens a terminal) plus a manual xquartz.org fallback link.
+    expect(query("x-server-setup-install-dep")).toBeNull();
+    const brew = query("x-server-setup-install-homebrew");
+    expect(brew).not.toBeNull();
+    expect(brew?.textContent).toContain("Install Homebrew");
+    expect(query("x-server-setup-open-xquartz")).not.toBeNull();
+    await act(async () => {
+      click("x-server-setup-install-homebrew");
+      await Promise.resolve();
+    });
+    expect(onGuideHomebrewInstall).toHaveBeenCalledWith(cmd);
+    expect(onInstallDependency).not.toHaveBeenCalled();
   });
 
   it("falls back to the raw error message when no typed error is present", () => {
