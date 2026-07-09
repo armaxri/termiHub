@@ -237,6 +237,10 @@ def test_handles_server_disconnect():
     ...
 
 
-@pytest.mark.skip(reason="needs an X server on the host (SSH-07)")
+@pytest.mark.skip(
+    reason="needs an X server on the host (SSH-07); automated end-to-end X11 "
+    "forwarding is instead covered by core/tests/ssh_x11.rs, which uses a fake "
+    "loopback X server and needs no host display (issue #1304)"
+)
 def test_forwards_x11_applications():
     ...
