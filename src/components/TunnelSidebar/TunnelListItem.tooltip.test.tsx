@@ -54,6 +54,7 @@ function renderItem(state: TunnelState | undefined): void {
           connections={[] as SavedConnection[]}
           onStart={noop}
           onStop={noop}
+          onReconnect={noop}
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}

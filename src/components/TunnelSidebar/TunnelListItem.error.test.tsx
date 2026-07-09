@@ -56,6 +56,7 @@ function renderItem(
   handlers: Partial<{
     onStart: (id: string) => void;
     onStop: (id: string) => void;
+    onReconnect: (id: string) => void;
   }> = {}
 ): void {
   act(() => {
@@ -67,6 +68,7 @@ function renderItem(
           connections={[] as SavedConnection[]}
           onStart={handlers.onStart ?? noop}
           onStop={handlers.onStop ?? noop}
+          onReconnect={handlers.onReconnect ?? noop}
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
