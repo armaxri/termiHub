@@ -217,6 +217,12 @@ pub struct TunnelManager {
     /// cleared on a successful start or an explicit stop. `Arc`-shared so the
     /// supervisor can record a death cause (#1243).
     last_errors: Arc<Mutex<HashMap<String, String>>>,
+    /// Cancel tokens for in-flight reconnect-backoff loops, keyed by tunnel id
+    /// (#1246, GAP 5). A tunnel with `reconnect_on_disconnect` on is NOT in
+    /// `active_tunnels` while retrying, so `stop_tunnel`/`stop_all` cancel the
+    /// backoff loop through this registry instead. `Arc`-shared so the supervisor
+    /// task can register/deregister its own loop without `&self`.
+    reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
     connecting: ConnectingTracker,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
@@ -245,6 +251,7 @@ impl TunnelManager {
             storage,
             active_tunnels: Arc::new(Mutex::new(HashMap::new())),
             last_errors: Arc::new(Mutex::new(HashMap::new())),
+            reconnecting: Arc::new(Mutex::new(HashMap::new())),
             connecting: ConnectingTracker::new(),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
@@ -319,6 +326,10 @@ impl TunnelManager {
             .active_tunnels
             .lock()
             .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+        let reconnecting = self
+            .reconnecting
+            .lock()
+            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
 
         let states = store
             .tunnels
@@ -330,6 +341,15 @@ impl TunnelManager {
                         status: TunnelStatus::Connected,
                         error: None,
                         stats: tunnel.forwarder.stats(),
+                    }
+                } else if reconnecting.contains_key(&config.id) {
+                    // In a reconnect-backoff loop (#1246) — report `Reconnecting`
+                    // so a reload does not briefly launder it back to Error.
+                    TunnelState {
+                        tunnel_id: config.id.clone(),
+                        status: TunnelStatus::Reconnecting,
+                        error: None,
+                        stats: TunnelStats::default(),
                     }
                 } else {
                     // A tunnel that is neither active nor connecting rests as
@@ -401,7 +421,7 @@ impl TunnelManager {
         // handshake). On failure, surface it as `error` status instead of
         // leaving the tunnel stuck in `connecting` (#829) — unless a Stop was
         // requested mid-connect, in which case it has already gone disconnected.
-        let (mut forwarder, guards, probe) = match self.build_forwarder(&config, cancel) {
+        let (forwarder, guards, probe) = match self.build_forwarder(&config, cancel) {
             Ok(built) => built,
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
@@ -430,33 +450,15 @@ impl TunnelManager {
             return Ok(());
         }
 
-        // Register as active and spawn the per-tunnel supervisor. The supervisor
-        // watches the forwarder death signal + a session keepalive probe and, on
-        // a real death (not a user stop), reaps the tunnel, drops its pool guards,
-        // records the cause, and drives the resting state to Error (#1243).
-        let death = forwarder.take_death_signal();
-        let supervisor_cancel = CancellationToken::new();
-        {
-            let mut active = self
-                .active_tunnels
-                .lock()
-                .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-            let supervisor = self.spawn_supervisor(
-                tunnel_id.to_string(),
-                death,
-                probe,
-                supervisor_cancel.clone(),
-            );
-            active.insert(
-                tunnel_id.to_string(),
-                ActiveTunnel {
-                    forwarder,
-                    guards,
-                    supervisor: Some(supervisor),
-                    supervisor_cancel,
-                },
-            );
-        }
+        // Register as active and spawn the per-tunnel supervisor (#1243), passing
+        // the reconnect toggle so a later death enters the backoff loop (#1246).
+        self.register_and_supervise(
+            tunnel_id,
+            forwarder,
+            guards,
+            probe,
+            config.reconnect_on_disconnect,
+        )?;
 
         // A successful start clears any recorded failure so the tunnel no longer
         // rests in `Error` once it is running again (GAP 3, #1238).
@@ -671,25 +673,110 @@ impl TunnelManager {
 
     /// Spawn the per-tunnel supervisor task (#1243). Holds `Arc` clones of the
     /// shared state so it can self-reap its tunnel on death without `&self`.
+    /// Register a freshly-built forwarder as active and spawn its supervisor.
+    /// Shared by `start_tunnel` and the reconnect loop (#1246); `reconnect_on_disconnect`
+    /// is threaded to the supervisor so a later death enters backoff vs. `Error`.
+    fn register_and_supervise(
+        &self,
+        tunnel_id: &str,
+        mut forwarder: ActiveForwarder,
+        guards: PooledSessionGuards,
+        probe: Option<Arc<SshSession>>,
+        reconnect_on_disconnect: bool,
+    ) -> Result<(), TerminalError> {
+        let death = forwarder.take_death_signal();
+        let supervisor_cancel = CancellationToken::new();
+        let mut active = self
+            .active_tunnels
+            .lock()
+            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+        let supervisor = self.spawn_supervisor(
+            tunnel_id.to_string(),
+            death,
+            probe,
+            supervisor_cancel.clone(),
+            reconnect_on_disconnect,
+        );
+        active.insert(
+            tunnel_id.to_string(),
+            ActiveTunnel {
+                forwarder,
+                guards,
+                supervisor: Some(supervisor),
+                supervisor_cancel,
+            },
+        );
+        Ok(())
+    }
+
+    /// One reconnect attempt driven by the backoff loop (#1246): re-resolve the
+    /// config, rebuild the forwarder, and re-register + re-supervise it. Returns
+    /// `true` on success (the tunnel is `Connected` again), `false` if the build
+    /// failed (the loop then backs off and retries). Runs on `&self` — the
+    /// supervisor task reaches it via `app_handle.try_state::<TunnelManager>()`.
+    fn attempt_reconnect(&self, tunnel_id: &str) -> bool {
+        let config = {
+            match self.tunnel_configs.lock() {
+                Ok(store) => store.tunnels.iter().find(|t| t.id == tunnel_id).cloned(),
+                Err(_) => None,
+            }
+        };
+        let Some(config) = config else {
+            return false;
+        };
+        // A fresh, un-cancelled token: the backoff loop owns Stop via the
+        // `reconnecting` registry, not this connect token.
+        let cancel = CancellationToken::new();
+        let built = match self.build_forwarder(&config, cancel) {
+            Ok(built) => built,
+            Err(e) => {
+                tracing::warn!("Reconnect attempt for tunnel {tunnel_id} failed to build: {e}");
+                return false;
+            }
+        };
+        let (forwarder, guards, probe) = built;
+        if self
+            .register_and_supervise(
+                tunnel_id,
+                forwarder,
+                guards,
+                probe,
+                config.reconnect_on_disconnect,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        clear_last_error(&self.last_errors, tunnel_id);
+        self.emit_status(tunnel_id, TunnelStatus::Connected, None);
+        tracing::info!("Tunnel {tunnel_id} reconnected");
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn spawn_supervisor(
         &self,
         tunnel_id: String,
         death: Option<tokio::sync::oneshot::Receiver<()>>,
         probe: Option<Arc<SshSession>>,
         cancel: CancellationToken,
+        reconnect_on_disconnect: bool,
     ) -> tokio::task::JoinHandle<()> {
         let active_tunnels = Arc::clone(&self.active_tunnels);
         let last_errors = Arc::clone(&self.last_errors);
+        let reconnecting = Arc::clone(&self.reconnecting);
         let app_handle = self.app_handle.clone();
         tokio::spawn(async move {
             supervise(
                 active_tunnels,
                 last_errors,
+                reconnecting,
                 app_handle,
                 tunnel_id,
                 death,
                 probe,
                 cancel,
+                reconnect_on_disconnect,
             )
             .await;
         })
@@ -729,6 +816,14 @@ impl TunnelManager {
             return Ok(());
         }
 
+        // Not active — it may be in a reconnect-backoff loop (#1246). Cancel it;
+        // the loop's supervisor observes the token and emits `Disconnected` on the
+        // Cancelled outcome. Stop always wins the Stop-vs-backoff race.
+        if self.cancel_reconnect(tunnel_id) {
+            tracing::info!("Tunnel {} reconnect cancelled by stop", tunnel_id);
+            return Ok(());
+        }
+
         // Not active yet — it may still be mid-connect. Flag the in-flight start
         // to cancel and tell the UI it has stopped so the Stop click is not lost
         // (#829). The start path tears the forwarder down once the blocking
@@ -741,8 +836,33 @@ impl TunnelManager {
         Ok(())
     }
 
+    /// Cancel an in-flight reconnect-backoff loop for `tunnel_id` (#1246).
+    /// Returns true if one was cancelled; the loop's supervisor emits
+    /// `Disconnected` and deregisters itself.
+    fn cancel_reconnect(&self, tunnel_id: &str) -> bool {
+        let token = match self.reconnecting.lock() {
+            Ok(map) => map.get(tunnel_id).cloned(),
+            Err(_) => None,
+        };
+        match token {
+            Some(t) => {
+                t.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Stop all active tunnels (used during app shutdown).
     pub fn stop_all(&self) {
+        // Cancel every in-flight reconnect-backoff loop so no zombie backoff task
+        // survives shutdown (#1246).
+        if let Ok(map) = self.reconnecting.lock() {
+            for token in map.values() {
+                token.cancel();
+            }
+        }
+
         let tunnels: Vec<String> = {
             let active = match self.active_tunnels.lock() {
                 Ok(a) => a,
@@ -890,11 +1010,13 @@ fn emit_tunnel_status(
 async fn supervise(
     active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
     last_errors: Arc<Mutex<HashMap<String, String>>>,
+    reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
     app_handle: AppHandle,
     tunnel_id: String,
     death: Option<tokio::sync::oneshot::Receiver<()>>,
     probe: Option<Arc<SshSession>>,
     cancel: CancellationToken,
+    reconnect_on_disconnect: bool,
 ) {
     let cause = tokio::select! {
         biased;
@@ -919,12 +1041,132 @@ async fn supervise(
     teardown_parts(forwarder, guards);
 
     let reason = match cause {
-        DeathCause::Forwarder => "connection lost: forwarder stopped".to_string(),
-        DeathCause::Session => "connection lost: SSH session closed".to_string(),
+        DeathCause::Forwarder => "connection lost: forwarder stopped",
+        DeathCause::Session => "connection lost: SSH session closed",
     };
-    record_last_error(&last_errors, &tunnel_id, reason.clone());
-    emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error, Some(reason));
-    tracing::warn!("Tunnel {tunnel_id} died — transitioned to Error");
+
+    // With reconnect off, death is a terminal Error resting state (#1243).
+    if !reconnect_on_disconnect {
+        record_last_error(&last_errors, &tunnel_id, reason.to_string());
+        emit_tunnel_status(
+            &app_handle,
+            &tunnel_id,
+            TunnelStatus::Error,
+            Some(reason.to_string()),
+        );
+        tracing::warn!("Tunnel {tunnel_id} died — transitioned to Error");
+        return;
+    }
+
+    // With reconnect on, enter the capped-backoff reconnect loop (#1246, GAP 5).
+    // Register a loop cancel token so Stop reaches the backoff even though the
+    // tunnel is no longer in `active_tunnels`.
+    tracing::info!("Tunnel {tunnel_id} died ({reason}) — reconnecting under backoff");
+    let loop_cancel = CancellationToken::new();
+    if let Ok(mut map) = reconnecting.lock() {
+        map.insert(tunnel_id.clone(), loop_cancel.clone());
+    }
+
+    let outcome = run_reconnect_loop(
+        &loop_cancel,
+        RECONNECT_MAX_ATTEMPTS,
+        RECONNECT_BASE_DELAY,
+        RECONNECT_MAX_DELAY,
+        |attempt, delay| {
+            emit_tunnel_status(
+                &app_handle,
+                &tunnel_id,
+                TunnelStatus::Reconnecting,
+                Some(format!(
+                    "reconnecting — attempt {attempt}/{RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
+                    delay.as_secs()
+                )),
+            );
+        },
+        |_attempt| match app_handle.try_state::<TunnelManager>() {
+            Some(mgr) => mgr.attempt_reconnect(&tunnel_id),
+            None => false,
+        },
+    )
+    .await;
+
+    if let Ok(mut map) = reconnecting.lock() {
+        map.remove(&tunnel_id);
+    }
+
+    match outcome {
+        // `attempt_reconnect` already re-registered + re-supervised + emitted Connected.
+        ReconnectOutcome::Reconnected => {}
+        ReconnectOutcome::Cancelled => {
+            emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Disconnected, None);
+            tracing::info!("Tunnel {tunnel_id} reconnect cancelled by stop");
+        }
+        ReconnectOutcome::Exhausted => {
+            let msg = format!("reconnect failed after {RECONNECT_MAX_ATTEMPTS} attempts");
+            record_last_error(&last_errors, &tunnel_id, msg.clone());
+            emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error, Some(msg));
+            tracing::warn!("Tunnel {tunnel_id} reconnect exhausted — transitioned to Error");
+        }
+    }
+}
+
+/// Max reconnect attempts before giving up to `Error` (#1246).
+const RECONNECT_MAX_ATTEMPTS: u32 = 5;
+/// First backoff delay; subsequent attempts double it up to the cap.
+const RECONNECT_BASE_DELAY: Duration = Duration::from_secs(1);
+/// Upper bound on a single backoff wait.
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// Outcome of a reconnect-backoff loop (#1246).
+#[derive(Debug, PartialEq, Eq)]
+enum ReconnectOutcome {
+    /// A retry succeeded — the tunnel is `Connected` again.
+    Reconnected,
+    /// A user Stop cancelled the loop — the tunnel returns to `Disconnected`.
+    Cancelled,
+    /// All attempts failed — the tunnel falls through to `Error`.
+    Exhausted,
+}
+
+/// Capped exponential backoff: `base * 2^(attempt-1)`, clamped to `cap`.
+/// Saturating so a large attempt count cannot overflow (#1246).
+fn backoff_delay(attempt: u32, base: Duration, cap: Duration) -> Duration {
+    let factor = 2u32.saturating_pow(attempt.saturating_sub(1));
+    base.saturating_mul(factor).min(cap)
+}
+
+/// Run the reconnect-backoff loop (#1246, GAP 5). Before each attempt it calls
+/// `on_attempt(attempt, delay)` (to emit `Reconnecting`), waits `delay` (racing
+/// the cancel token so a Stop wins immediately and clears the pending timer),
+/// then runs `attempt(n)` — returning `Reconnected` on the first success,
+/// `Cancelled` if the token fires, or `Exhausted` after `max_attempts`.
+/// `attempt` is synchronous (the manager's connect blocks internally).
+async fn run_reconnect_loop(
+    cancel: &CancellationToken,
+    max_attempts: u32,
+    base: Duration,
+    cap: Duration,
+    mut on_attempt: impl FnMut(u32, Duration),
+    mut attempt: impl FnMut(u32) -> bool,
+) -> ReconnectOutcome {
+    for n in 1..=max_attempts {
+        let delay = backoff_delay(n, base, cap);
+        on_attempt(n, delay);
+        tokio::select! {
+            biased;
+            // Stop always wins the Stop-vs-backoff race and clears the pending timer.
+            _ = cancel.cancelled() => return ReconnectOutcome::Cancelled,
+            _ = tokio::time::sleep(delay) => {}
+        }
+        // A stop that fired exactly as the timer elapsed still wins.
+        if cancel.is_cancelled() {
+            return ReconnectOutcome::Cancelled;
+        }
+        if attempt(n) {
+            return ReconnectOutcome::Reconnected;
+        }
+    }
+    ReconnectOutcome::Exhausted
 }
 
 /// Resolve when the forwarder's accept/forward loop ends. The oneshot resolves
@@ -992,8 +1234,9 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::super::local_forward::ForwarderStats;
     use super::{
-        clear_last_error, last_error_for, record_last_error, resting_status, session_probe_loop,
-        snapshot_active_stats, wait_forwarder_death, ActiveTunnel, TunnelStatsUpdate,
+        backoff_delay, clear_last_error, last_error_for, record_last_error, resting_status,
+        run_reconnect_loop, session_probe_loop, snapshot_active_stats, wait_forwarder_death,
+        ActiveTunnel, ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::tunnel::config::TunnelStatus;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
@@ -1425,6 +1668,91 @@ mod tests {
             resting_status(false, last_error_for(&errors, "tunnel-b")).0,
             TunnelStatus::Error
         );
+    }
+
+    // ── Reconnect backoff loop (S3, GAP 5, #1246) ──
+    //
+    // As with the #1243 supervisor, the full reconnect (a real `attempt_reconnect`
+    // via the managed TunnelManager) needs an AppHandle + SSH and can't run in a
+    // unit test. These lock in the risky part — the backoff schedule and the loop's
+    // success/exhaustion/cancel control flow — with injected closures + paused time.
+
+    #[test]
+    fn backoff_delay_is_capped_exponential() {
+        let base = Duration::from_secs(1);
+        let cap = Duration::from_secs(30);
+        assert_eq!(backoff_delay(1, base, cap), Duration::from_secs(1));
+        assert_eq!(backoff_delay(2, base, cap), Duration::from_secs(2));
+        assert_eq!(backoff_delay(3, base, cap), Duration::from_secs(4));
+        assert_eq!(backoff_delay(4, base, cap), Duration::from_secs(8));
+        assert_eq!(backoff_delay(5, base, cap), Duration::from_secs(16));
+        // 32s would exceed the cap → clamped; huge attempts saturate, still clamped.
+        assert_eq!(backoff_delay(6, base, cap), cap);
+        assert_eq!(backoff_delay(100, base, cap), cap);
+    }
+
+    #[tokio::test]
+    async fn reconnect_loop_succeeds_on_a_later_attempt() {
+        let cancel = CancellationToken::new();
+        let mut emitted: Vec<u32> = Vec::new();
+        let mut tries = 0u32;
+        let outcome = run_reconnect_loop(
+            &cancel,
+            5,
+            Duration::from_millis(1),
+            Duration::from_millis(20),
+            |n, _delay| emitted.push(n),
+            |n| {
+                tries += 1;
+                n == 3 // succeeds on the 3rd attempt
+            },
+        )
+        .await;
+        assert_eq!(outcome, ReconnectOutcome::Reconnected);
+        assert_eq!(
+            emitted,
+            vec![1, 2, 3],
+            "emits Reconnecting once per attempt"
+        );
+        assert_eq!(tries, 3);
+    }
+
+    #[tokio::test]
+    async fn reconnect_loop_exhausts_to_error() {
+        let cancel = CancellationToken::new();
+        let mut emitted: Vec<u32> = Vec::new();
+        let outcome = run_reconnect_loop(
+            &cancel,
+            5,
+            Duration::from_millis(1),
+            Duration::from_millis(20),
+            |n, _delay| emitted.push(n),
+            |_| false, // every attempt fails
+        )
+        .await;
+        assert_eq!(outcome, ReconnectOutcome::Exhausted);
+        assert_eq!(emitted, vec![1, 2, 3, 4, 5], "exhausts after max attempts");
+    }
+
+    #[tokio::test]
+    async fn reconnect_loop_stop_wins_over_backoff() {
+        let cancel = CancellationToken::new();
+        cancel.cancel(); // a user Stop arrived before/during backoff
+        let mut tries = 0u32;
+        let outcome = run_reconnect_loop(
+            &cancel,
+            5,
+            Duration::from_millis(1),
+            Duration::from_millis(20),
+            |_, _| {},
+            |_| {
+                tries += 1;
+                true
+            },
+        )
+        .await;
+        assert_eq!(outcome, ReconnectOutcome::Cancelled);
+        assert_eq!(tries, 0, "Stop wins the race — no reconnect attempt runs");
     }
 
     // --- GAP 6: live tunnel-stats emitter (#1248) --------------------------
