@@ -15,8 +15,9 @@ dev.local.json
 .dev-agent/
 coverage
 test-results
-tests/reports/*.json
-tests/reports/*.log
+# Guided-manual / system-test run outputs — never checked in (keep the dir).
+tests/reports/*
+!tests/reports/.gitkeep
 
 # Editor directories and files
 .vscode/*
