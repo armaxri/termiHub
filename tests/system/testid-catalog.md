@@ -483,6 +483,11 @@ Fixed strings — match exactly.
 | `workspace-save-btn` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-save-current-btn` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
 | `workspace-sidebar` | `src/components/WorkspaceSidebar/WorkspaceSidebar.tsx` |
+| `x-server-connect-consent-body` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
+| `x-server-connect-consent-dialog` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
+| `x-server-connect-consent-enable` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
+| `x-server-connect-consent-not-now` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
+| `x-server-connect-consent-progress` | `src/components/OpenConnections/XServerConnectConsent.tsx` |
 | `x-server-setup-cancel` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
 | `x-server-setup-close` | `src/components/OpenConnections/XServerSetupDialog.tsx` |
 | `x-server-setup-consent` | `src/components/OpenConnections/XServerSetupDialog.tsx` |

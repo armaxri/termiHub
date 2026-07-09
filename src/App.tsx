@@ -15,6 +15,7 @@ import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
+import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
 import { ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
@@ -302,6 +303,7 @@ function App() {
           />
           <UpdateNotification />
           <ConfirmCloseTabDialog />
+          <XServerConnectConsent />
           <ToastProvider />
         </div>
       </TooltipProvider>

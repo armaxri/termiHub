@@ -12,7 +12,7 @@ import {
   LineEnding,
 } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
-import { XServerStatusReport } from "@/types/xserver";
+import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
   SavedConnection,
@@ -293,6 +293,19 @@ export async function xServerEnsure(): Promise<XServerStatusReport> {
  */
 export async function xServerInstallDependency(): Promise<void> {
   await invoke("x_server_install_dependency");
+}
+
+/**
+ * Reply to a connect-time X server download-consent prompt (#1116), waking the
+ * SSH connect paused on `id`. `decision` is `enable` (download/provision and
+ * remember) or `notNow` (skip X forwarding this connect). Resolves `true` when a
+ * paused connect matched the id, `false` when it was already resolved or unknown.
+ */
+export async function xServerConnectConsentReply(
+  id: string,
+  decision: XServerConsentDecision
+): Promise<boolean> {
+  return await invoke<boolean>("x_server_connect_consent_reply", { id, decision });
 }
 
 /** Check whether the SSH agent is running, stopped, or not installed. */

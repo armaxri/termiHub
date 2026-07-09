@@ -59,6 +59,26 @@ export interface XServerProgress {
 }
 
 /**
+ * A connect-time X server download-consent prompt (`x-server-consent-needed`
+ * event, #1116). Emitted when opening an X11-forwarding SSH connection would
+ * need to download the X dependency and the user has not consented yet. The
+ * connect pauses until the frontend replies via `xServerConnectConsentReply`
+ * with this `id`.
+ */
+export interface XServerConsentRequest {
+  /** Opaque id correlating the prompt with the reply that resolves it. */
+  id: string;
+  /** Platform the connect is running on (tailors the consent copy). */
+  platform: XServerPlatform;
+}
+
+/**
+ * The user's reply to a connect-time consent prompt: `enable` downloads and
+ * provisions (and is remembered), `notNow` skips X forwarding for this connect.
+ */
+export type XServerConsentDecision = "enable" | "notNow";
+
+/**
  * Machine-readable classification of an X server provisioning failure. Drives
  * how the setup dialog recovers: `dependencyMissing` offers an install action;
  * the rest offer a plain retry with the human-readable `message`.
