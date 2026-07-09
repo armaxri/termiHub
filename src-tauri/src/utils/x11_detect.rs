@@ -74,22 +74,30 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
             }
         }
         Some(ref h) if h.starts_with('/') => {
-            // macOS XQuartz: /private/tmp/com.apple.launchd.xxx/org.xquartz:0
-            if std::path::Path::new(h).exists()
-                || std::path::Path::new(&format!("{}:{}", h, display_number)).exists()
-            {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::UnixSocket(h.clone()),
-                }
+            // macOS XQuartz: /private/tmp/com.apple.launchd.xxx/org.xquartz:0.
+            // Connect to whichever socket file exists — XQuartz's launchd socket
+            // carries the `:<N>` display suffix with no bare file, so using the
+            // bare `<h>` would fail with ENOENT (#1311).
+            let with_display = format!("{}:{}", h, display_number);
+            let socket = if std::path::Path::new(h).exists() {
+                Some(h.clone())
+            } else if std::path::Path::new(&with_display).exists() {
+                Some(with_display)
             } else {
-                LocalXServerInfo {
+                None
+            };
+            match socket {
+                Some(socket_path) => LocalXServerInfo {
+                    display_number,
+                    connection: LocalXConnection::UnixSocket(socket_path),
+                },
+                None => LocalXServerInfo {
                     display_number,
                     connection: LocalXConnection::Tcp(
                         "localhost".to_string(),
                         6000 + display_number as u16,
                     ),
-                }
+                },
             }
         }
         Some(ref h) if h == "localhost" || h == "127.0.0.1" || h == "::1" => {
@@ -230,6 +238,25 @@ mod tests {
         assert_eq!(host.as_deref(), Some("myhost"));
         assert_eq!(display, 5);
         assert_eq!(screen, 0);
+    }
+
+    /// XQuartz's launchd socket is `<dir>/org.xquartz:0` (with the `:0` suffix),
+    /// and there is no bare `<dir>/org.xquartz`. Resolution must use the path
+    /// that exists, else the forwarder connects to a missing socket (#1311).
+    #[cfg(unix)]
+    #[test]
+    fn test_xquartz_launchd_socket_resolves_with_display_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("org.xquartz");
+        let base = base.to_str().unwrap().to_string();
+        let socket_with_suffix = format!("{base}:0");
+        std::fs::File::create(&socket_with_suffix).unwrap();
+
+        let info = info_from_parsed(Some(base), 0);
+        match info.connection {
+            LocalXConnection::UnixSocket(path) => assert_eq!(path, socket_with_suffix),
+            other => panic!("expected UnixSocket at the `:0` path, got {other:?}"),
+        }
     }
 
     #[test]
