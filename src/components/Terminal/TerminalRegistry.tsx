@@ -4,7 +4,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
+import {
+  readText as readClipboard,
+  writeText as writeClipboard,
+} from "@tauri-apps/plugin-clipboard-manager";
 import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
@@ -236,7 +239,10 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       const content = getTerminalContent(tabId);
       if (!content) return;
 
-      await navigator.clipboard.writeText(content);
+      // Use the Tauri clipboard plugin (like paste) rather than the web
+      // clipboard API: navigator.clipboard.writeText rejects on macOS/WKWebView
+      // when the document isn't focused, silently dropping the copy.
+      await writeClipboard(content);
     },
     [getTerminalContent]
   );
@@ -273,7 +279,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       const selection = getTerminalSelection(tabId);
       if (!selection) return;
 
-      await navigator.clipboard.writeText(selection);
+      // See copyTerminalToClipboard: route through the OS clipboard so the copy
+      // lands even when the window isn't focused (web clipboard rejects there).
+      await writeClipboard(selection);
     },
     [getTerminalSelection]
   );

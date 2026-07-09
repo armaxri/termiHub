@@ -52,6 +52,12 @@ SSH_BANNER_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_BANNER_PORT", 2206)
 #: Service + host port for the tunnel-target SSH container (internal HTTP :8080).
 SSH_TUNNEL_SERVICE = "ssh-tunnel-target"
 SSH_TUNNEL_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_TUNNEL_PORT", 2207)
+#: Service + host port for the X11-forwarding SSH container (``X11Forwarding yes``
+#: with ``xauth`` + ``x11-apps``/``xdpyinfo`` installed — see
+#: ``tests/docker/ssh-x11/Dockerfile``). Lets the guided-manual X11 test
+#: auto-assert that the server allocates a forwarded ``$DISPLAY`` (#957).
+SSH_X11_SERVICE = "ssh-x11"
+SSH_X11_PORT = dev_local.service_port("TERMIHUB_TEST_SSH_X11_PORT", 2208)
 #: Credentials shared by the test SSH containers.
 SSH_USERNAME = "testuser"
 SSH_PASSWORD = "testpass"

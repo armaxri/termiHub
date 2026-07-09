@@ -76,6 +76,33 @@ def _capture_screenshot_png(driver: Any) -> bytes:
     return screenshot_to_png_bytes(driver.screenshot())
 
 
+def save_manual_screenshot(
+    driver: Any, nodeid: str, *, label: Optional[str] = None
+) -> Optional[Path]:
+    """Persist a guided-manual observation screenshot; return its path or ``None``.
+
+    Guided-manual ``observe`` steps attach a screenshot (#900). The bridge hands
+    back a ``data:image/png;base64,…`` URL, which must **never** be surfaced raw —
+    it would flood the operator console and bloat the JSON report. So this decodes
+    it to a PNG under the per-test artifacts dir and returns the *file path* to
+    reference instead. Returns ``None`` when the bridge lacks the screenshot verb
+    (older app / driver stub) or capture fails — best-effort, like the failure
+    bundle, so a broken capture never masks the test result.
+    """
+    if not hasattr(driver, "screenshot"):
+        return None
+    dest_dir = ARTIFACT_ROOT / sanitize_nodeid(nodeid)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"observe-{sanitize_nodeid(label)}" if label else "observe"
+    dest = dest_dir / f"{stem}.png"
+    suffix = 2
+    while dest.exists():  # keep every observation in a test, don't overwrite
+        dest = dest_dir / f"{stem}-{suffix}.png"
+        suffix += 1
+    _safe_write_bytes(dest, lambda: _capture_screenshot_png(driver))
+    return dest if dest.exists() else None
+
+
 def write_failure_artifacts(dest: Path, driver: Optional[Any], app: Optional[Any]) -> Path:
     """Snapshot whatever app-side state is reachable into ``dest``; return ``dest``.
 

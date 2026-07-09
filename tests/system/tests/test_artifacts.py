@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from termihub_harness import screenshot_to_png_bytes
-from termihub_harness.artifacts import sanitize_nodeid, write_failure_artifacts
+from termihub_harness import artifacts as artifacts_mod
+from termihub_harness.artifacts import (
+    sanitize_nodeid,
+    save_manual_screenshot,
+    write_failure_artifacts,
+)
 
 # A 1×1 transparent PNG, the smallest valid capture to round-trip through base64.
 _PNG_1X1 = (
@@ -116,6 +121,37 @@ def test_screenshot_capture_error_is_recorded_not_raised(tmp_path: Path):
     assert (dest / "screenshot.png.error.txt").read_text() == "RuntimeError: capture gone"
     # The other probes still ran independently.
     assert (dest / "terminal.txt").read_text() == "$ ls\n"
+
+
+def test_save_manual_screenshot_writes_png_and_returns_a_path(tmp_path, monkeypatch):
+    # A guided-manual observation must return a *file path*, never the raw
+    # data: URL (which would flood the operator console / report — #957).
+    monkeypatch.setattr(artifacts_mod, "ARTIFACT_ROOT", tmp_path)
+    driver = _ScreenshotDriver(data_url=f"data:image/png;base64,{_PNG_1X1}")
+    path = save_manual_screenshot(driver, "tests/t.py::T::test_x")
+    assert path is not None
+    assert path.suffix == ".png" and path.exists()
+    assert not str(path).startswith("data:")
+    assert path.read_bytes().startswith(_PNG_SIGNATURE)
+
+
+def test_save_manual_screenshot_none_without_screenshot_verb(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifacts_mod, "ARTIFACT_ROOT", tmp_path)
+    assert save_manual_screenshot(_StubDriver(), "tests/t.py::T::test_x") is None
+
+
+def test_save_manual_screenshot_keeps_each_observation(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifacts_mod, "ARTIFACT_ROOT", tmp_path)
+    driver = _ScreenshotDriver(data_url=f"data:image/png;base64,{_PNG_1X1}")
+    first = save_manual_screenshot(driver, "tests/t.py::T::test_x")
+    second = save_manual_screenshot(driver, "tests/t.py::T::test_x")
+    assert first != second and first.exists() and second.exists()
+
+
+def test_save_manual_screenshot_capture_error_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifacts_mod, "ARTIFACT_ROOT", tmp_path)
+    driver = _ScreenshotDriver(screenshot_exc=RuntimeError("capture gone"))
+    assert save_manual_screenshot(driver, "tests/t.py::T::test_x") is None
 
 
 def test_screenshot_to_png_bytes_accepts_data_url_and_bare_base64():

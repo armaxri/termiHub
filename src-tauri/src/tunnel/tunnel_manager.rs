@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable as core_connect_cancellable;
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
@@ -120,11 +121,47 @@ fn resting_status(
     }
 }
 
+/// How often the live stats emitter samples each active tunnel and pushes a
+/// `tunnel-stats-updated` event (GAP 6, #1248).
+const STATS_EMIT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// The Tauri event name carrying live per-tunnel throughput / connection counts.
+const TUNNEL_STATS_EVENT: &str = "tunnel-stats-updated";
+
+/// Payload for a live `tunnel-stats-updated` event.
+///
+/// The frontend listener (`onTunnelStatsUpdated`, `src/services/events.ts`)
+/// reads `event.payload.tunnel_id` and `event.payload.stats`, so the id field is
+/// intentionally serialized as snake_case `tunnel_id` (not the camelCase
+/// `tunnelId` used by `TunnelState`). `TunnelStats` itself already serializes to
+/// the camelCase shape the frontend `TunnelStats` type expects.
+#[derive(Debug, Clone, Serialize)]
+struct TunnelStatsUpdate {
+    tunnel_id: String,
+    stats: TunnelStats,
+}
+
 /// An active tunnel with its forwarder.
 enum ActiveForwarder {
     Local(LocalForwarder),
     Remote(RemoteForwarder),
     Dynamic(DynamicForwarder),
+}
+
+/// Build the per-tunnel stats payloads for one emit tick from the active set.
+///
+/// Pure helper (no locking, no IO) so it is unit-testable: given the current
+/// active tunnels it returns one [`TunnelStatsUpdate`] per tunnel with a live
+/// counter snapshot. An empty map yields an empty vec — the signal the emitter
+/// task uses to stop once no tunnel is active.
+fn snapshot_active_stats(active: &HashMap<String, ActiveTunnel>) -> Vec<TunnelStatsUpdate> {
+    active
+        .iter()
+        .map(|(tunnel_id, tunnel)| TunnelStatsUpdate {
+            tunnel_id: tunnel_id.clone(),
+            stats: tunnel.forwarder.stats(),
+        })
+        .collect()
 }
 
 impl ActiveForwarder {
@@ -134,6 +171,15 @@ impl ActiveForwarder {
             ActiveForwarder::Local(f) => f.take_death_signal(),
             ActiveForwarder::Remote(f) => f.take_death_signal(),
             ActiveForwarder::Dynamic(f) => f.take_death_signal(),
+        }
+    }
+
+    /// Read a live snapshot of this forwarder's traffic / connection counters.
+    fn stats(&self) -> TunnelStats {
+        match self {
+            ActiveForwarder::Local(f) => f.get_stats(),
+            ActiveForwarder::Remote(f) => f.get_stats(),
+            ActiveForwarder::Dynamic(f) => f.get_stats(),
         }
     }
 }
@@ -184,6 +230,10 @@ pub struct TunnelManager {
     endpoint_pool: Arc<RefPool<Arc<SshSession>>>,
     app_handle: AppHandle,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
+    /// Handle to the single periodic live-stats emitter task (GAP 6, #1248).
+    /// `Some` while at least one tunnel is active; the task self-reaps and clears
+    /// this slot once no tunnel remains, and `stop_all` aborts it on shutdown.
+    stats_emitter: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl TunnelManager {
@@ -206,6 +256,7 @@ impl TunnelManager {
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
+            stats_emitter: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -285,16 +336,11 @@ impl TunnelManager {
             .iter()
             .map(|config| {
                 if let Some(tunnel) = active.get(&config.id) {
-                    let stats = match &tunnel.forwarder {
-                        ActiveForwarder::Local(f) => f.get_stats(),
-                        ActiveForwarder::Remote(f) => f.get_stats(),
-                        ActiveForwarder::Dynamic(f) => f.get_stats(),
-                    };
                     TunnelState {
                         tunnel_id: config.id.clone(),
                         status: TunnelStatus::Connected,
                         error: None,
-                        stats,
+                        stats: tunnel.forwarder.stats(),
                     }
                 } else if reconnecting.contains_key(&config.id) {
                     // In a reconnect-backoff loop (#1246) — report `Reconnecting`
@@ -421,8 +467,67 @@ impl TunnelManager {
         // Emit connected status
         self.emit_status(tunnel_id, TunnelStatus::Connected, None);
 
+        // Ensure the periodic live-stats emitter is running now that a tunnel is
+        // active, so the sidebar's ↑/↓ bytes + conn count update live rather than
+        // freezing at the zeros the initial status event carried (GAP 6, #1248).
+        self.ensure_stats_emitter();
+
         tracing::info!("Tunnel {} started", tunnel_id);
         Ok(())
+    }
+
+    /// Ensure the single periodic live-stats emitter task is running.
+    ///
+    /// Idempotent: if a task is already tracked in `stats_emitter` it is left
+    /// alone. Otherwise a new task is spawned that, every [`STATS_EMIT_INTERVAL`],
+    /// snapshots every active tunnel's live [`ForwarderStats`] and emits one
+    /// `tunnel-stats-updated` event per tunnel. The task self-terminates (and
+    /// clears the tracking slot) as soon as no tunnel is active, so a dead/errored
+    /// tunnel reaped by its supervisor (#1243) naturally stops emitting.
+    fn ensure_stats_emitter(&self) {
+        let mut slot = match self.stats_emitter.lock() {
+            Ok(slot) => slot,
+            Err(_) => return,
+        };
+        // Already running (and not yet finished) — nothing to do.
+        if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+
+        let active_tunnels = Arc::clone(&self.active_tunnels);
+        let app_handle = self.app_handle.clone();
+        let emitter_slot = Arc::clone(&self.stats_emitter);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STATS_EMIT_INTERVAL).await;
+
+                // Snapshot under the lock, then release it before emitting so a
+                // slow event dispatch never blocks start/stop of other tunnels.
+                let updates = match active_tunnels.lock() {
+                    Ok(active) => snapshot_active_stats(&active),
+                    Err(_) => break,
+                };
+
+                // No tunnel left active: stop emitting and clear the slot so a
+                // later start re-spawns the task.
+                if updates.is_empty() {
+                    break;
+                }
+
+                for update in &updates {
+                    let _ = app_handle.emit(TUNNEL_STATS_EVENT, update);
+                }
+            }
+
+            // Self-reap: drop our own handle from the tracking slot so
+            // `ensure_stats_emitter` spawns a fresh task on the next start.
+            if let Ok(mut slot) = emitter_slot.lock() {
+                *slot = None;
+            }
+        });
+
+        *slot = Some(handle);
     }
 
     /// Build the forwarder for a tunnel config, performing the SSH handshake.
@@ -771,6 +876,19 @@ impl TunnelManager {
                 tracing::error!("Failed to stop tunnel {}: {}", tunnel_id, e);
             }
         }
+
+        // Abort the live-stats emitter promptly on shutdown rather than waiting
+        // for its next tick to observe the now-empty active set (GAP 6, #1248).
+        self.stop_stats_emitter();
+    }
+
+    /// Abort the live-stats emitter task (if any) and clear its tracking slot.
+    fn stop_stats_emitter(&self) {
+        if let Ok(mut slot) = self.stats_emitter.lock() {
+            if let Some(handle) = slot.take() {
+                handle.abort();
+            }
+        }
     }
 
     /// Start all tunnels marked with `auto_start: true`.
@@ -1114,9 +1232,11 @@ mod tests {
     use std::time::Duration;
 
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
+    use super::super::local_forward::ForwarderStats;
     use super::{
         backoff_delay, clear_last_error, last_error_for, record_last_error, resting_status,
-        run_reconnect_loop, session_probe_loop, wait_forwarder_death, ReconnectOutcome,
+        run_reconnect_loop, session_probe_loop, snapshot_active_stats, wait_forwarder_death,
+        ActiveTunnel, ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::tunnel::config::TunnelStatus;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
@@ -1633,5 +1753,90 @@ mod tests {
         .await;
         assert_eq!(outcome, ReconnectOutcome::Cancelled);
         assert_eq!(tries, 0, "Stop wins the race — no reconnect attempt runs");
+    }
+
+    // --- GAP 6: live tunnel-stats emitter (#1248) --------------------------
+    //
+    // Driving the full periodic emitter loop needs a live Tauri `AppHandle`
+    // (for `emit`) plus real forwarders (an `ActiveTunnel` holds an SSH-backed
+    // `ActiveForwarder` that cannot be fabricated without a server), which
+    // `src-tauri` has no mock harness for. So — like the GAP-3 / GAP-8 tests
+    // above — these exercise the production building blocks the emitter uses
+    // directly: the shared `ForwarderStats` atomics the forwarders update under
+    // traffic, the `TunnelStatsUpdate` event payload shape the frontend reads,
+    // and the `snapshot_active_stats` "nothing active -> nothing to emit"
+    // predicate that stops the task.
+
+    /// GAP 6: after simulated traffic the forwarder's live counters read back
+    /// non-zero — so the emitter ships real ↑/↓ bytes and connection counts,
+    /// not the frozen `TunnelStats::default()` zeros of the status event.
+    #[test]
+    fn forwarder_stats_reflect_simulated_traffic() {
+        let stats = ForwarderStats::new();
+        // Two connections opened, one already closed.
+        stats.increment_active();
+        stats.increment_active();
+        stats.decrement_active();
+        stats.add_bytes_sent(1500);
+        stats.add_bytes_received(4096);
+
+        let snapshot = stats.to_tunnel_stats();
+        assert_eq!(snapshot.bytes_sent, 1500);
+        assert_eq!(snapshot.bytes_received, 4096);
+        assert_eq!(snapshot.active_connections, 1, "one of two still open");
+        assert_eq!(snapshot.total_connections, 2, "total never decrements");
+    }
+
+    /// GAP 6: the emitted payload serializes to the exact shape the frontend
+    /// `onTunnelStatsUpdated` listener reads — snake_case `tunnel_id` plus a
+    /// camelCase `stats` object (`bytesSent`/`bytesReceived`/…). A regression
+    /// here would silently freeze the sidebar at 0.
+    #[test]
+    fn stats_update_payload_matches_frontend_shape() {
+        let stats = ForwarderStats::new();
+        stats.increment_active();
+        stats.add_bytes_sent(2048);
+        stats.add_bytes_received(1024);
+
+        let update = TunnelStatsUpdate {
+            tunnel_id: "tunnel-1".to_string(),
+            stats: stats.to_tunnel_stats(),
+        };
+        let json = serde_json::to_value(&update).expect("serialize payload");
+
+        assert_eq!(
+            json.get("tunnel_id").and_then(|v| v.as_str()),
+            Some("tunnel-1")
+        );
+        let stats_json = json.get("stats").expect("stats object");
+        assert_eq!(
+            stats_json.get("bytesSent").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
+        assert_eq!(
+            stats_json.get("bytesReceived").and_then(|v| v.as_u64()),
+            Some(1024)
+        );
+        assert_eq!(
+            stats_json.get("activeConnections").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            stats_json.get("totalConnections").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+    }
+
+    /// GAP 6: with no tunnel active the emit tick produces no payloads — the
+    /// empty-vec signal the emitter task uses to stop itself once the last
+    /// tunnel goes away (a dead/errored tunnel reaped by its supervisor #1243).
+    #[test]
+    fn snapshot_of_empty_active_set_is_empty_and_stops_emitter() {
+        let active: HashMap<String, ActiveTunnel> = HashMap::new();
+        let updates = snapshot_active_stats(&active);
+        assert!(
+            updates.is_empty(),
+            "no active tunnel must yield no stats events so the emitter stops"
+        );
     }
 }

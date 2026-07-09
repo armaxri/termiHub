@@ -20,8 +20,9 @@ Covered:
 - **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07) and
   the "Setup SSH Agent" button in the connection editor (MT-SSH-09, #955).
 - **X11 forwarding** — enabling ``enableX11Forwarding`` on a connection, proving
-  the flag persists and the session connects, then confirming a remote X11 window
-  appears (MT-SSH-14/15/16/18, MT-XPLAT-03).
+  the flag persists, the session connects, and (against the ``ssh-x11`` fixture)
+  the server allocates a forwarded ``$DISPLAY``; the operator only confirms a
+  remote X11 window appears (MT-SSH-14/15/16/18, MT-XPLAT-03).
 - **Clipboard** — copy the terminal buffer via the tab menu and via the
   platform copy shortcut, and paste into the terminal (MT-KB-01..04).
 
@@ -57,12 +58,14 @@ from termihub_harness import (
     SSH_HOST,
     SSH_KEYS_PORT,
     SSH_PASSWORD,
-    SSH_PASSWORD_PORT,
     SSH_USERNAME,
+    SSH_X11_PORT,
     ManualUi,
     SystemTest,
     TabsUi,
     TerminalUi,
+    agent_has_key,
+    read_os_clipboard,
     unique_name,
 )
 
@@ -135,9 +138,9 @@ class TestExternalApp(
         assert self.driver.exists(_VSCODE_ITEM), "Open-in-VS-Code item missing"
         self.driver.click(_VSCODE_ITEM)
 
-        self.manual_step(
-            f"termiHub just issued 'Open in VS Code' for the local file {fname!r}.",
-            "VS Code opens (or focuses) with that file.",
+        self.manual_observe(
+            f"termiHub opened {fname} in VS Code.",
+            "VS Code shows that file.",
         )
 
     # ── Open in VS Code: menu hidden when unavailable (MT-FB-16) ──────────────
@@ -178,10 +181,9 @@ class TestExternalApp(
         assert self.driver.exists(_VSCODE_ITEM), "Open-in-VS-Code item missing (SFTP)"
         self.driver.click(_VSCODE_ITEM)
 
-        self.manual_step(
-            f"termiHub issued 'Open in VS Code' for the remote (SFTP) file {fname!r}.",
-            "VS Code opens with the downloaded file and termiHub keeps running "
-            "(no crash — regression #828).",
+        self.manual_observe(
+            f"termiHub opened the remote (SFTP) file {fname} in VS Code.",
+            "VS Code shows the file and termiHub is still running (no crash).",
         )
         # In-app side: the app is still responsive after the external hand-off.
         assert self.driver.get_state("vscodeAvailable") is not None
@@ -189,16 +191,23 @@ class TestExternalApp(
     # ── SSH agent auth connects (MT-SSH-07) ──────────────────────────────────
     @pytest.mark.usefixtures("ssh_fixtures")
     def test_ssh_agent_auth_connects(self):
-        """Operator loads the fixture key into their agent; harness connects with
-        the ``agent`` auth method and asserts a terminal comes up — no password,
-        no key path."""
+        """Harness connects with the ``agent`` auth method and asserts a terminal
+        comes up — no password, no key path.
+
+        The precondition (the fixture key loaded into the operator's ssh-agent)
+        is *checked* programmatically rather than prompted: agent auth is only
+        possible if the agent holds that key, and that is machine-verifiable via
+        ``ssh-add -l`` fingerprints. So the test runs unattended when the key is
+        present and skips with the exact ``ssh-add`` command when it is not —
+        instead of gating an operator on a step a machine can confirm (#957).
+        """
         self.close_all_tabs()
-        self.manual_step(
-            "Ensure an ssh-agent is running with this key loaded:\n"
-            f"      ssh-add {_AGENT_KEY_FIXTURE}\n"
-            "(this key is authorized by the ssh-keys fixture container).",
-            "ssh-add reports the key is added.",
-        )
+        if not agent_has_key(_AGENT_KEY_FIXTURE):
+            pytest.skip(
+                "ssh-agent has not loaded the fixture key — run:\n"
+                f"      ssh-add {_AGENT_KEY_FIXTURE}\n"
+                "(authorized by the ssh-keys fixture container), then re-run."
+            )
 
         name = unique_name("agent-auth")
         self.create_ssh_connection(
@@ -242,59 +251,66 @@ class TestExternalApp(
             what="the 'Setup SSH Agent' helper tab to open",
         )
 
-        self.manual_step(
-            "termiHub opened the 'Setup SSH Agent' helper tab.",
-            "The helper terminal runs the SSH-agent setup command (PowerShell "
-            "elevation on Windows; `ssh-agent` + `ssh-add` on macOS/Linux).",
+        self.manual_observe(
+            "termiHub opened a 'Setup SSH Agent' tab.",
+            "The tab ran the ssh-agent setup command.",
         )
 
     # ── X11 forwarding (MT-SSH-14/15/16/18, MT-XPLAT-03) ─────────────────────
     @pytest.mark.skipif(
         "sys.platform == 'win32'", reason="X11 forwarding is a macOS/Linux feature"
     )
-    @pytest.mark.usefixtures("ssh_fixtures")
+    @pytest.mark.usefixtures("ssh_x11_fixtures")
     def test_x11_forwarding_window_appears(self):
-        """Harness enables X11 on the connection (proving the flag persists) and
-        connects; operator runs an X11 app and confirms a window appears."""
+        """Harness saves an SSH connection (X11 forwarding is on by default),
+        connects to the X11-capable fixture, and auto-asserts the server handed
+        back a forwarded ``$DISPLAY``; the operator only confirms a window."""
         self.close_all_tabs()
         name = unique_name("x11")
-        self._fill_ssh_editor(name, port=SSH_PASSWORD_PORT)
+        self._fill_ssh_editor(name, port=SSH_X11_PORT)
 
+        # SSH connections default X11 forwarding ON (schema default, machine-
+        # verified by test_connection_forms::test_ssh_x11_defaults_on), so do NOT
+        # toggle the checkbox — a click would DISABLE it. Just save with the
+        # default so the session negotiates forwarding below.
         self.wait(
             lambda: self.driver.exists("field-enableX11Forwarding"),
             what="the X11-forwarding toggle",
         )
-        # A fresh SSH connection defaults X11 off (MT-SSH-19 /
-        # test_connection_forms::test_ssh_x11_field_present_and_defaults_off), so a
-        # single click on the checkbox enables it.
-        self.driver.click("field-enableX11Forwarding")
         self.driver.click(self.EDITOR_SAVE)
-
-        # In-app verification: the toggle actually persisted onto the connection.
-        conn = self.require_connection(name)
-        assert (conn.get("config") or {}).get("enableX11Forwarding") is True, (
-            "enableX11Forwarding did not persist on the saved connection"
-        )
 
         # Connect and let the operator exercise the forwarded display.
         self.connect_connection(name)
         self.handle_password_prompt(SSH_PASSWORD)
         assert self.wait(self.has_terminal, what="the X11 SSH terminal")
-        self.run_command("echo DISPLAY=$DISPLAY")
 
+        # In-app verification: the ssh-x11 fixture has X11Forwarding + xauth, so a
+        # session opened with X11 enabled gets a server-allocated $DISPLAY (e.g.
+        # 'localhost:10.0'). Auto-assert it rather than leaving it to the operator
+        # (#957) — a unique marker keeps the typed command line ('$DISPLAY') from
+        # matching before the echoed value does.
+        self.run_command("echo TH_X11_DISPLAY=$DISPLAY")
+        output = self.wait_for_output("TH_X11_DISPLAY=localhost:")
+        assert "TH_X11_DISPLAY=localhost:" in output, (
+            "SSH server did not allocate a forwarded $DISPLAY — X11 forwarding "
+            "was not negotiated"
+        )
+
+        # KNOWN ISSUE #1304: forwarding negotiates and $DISPLAY is set (asserted
+        # above), but the forwarded X11 channel never reaches termiHub, so no
+        # window appears yet. This step is expected to fail until #1304 is fixed;
+        # it stays active so it re-verifies once forwarding delivers the channel.
         self.manual_step(
-            "In the SSH terminal (X11 forwarding is enabled), with a local X server "
-            "running (XQuartz on macOS), run an X11 app, e.g.:\n"
-            "      xeyes   (or: xclock)\n"
-            "Note: $DISPLAY was just echoed above — it should read like "
-            "'localhost:10.0'.",
-            "An X11 window (xeyes/xclock) appears on your local display.",
+            "In the SSH terminal, type: xeyes   (or: xclock)",
+            "An X11 window appears on your screen. (Known bug #1304: it may not "
+            "yet — mark [n] if no window shows.)",
         )
 
     # ── Clipboard copy/paste (MT-KB-01..04) ──────────────────────────────────
     def test_terminal_clipboard_copy_paste(self):
-        """Harness copies the terminal buffer via the tab menu; operator pastes it
-        out, then exercises the platform copy/paste shortcuts on a selection."""
+        """Harness copies the terminal buffer via the tab menu and verifies it
+        landed on the OS clipboard (machine-checkable); the operator only
+        exercises the keyboard copy/paste shortcuts and Ctrl+C interrupt."""
         self.close_all_tabs()
         self.ensure_terminal()
         marker = "CLIPBOARD_MARKER_7731"
@@ -311,18 +327,33 @@ class TestExternalApp(
         )
         self.driver.click("tab-context-copy")
 
-        self.manual_step(
-            "termiHub copied the terminal buffer to the clipboard (tab menu → "
-            "Copy to Clipboard). Paste into any external editor.",
-            f"The pasted text contains {marker!r}.",
+        # In-app verification (machine-checkable): the copy must actually land on
+        # the OS clipboard. Reading it back catches a silently-failing copy
+        # without depending on the operator's paste. The write is async, so poll
+        # briefly; the clipboard state is printed either way for diagnosis.
+        try:
+            self.wait(
+                lambda: (marker in (read_os_clipboard() or "")) or None,
+                timeout=5.0,
+                what=f"{marker!r} on the OS clipboard",
+            )
+            landed = True
+        except AssertionError:
+            landed = False
+        clip_head = (read_os_clipboard() or "")[:120]
+        print(f"[clipboard-check] marker landed on OS clipboard: {landed} · "
+              f"content head: {clip_head!r}")
+        assert landed, (
+            "'Copy to Clipboard' did not put the terminal buffer on the OS "
+            f"clipboard — read back: {clip_head!r}"
         )
 
+        # The copy is now machine-verified above, so the operator is asked only
+        # for the irreducibly-manual part: the keyboard copy/paste shortcuts and
+        # that plain Ctrl+C still interrupts (xterm key handling + SIGINT).
         self.manual_step(
-            "Now test the keyboard shortcuts directly in the terminal:\n"
-            "  1. Select some terminal text with the mouse.\n"
-            "  2. Copy it — macOS: Cmd+C   ·   Windows/Linux: Ctrl+Shift+C.\n"
-            "  3. Paste it back — macOS: Cmd+V   ·   Windows/Linux: Ctrl+Shift+V.\n"
-            "  4. Confirm plain Ctrl+C (no Shift) still sends SIGINT (cancels a "
-            "running command).",
-            "Copy/paste use the platform shortcut, and Ctrl+C still interrupts.",
+            "In the terminal: select some text, copy it (Cmd+C, or Ctrl+Shift+C "
+            "on Windows/Linux), paste it back (Cmd+V / Ctrl+Shift+V). Then run a "
+            "command and press plain Ctrl+C.",
+            "Copy and paste worked, and plain Ctrl+C cancelled the command.",
         )

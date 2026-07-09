@@ -16,9 +16,11 @@ vi.mock("@/services/api", () => ({
 }));
 
 const mockReadClipboard = vi.fn().mockResolvedValue("");
+const mockWriteClipboard = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   readText: (...args: unknown[]) => mockReadClipboard(...args),
+  writeText: (...args: unknown[]) => mockWriteClipboard(...args),
 }));
 
 /** Creates a mock xterm instance with configurable selection state. */
@@ -106,10 +108,11 @@ describe("getTerminalSelection", () => {
 });
 
 describe("copySelectionToClipboard", () => {
-  it("does not write to clipboard when there is no selection", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+  beforeEach(() => {
+    mockWriteClipboard.mockClear();
+  });
 
+  it("does not write to clipboard when there is no selection", async () => {
     const xterm = createMockXterm(undefined);
     const el = document.createElement("div");
 
@@ -121,12 +124,15 @@ describe("copySelectionToClipboard", () => {
       await registryActions.copySelectionToClipboard("tab-1");
     });
 
-    expect(writeText).not.toHaveBeenCalled();
+    expect(mockWriteClipboard).not.toHaveBeenCalled();
   });
 
-  it("copies selection text to clipboard", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+  it("copies selection text via the OS clipboard plugin (not navigator.clipboard)", async () => {
+    // The web clipboard API rejects on macOS/WKWebView when the document isn't
+    // focused, silently dropping the copy. Route through the Tauri plugin (like
+    // paste) so copy works regardless of window focus.
+    const navigatorWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText: navigatorWriteText } });
 
     const xterm = createMockXterm("hello world");
     const el = document.createElement("div");
@@ -139,15 +145,48 @@ describe("copySelectionToClipboard", () => {
       await registryActions.copySelectionToClipboard("tab-1");
     });
 
-    expect(writeText).toHaveBeenCalledWith("hello world");
+    expect(mockWriteClipboard).toHaveBeenCalledWith("hello world");
+    expect(navigatorWriteText).not.toHaveBeenCalled();
   });
 });
 
 describe("copyTerminalToClipboard", () => {
-  it("trims trailing spaces from each line", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+  beforeEach(() => {
+    mockWriteClipboard.mockClear();
+  });
 
+  it("copies the whole buffer via the OS clipboard plugin (not navigator.clipboard)", async () => {
+    // Same focus-independence requirement as copySelectionToClipboard: the
+    // whole-buffer copy must also go through the Tauri plugin.
+    const navigatorWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText: navigatorWriteText } });
+
+    const xterm = {
+      buffer: {
+        active: {
+          length: 1,
+          getLine: vi.fn(() => ({
+            isWrapped: false,
+            translateToString: (trimRight?: boolean) => (trimRight ? "hello" : "hello   "),
+          })),
+        },
+      },
+    } as unknown as XTerm;
+
+    const el = document.createElement("div");
+    act(() => {
+      registryActions.register("tab-plugin", el, xterm, createMockFitAddon());
+    });
+
+    await act(async () => {
+      await registryActions.copyTerminalToClipboard("tab-plugin");
+    });
+
+    expect(mockWriteClipboard).toHaveBeenCalledWith("hello\n");
+    expect(navigatorWriteText).not.toHaveBeenCalled();
+  });
+
+  it("trims trailing spaces from each line", async () => {
     const xterm = {
       buffer: {
         active: {
@@ -178,13 +217,10 @@ describe("copyTerminalToClipboard", () => {
       await registryActions.copyTerminalToClipboard("tab-trim");
     });
 
-    expect(writeText).toHaveBeenCalledWith("hello\nworld\n");
+    expect(mockWriteClipboard).toHaveBeenCalledWith("hello\nworld\n");
   });
 
   it("joins wrapped continuation rows into a single logical line", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
-
     // Simulates "Hello World" in a 10-column terminal:
     // row 0: "Hello Worl" fills the terminal width (isWrapped=false)
     // row 1: "d         " is the continuation (isWrapped=true)
@@ -218,7 +254,7 @@ describe("copyTerminalToClipboard", () => {
       await registryActions.copyTerminalToClipboard("tab-wrap");
     });
 
-    expect(writeText).toHaveBeenCalledWith("Hello World\n");
+    expect(mockWriteClipboard).toHaveBeenCalledWith("Hello World\n");
   });
 });
 

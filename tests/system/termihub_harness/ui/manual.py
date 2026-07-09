@@ -67,31 +67,47 @@ class ManualUi(HarnessMixin):
         return answer
 
     def manual_observe(
-        self, instruction: str, expected: str, *, label: Optional[str] = None
+        self,
+        instruction: str,
+        expected: str,
+        *,
+        label: Optional[str] = None,
+        screenshot: bool = False,
     ) -> None:
-        """Like :meth:`manual_step`, attaching a screenshot when the bridge can.
+        """Confirm a result the harness already produced — no operator action.
 
-        The screenshot verb (#900) is not yet available; until it lands this
-        captures nothing and behaves like :meth:`manual_step`, so visual carve-
-        outs can already be written against this API.
+        Use this (not :meth:`manual_step`) whenever the harness performed the
+        work and the operator only *looks* — e.g. "termiHub issued Open in
+        VS Code; confirm it opened". The prompt is framed as an observation
+        ("Look at the result…") rather than an action.
+
+        ``screenshot`` is **opt-in and off by default**: observe steps almost
+        always run right after the app hands off to an external app, which on
+        macOS leaves termiHub's window occluded — and the bridge snapshot verb
+        (#900) then blocks until it times out (~10 s), stalling the operator for
+        no benefit. Pass ``screenshot=True`` only where a capture is both
+        reliable and worth the wait; it saves a PNG under the artifacts dir and
+        references its path (never the raw data URL).
         """
-        screenshot = self._capture_screenshot(label)
-        result = self._manual_prompter.step(
-            instruction, expected, screenshot=screenshot
-        )
-        self._record("observe", instruction, expected, result, screenshot=screenshot)
+        shot = self._capture_screenshot(label) if screenshot else None
+        result = self._manual_prompter.step(instruction, expected, screenshot=shot)
+        self._record("observe", instruction, expected, result, screenshot=shot)
         self._enforce(result, instruction)
 
     # ── Internals ────────────────────────────────────────────────────────────
     def _capture_screenshot(self, label: Optional[str]) -> Optional[str]:
-        """Capture a screenshot via the bridge if it supports it (#900), else None."""
-        shot = getattr(self.driver, "screenshot", None)
-        if shot is None:
-            return None
-        try:
-            return shot(label) if label else shot()
-        except Exception:  # noqa: BLE001 — evidence capture is best-effort
-            return None
+        """Persist a bridge screenshot for this observation; return its file path.
+
+        Delegates to :func:`artifacts.save_manual_screenshot`, which writes a PNG
+        under the per-test artifacts dir and returns its path — never the raw
+        ``data:image/png;base64,…`` URL the bridge produces (#900), which would
+        flood the operator console and the report. Returns ``None`` when the
+        bridge has no screenshot verb (older app) or capture fails.
+        """
+        from ..artifacts import save_manual_screenshot
+
+        path = save_manual_screenshot(self.driver, self._manual_nodeid, label=label)
+        return str(path) if path is not None else None
 
     def _record(
         self,
