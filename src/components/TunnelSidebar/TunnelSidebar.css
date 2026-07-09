@@ -166,3 +166,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Amber reconnecting row: attempt counter + backoff countdown while a tunnel
+ * with reconnect-on-disconnect retries under capped backoff (issue 1246). */
+.tunnel-item__reconnecting {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-warning);
+  min-width: 0;
+}
+
+.tunnel-item__reconnecting-icon {
+  flex-shrink: 0;
+}
+
+.tunnel-item__reconnecting-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

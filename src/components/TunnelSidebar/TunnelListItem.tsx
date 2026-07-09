@@ -226,6 +226,12 @@ export function TunnelListItem({
             <span className="tunnel-item__error-text">{lastError}</span>
           </span>
         )}
+        {status === "reconnecting" && lastError && (
+          <span className="tunnel-item__reconnecting" title={lastError}>
+            <RotateCw size={12} className="tunnel-item__reconnecting-icon" />
+            <span className="tunnel-item__reconnecting-text">{lastError}</span>
+          </span>
+        )}
       </div>
     </div>
   );
