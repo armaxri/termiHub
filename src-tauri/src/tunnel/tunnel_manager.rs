@@ -121,6 +121,13 @@ fn resting_status(
     }
 }
 
+/// How often the live stats emitter samples each active tunnel and pushes a
+/// `tunnel-stats-updated` event (GAP 6, #1248).
+const STATS_EMIT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// The Tauri event name carrying live per-tunnel throughput / connection counts.
+const TUNNEL_STATS_EVENT: &str = "tunnel-stats-updated";
+
 /// Payload for a live `tunnel-stats-updated` event.
 ///
 /// The frontend listener (`onTunnelStatsUpdated`, `src/services/events.ts`)
@@ -217,6 +224,10 @@ pub struct TunnelManager {
     endpoint_pool: Arc<RefPool<Arc<SshSession>>>,
     app_handle: AppHandle,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
+    /// Handle to the single periodic live-stats emitter task (GAP 6, #1248).
+    /// `Some` while at least one tunnel is active; the task self-reaps and clears
+    /// this slot once no tunnel remains, and `stop_all` aborts it on shutdown.
+    stats_emitter: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl TunnelManager {
@@ -238,6 +249,7 @@ impl TunnelManager {
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
+            stats_emitter: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -453,8 +465,67 @@ impl TunnelManager {
         // Emit connected status
         self.emit_status(tunnel_id, TunnelStatus::Connected, None);
 
+        // Ensure the periodic live-stats emitter is running now that a tunnel is
+        // active, so the sidebar's ↑/↓ bytes + conn count update live rather than
+        // freezing at the zeros the initial status event carried (GAP 6, #1248).
+        self.ensure_stats_emitter();
+
         tracing::info!("Tunnel {} started", tunnel_id);
         Ok(())
+    }
+
+    /// Ensure the single periodic live-stats emitter task is running.
+    ///
+    /// Idempotent: if a task is already tracked in `stats_emitter` it is left
+    /// alone. Otherwise a new task is spawned that, every [`STATS_EMIT_INTERVAL`],
+    /// snapshots every active tunnel's live [`ForwarderStats`] and emits one
+    /// `tunnel-stats-updated` event per tunnel. The task self-terminates (and
+    /// clears the tracking slot) as soon as no tunnel is active, so a dead/errored
+    /// tunnel reaped by its supervisor (#1243) naturally stops emitting.
+    fn ensure_stats_emitter(&self) {
+        let mut slot = match self.stats_emitter.lock() {
+            Ok(slot) => slot,
+            Err(_) => return,
+        };
+        // Already running (and not yet finished) — nothing to do.
+        if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+
+        let active_tunnels = Arc::clone(&self.active_tunnels);
+        let app_handle = self.app_handle.clone();
+        let emitter_slot = Arc::clone(&self.stats_emitter);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STATS_EMIT_INTERVAL).await;
+
+                // Snapshot under the lock, then release it before emitting so a
+                // slow event dispatch never blocks start/stop of other tunnels.
+                let updates = match active_tunnels.lock() {
+                    Ok(active) => snapshot_active_stats(&active),
+                    Err(_) => break,
+                };
+
+                // No tunnel left active: stop emitting and clear the slot so a
+                // later start re-spawns the task.
+                if updates.is_empty() {
+                    break;
+                }
+
+                for update in &updates {
+                    let _ = app_handle.emit(TUNNEL_STATS_EVENT, update);
+                }
+            }
+
+            // Self-reap: drop our own handle from the tracking slot so
+            // `ensure_stats_emitter` spawns a fresh task on the next start.
+            if let Ok(mut slot) = emitter_slot.lock() {
+                *slot = None;
+            }
+        });
+
+        *slot = Some(handle);
     }
 
     /// Build the forwarder for a tunnel config, performing the SSH handshake.
@@ -683,6 +754,19 @@ impl TunnelManager {
         for tunnel_id in tunnels {
             if let Err(e) = self.stop_tunnel(&tunnel_id) {
                 tracing::error!("Failed to stop tunnel {}: {}", tunnel_id, e);
+            }
+        }
+
+        // Abort the live-stats emitter promptly on shutdown rather than waiting
+        // for its next tick to observe the now-empty active set (GAP 6, #1248).
+        self.stop_stats_emitter();
+    }
+
+    /// Abort the live-stats emitter task (if any) and clear its tracking slot.
+    fn stop_stats_emitter(&self) {
+        if let Ok(mut slot) = self.stats_emitter.lock() {
+            if let Some(handle) = slot.take() {
+                handle.abort();
             }
         }
     }
