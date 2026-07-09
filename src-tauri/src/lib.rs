@@ -6,7 +6,6 @@ mod embedded_servers;
 /// subsystem (public so integration tests can drive `SftpSession` /
 /// `TransferRegistry` directly — issue #1245).
 pub mod files;
-mod monitoring;
 mod network;
 mod session;
 mod terminal;
@@ -27,7 +26,6 @@ use connection::settings::{AppSettings, SettingsStorage};
 use credential::{AutoLockTimer, CredentialManager, StorageMode};
 use files::sftp::SftpManager;
 use files::transfer::TransferRegistry;
-use monitoring::MonitoringManager;
 use network::NetworkManager;
 use session::manager::SessionManager;
 use session::registry::build_desktop_registry;
@@ -94,10 +92,10 @@ pub fn run() {
         .plugin(tauri_plugin_cli::init())
         .manage(SftpManager::new())
         .manage(TransferRegistry::new())
-        .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
         .manage(x_server_manager.clone())
         .manage(commands::connection_path::ProbeRegistry::default())
+        .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
@@ -525,10 +523,6 @@ pub fn run() {
             commands::files::vscode_open_local,
             commands::files::vscode_open_remote,
             commands::files::write_cheatsheet,
-            // Monitoring (kept temporarily — will migrate to session-based monitoring)
-            commands::monitoring::monitoring_open,
-            commands::monitoring::monitoring_close,
-            commands::monitoring::monitoring_fetch_stats,
             // Agent management
             commands::agent::connect_agent,
             commands::agent::cancel_connect_agent,
@@ -549,6 +543,7 @@ pub fn run() {
             commands::agent::delete_agent_folder,
             commands::agent::detect_agent_arch,
             commands::agent::setup_remote_agent,
+            commands::agent::cancel_agent_setup,
             commands::agent::probe_remote_agent,
             commands::agent::deploy_agent,
             commands::agent::update_agent,

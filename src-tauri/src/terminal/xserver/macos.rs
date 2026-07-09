@@ -11,6 +11,9 @@ use std::path::Path;
 #[cfg(any(target_os = "macos", test))]
 use std::time::Duration;
 
+#[cfg(any(target_os = "macos", test))]
+use tokio_util::sync::CancellationToken;
+
 use super::types::XServerError;
 
 /// How long to wait between readiness probes after launching XQuartz.
@@ -114,6 +117,22 @@ fn poll_until_ready(
     }
 }
 
+/// Whether an SSH connect-abort token has been tripped, mapping the connect
+/// path's optional [`CancellationToken`] into the boolean predicate
+/// [`poll_until_ready`] consumes.
+///
+/// `None` is the status/probe path (the `x_server_ensure` command), which has no
+/// connect to abort, so it never reports cancelled. `Some(token)` is the SSH
+/// connect path (#1260): when the user aborts the connect the token trips and the
+/// readiness wait short-cuts instead of running out its budget.
+///
+/// Gated to macOS (plus `test`): the only production caller is the macOS
+/// launch-and-wait path.
+#[cfg(any(target_os = "macos", test))]
+fn token_cancelled(cancel: Option<&CancellationToken>) -> bool {
+    cancel.is_some_and(CancellationToken::is_cancelled)
+}
+
 /// Launch XQuartz (best-effort) and wait a short, bounded time for it to become
 /// ready before returning, so the connect path doesn't classify a
 /// still-starting server as unreachable (#1088).
@@ -121,10 +140,13 @@ fn poll_until_ready(
 /// Called from the orchestrator's macOS path in place of a bare launch +
 /// single immediate re-probe. Runs on the `spawn_blocking` thread the ensure
 /// call already uses, so the `std::thread::sleep` between probes never blocks
-/// the async reactor. `cancelled` lets an in-flight connect abort short-cut the
-/// wait; readiness is re-checked via `detect_local_x_server` each attempt.
+/// the async reactor. `cancel` is the SSH connect-abort token threaded from the
+/// connect path (#1260): when the user aborts the connect it short-cuts the wait
+/// promptly instead of running out the readiness budget. `None` (the
+/// status/probe path) is never cancelled. Readiness is re-checked via
+/// `detect_local_x_server` each attempt.
 #[cfg(target_os = "macos")]
-pub(super) fn launch_xquartz_and_wait(cancelled: impl Fn() -> bool) {
+pub(super) fn launch_xquartz_and_wait(cancel: Option<&CancellationToken>) {
     use termihub_core::backends::ssh::x11::detect_local_x_server;
 
     launch_xquartz();
@@ -132,7 +154,7 @@ pub(super) fn launch_xquartz_and_wait(cancelled: impl Fn() -> bool) {
         READINESS_POLL_INTERVAL,
         READINESS_TOTAL_BUDGET,
         || detect_local_x_server().is_some(),
-        cancelled,
+        || token_cancelled(cancel),
         std::thread::sleep,
     );
 }
@@ -289,6 +311,71 @@ mod tests {
             slept.get() < Duration::from_millis(4000),
             "cancellation must short-cut the remaining budget, slept {:?}",
             slept.get()
+        );
+    }
+
+    // ── Connect-abort token wiring (#1260) ───────────────────────────────────
+    //
+    // The readiness wait is driven by a `cancelled` predicate. `token_cancelled`
+    // is the bridge from the SSH connect path's `CancellationToken` (threaded
+    // through `ensure_x_server_for_session`) into that predicate, so an aborted
+    // connect short-cuts the wait instead of running out the budget. These cover
+    // the end-to-end wiring (the pure poll-loop cancellation path is already
+    // covered above).
+
+    #[test]
+    fn token_cancelled_maps_absent_live_and_tripped() {
+        // No token (the status/probe path with no connect abort) is never
+        // cancelled; a live token isn't cancelled; a tripped one is.
+        assert!(
+            !token_cancelled(None),
+            "the probe path (no token) must never report cancelled"
+        );
+        let token = tokio_util::sync::CancellationToken::new();
+        assert!(
+            !token_cancelled(Some(&token)),
+            "a live connect token must not report cancelled"
+        );
+        token.cancel();
+        assert!(
+            token_cancelled(Some(&token)),
+            "a tripped connect token must report cancelled"
+        );
+    }
+
+    #[test]
+    fn readiness_wait_bails_on_tripped_token() {
+        // End-to-end wiring: a connect-abort token threaded into the readiness
+        // wait short-cuts it before any sleep, rather than running out the
+        // ~4s budget while the aborted connect waits.
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        let cancel = Some(&token);
+        let probes = Cell::new(0u32);
+        let slept = Cell::new(Duration::ZERO);
+        let ready = poll_until_ready(
+            READINESS_POLL_INTERVAL,
+            READINESS_TOTAL_BUDGET,
+            || {
+                probes.set(probes.get() + 1);
+                false
+            },
+            || token_cancelled(cancel),
+            |d| slept.set(slept.get() + d),
+        );
+        assert!(
+            !ready,
+            "an aborted connect must not report the server ready"
+        );
+        assert_eq!(
+            slept.get(),
+            Duration::ZERO,
+            "an already-tripped token must bail before any sleep"
+        );
+        assert_eq!(
+            probes.get(),
+            0,
+            "cancellation is honored before the first readiness probe"
         );
     }
 

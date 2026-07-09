@@ -54,14 +54,12 @@ function monitorEntry(patch: Partial<MonitoringEntry> = {}): MonitoringEntry {
   return {
     key: KEY,
     host: KEY,
-    sessionBased: false,
     monitorSessionId: "sess-1",
     stats: null,
     loading: false,
     error: null,
     status: "live",
     sampleCount: 2,
-    cancelled: false,
     paused: false,
     intervalMs: 2000,
     ...patch,
@@ -137,10 +135,12 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
   });
 
   it("shows a Retry control and error badge when the entry is offline", async () => {
-    const refreshMonitoring = vi.fn(() => Promise.resolve());
+    const connectMonitoring = vi.fn(() => Promise.resolve());
+    const disconnectMonitoring = vi.fn(() => Promise.resolve());
     useAppStore.setState({
       monitors: { [KEY]: monitorEntry({ status: "offline" }) },
-      refreshMonitoring,
+      connectMonitoring,
+      disconnectMonitoring,
     });
     renderModal();
 
@@ -154,7 +154,9 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     await act(async () => {
       retry.click();
     });
-    expect(refreshMonitoring).toHaveBeenCalledWith(KEY);
+    // Retry tears down the stale subscription and re-subscribes (#1232/#1233).
+    expect(disconnectMonitoring).toHaveBeenCalledWith(KEY);
+    expect(connectMonitoring).toHaveBeenCalledWith(KEY, KEY);
   });
 
   it("does not render a Retry control while live", () => {

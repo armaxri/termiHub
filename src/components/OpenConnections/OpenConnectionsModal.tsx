@@ -18,6 +18,8 @@ import {
   RotateCw,
   Timer,
   Check,
+  Unplug,
+  Power,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Modal, Button, Tooltip, Progress, toast } from "@/components/ui";
@@ -70,6 +72,7 @@ interface ProxySessionsState {
 export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModalProps) {
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
+  const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
   const tunnels = useAppStore((s) => s.tunnels);
   // Live single source of truth for tunnel status (kept in sync by tunnel
@@ -91,7 +94,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
   const setMonitoringPaused = useAppStore((s) => s.setMonitoringPaused);
   const setMonitoringInterval = useAppStore((s) => s.setMonitoringInterval);
-  const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
+  const connectMonitoring = useAppStore((s) => s.connectMonitoring);
   // Live source of truth for HTTP monitors (kept current by the Network Tools
   // sidebar / check events); the panel reads it directly so it stays in sync
   // and this "kill everything" surface can see and stop the poll loops (#1147).
@@ -290,13 +293,36 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     setLocalSessions([]);
   };
 
-  const handleKillAgent = async (agentId: string) => {
-    await disconnectRemoteAgent(agentId);
+  // Clear the cached native-session rows for an agent once its transport is gone
+  // (both teardown intents drop the transport, so the "Sessions on <agent>"
+  // section must disappear together with the agent row).
+  const clearAgentSessionCache = (agentId: string) => {
     setAgentSessions((prev) => {
       const next = { ...prev };
       delete next[agentId];
       return next;
     });
+  };
+
+  // Disconnect (detach) — drop the transport but leave persistent daemon-backed
+  // remote sessions running so they re-list on the next connect (G9, #1237).
+  // Mirrors the agent header's Disconnect intent.
+  const handleKillAgent = async (agentId: string) => {
+    await disconnectRemoteAgent(agentId);
+    clearAgentSessionCache(agentId);
+  };
+
+  // Shutdown (stop remote) — stop the remote sessions and disconnect, reporting
+  // how many sessions the agent detached/killed as a success toast (G9, #1237).
+  // Mirrors the agent header's Shutdown intent.
+  const handleShutdownAgent = async (agentId: string) => {
+    const detached = await shutdownRemoteAgent(agentId);
+    clearAgentSessionCache(agentId);
+    toast.success(
+      detached > 0
+        ? `Agent shut down — ${detached} session${detached === 1 ? "" : "s"} stopped`
+        : "Agent shut down"
+    );
   };
 
   const handleKillAllAgents = async () => {
@@ -462,12 +488,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     }
   };
 
-  // Retry re-polls a monitor that dropped to stale/offline; a successful fetch
-  // flips its status back to live (session monitors recover via their own push
-  // stream, so this is a harmless no-op there).
+  // Retry re-establishes a monitor that dropped to stale/offline: tear down the
+  // stale subscription and re-subscribe the session's MonitoringProvider push
+  // stream (#1232/#1233), flipping its status back to connecting → live.
   const handleRetryMonitor = async (key: string) => {
+    const host = monitors[key]?.host ?? null;
     try {
-      await refreshMonitoring(key);
+      await disconnectMonitoring(key);
+      await connectMonitoring(key, host);
       toast.success("Retrying monitor");
     } catch (err) {
       frontendLog("open_connections", `Failed to retry monitoring: ${err}`);
@@ -596,7 +624,42 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 icon={<Server size={14} />}
                 title={a.name}
                 badge="connected"
-                onKill={() => handleKillAgent(a.id)}
+                actions={
+                  // Two distinct teardown intents mirroring the agent header
+                  // (G9, #1237/#1277). Disconnect detaches the transport but keeps
+                  // persistent remote sessions running; Shutdown stops them and
+                  // reports the count. Both use the async Button for pending/error
+                  // feedback; Shutdown adds a success toast.
+                  <div className="oc-row__actions">
+                    <Tooltip
+                      content="Detach transport — keep persistent remote sessions"
+                      side="top"
+                    >
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        icon={<Unplug size={14} />}
+                        onClick={() => handleKillAgent(a.id)}
+                        aria-label={`Disconnect (detach) ${a.name}`}
+                        data-testid={`oc-agent-disconnect-${a.id}`}
+                      >
+                        Disconnect
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="Stop remote sessions and disconnect" side="top">
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        icon={<Power size={14} />}
+                        onClick={() => handleShutdownAgent(a.id)}
+                        aria-label={`Shutdown (stop remote) ${a.name}`}
+                        data-testid={`oc-agent-shutdown-${a.id}`}
+                      >
+                        Shutdown
+                      </Button>
+                    </Tooltip>
+                  </div>
+                }
               />
             ))}
           </Section>
@@ -961,11 +1024,15 @@ interface ConnectionRowProps {
   onKill?: () => void | Promise<void>;
   /** Label for the kill button (defaults to "Kill"). */
   killLabel?: string;
-  /** Extra per-row controls rendered before the kill button. */
-  actions?: React.ReactNode;
   "data-testid"?: string;
   /** data-testid forwarded to the kill button. */
   killTestId?: string;
+  /**
+   * Custom trailing actions, rendered in place of the default kill button. Used
+   * by rows that expose more than one teardown intent (e.g. an agent's
+   * Disconnect vs Shutdown). When set, `onKill` is ignored.
+   */
+  actions?: React.ReactNode;
 }
 
 function ConnectionRow({
@@ -975,9 +1042,9 @@ function ConnectionRow({
   badge,
   onKill,
   killLabel = "Kill",
-  actions,
   "data-testid": testId,
   killTestId,
+  actions,
 }: ConnectionRowProps) {
   return (
     <div className="oc-row" data-testid={testId}>
@@ -987,18 +1054,18 @@ function ConnectionRow({
         {detail && <span className="oc-row__detail">{detail}</span>}
       </span>
       <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
-      {actions}
-      {onKill && (
-        <Button
-          variant="danger"
-          size="sm"
-          className="oc-row__kill"
-          onClick={() => onKill()}
-          data-testid={killTestId}
-        >
-          {killLabel}
-        </Button>
-      )}
+      {actions ??
+        (onKill && (
+          <Button
+            variant="danger"
+            size="sm"
+            className="oc-row__kill"
+            onClick={() => onKill()}
+            data-testid={killTestId}
+          >
+            {killLabel}
+          </Button>
+        ))}
     </div>
   );
 }

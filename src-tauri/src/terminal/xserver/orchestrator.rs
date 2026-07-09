@@ -13,6 +13,7 @@ use std::sync::Arc;
 use termihub_core::backends::ssh::x11::{
     detect_local_x_server, read_local_xauth_cookie, LocalXServerInfo, ResolvedXServer,
 };
+use tokio_util::sync::CancellationToken;
 
 use super::linux_gap::{self, LinuxXEnv};
 use super::manager::{XServerManager, XServerStatus as ManagedStatus};
@@ -43,7 +44,9 @@ pub fn ensure_x_server(
     manager: &XServerManager,
     provide_automatically: bool,
 ) -> Result<EnsureOutcome, XServerError> {
-    ensure_x_server_impl(manager, provide_automatically)
+    // Status/probe path (the `x_server_ensure` command): no connect to abort, so
+    // no cancellation token.
+    ensure_x_server_impl(manager, provide_automatically, None)
 }
 
 /// Ensure a usable local X server **and** claim a session against it, returning
@@ -57,6 +60,7 @@ pub fn ensure_x_server(
 pub fn ensure_x_server_for_session(
     manager: &Arc<XServerManager>,
     provide_automatically: bool,
+    cancel: Option<&CancellationToken>,
 ) -> Result<(EnsureOutcome, super::manager::SessionGuard), XServerError> {
     // Acquire first: this drives the same adopt/reuse/spawn logic as
     // `ensure_running` while bumping the refcount, and hands back a guard that
@@ -68,9 +72,10 @@ pub fn ensure_x_server_for_session(
         })?;
     // Resolve the (now running) server for the report/forwarder. The lease
     // already ensured it, so this reuses the live process without a second
-    // acquire. If resolution somehow fails, dropping `guard` releases the
-    // session we just claimed.
-    let outcome = ensure_x_server_impl(manager, provide_automatically)?;
+    // acquire. `cancel` is the SSH connect-abort token so an aborted connect
+    // short-cuts the macOS XQuartz readiness wait (#1260). If resolution somehow
+    // fails, dropping `guard` releases the session we just claimed.
+    let outcome = ensure_x_server_impl(manager, provide_automatically, cancel)?;
     Ok((outcome, guard))
 }
 
@@ -80,9 +85,15 @@ pub fn ensure_x_server_for_session(
 fn ensure_x_server_impl(
     manager: &XServerManager,
     provide_automatically: bool,
+    cancel: Option<&CancellationToken>,
 ) -> Result<EnsureOutcome, XServerError> {
     let platform = XServerPlatform::current();
     let dependency = dependency_available(platform);
+
+    // `cancel` only feeds the macOS XQuartz readiness wait below; silence the
+    // unused-variable warning on platforms without that path.
+    #[cfg(not(target_os = "macos"))]
+    let _ = cancel;
 
     // macOS: if XQuartz is installed but idle, nudge it up so detection and the
     // SSH `DISPLAY` handshake can succeed. XQuartz takes a second or two to
@@ -90,12 +101,12 @@ fn ensure_x_server_impl(
     // rather than re-probing once immediately and misclassifying a
     // still-starting server as unreachable (#1088). This runs on the
     // `spawn_blocking` thread the ensure call already uses, so the between-probe
-    // sleeps never touch the async reactor. No connect-abort token is threaded
-    // through `ensure_x_server` yet, so cancellation is a no-op for now; the
-    // wait is cancel-ready for when one is wired in.
+    // sleeps never touch the async reactor. `cancel` is the SSH connect-abort
+    // token (#1260): an aborted connect short-cuts the wait promptly instead of
+    // running out the readiness budget.
     #[cfg(target_os = "macos")]
     if dependency && detect_local_x_server().is_none() {
-        super::macos::launch_xquartz_and_wait(|| false);
+        super::macos::launch_xquartz_and_wait(cancel);
     }
 
     // 1. Let the manager adopt/reuse/spawn (TCP-based; covers Windows + managed).
@@ -518,12 +529,12 @@ mod tests {
             // decrement the refcount, so the accumulation assertions below rely
             // on both leases staying in scope.
             let (outcome, _guard1) =
-                ensure_x_server_for_session(&mgr, true).expect("session acquired");
+                ensure_x_server_for_session(&mgr, true, None).expect("session acquired");
             assert_eq!(outcome.report.session_count, 1, "first session counted");
             assert_eq!(mgr.session_count(), 1);
 
             let (outcome, _guard2) =
-                ensure_x_server_for_session(&mgr, true).expect("second session acquired");
+                ensure_x_server_for_session(&mgr, true, None).expect("second session acquired");
             assert_eq!(outcome.report.session_count, 2, "second session counted");
             assert_eq!(mgr.session_count(), 2);
         }
@@ -544,8 +555,10 @@ mod tests {
             let mgr = std::sync::Arc::new(manager(vec![], true));
 
             // Keep both leases alive so the live count stays at 2.
-            let (_o1, _guard1) = ensure_x_server_for_session(&mgr, true).expect("session acquired");
-            let (_o2, _guard2) = ensure_x_server_for_session(&mgr, true).expect("session acquired");
+            let (_o1, _guard1) =
+                ensure_x_server_for_session(&mgr, true, None).expect("session acquired");
+            let (_o2, _guard2) =
+                ensure_x_server_for_session(&mgr, true, None).expect("session acquired");
 
             let status = current_status(&mgr);
             assert_eq!(status.state, XServerState::Running);

@@ -35,6 +35,16 @@ vi.mock("@/services/api", () => ({
   sftpRename: vi.fn(() => Promise.resolve()),
   sftpWriteFileContent: vi.fn(() => Promise.resolve()),
   vscodeOpenRemote: vi.fn(() => Promise.resolve()),
+  // The real marker class so `error instanceof TransferTerminalError` in
+  // runTransfer resolves correctly (#1286).
+  TransferTerminalError: class TransferTerminalError extends Error {
+    readonly phase: "cancelled" | "error";
+    constructor(phase: "cancelled" | "error", message: string) {
+      super(message);
+      this.name = "TransferTerminalError";
+      this.phase = phase;
+    }
+  },
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -223,7 +233,7 @@ describe("useFileSystem (SFTP) — store integration", () => {
 
 // D2 (#1143): a failed transfer must surface an error to the user via toast
 // rather than resolving silently or producing an unhandled rejection.
-import { sftpDownload } from "@/services/api";
+import { sftpDownload, TransferTerminalError } from "@/services/api";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { toast } from "@/components/ui";
 
@@ -343,5 +353,109 @@ describe("useFileSystem (SFTP) — transfer-error feedback (D2, #1143)", () => {
     });
 
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+});
+
+// #1286: the terminal success/error toast is owned exclusively by the
+// `transfer-progress` event path (useTransferEvents) so a single transfer
+// yields exactly one terminal toast. `runTransfer` must therefore show only a
+// pending toast and dismiss it on completion — never emit its own terminal
+// success/error toast (which would double up with the event path).
+describe("useFileSystem (SFTP) — no double terminal toast (#1286)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  async function renderHook(): Promise<ReturnType<typeof useFileSystem>> {
+    let api: ReturnType<typeof useFileSystem> | undefined;
+    function Harness() {
+      api = useFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    return api!;
+  }
+
+  it("does not emit a terminal success toast on a successful upload (event path owns it)", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+    vi.mocked(open).mockResolvedValueOnce("/local/file.txt");
+    vi.mocked(sftpUpload).mockResolvedValueOnce(0);
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await api.uploadFile();
+    });
+
+    // Pending feedback only; the terminal toast comes from useTransferEvents.
+    expect(vi.mocked(toast.loading)).toHaveBeenCalled();
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalled();
+  });
+
+  it("does not emit a terminal success toast on a successful download", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/" });
+    vi.mocked(save).mockResolvedValueOnce("/local/save.txt");
+    vi.mocked(sftpDownload).mockResolvedValueOnce(0);
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await api.downloadFile("/remote/save.txt", "save.txt");
+    });
+
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalled();
+  });
+
+  it("defers to the event path on a TransferTerminalError (no runTransfer error toast)", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+    vi.mocked(open).mockResolvedValueOnce("/local/file.txt");
+    // A terminal `error` phase surfaced via awaitTransfer — the event path
+    // (useTransferEvents) already toasts it, so runTransfer must not re-toast.
+    vi.mocked(sftpUpload).mockRejectedValueOnce(
+      new TransferTerminalError("error", "connection reset")
+    );
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await expect(api.uploadFile()).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalled();
+  });
+
+  it("stays quiet on a cancelled transfer (TransferTerminalError 'cancelled')", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+    vi.mocked(open).mockResolvedValueOnce("/local/file.txt");
+    vi.mocked(sftpUpload).mockRejectedValueOnce(
+      new TransferTerminalError("cancelled", "Transfer cancelled")
+    );
+
+    const api = await renderHook();
+
+    await act(async () => {
+      await expect(api.uploadFile()).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.dismiss)).toHaveBeenCalled();
   });
 });

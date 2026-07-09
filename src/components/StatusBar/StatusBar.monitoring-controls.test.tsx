@@ -109,10 +109,10 @@ function primeRemoteSessionTab(sessionId: string) {
   }));
 }
 
-/** MonitorKey for the primed SSH tab (`user@host:port`). */
-const MONITOR_KEY = "user@host:22";
+/** MonitorKey for the primed SSH tab — the owning session id (#1232). */
+const MONITOR_KEY = "sess-1";
 
-/** Install a keyed monitor entry for the primed tab (#1231, per-host slice). */
+/** Install a keyed monitor entry for the primed tab (#1231, per-session slice). */
 function setActiveMonitor(patch: Partial<MonitoringEntry>) {
   useAppStore.setState((s) => ({
     monitors: {
@@ -120,14 +120,12 @@ function setActiveMonitor(patch: Partial<MonitoringEntry>) {
       [MONITOR_KEY]: {
         key: MONITOR_KEY,
         host: MONITOR_KEY,
-        sessionBased: false,
         monitorSessionId: null,
         stats: null,
         loading: false,
         error: null,
         status: null,
         sampleCount: 0,
-        cancelled: false,
         paused: false,
         intervalMs: 2000,
         ...patch,

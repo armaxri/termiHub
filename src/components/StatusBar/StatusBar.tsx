@@ -3,7 +3,6 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Activity,
   AlertTriangle,
-  RefreshCw,
   Unplug,
   Loader2,
   Server,
@@ -18,8 +17,6 @@ import {
 import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
-import { ConnectionConfig } from "@/types/terminal";
-import { SavedConnection } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
   SystemStats,
@@ -56,13 +53,6 @@ function formatKb(kb: number): string {
   if (kb < 1024) return `${kb} KB`;
   if (kb < 1024 * 1024) return `${(kb / 1024).toFixed(1)} MB`;
   return `${(kb / (1024 * 1024)).toFixed(1)} GB`;
-}
-
-/** Extract monitoring-relevant connection settings (host, port, username, authMethod, password). */
-function extractMonitoringConfig(config: ConnectionConfig): Record<string, unknown> | null {
-  const cfg = config.config;
-  if (cfg.host && cfg.username) return cfg;
-  return null;
 }
 
 /** Check if a connection type supports monitoring.
@@ -291,25 +281,22 @@ function TransfersIndicator() {
  */
 function MonitoringStatus() {
   const globalMonitoringEnabled = useAppStore((s) => s.settings.powerMonitoringEnabled);
-  const connectMonitoring = useAppStore((s) => s.connectMonitoring);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
-  const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
   const setMonitoringPaused = useAppStore((s) => s.setMonitoringPaused);
   const setMonitoringInterval = useAppStore((s) => s.setMonitoringInterval);
   const cancelMonitoring = useAppStore((s) => s.cancelMonitoring);
   const sessionCapabilities = useAppStore((s) => s.sessionCapabilities);
 
-  const connections = useAppStore((s) => s.connections);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
-  const activeTabSessionId = useAppStore((s) => getActiveTab(s)?.sessionId ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
   const activeTabExited = useAppStore((s) => !!(activeTabId && s.terminalExitedTabs[activeTabId]));
 
   // Per-host keying (#1231, audit gap G6): the status bar renders the entry for
-  // the active tab's monitor key. Switching tabs just changes which entry we
-  // show — other hosts keep monitoring independently.
+  // the active tab's monitor key — the owning terminal session id (#1232).
+  // Switching tabs just changes which entry we show — other hosts keep
+  // monitoring independently.
   const activeMonitorKey = useAppStore((s) => monitorKeyForTab(getActiveTab(s)));
   const activeMonitor = useAppStore((s) => selectMonitor(s, monitorKeyForTab(getActiveTab(s))));
   const monitoringConnected = !!activeMonitor?.monitorSessionId;
@@ -319,7 +306,6 @@ function MonitoringStatus() {
   const monitoringLoading = activeMonitor?.loading ?? false;
   const monitoringError = activeMonitor?.error ?? null;
   const monitoringStatus = activeMonitor?.status ?? null;
-  const monitoringCancelled = activeMonitor?.cancelled ?? false;
   const monitoringPaused = activeMonitor?.paused ?? false;
   const monitoringInterval = activeMonitor?.intervalMs ?? DEFAULT_MONITORING_INTERVAL_MS;
 
@@ -327,57 +313,29 @@ function MonitoringStatus() {
     connectionTypes,
     activeTabConnectionType ?? "",
     sessionCapabilities,
-    activeTabSessionId
+    activeMonitorKey
   );
   const monitoringEnabled = activeTabSupportsMonitoring
     ? resolveFeatureEnabled(activeTabConfig, "enableMonitoring", globalMonitoringEnabled)
     : false;
 
-  const isRemoteSession = activeTabConnectionType === "remote-session";
-
-  /** Tracks which host key already failed auto-connect to prevent retry loops. */
+  /** Tracks which monitor key already failed auto-connect to prevent retry loops. */
   const autoConnectFailedRef = useRef<string | null>(null);
 
   /**
    * Bumped by the Retry control to re-run the auto-connect effect after clearing
-   * the failed-host latch, so a failed/cancelled auto-connect is not a dead-end
-   * (audit gaps G7 + G8).
+   * the failed-host latch, so a failed auto-connect is not a dead-end (audit
+   * gaps G7 + G9).
    */
   const [retryNonce, setRetryNonce] = useState(0);
 
-  const monitorableConnections = useMemo(() => {
-    return connections.filter((c) =>
-      typeSupportsMonitoring(connectionTypes, c.config.type, sessionCapabilities, null)
-    );
-  }, [connections, connectionTypes, sessionCapabilities]);
-
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Auto-refresh polling (SSH-based monitoring only; session-based is push).
-  // Suspended while paused, and driven by the per-entry interval (#1233).
-  useEffect(() => {
-    if (monitoringConnected && !isRemoteSession && !monitoringPaused && activeMonitorKey) {
-      const key = activeMonitorKey;
-      intervalRef.current = setInterval(() => {
-        refreshMonitoring(key);
-      }, monitoringInterval);
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [
-    monitoringConnected,
-    isRemoteSession,
-    monitoringPaused,
-    monitoringInterval,
-    activeMonitorKey,
-    refreshMonitoring,
-  ]);
-
-  // Auto-connect monitoring when active tab supports monitoring
+  // Auto-connect monitoring when the active tab supports it. Every monitorable
+  // tab — desktop-direct SSH and remote-session alike — subscribes to its own
+  // terminal session's MonitoringProvider push path, keyed by that session id
+  // (#1232). No credentials are prompted: the provider reuses the already
+  // authenticated terminal session. Collection cadence and pause are driven by
+  // the backend loop via setMonitoringInterval / setMonitoringPaused (#1233),
+  // so there is no frontend poll timer.
   useEffect(() => {
     if (!monitoringEnabled) return;
 
@@ -390,70 +348,23 @@ function MonitoringStatus() {
     const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab) return;
 
+    // The monitor key is the owning terminal session id (#1232), so it doubles
+    // as the sessionId passed to connectMonitoring.
     const key = monitorKeyForTab(activeTab);
     if (!key) return;
 
-    // Already monitoring this host (connected or in flight) → nothing to do.
+    // Already monitoring this session (connected or in flight) → nothing to do.
     // Switching tabs no longer tears down other hosts (#1231, audit gap G6).
     const existing = useAppStore.getState().monitors[key];
     if (existing && (existing.monitorSessionId || existing.loading)) return;
     if (autoConnectFailedRef.current === key) return;
     autoConnectFailedRef.current = key;
 
-    // ── Remote-session: use session-based (push) monitoring ───────────
-    if (activeTab.connectionType === "remote-session") {
-      const sessionId = activeTab.sessionId;
-      if (!sessionId) return;
-      const doConnect = async () => {
-        await useAppStore
-          .getState()
-          .connectMonitoring({ _sessionBased: true, _sessionId: sessionId });
-        if (useAppStore.getState().monitors[key]?.monitorSessionId) {
-          autoConnectFailedRef.current = null;
-        }
-      };
-      doConnect();
-      return;
-    }
-
-    // ── Standard SSH-based monitoring ────────────────────────────────
-    const { sessionCapabilities: caps, connectionTypes: types } = useAppStore.getState();
-    if (!typeSupportsMonitoring(types, activeTab.config.type, caps, activeTab.sessionId)) return;
-
     const cfg = activeTab.config.config;
-    const host = (cfg.host as string) ?? "";
-    const port = (cfg.port as number) ?? 0;
-    const username = (cfg.username as string) ?? "";
+    const hostLabel = (cfg.host as string) || activeTab.title || key;
 
     const doConnect = async () => {
-      const {
-        connections: conns,
-        connectMonitoring: connect,
-        requestPassword,
-      } = useAppStore.getState();
-
-      let configToUse = cfg;
-      const authMethod = cfg.authMethod as string | undefined;
-      if (authMethod === "password" && !cfg.password) {
-        const savedConn = conns.find((c) => {
-          const sc = c.config.config;
-          return sc.host === host && sc.port === port && sc.username === username;
-        });
-        const baseConfig = savedConn ? savedConn.config.config : cfg;
-        const password = await requestPassword(host, username);
-        if (password === null) {
-          // The user cancelled the password prompt. Surface a subtle
-          // "Monitoring not connected" affordance instead of returning silently,
-          // and keep the Retry/picker reachable (audit gap G8).
-          frontendLog("monitoring", "auto-connect cancelled at password prompt");
-          useAppStore.getState().setMonitoringCancelled(key, true);
-          return;
-        }
-        configToUse = { ...baseConfig, password };
-      }
-
-      await connect(configToUse);
-
+      await useAppStore.getState().connectMonitoring(key, hostLabel);
       if (useAppStore.getState().monitors[key]?.monitorSessionId) {
         autoConnectFailedRef.current = null;
       }
@@ -462,38 +373,24 @@ function MonitoringStatus() {
     doConnect();
   }, [
     activeTabId,
-    activeTabSessionId,
     activeMonitorKey,
     monitoringConnected,
     monitoringEnabled,
     activeTabExited,
-    // Re-run auto-connect when the user hits Retry (audit gaps G7 + G8).
+    // Re-run auto-connect when the user hits Retry (audit gaps G7 + G9).
     retryNonce,
   ]);
 
-  const handleConnect = useCallback(
-    (connection: SavedConnection) => {
-      const monitorConfig = extractMonitoringConfig(connection.config);
-      if (monitorConfig) {
-        connectMonitoring(monitorConfig);
-      }
-    },
-    [connectMonitoring]
-  );
-
   /**
-   * Retry auto-connect after a failure or a cancelled password prompt. Clears
-   * the failed-host latch, the stale error, and the cancel affordance, then
-   * bumps the nonce so the auto-connect effect fires again (audit gaps G7 + G8;
-   * G9 — the lingering error is cleared here too).
+   * Retry auto-connect after a failure. Clears the failed-host latch and the
+   * stale error, then bumps the nonce so the auto-connect effect fires again
+   * (audit gaps G7 + G9).
    */
   const handleRetry = useCallback(() => {
     frontendLog("monitoring", "user retrying monitoring auto-connect");
     autoConnectFailedRef.current = null;
     if (activeMonitorKey) {
-      const { clearMonitoringError, setMonitoringCancelled } = useAppStore.getState();
-      clearMonitoringError(activeMonitorKey);
-      setMonitoringCancelled(activeMonitorKey, false);
+      useAppStore.getState().clearMonitoringError(activeMonitorKey);
     }
     setRetryNonce((n) => n + 1);
   }, [activeMonitorKey]);
@@ -550,18 +447,13 @@ function MonitoringStatus() {
 
   // Not connected: show connect button (or loading/error/cancelled state)
   if (!monitoringConnected && !isReconnectingWithCache) {
-    // Remote-session tabs auto-connect; show loading/error/cancelled feedback.
-    if (isRemoteSession) {
-      if (!monitoringLoading && !monitoringError && !monitoringCancelled) return null;
-    } else if (monitorableConnections.length === 0 && !monitoringError && !monitoringCancelled) {
-      // No saved monitorable connections to offer — but a failed/cancelled
-      // auto-connect must still surface its feedback + Retry (audit gaps G7/G8).
-      return null;
-    }
+    // Monitoring auto-connects for every monitorable tab, so the disconnected
+    // arm only ever surfaces transient feedback: the connecting spinner, or a
+    // failed-connect error with a reachable Retry (audit gaps G7 + G9). When
+    // there is nothing to show, render nothing and let auto-connect run.
+    if (!monitoringLoading && !monitoringError) return null;
 
-    // Retry is reachable whenever auto-connect failed or was cancelled, so the
-    // failure is never a dead-end (audit gaps G7 + G8).
-    const showRetry = !monitoringLoading && (monitoringError !== null || monitoringCancelled);
+    const showRetry = !monitoringLoading && monitoringError !== null;
 
     return (
       <>
@@ -602,16 +494,6 @@ function MonitoringStatus() {
           </span>
         )}
 
-        {monitoringCancelled && !monitoringError && (
-          <span
-            className="status-bar__item monitoring-status__cancelled"
-            title="Monitoring not connected — the password prompt was cancelled"
-            data-testid="monitoring-not-connected"
-          >
-            Monitoring not connected
-          </span>
-        )}
-
         {showRetry && (
           <Tooltip content="Retry monitoring connection" side="top">
             <button
@@ -624,45 +506,6 @@ function MonitoringStatus() {
               Retry
             </button>
           </Tooltip>
-        )}
-
-        {!monitoringLoading && monitorableConnections.length > 0 && (
-          <DropdownMenu.Root>
-            <Tooltip content="Connect monitoring" side="top">
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="status-bar__item status-bar__item--interactive"
-                  aria-label="Connect monitoring"
-                  data-testid="monitoring-connect-btn"
-                >
-                  <Activity size={12} />
-                  Monitor
-                </button>
-              </DropdownMenu.Trigger>
-            </Tooltip>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                className="monitoring-picker__content"
-                side="top"
-                align="start"
-                sideOffset={4}
-              >
-                <DropdownMenu.Label className="monitoring-picker__label">
-                  Connect Monitoring
-                </DropdownMenu.Label>
-                {monitorableConnections.map((conn) => (
-                  <DropdownMenu.Item
-                    key={conn.id}
-                    className="monitoring-picker__item"
-                    onSelect={() => handleConnect(conn)}
-                    data-testid={`monitoring-connect-${conn.id}`}
-                  >
-                    {conn.name}
-                  </DropdownMenu.Item>
-                ))}
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
         )}
       </>
     );
@@ -686,7 +529,6 @@ function MonitoringStatus() {
         status={monitoringStatus}
         paused={monitoringPaused}
         intervalMs={monitoringInterval}
-        onRefresh={() => activeMonitorKey && refreshMonitoring(activeMonitorKey)}
         onDisconnect={() => activeMonitorKey && disconnectMonitoring(activeMonitorKey)}
         onSetPaused={handleSetPaused}
         onSetInterval={handleSetInterval}
@@ -791,7 +633,6 @@ interface MonitoringDetailDropdownProps {
   paused: boolean;
   /** Current per-entry refresh interval in ms (#1233). */
   intervalMs: number;
-  onRefresh: () => void;
   onDisconnect: () => void;
   /** Pause/resume collection (#1233). */
   onSetPaused: (paused: boolean) => void | Promise<void>;
@@ -817,7 +658,6 @@ function MonitoringDetailDropdown({
   status,
   paused,
   intervalMs,
-  onRefresh,
   onDisconnect,
   onSetPaused,
   onSetInterval,
@@ -947,15 +787,6 @@ function MonitoringDetailDropdown({
 
           <DropdownMenu.Separator className="monitoring-menu__separator" />
 
-          <DropdownMenu.Item
-            className="monitoring-menu__action"
-            onSelect={onRefresh}
-            disabled={loading || paused}
-            data-testid="monitoring-refresh"
-          >
-            <RefreshCw size={14} className={loading ? "monitoring-status__spinner" : ""} />
-            Refresh
-          </DropdownMenu.Item>
           <DropdownMenu.Item
             className="monitoring-menu__action"
             onSelect={onDisconnect}

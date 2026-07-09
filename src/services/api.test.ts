@@ -72,6 +72,7 @@ import {
   listPodmanImages,
   detectAgentArch,
   setupRemoteAgent,
+  cancelAgentSetup,
   getLogs,
   clearLogs,
   getCredentialStoreStatus,
@@ -945,6 +946,23 @@ describe("api service", () => {
           }
         )
       ).rejects.toEqual("Binary not found");
+    });
+
+    it("cancelAgentSetup invokes cancel_agent_setup with the agentId", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await cancelAgentSetup("agent-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("cancel_agent_setup", { agentId: "agent-1" });
+      expect(result).toBe(true);
+    });
+
+    it("cancelAgentSetup returns false when no run is in flight", async () => {
+      mockedInvoke.mockResolvedValue(false);
+
+      const result = await cancelAgentSetup("agent-2");
+
+      expect(result).toBe(false);
     });
   });
 

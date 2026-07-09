@@ -38,8 +38,10 @@ Fixed strings — match exactly.
 | `agent-setup-branch-name` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-browse` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-cancel` | `src/components/Sidebar/AgentSetupDialog.tsx` |
+| `agent-setup-cancel-running` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-error` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-install-service` | `src/components/Sidebar/AgentSetupDialog.tsx` |
+| `agent-setup-progress` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-remote-path` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-source-branch` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-source-github` | `src/components/Sidebar/AgentSetupDialog.tsx` |
@@ -248,7 +250,6 @@ Fixed strings — match exactly.
 | `migration-result` | `src/components/Settings/PortableModeSettings.tsx`, `src/components/Settings/SecuritySettings.tsx` |
 | `modal-close` | `src/components/ui/Modal.tsx` |
 | `monitoring-cancel-btn` | `src/components/StatusBar/StatusBar.tsx` |
-| `monitoring-connect-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-cpu` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disconnect` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disk` | `src/components/StatusBar/StatusBar.tsx` |
@@ -256,9 +257,7 @@ Fixed strings — match exactly.
 | `monitoring-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-loading` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-mem` | `src/components/StatusBar/StatusBar.tsx` |
-| `monitoring-not-connected` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-paused` | `src/components/StatusBar/StatusBar.tsx` |
-| `monitoring-refresh` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-retry-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-stale` | `src/components/StatusBar/StatusBar.tsx` |
 | `multi-select-copy` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -597,9 +596,10 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `monitor-retry-*` | `monitor-retry-${entry.key}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `monitor-row-*` | `monitor-row-${config.id}` | `src/components/NetworkTools/HttpMonitorPanel.tsx`, `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `monitor-stale-*` | `monitor-stale-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
-| `monitoring-connect-*` | `monitoring-connect-${conn.id}` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-interval-*` | `monitoring-interval-${opt}` | `src/components/StatusBar/StatusBar.tsx` |
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `oc-agent-disconnect-*` | `oc-agent-disconnect-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `oc-agent-shutdown-*` | `oc-agent-shutdown-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `persistent-attach-*` | `persistent-attach-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-start-*` | `persistent-start-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-stop-*` | `persistent-stop-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |

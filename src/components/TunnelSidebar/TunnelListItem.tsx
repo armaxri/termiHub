@@ -1,5 +1,5 @@
 import { Play, Square, Pencil, Copy, Trash2, RotateCw, Info, AlertTriangle } from "lucide-react";
-import { Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, toast } from "@/components/ui";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
@@ -8,8 +8,10 @@ interface TunnelListItemProps {
   tunnel: TunnelConfig;
   state: TunnelState | undefined;
   connections: SavedConnection[];
-  onStart: (tunnelId: string) => void;
-  onStop: (tunnelId: string) => void;
+  /** Start (also Retry) the tunnel. May be async so the button shows a pending state. */
+  onStart: (tunnelId: string) => void | Promise<void>;
+  /** Stop the tunnel. May be async so the button shows a pending state. */
+  onStop: (tunnelId: string) => void | Promise<void>;
   onEdit: (tunnelId: string) => void;
   onDuplicate: (tunnelId: string) => void;
   onDelete: (tunnelId: string) => void;
@@ -73,102 +75,114 @@ export function TunnelListItem({
         <div className="tunnel-item__actions">
           {isActive && (
             <Tooltip content="Stop" side="top">
-              <button
-                className="tunnel-item__action"
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
                 aria-label="Stop"
                 data-testid={`tunnel-stop-${tunnel.id}`}
+                icon={<Square size={12} />}
+                // The store surfaces its own start/stop toast; suppress the
+                // Button's duplicate error toast and keep the pending spinner.
+                errorToast={false}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onStop(tunnel.id);
+                  return onStop(tunnel.id);
                 }}
-              >
-                <Square size={12} />
-              </button>
+              />
             </Tooltip>
           )}
           {isError && (
             <>
               <Tooltip content="View last error" side="top">
-                <button
-                  className="tunnel-item__action"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   aria-label="View last error"
                   data-testid={`tunnel-view-error-${tunnel.id}`}
+                  icon={<Info size={12} />}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleViewError();
                   }}
-                >
-                  <Info size={12} />
-                </button>
+                />
               </Tooltip>
               <Tooltip content="Retry" side="top">
-                <button
-                  className="tunnel-item__action"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   aria-label="Retry"
                   data-testid={`tunnel-retry-${tunnel.id}`}
+                  icon={<RotateCw size={12} />}
+                  errorToast={false}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onStart(tunnel.id);
+                    return onStart(tunnel.id);
                   }}
-                >
-                  <RotateCw size={12} />
-                </button>
+                />
               </Tooltip>
             </>
           )}
           {!isActive && !isError && (
             <Tooltip content="Start" side="top">
-              <button
-                className="tunnel-item__action"
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
                 aria-label="Start"
                 data-testid={`tunnel-start-${tunnel.id}`}
+                icon={<Play size={12} />}
+                errorToast={false}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onStart(tunnel.id);
+                  return onStart(tunnel.id);
                 }}
-              >
-                <Play size={12} />
-              </button>
+              />
             </Tooltip>
           )}
           <Tooltip content="Edit" side="top">
-            <button
-              className="tunnel-item__action"
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
               aria-label="Edit"
               data-testid={`tunnel-edit-${tunnel.id}`}
+              icon={<Pencil size={12} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onEdit(tunnel.id);
               }}
-            >
-              <Pencil size={12} />
-            </button>
+            />
           </Tooltip>
           <Tooltip content="Duplicate" side="top">
-            <button
-              className="tunnel-item__action"
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
               aria-label="Duplicate"
               data-testid={`tunnel-duplicate-${tunnel.id}`}
+              icon={<Copy size={12} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onDuplicate(tunnel.id);
               }}
-            >
-              <Copy size={12} />
-            </button>
+            />
           </Tooltip>
           <Tooltip content="Delete" side="top">
-            <button
-              className="tunnel-item__action"
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
               aria-label="Delete"
               data-testid={`tunnel-delete-${tunnel.id}`}
+              icon={<Trash2 size={12} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete(tunnel.id);
               }}
-            >
-              <Trash2 size={12} />
-            </button>
+            />
           </Tooltip>
         </div>
       </div>

@@ -288,9 +288,14 @@
             (<code>monitoringStatsCache</code> is already keyed by <code>sessionId</code>).
           </li>
           <li>
-            <strong>Desktop-direct SSH tabs:</strong> <code>MonitorKey = sessionId</code> of the SSH
-            terminal session that owns the monitor; the human-readable host label rides alongside as
-            <code>host</code> for display.
+            <strong>Desktop-direct SSH tabs:</strong> <code>MonitorKey = user@host:port</code> (the
+            SSH host key). This is the identity that is known <em>before</em> the async backend open
+            and is already shared with the stats cache — the connect picker monitors a saved host
+            that has no owning terminal session, so a stable session id is not available at keying
+            time. The human-readable host label rides alongside as <code>host</code> for display.
+            (<strong>Shipped deviation:</strong> the concept originally proposed keying these by the
+            owning terminal session id; #1231 keyed them by the host key instead — see the
+            <a href="#sync">Sync Ledger</a>.)
           </li>
         </ul>
         <p>
@@ -829,9 +834,11 @@ sequenceDiagram
                   <code>monitoringHost</code>, <code>monitoringStats</code>,
                   <code>monitoringLoading</code>, <code>monitoringError</code>) with
                   <code>monitors: Record&lt;MonitorKey, MonitoringEntry&gt;</code> (entry =
-                  <code>{ status, stats, host, error, intervalMs, paused }</code>).
-                  <code>monitoringStatsCache</code> is already keyed by <code>sessionId</code> — fold
-                  into the entry. Backend keeps a <code>HashMap&lt;MonitorKey, Subscription&gt;</code>;
+                  <code>{ status, stats, host, error, intervalMs, paused }</code>). The
+                  <code>MonitorKey</code> is the <code>sessionId</code> for session-based tabs and the
+                  <code>user@host:port</code> host key for desktop-direct SSH tabs;
+                  <code>monitoringStatsCache</code> already used that same keying — fold it into the
+                  entry. Backend keeps a <code>HashMap&lt;MonitorKey, Subscription&gt;</code>;
                   <code>session_monitoring_close(key)</code> kills one host. Status bar renders the
                   active tab's entry; Open Connections iterates all entries (replaces the single
                   <code>monitoringHost</code>-gated row).
@@ -904,8 +911,10 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
-          (design-only concept for #1193)
+          <strong>Last synced:</strong> after stages S1–S3 shipped (per-host keying G6 landed via
+          #1231 / PR #1280; ledger reconciled in #1281) · <strong>Status:</strong> aligned — the
+          keyed <code>monitors</code> store matches the concept, with one <em>accepted</em> keying
+          deviation recorded below (row 8).
         </p>
         <div class="table-wrap">
           <table>
@@ -926,15 +935,15 @@ sequenceDiagram
                   Mid-stream drop swallowed; only <code>monitoringError</code> set, stale stats keep
                   rendering (appStore + monitoring.rs:127-133)
                 </td>
-                <td>Missing</td>
-                <td>Implement S2, then re-sync</td>
+                <td>Resolved</td>
+                <td>Shipped in S2</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>Bounded backoff reconnect in collector loop (G2)</td>
                 <td>Loop connects once (monitoring.rs:106), never re-dials</td>
-                <td>Missing</td>
-                <td>Implement S3, then re-sync</td>
+                <td>Resolved</td>
+                <td>Shipped in S3</td>
               </tr>
               <tr>
                 <td>3</td>
@@ -943,36 +952,54 @@ sequenceDiagram
                   <code>run_remote_command</code> has no timeout; 5s <code>setInterval</code> stacks
                   tasks
                 </td>
-                <td>Missing</td>
-                <td>Implement S1 (push path); legacy removed in S3</td>
+                <td>Resolved</td>
+                <td>Shipped in S1 (push path); legacy removed in S3</td>
               </tr>
               <tr>
                 <td>4</td>
                 <td><code>subscribe()</code> returns real connect result (G4)</td>
                 <td>Returns <code>Ok(rx)</code> before connect; failure only <code>warn!</code></td>
-                <td>Missing</td>
-                <td>Implement S1, then re-sync</td>
+                <td>Resolved</td>
+                <td>Shipped in S1</td>
               </tr>
               <tr>
                 <td>5</td>
                 <td>Per-host/session keyed store + Open Connections rows (G6)</td>
                 <td>Five singleton fields; single global Monitoring row</td>
-                <td>Missing</td>
-                <td>Implement S3, then re-sync</td>
+                <td>Resolved</td>
+                <td>Shipped in S3 (#1231 / PR #1280)</td>
               </tr>
               <tr>
                 <td>6</td>
                 <td>Pause/Resume, Cancel, Retry, interval controls</td>
                 <td>Only Refresh + Disconnect; no Pause/Cancel/Retry/interval</td>
-                <td>Missing</td>
-                <td>Implement S2–S3, then re-sync</td>
+                <td>Resolved</td>
+                <td>Shipped in S2–S3</td>
               </tr>
               <tr>
                 <td>7</td>
                 <td>Legacy pull path retired</td>
                 <td>Legacy <code>MonitoringSession</code> still present (marked for removal)</td>
-                <td>Divergence (planned)</td>
-                <td>Remove in S3 after provider parity</td>
+                <td>Resolved</td>
+                <td>Removed in S3 after provider parity</td>
+              </tr>
+              <tr>
+                <td>8</td>
+                <td>
+                  Desktop-direct SSH <code>MonitorKey</code> = owning terminal session id
+                </td>
+                <td>
+                  Keyed by the <code>user@host:port</code> host key instead
+                  (<code>monitorKeyForTab</code> in <code>appStore.ts</code>), the identity known
+                  before the async backend open and shared with the stats cache — the connect picker
+                  monitors a saved host with no owning terminal session
+                </td>
+                <td>Divergence (accepted)</td>
+                <td>
+                  Concept updated to the host-key wording (this reconciliation, #1281); the #1231 /
+                  PR #1280 host-key choice is the real constraint, so the concept follows the code
+                  here rather than the reverse
+                </td>
               </tr>
             </tbody>
           </table>

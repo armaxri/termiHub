@@ -1,12 +1,13 @@
 /**
- * Tests for the monitoring auto-connect feedback gaps (issue #1148, G7 + G8 + G9).
+ * Tests for the monitoring auto-connect feedback gaps (issue #1148, G7 + G9).
  *
  * G7 — auto-connect failure is a dead-end: the error state must expose a visible
  *      Retry control that clears the failed-host latch and re-invokes connect.
- * G8 — cancelling the password prompt during auto-connect leaves no feedback: a
- *      subtle "Monitoring not connected" affordance with a reachable Retry must
- *      appear when `monitoringCancelled` is set.
  * G9 — a stale `monitoringError` must not linger; the Retry control clears it.
+ *
+ * (The former G8 "password prompt cancelled" affordance was retired with the
+ * legacy pull path in #1232: monitoring now reuses the already-authenticated
+ * terminal session, so there is no monitoring-specific credential prompt.)
  *
  * These tests drive the store's monitoring signals directly and assert the
  * disconnected-state render branch and the Retry interaction.
@@ -72,8 +73,8 @@ function primeMonitoringTab() {
   }));
 }
 
-/** MonitorKey for the primed SSH tab (`user@host:port`). */
-const MONITOR_KEY = "pi@pi.local:22";
+/** MonitorKey for the primed SSH tab: the owning terminal session id (#1232). */
+const MONITOR_KEY = "sess-1";
 
 /** Install a keyed monitor entry for the primed tab (#1231, per-host slice). */
 function setActiveMonitor(patch: Partial<MonitoringEntry>) {
@@ -83,14 +84,12 @@ function setActiveMonitor(patch: Partial<MonitoringEntry>) {
       [MONITOR_KEY]: {
         key: MONITOR_KEY,
         host: MONITOR_KEY,
-        sessionBased: false,
         monitorSessionId: null,
         stats: null,
         loading: false,
         error: null,
         status: null,
         sampleCount: 0,
-        cancelled: false,
         paused: false,
         intervalMs: 2000,
         ...patch,
@@ -162,41 +161,6 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
     // The stale error must be cleared so it does not linger (G9)…
     expect(useAppStore.getState().monitors[MONITOR_KEY].error).toBeNull();
     // …and a fresh connect attempt must be made (G7).
-    expect(connectSpy.mock.calls.length).toBe(before + 1);
-  });
-
-  it("(G8) shows a 'not connected' affordance with Retry when the password prompt was cancelled", () => {
-    setActiveMonitor({ cancelled: true });
-    useAppStore.setState({ connectMonitoring: vi.fn(() => Promise.resolve()) });
-    renderStatusBar();
-
-    const notConnected = container.querySelector('[data-testid="monitoring-not-connected"]');
-    expect(notConnected).not.toBeNull();
-    expect(notConnected!.textContent).toContain("not connected");
-
-    const retry = container.querySelector('[data-testid="monitoring-retry-btn"]');
-    expect(retry).not.toBeNull();
-  });
-
-  it("(G8) Retry from the cancelled affordance clears the flag and re-invokes connect", async () => {
-    const connectSpy = vi.fn(() => Promise.resolve());
-    setActiveMonitor({ cancelled: true });
-    useAppStore.setState({ connectMonitoring: connectSpy });
-    renderStatusBar();
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const retry = container.querySelector<HTMLButtonElement>(
-      '[data-testid="monitoring-retry-btn"]'
-    );
-    const before = connectSpy.mock.calls.length;
-    await act(async () => {
-      retry!.click();
-      await Promise.resolve();
-    });
-
-    expect(useAppStore.getState().monitors[MONITOR_KEY].cancelled).toBe(false);
     expect(connectSpy.mock.calls.length).toBe(before + 1);
   });
 });

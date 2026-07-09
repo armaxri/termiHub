@@ -15,22 +15,21 @@ export type MonitorStatus = "connecting" | "live" | "stale" | "reconnecting" | "
  * G6). The status bar renders the entry for the active tab; Open Connections
  * iterates every entry.
  *
- * `MonitorKey` is the session id for session-based (`remote-session`) tabs and
- * the `user@host:port` host key for desktop-direct SSH monitoring — matching the
- * keying that `monitoringStatsCache` already used.
+ * Since the legacy pull path was retired (#1232), every monitor — desktop-direct
+ * SSH and remote-session alike — routes through the unified session-based
+ * `MonitoringProvider` push path, so `MonitorKey` is always the id of the
+ * terminal session that owns the monitor.
  */
 export interface MonitoringEntry {
-  /** Stable key identifying this monitor (sessionId or `user@host:port`). */
+  /** Stable key identifying this monitor (the owning terminal session id). */
   key: string;
   /** Human-readable host label shown in the UI. */
   host: string | null;
-  /** True for push-based session monitoring; false for desktop-direct SSH polling. */
-  sessionBased: boolean;
   /**
-   * Backend session id used for close/refresh RPCs. Equals `key` for
-   * session-based monitors; for SSH it is the id returned by `monitoringOpen`.
-   * `null` until the backend connection is established (or after a failed open),
-   * which the UI reads as "not yet connected".
+   * Backend session id used for the close RPC. Equals {@link key} once the
+   * provider subscription is live; `null` until the backend connection is
+   * established (or after a failed open), which the UI reads as "not yet
+   * connected".
    */
   monitorSessionId: string | null;
   /** Last-known stats for this host, or `null` before the first sample. */
@@ -48,21 +47,14 @@ export interface MonitoringEntry {
    */
   sampleCount: number;
   /**
-   * True when auto-connect was aborted because the user cancelled the password
-   * prompt. The status bar renders a "Monitoring not connected" affordance with a
-   * reachable Retry instead of failing silently (audit gap G8).
-   */
-  cancelled: boolean;
-  /**
    * True while the user has paused collection (#1233). The transport stays open;
-   * the loop simply stops collecting. A paused monitor shows a neutral badge and,
-   * for SSH polling, suspends the frontend refresh timer.
+   * the backend loop simply stops collecting. A paused monitor shows a neutral
+   * badge and dimmed stats.
    */
   paused: boolean;
   /**
-   * Per-entry refresh interval in milliseconds (#1233). Drives the frontend poll
-   * cadence for SSH monitors and the backend loop cadence for session monitors,
-   * replacing the previously hardcoded intervals.
+   * Per-entry refresh interval in milliseconds (#1233). Drives the backend
+   * session monitoring loop cadence, replacing the previously hardcoded interval.
    */
   intervalMs: number;
 }

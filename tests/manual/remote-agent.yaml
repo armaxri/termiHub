@@ -409,3 +409,36 @@ tests:
       - "The container shell is interactive and command output appears"
       - "In-container file browsing lists directories; the container is removed on disconnect (when Remove on Exit is set)"
     verification: manual
+
+  - id: MT-AGENT-29
+    name: "Cancel an in-progress agent setup aborts the upload and rolls back"
+    pr: 1242
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a Remote Agent for a reachable Linux/macOS SSH host and open the Setup Agent dialog"
+      - "Pick a large binary source (GitHub download, or a local file) so the upload takes a few seconds, then click Start Setup"
+      - "While the dialog shows the live setup step, click Cancel Setup"
+      - "On the host, check the temp upload path (`/tmp/termihub-agent-upload`) after cancelling"
+    expected:
+      - "The dialog shows a live step (e.g. Uploading agent binary...) with a Cancel Setup button"
+      - "Clicking Cancel Setup fires immediately (a toast confirms cancellation) and closes the dialog"
+      - "The background SFTP upload stops rather than running to completion; the setup terminal shows the setup was cancelled"
+      - "The partial upload is rolled back — no leftover `/tmp/termihub-agent-upload` file remains on the host"
+    verification: manual
+
+  - id: MT-AGENT-30
+    name: "Agent tab that drops while still spawning shows waiting/reconnecting feedback"
+    pr: 1242
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect a Remote Agent and open a new session on it so a tab begins its connection.create"
+      - "Immediately drop the agent link (e.g. kill the SSH connection / take the host offline) while the tab is still opening, before its session is established"
+      - "Restore the agent link"
+    expected:
+      - "The spawning tab shows waiting-for-agent / reconnecting feedback rather than an ambiguous spawn error"
+      - "When the agent link is restored, the parked tab retries and opens its session"
+    verification: manual

@@ -11,7 +11,6 @@ import {
   TerminalOptions,
   LineEnding,
 } from "@/types/terminal";
-import { SystemStats } from "@/types/monitoring";
 import { XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
@@ -528,13 +527,37 @@ export interface TransferProgress {
 }
 
 /**
+ * Rejection raised by {@link awaitTransfer} when a transfer settles via a
+ * terminal `transfer-progress` event (`cancelled` / `error`), as opposed to an
+ * early/synchronous failure that never reached the background transfer.
+ *
+ * The terminal success/error toast is owned exclusively by the
+ * `transfer-progress` event path (`useTransferEvents`, #1286) so a single
+ * transfer yields exactly one toast. Callers such as `runTransfer` use this
+ * marker to recognise "the event path already surfaced this outcome" and skip
+ * their own terminal toast (they just dismiss their pending toast), while still
+ * surfacing early failures that produced no transfer event.
+ */
+export class TransferTerminalError extends Error {
+  /** `"cancelled"` when the user aborted; `"error"` on a real failure. */
+  readonly phase: "cancelled" | "error";
+
+  constructor(phase: "cancelled" | "error", message: string) {
+    super(message);
+    this.name = "TransferTerminalError";
+    this.phase = phase;
+  }
+}
+
+/**
  * Await the terminal `transfer-progress` event for `transferId`.
  *
  * The backend now runs transfers in the background on a dedicated channel and
  * returns a `transferId` synchronously (#1245). This bridges that fire-and-return
  * command to the existing await-completion callers: it resolves with the bytes
- * transferred on `done`, and rejects on `cancelled` / `error`. The D3 UI can
- * instead subscribe to `transfer-progress` directly for live progress.
+ * transferred on `done`, and rejects with a {@link TransferTerminalError} on
+ * `cancelled` / `error`. The D3 UI can instead subscribe to `transfer-progress`
+ * directly for live progress.
  */
 async function awaitTransfer(transferId: string): Promise<number> {
   const { listen } = await import("@tauri-apps/api/event");
@@ -548,10 +571,10 @@ async function awaitTransfer(transferId: string): Promise<number> {
         resolve(p.transferred);
       } else if (p.phase === "cancelled") {
         unlisten?.();
-        reject(new Error("Transfer cancelled"));
+        reject(new TransferTerminalError("cancelled", "Transfer cancelled"));
       } else if (p.phase === "error") {
         unlisten?.();
-        reject(new Error(p.message ?? "Transfer failed"));
+        reject(new TransferTerminalError("error", p.message ?? "Transfer failed"));
       }
     }).then((fn) => {
       unlisten = fn;
@@ -981,6 +1004,15 @@ export async function setupRemoteAgent(
   });
 }
 
+/**
+ * Cancel an in-flight agent deploy/setup, aborting the background SFTP upload /
+ * script injection between steps and rolling back the partial upload (#1242).
+ * No-op if no run is in flight. Returns whether a run was found.
+ */
+export async function cancelAgentSetup(agentId: string): Promise<boolean> {
+  return await invoke<boolean>("cancel_agent_setup", { agentId });
+}
+
 // --- Agent deployment commands ---
 
 /** Result of probing a remote host for the agent binary. */
@@ -1053,23 +1085,6 @@ export async function deleteRemoteAgentFromBackend(id: string): Promise<void> {
 /** Reorder remote agents by providing agent IDs in the desired order. */
 export async function reorderRemoteAgents(agentIds: string[]): Promise<void> {
   await invoke("reorder_remote_agents", { agentIds });
-}
-
-// --- Monitoring commands ---
-
-/** Open a new monitoring session. Returns session ID. */
-export async function monitoringOpen(config: Record<string, unknown>): Promise<string> {
-  return await invoke<string>("monitoring_open", { config });
-}
-
-/** Close a monitoring session. */
-export async function monitoringClose(sessionId: string): Promise<void> {
-  await invoke("monitoring_close", { sessionId });
-}
-
-/** Fetch system stats from a monitoring session. */
-export async function monitoringFetchStats(sessionId: string): Promise<SystemStats> {
-  return await invoke<SystemStats>("monitoring_fetch_stats", { sessionId });
 }
 
 // --- Session-based monitoring commands ---
