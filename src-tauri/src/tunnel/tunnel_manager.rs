@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter, Manager};
@@ -126,12 +127,32 @@ enum ActiveForwarder {
     Dynamic(DynamicForwarder),
 }
 
+impl ActiveForwarder {
+    /// Take the forwarder's death receiver (once) for the tunnel supervisor.
+    fn take_death_signal(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        match self {
+            ActiveForwarder::Local(f) => f.take_death_signal(),
+            ActiveForwarder::Remote(f) => f.take_death_signal(),
+            ActiveForwarder::Dynamic(f) => f.take_death_signal(),
+        }
+    }
+}
+
 /// An active tunnel instance.
 struct ActiveTunnel {
     forwarder: ActiveForwarder,
     /// Pool references kept alive for the tunnel's lifetime; dropped on teardown
     /// to release the shared endpoint / gateway sessions.
     guards: PooledSessionGuards,
+    /// Per-tunnel supervisor task that watches for forwarder / session death and
+    /// drives the tunnel to `Error` (#1243). `None` only in the brief window
+    /// before it is spawned. Dropped (detached) when the supervisor self-reaps on
+    /// death; aborted by `stop_tunnel`/`stop_all`.
+    supervisor: Option<tokio::task::JoinHandle<()>>,
+    /// Cancelled by `stop_tunnel`/`stop_all` before teardown so the supervisor
+    /// exits cleanly — a user stop must never be mistaken for a real death and
+    /// launder the tunnel into `Error`.
+    supervisor_cancel: CancellationToken,
 }
 
 /// Central manager for SSH tunnels.
@@ -141,12 +162,15 @@ struct ActiveTunnel {
 pub struct TunnelManager {
     tunnel_configs: Mutex<TunnelStore>,
     storage: TunnelStorage,
-    active_tunnels: Mutex<HashMap<String, ActiveTunnel>>,
+    /// `Arc`-shared so each per-tunnel supervisor task can hold a handle and
+    /// self-reap its own entry on death (#1243) without a `&self` reference.
+    active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
     /// Last error per tunnel id, making a failed start a durable, queryable
     /// resting state that survives a `loadTunnels` reload (GAP 3, #1238). An
     /// entry is set when a start fails and committed (not cancelled), and
-    /// cleared on a successful start or an explicit stop.
-    last_errors: Mutex<HashMap<String, String>>,
+    /// cleared on a successful start or an explicit stop. `Arc`-shared so the
+    /// supervisor can record a death cause (#1243).
+    last_errors: Arc<Mutex<HashMap<String, String>>>,
     connecting: ConnectingTracker,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
@@ -169,8 +193,8 @@ impl TunnelManager {
         Ok(Self {
             tunnel_configs: Mutex::new(result.data),
             storage,
-            active_tunnels: Mutex::new(HashMap::new()),
-            last_errors: Mutex::new(HashMap::new()),
+            active_tunnels: Arc::new(Mutex::new(HashMap::new())),
+            last_errors: Arc::new(Mutex::new(HashMap::new())),
             connecting: ConnectingTracker::new(),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
@@ -331,7 +355,7 @@ impl TunnelManager {
         // handshake). On failure, surface it as `error` status instead of
         // leaving the tunnel stuck in `connecting` (#829) — unless a Stop was
         // requested mid-connect, in which case it has already gone disconnected.
-        let (forwarder, guards) = match self.build_forwarder(&config, cancel) {
+        let (mut forwarder, guards, probe) = match self.build_forwarder(&config, cancel) {
             Ok(built) => built,
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
@@ -360,13 +384,32 @@ impl TunnelManager {
             return Ok(());
         }
 
-        // Register as active
+        // Register as active and spawn the per-tunnel supervisor. The supervisor
+        // watches the forwarder death signal + a session keepalive probe and, on
+        // a real death (not a user stop), reaps the tunnel, drops its pool guards,
+        // records the cause, and drives the resting state to Error (#1243).
+        let death = forwarder.take_death_signal();
+        let supervisor_cancel = CancellationToken::new();
         {
             let mut active = self
                 .active_tunnels
                 .lock()
                 .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-            active.insert(tunnel_id.to_string(), ActiveTunnel { forwarder, guards });
+            let supervisor = self.spawn_supervisor(
+                tunnel_id.to_string(),
+                death,
+                probe,
+                supervisor_cancel.clone(),
+            );
+            active.insert(
+                tunnel_id.to_string(),
+                ActiveTunnel {
+                    forwarder,
+                    guards,
+                    supervisor: Some(supervisor),
+                    supervisor_cancel,
+                },
+            );
         }
 
         // A successful start clears any recorded failure so the tunnel no longer
@@ -392,27 +435,41 @@ impl TunnelManager {
         &self,
         config: &TunnelConfig,
         cancel: CancellationToken,
-    ) -> Result<(ActiveForwarder, PooledSessionGuards), TerminalError> {
+    ) -> Result<
+        (
+            ActiveForwarder,
+            PooledSessionGuards,
+            Option<Arc<SshSession>>,
+        ),
+        TerminalError,
+    > {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
         let conn_id = &config.ssh_connection_id;
         let jumped = !ssh_config.proxy_jump.is_empty();
 
+        // The returned `Arc<SshSession>` is a probe handle the supervisor
+        // keepalive-pings so a dead SSH session surfaces as `Error` even while the
+        // local listener keeps accepting (#1243, GAP 1). Remote forwards own a
+        // dedicated non-`Arc` session (russh `Handle` is not `Clone`), so they get
+        // no probe here and rely on the forwarder death signal.
         match &config.tunnel_type {
             TunnelType::Local(local_config) => {
                 let (session, guards) =
                     self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                let probe = Some(Arc::clone(&session));
                 let f = LocalForwarder::start(local_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start local forwarder: {}", e))
                 })?;
-                Ok((ActiveForwarder::Local(f), guards))
+                Ok((ActiveForwarder::Local(f), guards, probe))
             }
             TunnelType::Dynamic(dynamic_config) => {
                 let (session, guards) =
                     self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
+                let probe = Some(Arc::clone(&session));
                 let f = DynamicForwarder::start(dynamic_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start dynamic forwarder: {}", e))
                 })?;
-                Ok((ActiveForwarder::Dynamic(f), guards))
+                Ok((ActiveForwarder::Dynamic(f), guards, probe))
             }
             TunnelType::Remote(remote_config) => {
                 // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
@@ -422,7 +479,7 @@ impl TunnelManager {
                 let f = RemoteForwarder::start(remote_config, session, registry).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start remote forwarder: {}", e))
                 })?;
-                Ok((ActiveForwarder::Remote(f), guards))
+                Ok((ActiveForwarder::Remote(f), guards, None))
             }
         }
     }
@@ -503,16 +560,34 @@ impl TunnelManager {
     }
 
     /// Stop a forwarder and release the pool references it held.
-    fn teardown_forwarder(&self, mut forwarder: ActiveForwarder, guards: PooledSessionGuards) {
-        match &mut forwarder {
-            ActiveForwarder::Local(f) => f.stop(),
-            ActiveForwarder::Remote(f) => f.stop(),
-            ActiveForwarder::Dynamic(f) => f.stop(),
-        }
-        // Dropping the guards (at end of scope) releases the pooled endpoint /
-        // gateway references, draining sessions no longer used by any tunnel or
-        // terminal.
-        drop(guards);
+    fn teardown_forwarder(&self, forwarder: ActiveForwarder, guards: PooledSessionGuards) {
+        teardown_parts(forwarder, guards);
+    }
+
+    /// Spawn the per-tunnel supervisor task (#1243). Holds `Arc` clones of the
+    /// shared state so it can self-reap its tunnel on death without `&self`.
+    fn spawn_supervisor(
+        &self,
+        tunnel_id: String,
+        death: Option<tokio::sync::oneshot::Receiver<()>>,
+        probe: Option<Arc<SshSession>>,
+        cancel: CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
+        let active_tunnels = Arc::clone(&self.active_tunnels);
+        let last_errors = Arc::clone(&self.last_errors);
+        let app_handle = self.app_handle.clone();
+        tokio::spawn(async move {
+            supervise(
+                active_tunnels,
+                last_errors,
+                app_handle,
+                tunnel_id,
+                death,
+                probe,
+                cancel,
+            )
+            .await;
+        })
     }
 
     /// Stop an active tunnel by ID.
@@ -530,7 +605,19 @@ impl TunnelManager {
         };
 
         if let Some(tunnel) = tunnel {
-            let ActiveTunnel { forwarder, guards } = tunnel;
+            let ActiveTunnel {
+                forwarder,
+                guards,
+                supervisor,
+                supervisor_cancel,
+            } = tunnel;
+            // Cancel + abort the supervisor first so the teardown-induced forwarder
+            // death is not mistaken for a real death that would re-emit `Error`
+            // over this `Disconnected` (#1243).
+            supervisor_cancel.cancel();
+            if let Some(handle) = supervisor {
+                handle.abort();
+            }
             self.teardown_forwarder(forwarder, guards);
             self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
             tracing::info!("Tunnel {} stopped", tunnel_id);
@@ -633,13 +720,127 @@ impl TunnelManager {
 
     /// Emit a tunnel status change event to the frontend.
     fn emit_status(&self, tunnel_id: &str, status: TunnelStatus, error: Option<String>) {
-        let state = TunnelState {
-            tunnel_id: tunnel_id.to_string(),
-            status,
-            error,
-            stats: TunnelStats::default(),
-        };
-        let _ = self.app_handle.emit("tunnel-status-changed", &state);
+        emit_tunnel_status(&self.app_handle, tunnel_id, status, error);
+    }
+}
+
+/// How long the supervisor waits between session keepalive probes (#1243).
+const SUPERVISOR_PROBE_INTERVAL: Duration = Duration::from_secs(20);
+
+/// Why a supervised tunnel died, for the recorded `Error` message.
+enum DeathCause {
+    Forwarder,
+    Session,
+}
+
+/// Stop a forwarder and drop its pool guards (RAII drains the pool). Free
+/// function so the supervisor task can tear a dead tunnel down without `&self`.
+fn teardown_parts(mut forwarder: ActiveForwarder, guards: PooledSessionGuards) {
+    match &mut forwarder {
+        ActiveForwarder::Local(f) => f.stop(),
+        ActiveForwarder::Remote(f) => f.stop(),
+        ActiveForwarder::Dynamic(f) => f.stop(),
+    }
+    drop(guards);
+}
+
+/// Emit a tunnel status change event to the frontend (free function so the
+/// supervisor task can emit without `&self`).
+fn emit_tunnel_status(
+    app_handle: &AppHandle,
+    tunnel_id: &str,
+    status: TunnelStatus,
+    error: Option<String>,
+) {
+    let state = TunnelState {
+        tunnel_id: tunnel_id.to_string(),
+        status,
+        error,
+        stats: TunnelStats::default(),
+    };
+    let _ = app_handle.emit("tunnel-status-changed", &state);
+}
+
+/// Per-tunnel supervisor loop (#1243, GAP 1 + GAP 2).
+///
+/// Waits for the first of: an explicit stop (cancel token — NOT a death), the
+/// forwarder death signal, or a failed session keepalive probe. On a real death
+/// it reaps the tunnel from `active_tunnels` (dropping its pool guards so the
+/// shared session drains exactly once), records the cause as the durable
+/// last-error (#1238), and emits the `Error` resting state.
+#[allow(clippy::too_many_arguments)]
+async fn supervise(
+    active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
+    last_errors: Arc<Mutex<HashMap<String, String>>>,
+    app_handle: AppHandle,
+    tunnel_id: String,
+    death: Option<tokio::sync::oneshot::Receiver<()>>,
+    probe: Option<Arc<SshSession>>,
+    cancel: CancellationToken,
+) {
+    let cause = tokio::select! {
+        biased;
+        // An explicit stop wins the race so a user stop is never laundered into
+        // Error; the other branches are dropped.
+        _ = cancel.cancelled() => return,
+        _ = wait_forwarder_death(death) => DeathCause::Forwarder,
+        _ = session_probe_loop(probe, SUPERVISOR_PROBE_INTERVAL) => DeathCause::Session,
+    };
+
+    let removed = match active_tunnels.lock() {
+        Ok(mut map) => map.remove(&tunnel_id),
+        Err(_) => None,
+    };
+    // If a concurrent stop already removed the entry, it owns the resting state.
+    let Some(ActiveTunnel {
+        forwarder, guards, ..
+    }) = removed
+    else {
+        return;
+    };
+    teardown_parts(forwarder, guards);
+
+    let reason = match cause {
+        DeathCause::Forwarder => "connection lost: forwarder stopped".to_string(),
+        DeathCause::Session => "connection lost: SSH session closed".to_string(),
+    };
+    record_last_error(&last_errors, &tunnel_id, reason.clone());
+    emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error, Some(reason));
+    tracing::warn!("Tunnel {tunnel_id} died — transitioned to Error");
+}
+
+/// Resolve when the forwarder's accept/forward loop ends. The oneshot resolves
+/// on `Ok` (never sent explicitly) or `Err` (its sender dropped when the task
+/// ended — a `break` or an `abort()`), so either way signals the loop is gone.
+async fn wait_forwarder_death(death: Option<tokio::sync::oneshot::Receiver<()>>) {
+    match death {
+        Some(rx) => {
+            let _ = rx.await;
+        }
+        // No signal wired (should not happen) — never resolve so the keepalive
+        // probe alone governs liveness.
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// Resolve only once the SSH session is dead. Lightweight keepalive: open a
+/// throwaway session channel every `interval`; a failure means the transport is
+/// gone. (A native russh session-liveness watch is the Option-B upgrade.)
+async fn session_probe_loop(session: Option<Arc<SshSession>>, interval: Duration) {
+    // No probe handle (remote forward): never resolve — the forwarder death
+    // signal governs liveness for this tunnel.
+    let session = match session {
+        Some(s) => s,
+        None => {
+            std::future::pending::<()>().await;
+            return;
+        }
+    };
+    loop {
+        tokio::time::sleep(interval).await;
+        if session.channel_open_session().await.is_err() {
+            return;
+        }
     }
 }
 
@@ -668,11 +869,16 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
-    use super::{clear_last_error, last_error_for, record_last_error, resting_status};
+    use super::{
+        clear_last_error, last_error_for, record_last_error, resting_status, session_probe_loop,
+        wait_forwarder_death,
+    };
     use crate::tunnel::config::TunnelStatus;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
+    use tokio_util::sync::CancellationToken;
 
     /// Stand-in for a pooled `Arc<SshSession>` that records when the underlying
     /// value is dropped, so we can assert the session is actually torn down (not
@@ -946,5 +1152,159 @@ mod tests {
         let second = resting_status(false, last_error_for(&errors, TUNNEL_ID));
         assert_eq!(second.0, TunnelStatus::Error);
         assert_eq!(second.1.as_deref(), Some("session died"));
+    }
+
+    // ── Supervisor: liveness signals + death-driven Error (S2, GAP 1 + GAP 2, #1243) ──
+    //
+    // As with the GAP-8 tests above, the full `supervise` task cannot run in a
+    // unit test (it needs a Tauri `AppHandle` to emit and a real `SshSession`),
+    // so these lock in its constituent behaviours with the same production
+    // building blocks: the real `wait_forwarder_death` / `session_probe_loop`
+    // futures and the RefPool guard-drain that the death path performs. The
+    // end-to-end Connected → Error on a killed sshd is the Docker system test.
+
+    /// The forwarder death oneshot resolves when its sender is dropped — i.e. when
+    /// the accept/forward task ends (a `break` or a `stop()`-abort), so the
+    /// supervisor observes forwarder death however the loop exits (GAP 2).
+    #[tokio::test]
+    async fn forwarder_death_resolves_when_task_ends() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let waiter = tokio::spawn(wait_forwarder_death(Some(rx)));
+        drop(tx); // the accept task "ended"
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("death wait must resolve when the forwarder task ends")
+            .expect("join");
+    }
+
+    /// With no death signal wired, the wait never resolves — the keepalive probe
+    /// alone governs liveness (defensive default).
+    #[tokio::test]
+    async fn no_forwarder_signal_never_resolves() {
+        let r = tokio::time::timeout(Duration::from_millis(100), wait_forwarder_death(None)).await;
+        assert!(r.is_err(), "no death signal ⇒ the wait must never resolve");
+    }
+
+    /// A remote-forward tunnel has no probe handle; the probe loop must never
+    /// resolve so the forwarder death signal governs (no spurious Error).
+    #[tokio::test]
+    async fn session_probe_without_handle_never_resolves() {
+        let r = tokio::time::timeout(
+            Duration::from_millis(100),
+            session_probe_loop(None, Duration::from_millis(10)),
+        )
+        .await;
+        assert!(
+            r.is_err(),
+            "no probe handle ⇒ the probe loop must never resolve"
+        );
+    }
+
+    /// A user Stop cancels the supervisor token *and* (via teardown/abort) ends
+    /// the forwarder task, so both signals fire. The supervisor's biased select
+    /// must let the cancel win so the stop is never laundered into `Error`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_cancel_wins_the_race_over_forwarder_death() {
+        let cancel = CancellationToken::new();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        cancel.cancel();
+        drop(tx); // teardown-induced forwarder death also fires
+
+        let outcome = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => "stopped",
+            _ = wait_forwarder_death(Some(rx)) => "died",
+        };
+        assert_eq!(
+            outcome, "stopped",
+            "a user stop must win over the teardown-induced forwarder death"
+        );
+    }
+
+    /// The supervisor death path reaps the tunnel from the active set, dropping
+    /// its pool guards (RAII drains the shared session) and recording the cause as
+    /// the durable `Error` resting state (#1238). Reproduced with the same
+    /// RefPool building blocks the manager holds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn death_reap_drains_pool_and_records_error() {
+        let pool = RefPool::<Arc<TrackedSession>>::new();
+        let live = Arc::new(AtomicUsize::new(0));
+        let errors = Mutex::new(HashMap::new());
+
+        let mut active: HashMap<String, EndpointGuard> = HashMap::new();
+        active.insert(TUNNEL_ID.to_string(), acquire_guard(&pool, &live).await);
+        assert_eq!(pool.ref_count(CONN_ID), 1);
+        assert_eq!(live.load(Ordering::SeqCst), 1);
+
+        // Supervisor on death: remove the entry (drops guards → RAII pool drain)
+        // and record the cause as the resting Error.
+        let removed = active.remove(TUNNEL_ID).expect("was active");
+        drop(removed);
+        record_last_error(
+            &errors,
+            TUNNEL_ID,
+            "connection lost: SSH session closed".to_string(),
+        );
+
+        assert!(active.is_empty(), "dead tunnel reaped from the active set");
+        assert_eq!(pool.ref_count(CONN_ID), 0, "pool ref count drained to zero");
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            0,
+            "shared session dropped exactly once"
+        );
+        let (status, msg) = resting_status(false, last_error_for(&errors, TUNNEL_ID));
+        assert_eq!(status, TunnelStatus::Error);
+        assert_eq!(msg.as_deref(), Some("connection lost: SSH session closed"));
+    }
+
+    /// A shared pooled session backing two tunnels: when it dies, each tunnel's
+    /// supervisor reaps its own guard and records `Error`, and the underlying
+    /// session drains exactly once (ref-count → 0), not once per tunnel.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shared_session_death_errors_both_tunnels_and_drains_once() {
+        let pool = RefPool::<Arc<TrackedSession>>::new();
+        let live = Arc::new(AtomicUsize::new(0));
+        let errors = Mutex::new(HashMap::new());
+
+        let g1 = acquire_guard(&pool, &live).await;
+        let g2 = acquire_guard(&pool, &live).await;
+        assert_eq!(pool.ref_count(CONN_ID), 2);
+        assert_eq!(live.load(Ordering::SeqCst), 1, "one shared session");
+
+        // First tunnel's supervisor reaps; the session lives while a ref remains.
+        drop(g1);
+        record_last_error(
+            &errors,
+            "tunnel-a",
+            "connection lost: SSH session closed".to_string(),
+        );
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            1,
+            "session stays alive while one ref remains"
+        );
+
+        // Second tunnel's supervisor reaps; now the shared session drains once.
+        drop(g2);
+        record_last_error(
+            &errors,
+            "tunnel-b",
+            "connection lost: SSH session closed".to_string(),
+        );
+        assert_eq!(pool.ref_count(CONN_ID), 0);
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            0,
+            "shared session drained exactly once"
+        );
+        assert_eq!(
+            resting_status(false, last_error_for(&errors, "tunnel-a")).0,
+            TunnelStatus::Error
+        );
+        assert_eq!(
+            resting_status(false, last_error_for(&errors, "tunnel-b")).0,
+            TunnelStatus::Error
+        );
     }
 }

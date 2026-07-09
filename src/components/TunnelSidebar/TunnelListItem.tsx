@@ -12,6 +12,12 @@ interface TunnelListItemProps {
   onStart: (tunnelId: string) => void | Promise<void>;
   /** Stop the tunnel. May be async so the button shows a pending state. */
   onStop: (tunnelId: string) => void | Promise<void>;
+  /**
+   * Force-reconnect a connected tunnel (tear down + restart) even if liveness
+   * has not fired yet — covers a stale-but-green tunnel the supervisor is slow
+   * to notice (#1243). May be async so the button shows a pending state.
+   */
+  onReconnect: (tunnelId: string) => void | Promise<void>;
   onEdit: (tunnelId: string) => void;
   onDuplicate: (tunnelId: string) => void;
   onDelete: (tunnelId: string) => void;
@@ -35,6 +41,7 @@ export function TunnelListItem({
   connections,
   onStart,
   onStop,
+  onReconnect,
   onEdit,
   onDuplicate,
   onDelete,
@@ -73,6 +80,23 @@ export function TunnelListItem({
           {typeLabel}
         </span>
         <div className="tunnel-item__actions">
+          {status === "connected" && (
+            <Tooltip content="Reconnect (force)" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Reconnect"
+                data-testid={`tunnel-reconnect-${tunnel.id}`}
+                icon={<RotateCw size={12} />}
+                errorToast={false}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  return onReconnect(tunnel.id);
+                }}
+              />
+            </Tooltip>
+          )}
           {isActive && (
             <Tooltip content="Stop" side="top">
               <Button
