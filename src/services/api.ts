@@ -11,7 +11,6 @@ import {
   TerminalOptions,
   LineEnding,
 } from "@/types/terminal";
-import { SystemStats } from "@/types/monitoring";
 import { XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
@@ -1077,23 +1076,6 @@ export async function deleteRemoteAgentFromBackend(id: string): Promise<void> {
 /** Reorder remote agents by providing agent IDs in the desired order. */
 export async function reorderRemoteAgents(agentIds: string[]): Promise<void> {
   await invoke("reorder_remote_agents", { agentIds });
-}
-
-// --- Monitoring commands ---
-
-/** Open a new monitoring session. Returns session ID. */
-export async function monitoringOpen(config: Record<string, unknown>): Promise<string> {
-  return await invoke<string>("monitoring_open", { config });
-}
-
-/** Close a monitoring session. */
-export async function monitoringClose(sessionId: string): Promise<void> {
-  await invoke("monitoring_close", { sessionId });
-}
-
-/** Fetch system stats from a monitoring session. */
-export async function monitoringFetchStats(sessionId: string): Promise<SystemStats> {
-  return await invoke<SystemStats>("monitoring_fetch_stats", { sessionId });
 }
 
 // --- Session-based monitoring commands ---

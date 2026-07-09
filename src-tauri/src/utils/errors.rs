@@ -43,9 +43,6 @@ pub enum TerminalError {
     #[error("SFTP session not found: {0}")]
     SftpSessionNotFound(String),
 
-    #[error("Monitoring session not found: {0}")]
-    MonitoringSessionNotFound(String),
-
     #[error("Tunnel error: {0}")]
     TunnelError(String),
 

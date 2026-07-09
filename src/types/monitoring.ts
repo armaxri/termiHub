@@ -15,22 +15,21 @@ export type MonitorStatus = "connecting" | "live" | "stale" | "reconnecting" | "
  * G6). The status bar renders the entry for the active tab; Open Connections
  * iterates every entry.
  *
- * `MonitorKey` is the session id for session-based (`remote-session`) tabs and
- * the `user@host:port` host key for desktop-direct SSH monitoring — matching the
- * keying that `monitoringStatsCache` already used.
+ * Since the legacy pull path was retired (#1232), every monitor — desktop-direct
+ * SSH and remote-session alike — routes through the unified session-based
+ * `MonitoringProvider` push path, so `MonitorKey` is always the id of the
+ * terminal session that owns the monitor.
  */
 export interface MonitoringEntry {
-  /** Stable key identifying this monitor (sessionId or `user@host:port`). */
+  /** Stable key identifying this monitor (the owning terminal session id). */
   key: string;
   /** Human-readable host label shown in the UI. */
   host: string | null;
-  /** True for push-based session monitoring; false for desktop-direct SSH polling. */
-  sessionBased: boolean;
   /**
-   * Backend session id used for close/refresh RPCs. Equals `key` for
-   * session-based monitors; for SSH it is the id returned by `monitoringOpen`.
-   * `null` until the backend connection is established (or after a failed open),
-   * which the UI reads as "not yet connected".
+   * Backend session id used for the close RPC. Equals {@link key} once the
+   * provider subscription is live; `null` until the backend connection is
+   * established (or after a failed open), which the UI reads as "not yet
+   * connected".
    */
   monitorSessionId: string | null;
   /** Last-known stats for this host, or `null` before the first sample. */
@@ -47,12 +46,6 @@ export interface MonitoringEntry {
    * #1 as "priming" for the CPU field (audit gap G10).
    */
   sampleCount: number;
-  /**
-   * True when auto-connect was aborted because the user cancelled the password
-   * prompt. The status bar renders a "Monitoring not connected" affordance with a
-   * reachable Retry instead of failing silently (audit gap G8).
-   */
-  cancelled: boolean;
 }
 
 /** System statistics retrieved from a remote Linux host. */

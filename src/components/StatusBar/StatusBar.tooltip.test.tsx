@@ -2,15 +2,17 @@
  * Tests for the tooltip adoption on the StatusBar `DropdownMenu.Trigger`
  * text-buttons (issue #1163, follow-up to #1114/#1102).
  *
- * DECISION (ADOPT, partial): three text-buttons whose tooltip names the ACTION
+ * DECISION (ADOPT, partial): text-buttons whose tooltip names the ACTION
  * — distinct from the VALUE shown in the visible label — were converted from a
  * bare `title=` to the shared `<Tooltip>` primitive, mirroring VS Code's
  * status-bar "Select Indentation" / "Select Language Mode" pattern:
  *   - `status-bar-tab-size`    ("Select indentation"   vs. label "Spaces: 2")
- *   - `monitoring-connect-btn` ("Connect monitoring"   vs. label "Monitor")
  *   - `status-bar-language`    ("Select language mode" vs. label "TypeScript")
  *
- * The fourth trigger, `monitoring-host`, is the intentional NO-TOOLTIP case: in
+ * (The former `monitoring-connect-btn` picker was retired with the legacy pull
+ * path in #1232; monitoring now auto-connects per tab with no connect button.)
+ *
+ * The `monitoring-host` trigger is the intentional NO-TOOLTIP case: in
  * its normal state the `title` only duplicated the hostname already shown in the
  * label, so the redundant title was removed. A `title` is kept only while the
  * host is reconnecting, where it conveys transient state the collapsed label does
