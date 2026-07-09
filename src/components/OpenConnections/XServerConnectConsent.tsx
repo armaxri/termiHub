@@ -72,8 +72,8 @@ export function XServerConnectConsent() {
       cancelled = true;
       unlisten?.();
     };
-    // Callbacks are stable per prompt; re-running would restart the listener.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Only the phase transition should (re)start the progress listener; the
+    // helper callbacks it uses are stable function declarations.
   }, [phase]);
 
   const handleEnable = async () => {
