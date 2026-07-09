@@ -232,6 +232,25 @@ mod tests {
         assert_eq!(screen, 0);
     }
 
+    /// XQuartz's launchd socket is `<dir>/org.xquartz:0` (with the `:0` suffix),
+    /// and there is no bare `<dir>/org.xquartz`. Resolution must use the path
+    /// that exists, else the forwarder connects to a missing socket (#1311).
+    #[cfg(unix)]
+    #[test]
+    fn test_xquartz_launchd_socket_resolves_with_display_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("org.xquartz");
+        let base = base.to_str().unwrap().to_string();
+        let socket_with_suffix = format!("{base}:0");
+        std::fs::File::create(&socket_with_suffix).unwrap();
+
+        let info = info_from_parsed(Some(base), 0);
+        match info.connection {
+            LocalXConnection::UnixSocket(path) => assert_eq!(path, socket_with_suffix),
+            other => panic!("expected UnixSocket at the `:0` path, got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_parse_display_xquartz() {
         let (host, display, screen) =
