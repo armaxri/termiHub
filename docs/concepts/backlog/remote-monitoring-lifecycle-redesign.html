@@ -196,9 +196,10 @@
             error branch.
           </li>
           <li>
-            <strong>G6 — Per-host/session keying:</strong> replace the global singleton with a
-            <code>Record&lt;hostKey, MonitoringState&gt;</code> map so multiple hosts monitor
-            simultaneously and each appears in Open Connections with its own Kill.
+            <strong>G6 — Per-session keying:</strong> replace the global singleton with a
+            <code>Record&lt;MonitorKey, MonitoringState&gt;</code> map (keyed by the owning session
+            id) so multiple hosts monitor simultaneously and each appears in Open Connections with
+            its own Kill.
           </li>
           <li>
             <strong>Missing controls:</strong> Pause/Resume, Cancel-during-connecting,
@@ -280,22 +281,27 @@
           from the owning session/host, stored in a <code>Record&lt;MonitorKey, MonitoringEntry&gt;</code>
           on both the backend registry and the frontend store.</strong>
         </p>
-        <p>The key is the identity the rest of the app already uses to address a monitored target:</p>
+        <p>
+          The key is the identity the rest of the app already uses to address a monitored target —
+          <strong>one unified keying:</strong> <code>MonitorKey = sessionId</code>, the id of the
+          owning terminal session, for <em>every</em> monitored tab. Both flows route through the
+          same session-based <code>MonitoringProvider</code>:
+        </p>
         <ul>
           <li>
-            <strong>Session-based tabs:</strong> <code>MonitorKey = sessionId</code> (the
-            remote-session tab's session id) — matches today's session-path store keying
-            (<code>monitoringStatsCache</code> is already keyed by <code>sessionId</code>).
+            <strong>Session-based (remote-session) tabs:</strong> the tab's session id is the key —
+            matches the session-path store keying (<code>monitoringStatsCache</code> is keyed by
+            <code>sessionId</code>).
           </li>
           <li>
-            <strong>Desktop-direct SSH tabs:</strong> <code>MonitorKey = user@host:port</code> (the
-            SSH host key). This is the identity that is known <em>before</em> the async backend open
-            and is already shared with the stats cache — the connect picker monitors a saved host
-            that has no owning terminal session, so a stable session id is not available at keying
-            time. The human-readable host label rides alongside as <code>host</code> for display.
-            (<strong>Shipped deviation:</strong> the concept originally proposed keying these by the
-            owning terminal session id; #1231 keyed them by the host key instead — see the
-            <a href="#sync">Sync Ledger</a>.)
+            <strong>Desktop-direct SSH tabs:</strong> also keyed by the owning terminal session id.
+            The tab already owns a live SSH session, so its session id is available at keying time;
+            it auto-connects through <code>session_monitoring_open(sessionId)</code> exactly like a
+            remote-session tab. The human-readable host label rides alongside as <code>host</code>
+            for display. (Earlier the connect-picker pull path keyed these by the
+            <code>user@host:port</code> host key; #1232 retired that legacy path and re-routed
+            desktop-direct SSH through the session-based provider, collapsing the two keyings into
+            this single session-id keying — see the <a href="#sync">Sync Ledger</a>.)
           </li>
         </ul>
         <p>
@@ -835,10 +841,12 @@ sequenceDiagram
                   <code>monitoringLoading</code>, <code>monitoringError</code>) with
                   <code>monitors: Record&lt;MonitorKey, MonitoringEntry&gt;</code> (entry =
                   <code>{ status, stats, host, error, intervalMs, paused }</code>). The
-                  <code>MonitorKey</code> is the <code>sessionId</code> for session-based tabs and the
-                  <code>user@host:port</code> host key for desktop-direct SSH tabs;
-                  <code>monitoringStatsCache</code> already used that same keying — fold it into the
-                  entry. Backend keeps a <code>HashMap&lt;MonitorKey, Subscription&gt;</code>;
+                  <code>MonitorKey</code> is the owning terminal session's <code>sessionId</code> for
+                  every tab — both session-based and desktop-direct SSH tabs, since #1232 routes both
+                  through the session-based provider (<code>monitorKeyForTab</code> returns
+                  <code>tab.sessionId</code>); <code>monitoringStatsCache</code> uses that same
+                  keying — fold it into the entry. Backend keeps a
+                  <code>HashMap&lt;MonitorKey, Subscription&gt;</code>;
                   <code>session_monitoring_close(key)</code> kills one host. Status bar renders the
                   active tab's entry; Open Connections iterates all entries (replaces the single
                   <code>monitoringHost</code>-gated row).
@@ -911,10 +919,12 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> after stages S1–S3 shipped (per-host keying G6 landed via
-          #1231 / PR #1280; ledger reconciled in #1281) · <strong>Status:</strong> aligned — the
-          keyed <code>monitors</code> store matches the concept, with one <em>accepted</em> keying
-          deviation recorded below (row 8).
+          <strong>Last synced:</strong> after the legacy pull path was retired in #1232 / PR #1295
+          (following stages S1–S3; per-host keying G6 landed via #1231 / PR #1280, first reconciled
+          in #1281 / PR #1293, re-reconciled here in #1300) · <strong>Status:</strong> aligned — the
+          keyed <code>monitors</code> store matches the concept, and the former desktop-direct SSH
+          keying deviation (row 8) is now <em>resolved</em>: #1232 re-routed those tabs through the
+          session-based provider, so all tabs key by the owning session id.
         </p>
         <div class="table-wrap">
           <table>
@@ -989,16 +999,18 @@ sequenceDiagram
                   Desktop-direct SSH <code>MonitorKey</code> = owning terminal session id
                 </td>
                 <td>
-                  Keyed by the <code>user@host:port</code> host key instead
-                  (<code>monitorKeyForTab</code> in <code>appStore.ts</code>), the identity known
-                  before the async backend open and shared with the stats cache — the connect picker
-                  monitors a saved host with no owning terminal session
+                  Now keyed by the owning terminal session id (<code>monitorKeyForTab</code> returns
+                  <code>tab.sessionId</code> in <code>appStore.ts</code>); #1232 retired the legacy
+                  pull path and re-routed desktop-direct SSH tabs through the session-based
+                  <code>MonitoringProvider</code> (auto-connect via
+                  <code>session_monitoring_open(sessionId)</code>), matching session-based tabs
                 </td>
-                <td>Divergence (accepted)</td>
+                <td>Resolved</td>
                 <td>
-                  Concept updated to the host-key wording (this reconciliation, #1281); the #1231 /
-                  PR #1280 host-key choice is the real constraint, so the concept follows the code
-                  here rather than the reverse
+                  Supersedes the #1281 / PR #1293 reconciliation, which had documented the interim
+                  <code>user@host:port</code> host-key deviation (#1231 / PR #1280). With the legacy
+                  path gone (#1232 / PR #1295), keying is unified on the session id and matches the
+                  original concept — the two-keying distinction is dropped (re-reconciled in #1300)
                 </td>
               </tr>
             </tbody>
