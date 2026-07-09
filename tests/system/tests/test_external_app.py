@@ -262,28 +262,22 @@ class TestExternalApp(
     )
     @pytest.mark.usefixtures("ssh_x11_fixtures")
     def test_x11_forwarding_window_appears(self):
-        """Harness enables X11 on the connection (proving the flag persists),
+        """Harness saves an SSH connection (X11 forwarding is on by default),
         connects to the X11-capable fixture, and auto-asserts the server handed
         back a forwarded ``$DISPLAY``; the operator only confirms a window."""
         self.close_all_tabs()
         name = unique_name("x11")
         self._fill_ssh_editor(name, port=SSH_X11_PORT)
 
+        # SSH connections default X11 forwarding ON (schema default, machine-
+        # verified by test_connection_forms::test_ssh_x11_defaults_on), so do NOT
+        # toggle the checkbox — a click would DISABLE it. Just save with the
+        # default so the session negotiates forwarding below.
         self.wait(
             lambda: self.driver.exists("field-enableX11Forwarding"),
             what="the X11-forwarding toggle",
         )
-        # A fresh SSH connection defaults X11 off (MT-SSH-19 /
-        # test_connection_forms::test_ssh_x11_field_present_and_defaults_off), so a
-        # single click on the checkbox enables it.
-        self.driver.click("field-enableX11Forwarding")
         self.driver.click(self.EDITOR_SAVE)
-
-        # In-app verification: the toggle actually persisted onto the connection.
-        conn = self.require_connection(name)
-        assert (conn.get("config") or {}).get("enableX11Forwarding") is True, (
-            "enableX11Forwarding did not persist on the saved connection"
-        )
 
         # Connect and let the operator exercise the forwarded display.
         self.connect_connection(name)
