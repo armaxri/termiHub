@@ -1005,6 +1005,15 @@ export async function setupRemoteAgent(
   });
 }
 
+/**
+ * Cancel an in-flight agent deploy/setup, aborting the background SFTP upload /
+ * script injection between steps and rolling back the partial upload (#1242).
+ * No-op if no run is in flight. Returns whether a run was found.
+ */
+export async function cancelAgentSetup(agentId: string): Promise<boolean> {
+  return await invoke<boolean>("cancel_agent_setup", { agentId });
+}
+
 // --- Agent deployment commands ---
 
 /** Result of probing a remote host for the agent binary. */

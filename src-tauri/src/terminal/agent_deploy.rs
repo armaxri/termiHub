@@ -10,9 +10,11 @@
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::terminal::agent_binary;
+use crate::terminal::agent_cancel::bail_if_cancelled;
 use crate::terminal::agent_install::{
     self, detect_windows_shell, posix_install_plan, windows_install_plan, windows_resolve_command,
     InstallPlan,
@@ -20,8 +22,8 @@ use crate::terminal::agent_install::{
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
-    detect_binary_arch, detect_remote_info, expected_arch_for_uname, run_remote_command,
-    upload_bytes_via_sftp,
+    detect_binary_arch, detect_remote_info, expected_arch_for_uname, remove_via_sftp,
+    run_remote_command, upload_bytes_via_sftp,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
 use crate::utils::version;
@@ -145,11 +147,16 @@ pub struct AgentDeployResult {
 /// 3. Validate ELF architecture matches the remote host
 /// 4. Upload via SFTP to temp path, then move into place
 /// 5. Verify the installed binary runs
+///
+/// `cancel` is checked before each network step (G10, #1242); firing it aborts
+/// the deploy before the next step and rolls back a partial upload. Pass `None`
+/// to run without cancellation (e.g. the `update_agent` re-deploy path).
 pub fn deploy_agent(
     agent_id: &str,
     config: &RemoteAgentConfig,
     deploy_config: &AgentDeployConfig,
     app_handle: &AppHandle,
+    cancel: Option<&CancellationToken>,
 ) -> Result<AgentDeployResult, TerminalError> {
     let remote_path = deploy_config
         .remote_path
@@ -157,6 +164,7 @@ pub fn deploy_agent(
         .unwrap_or(DEFAULT_REMOTE_PATH);
 
     // 1. SSH connect
+    bail_if_cancelled(cancel)?;
     emit_progress(
         app_handle,
         agent_id,
@@ -168,6 +176,7 @@ pub fn deploy_agent(
     let session = connect_and_authenticate(&ssh_config)?;
 
     // 2. Detect remote arch
+    bail_if_cancelled(cancel)?;
     emit_progress(
         app_handle,
         agent_id,
@@ -185,6 +194,7 @@ pub fn deploy_agent(
         })?;
 
     // 3. Resolve binary locally
+    bail_if_cancelled(cancel)?;
     emit_progress(
         app_handle,
         agent_id,
@@ -244,6 +254,7 @@ pub fn deploy_agent(
         };
 
     // 6. Read binary and upload via SFTP
+    bail_if_cancelled(cancel)?;
     emit_progress(
         app_handle,
         agent_id,
@@ -260,6 +271,13 @@ pub fn deploy_agent(
         plan.upload_path
     );
 
+    // A cancel that landed during the upload must not leave the temp file
+    // behind — roll it back before returning (G10, #1242).
+    if let Err(e) = bail_if_cancelled(cancel) {
+        rollback_partial_upload(&session, &plan.upload_path);
+        return Err(e);
+    }
+
     // 7. Install: create dir + move binary into place (POSIX also sets +x).
     emit_progress(
         app_handle,
@@ -272,6 +290,7 @@ pub fn deploy_agent(
         .map_err(|e| TerminalError::RemoteError(format!("Install command failed: {e}")))?;
 
     // 8. Verify
+    bail_if_cancelled(cancel)?;
     emit_progress(
         app_handle,
         agent_id,
@@ -343,6 +362,7 @@ pub fn update_agent<F>(
     config: &RemoteAgentConfig,
     deploy_config: &AgentDeployConfig,
     app_handle: &AppHandle,
+    cancel: Option<&CancellationToken>,
     shutdown_fn: F,
 ) -> Result<AgentDeployResult, TerminalError>
 where
@@ -369,10 +389,28 @@ where
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 2. Deploy the new binary
-    deploy_agent(agent_id, config, deploy_config, app_handle)
+    deploy_agent(agent_id, config, deploy_config, app_handle, cancel)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+
+/// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
+///
+/// The upload target lives at a temp path (`plan.upload_path`, e.g. `/tmp/…` on
+/// POSIX) that has not yet been moved into place, so removing it fully rolls back
+/// the SFTP upload. Failures are logged but not surfaced — the deploy already
+/// failed with `Cancelled` and the temp file is harmless if it lingers.
+fn rollback_partial_upload(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    upload_path: &str,
+) {
+    // SFTP remove works uniformly on POSIX and Windows hosts (the upload path is
+    // a temp location that has not yet been moved into place).
+    match remove_via_sftp(session, upload_path) {
+        Ok(_) => info!("Rolled back partial agent upload at {upload_path}"),
+        Err(e) => warn!("Failed to roll back partial upload at {upload_path}: {e}"),
+    }
+}
 
 fn emit_progress(app_handle: &AppHandle, agent_id: &str, step: &str, message: &str, progress: f64) {
     let _ = app_handle.emit(

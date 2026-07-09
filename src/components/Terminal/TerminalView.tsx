@@ -9,6 +9,7 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { TestBridge } from "@/testbridge/TestBridge";
 import { Terminal } from "./Terminal";
+import { applyAgentReconnecting } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
@@ -198,19 +199,10 @@ export function TerminalView() {
           // (called above for the "connected" transition), so it runs exactly
           // once per connect (G4/#1234) — do not refresh again here.
         } else if (state === "reconnecting") {
-          // Show the reconnecting spinner overlay on all tabs with an active
-          // session for this agent.
-          let markedCount = 0;
-          for (const tab of agentTerminalTabs) {
-            if (!tab.sessionId) continue;
-            frontendLog("disconnect", `agent reconnecting: marking tab=${tab.id}`);
-            store.setTerminalReconnecting(tab.id, true);
-            if (error) {
-              store.setTerminalReconnectTriggerError(tab.id, error);
-            }
-            markedCount++;
-          }
-          frontendLog("disconnect", `agent reconnecting: ${markedCount} tabs marked`);
+          // Live-session tabs show the reconnecting spinner; spawning tabs (no
+          // sessionId yet) are parked on the waiting-for-agent path so every
+          // agent tab gets honest feedback during a drop (G8, #1242).
+          applyAgentReconnecting(session_id, agentTerminalTabs, error);
         } else if (state === "disconnected") {
           // Mark all tabs with an active session for this agent as exited so
           // the disconnect overlay appears.
