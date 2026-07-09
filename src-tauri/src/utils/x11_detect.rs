@@ -74,22 +74,30 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
             }
         }
         Some(ref h) if h.starts_with('/') => {
-            // macOS XQuartz: /private/tmp/com.apple.launchd.xxx/org.xquartz:0
-            if std::path::Path::new(h).exists()
-                || std::path::Path::new(&format!("{}:{}", h, display_number)).exists()
-            {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::UnixSocket(h.clone()),
-                }
+            // macOS XQuartz: /private/tmp/com.apple.launchd.xxx/org.xquartz:0.
+            // Connect to whichever socket file exists — XQuartz's launchd socket
+            // carries the `:<N>` display suffix with no bare file, so using the
+            // bare `<h>` would fail with ENOENT (#1311).
+            let with_display = format!("{}:{}", h, display_number);
+            let socket = if std::path::Path::new(h).exists() {
+                Some(h.clone())
+            } else if std::path::Path::new(&with_display).exists() {
+                Some(with_display)
             } else {
-                LocalXServerInfo {
+                None
+            };
+            match socket {
+                Some(socket_path) => LocalXServerInfo {
+                    display_number,
+                    connection: LocalXConnection::UnixSocket(socket_path),
+                },
+                None => LocalXServerInfo {
                     display_number,
                     connection: LocalXConnection::Tcp(
                         "localhost".to_string(),
                         6000 + display_number as u16,
                     ),
-                }
+                },
             }
         }
         Some(ref h) if h == "localhost" || h == "127.0.0.1" || h == "::1" => {

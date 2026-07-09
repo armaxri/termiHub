@@ -416,12 +416,23 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
         Some(ref h) if h.starts_with('/') => {
             #[cfg(unix)]
             {
-                if std::path::Path::new(h).exists()
-                    || std::path::Path::new(&format!("{h}:{display_number}")).exists()
-                {
+                // Connect to whichever socket file actually exists. A bare `<h>`
+                // socket is used directly; XQuartz's launchd socket instead
+                // carries the display suffix (`<h>:<N>`, e.g. `.../org.xquartz:0`)
+                // with no bare file, so we must use that path — connecting to the
+                // bare `<h>` fails with ENOENT (#1311).
+                let with_display = format!("{h}:{display_number}");
+                let socket = if std::path::Path::new(h).exists() {
+                    Some(h.clone())
+                } else if std::path::Path::new(&with_display).exists() {
+                    Some(with_display)
+                } else {
+                    None
+                };
+                if let Some(socket_path) = socket {
                     return LocalXServerInfo {
                         display_number,
-                        connection: LocalXConnection::UnixSocket(h.clone()),
+                        connection: LocalXConnection::UnixSocket(socket_path),
                     };
                 }
             }
