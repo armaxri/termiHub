@@ -468,19 +468,31 @@ mod tests {
 
     #[test]
     fn already_installed_short_circuits_regardless_of_brew() {
-        assert_eq!(decide_install_action(true, true), InstallAction::AlreadyInstalled);
-        assert_eq!(decide_install_action(true, false), InstallAction::AlreadyInstalled);
+        assert_eq!(
+            decide_install_action(true, true),
+            InstallAction::AlreadyInstalled
+        );
+        assert_eq!(
+            decide_install_action(true, false),
+            InstallAction::AlreadyInstalled
+        );
     }
 
     #[test]
     fn missing_xquartz_with_brew_installs_via_brew() {
-        assert_eq!(decide_install_action(false, true), InstallAction::InstallViaBrew);
+        assert_eq!(
+            decide_install_action(false, true),
+            InstallAction::InstallViaBrew
+        );
     }
 
     #[test]
     fn missing_xquartz_without_brew_requires_homebrew_first() {
         // The core #1117 change: no Homebrew → guide its install rather than the
         // old dead-end manual-download error.
-        assert_eq!(decide_install_action(false, false), InstallAction::HomebrewRequired);
+        assert_eq!(
+            decide_install_action(false, false),
+            InstallAction::HomebrewRequired
+        );
     }
 }
