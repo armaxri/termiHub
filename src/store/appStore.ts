@@ -63,9 +63,6 @@ import {
   sessionListFiles,
   localListDir,
   vscodeAvailable as checkVscode,
-  monitoringOpen,
-  monitoringClose,
-  monitoringFetchStats,
   sessionGetCapabilities,
   sessionMonitoringOpen,
   sessionMonitoringClose,
@@ -829,15 +826,17 @@ interface AppState {
   monitors: Record<string, MonitoringEntry>;
   /** Last-known stats per MonitorKey, persisted across tab switches for instant display on reconnect. */
   monitoringStatsCache: Record<string, SystemStats>;
-  connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
+  /**
+   * Subscribe the terminal session `sessionId` to its `MonitoringProvider` push
+   * path, keying the entry by `sessionId`. `host` is the human-readable label
+   * shown in the status bar. All monitors — desktop-direct SSH and
+   * remote-session alike — flow through this single path (#1232).
+   */
+  connectMonitoring: (sessionId: string, host?: string | null) => Promise<void>;
   /** Disconnect one monitor by key, or every monitor when `key` is omitted. */
   disconnectMonitoring: (key?: string) => Promise<void>;
-  /** Poll fresh stats for one SSH monitor (session-based monitors are push-driven). */
-  refreshMonitoring: (key: string) => Promise<void>;
   /** Clear a lingering error on one entry so a stale tooltip cannot persist (audit gap G9). */
   clearMonitoringError: (key: string) => void;
-  /** Set/reset the "connect was cancelled" affordance flag on one entry (audit gap G8). */
-  setMonitoringCancelled: (key: string, cancelled: boolean) => void;
   /** Per-session capabilities fetched after session creation (keyed by sessionId). */
   sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
   setSessionCapabilities: (
@@ -1071,48 +1070,36 @@ function detachMonitorListeners(key: string): void {
 }
 
 /** Build a fresh, idle {@link MonitoringEntry} for a key. */
-function emptyMonitor(key: string, host: string | null, sessionBased: boolean): MonitoringEntry {
+function emptyMonitor(key: string, host: string | null): MonitoringEntry {
   return {
     key,
     host,
-    sessionBased,
     monitorSessionId: null,
     stats: null,
     loading: false,
     error: null,
     status: null,
     sampleCount: 0,
-    cancelled: false,
   };
 }
 
 /** Merge a partial patch into the entry for `key`, creating it if absent. */
 function upsertMonitor(key: string, patch: Partial<MonitoringEntry>): void {
   useAppStore.setState((state) => {
-    const entry =
-      state.monitors[key] ?? emptyMonitor(key, patch.host ?? key, patch.sessionBased ?? false);
+    const entry = state.monitors[key] ?? emptyMonitor(key, patch.host ?? key);
     return { monitors: { ...state.monitors, [key]: { ...entry, ...patch } } };
   });
 }
 
 /**
- * Derive the {@link MonitoringEntry} key for a tab: the session id for
- * `remote-session` (session-based) tabs, or the `user@host:port` host key for
- * desktop-direct SSH tabs. Returns `null` when the tab cannot be monitored
- * (e.g. missing host/username). Kept in sync with the key `connectMonitoring`
- * computes so the status bar and auto-connect address the same entry.
+ * Derive the {@link MonitoringEntry} key for a tab: the id of the terminal
+ * session that owns the monitor. Every monitor — desktop-direct SSH and
+ * remote-session alike — routes through the session-based `MonitoringProvider`
+ * push path (#1232), so the key is uniformly the session id. Returns `null`
+ * when the tab has no session yet (so it cannot be monitored).
  */
 export function monitorKeyForTab(tab: TerminalTab | null | undefined): string | null {
-  if (!tab) return null;
-  if (tab.connectionType === "remote-session") {
-    return tab.sessionId ?? null;
-  }
-  const cfg = (tab.config?.config ?? {}) as Record<string, unknown>;
-  const host = cfg.host as string | undefined;
-  const username = cfg.username as string | undefined;
-  if (!host || !username) return null;
-  const port = cfg.port as number | undefined;
-  return `${username}@${host}:${port}`;
+  return tab?.sessionId ?? null;
 }
 
 /** Select one monitor entry by key, or `null` when none exists. */
@@ -4329,108 +4316,72 @@ export const useAppStore = create<AppState>((set, get) => {
         return { monitors: { ...state.monitors, [key]: { ...entry, error: null } } };
       }),
 
-    setMonitoringCancelled: (key, cancelled) =>
-      set((state) => {
-        // Auto-connect may cancel at the password prompt before any entry
-        // exists, so create a placeholder entry to carry the affordance (G8).
-        const entry = state.monitors[key] ?? emptyMonitor(key, key, false);
-        return { monitors: { ...state.monitors, [key]: { ...entry, cancelled } } };
-      }),
-
     setSessionCapabilities: (sessionId, caps) =>
       set((state) => ({
         sessionCapabilities: { ...state.sessionCapabilities, [sessionId]: caps },
       })),
 
-    connectMonitoring: async (config: Record<string, unknown>) => {
+    connectMonitoring: async (sessionId: string, host: string | null = null) => {
       const { monitoringStatsCache } = useAppStore.getState();
 
-      // Session-based monitoring: config carries sessionId for "remote-session"
-      // tabs. The agent pushes stats via "session-monitoring-stats" events.
-      const sessionBased = !!config._sessionBased;
-      const key = sessionBased
-        ? (config._sessionId as string)
-        : `${config.username as string}@${config.host as string}:${config.port as number}`;
+      // Unified session-based (push) monitoring: the key is the id of the
+      // terminal session that owns the monitor. The backend subscribes the
+      // session's `MonitoringProvider` and pushes stats/status as
+      // "session-monitoring-stats" / "session-monitoring-status" events (#1232).
+      const key = sessionId;
       const cachedStats = monitoringStatsCache[key] ?? null;
 
       // Upsert a fresh loading entry keyed by MonitorKey. monitorSessionId stays
-      // null until the backend connection is established, which the UI reads as
-      // "not yet connected" (matching the former singleton semantics).
+      // null until the backend subscription is established, which the UI reads as
+      // "not yet connected".
       upsertMonitor(key, {
-        ...emptyMonitor(key, key, sessionBased),
+        ...emptyMonitor(key, host ?? key),
         stats: cachedStats,
         loading: true,
         status: "connecting",
       });
 
       try {
-        if (sessionBased) {
-          // Attach the stats listener; it filters by sessionId and folds fresh
-          // samples into this entry + the shared cache.
-          const statsUnlisten = await onSessionMonitoringStats((sid, stats) => {
-            if (sid !== key) return;
-            useAppStore.setState((state) => {
-              const entry = state.monitors[key];
-              if (!entry) return {};
-              return {
-                monitors: {
-                  ...state.monitors,
-                  [key]: { ...entry, stats, error: null, sampleCount: entry.sampleCount + 1 },
-                },
-                monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
-              };
-            });
-          });
-          _monitoringStatsUnlisten.set(key, statsUnlisten);
-
-          // The status stream flips the indicator to `stale` on a mid-stream
-          // drop (and back to `live` on recovery) so frozen stats are never
-          // shown as live (#1229, audit gap G1).
-          const statusUnlisten = await onSessionMonitoringStatus((sid, status) => {
-            if (sid !== key) return;
-            useAppStore.setState((state) => {
-              const entry = state.monitors[key];
-              if (!entry) return {};
-              return { monitors: { ...state.monitors, [key]: { ...entry, status } } };
-            });
-          });
-          _monitoringStatusUnlisten.set(key, statusUnlisten);
-
-          await sessionMonitoringOpen(key);
-          upsertMonitor(key, { monitorSessionId: key, loading: false, status: "live" });
-          return;
-        }
-
-        // Standard SSH-based monitoring (direct connection from desktop).
-        const sessionId = await monitoringOpen(config);
-        const stats = await monitoringFetchStats(sessionId);
-        set((state) => {
-          const entry = state.monitors[key] ?? emptyMonitor(key, key, false);
-          return {
-            monitors: {
-              ...state.monitors,
-              [key]: {
-                ...entry,
-                monitorSessionId: sessionId,
-                stats,
-                loading: false,
-                error: null,
-                status: "live",
-                sampleCount: entry.sampleCount + 1,
+        // Attach the stats listener; it filters by sessionId and folds fresh
+        // samples into this entry + the shared cache.
+        const statsUnlisten = await onSessionMonitoringStats((sid, stats) => {
+          if (sid !== key) return;
+          useAppStore.setState((state) => {
+            const entry = state.monitors[key];
+            if (!entry) return {};
+            return {
+              monitors: {
+                ...state.monitors,
+                [key]: { ...entry, stats, error: null, sampleCount: entry.sampleCount + 1 },
               },
-            },
-            monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
-          };
+              monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
+            };
+          });
         });
+        _monitoringStatsUnlisten.set(key, statsUnlisten);
+
+        // The status stream flips the indicator to `stale` on a mid-stream
+        // drop (and back to `live` on recovery) so frozen stats are never
+        // shown as live (#1229, audit gap G1).
+        const statusUnlisten = await onSessionMonitoringStatus((sid, status) => {
+          if (sid !== key) return;
+          useAppStore.setState((state) => {
+            const entry = state.monitors[key];
+            if (!entry) return {};
+            return { monitors: { ...state.monitors, [key]: { ...entry, status } } };
+          });
+        });
+        _monitoringStatusUnlisten.set(key, statusUnlisten);
+
+        await sessionMonitoringOpen(key);
+        upsertMonitor(key, { monitorSessionId: key, loading: false, status: "live" });
       } catch (err) {
-        // The session-based branch attaches the stats listener before the open
-        // that may throw here. Detach it so a failed open never leaks a dangling
-        // Tauri listener (monitorSessionId stays null, so disconnectMonitoring
-        // would not clean it up either). See audit gap G5.
-        if (sessionBased) {
-          frontendLog("monitoring", "detaching stats listener after failed monitoring open");
-          detachMonitorListeners(key);
-        }
+        // The stats/status listeners are attached before the open that may throw
+        // here. Detach them so a failed open never leaks a dangling Tauri
+        // listener (monitorSessionId stays null, so disconnectMonitoring would
+        // not clean it up either). See audit gap G5.
+        frontendLog("monitoring", "detaching monitoring listeners after failed open");
+        detachMonitorListeners(key);
         upsertMonitor(key, {
           monitorSessionId: null,
           loading: false,
@@ -4450,11 +4401,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const entry = monitors[k];
         if (entry?.monitorSessionId) {
           try {
-            if (entry.sessionBased) {
-              await sessionMonitoringClose(entry.monitorSessionId);
-            } else {
-              await monitoringClose(entry.monitorSessionId);
-            }
+            await sessionMonitoringClose(entry.monitorSessionId);
           } catch {
             // Ignore close errors — the entry is torn down regardless.
           }
@@ -4473,51 +4420,6 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         return { monitors: nextMonitors, monitoringStatsCache: nextCache };
       });
-    },
-
-    refreshMonitoring: async (key) => {
-      const entry = useAppStore.getState().monitors[key];
-      // Only SSH monitors poll; session-based monitoring is push-driven.
-      if (!entry || !entry.monitorSessionId || entry.sessionBased) return;
-      const monitorSessionId = entry.monitorSessionId;
-      try {
-        const stats = await monitoringFetchStats(monitorSessionId);
-        set((state) => {
-          const current = state.monitors[key];
-          if (!current) return {};
-          return {
-            monitors: {
-              ...state.monitors,
-              [key]: {
-                ...current,
-                stats,
-                error: null,
-                // A successful poll recovers the indicator to live (audit gap G1).
-                status: "live",
-                sampleCount: current.sampleCount + 1,
-              },
-            },
-            monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
-          };
-        });
-      } catch (err) {
-        // A failed poll while still "connected" flips to stale so the last-good
-        // numbers are dimmed rather than shown as live (audit gap G1).
-        set((state) => {
-          const current = state.monitors[key];
-          if (!current) return {};
-          return {
-            monitors: {
-              ...state.monitors,
-              [key]: {
-                ...current,
-                error: err instanceof Error ? err.message : String(err),
-                status: "stale",
-              },
-            },
-          };
-        });
-      }
     },
 
     // SSH Tunnels

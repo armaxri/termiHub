@@ -249,7 +249,6 @@ Fixed strings — match exactly.
 | `migration-dialog` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-result` | `src/components/Settings/PortableModeSettings.tsx`, `src/components/Settings/SecuritySettings.tsx` |
 | `modal-close` | `src/components/ui/Modal.tsx` |
-| `monitoring-connect-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-cpu` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disconnect` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disk` | `src/components/StatusBar/StatusBar.tsx` |
@@ -257,8 +256,6 @@ Fixed strings — match exactly.
 | `monitoring-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-loading` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-mem` | `src/components/StatusBar/StatusBar.tsx` |
-| `monitoring-not-connected` | `src/components/StatusBar/StatusBar.tsx` |
-| `monitoring-refresh` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-retry-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-stale` | `src/components/StatusBar/StatusBar.tsx` |
 | `multi-select-copy` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -594,7 +591,6 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `layout-split-*` | `layout-split-${node.direction}` | `src/components/WorkspaceEditor/LayoutDesigner.tsx` |
 | `monitor-row-*` | `monitor-row-${config.id}` | `src/components/NetworkTools/HttpMonitorPanel.tsx`, `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `monitor-stale-*` | `monitor-stale-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
-| `monitoring-connect-*` | `monitoring-connect-${conn.id}` | `src/components/StatusBar/StatusBar.tsx` |
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `oc-agent-disconnect-*` | `oc-agent-disconnect-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `oc-agent-shutdown-*` | `oc-agent-shutdown-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |

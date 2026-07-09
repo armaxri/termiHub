@@ -247,51 +247,6 @@
   color: var(--color-error);
 }
 
-/* Subtle "not connected" affordance after a cancelled password prompt (G8). */
-.monitoring-status__cancelled {
-  color: var(--text-secondary);
-}
-
-/* Monitoring connection picker dropdown */
-.monitoring-picker__content {
-  min-width: 180px;
-  background-color: var(--bg-dropdown);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-xs) 0;
-  box-shadow: var(--shadow-dropdown);
-  z-index: 100;
-}
-
-.monitoring-picker__label {
-  padding: var(--spacing-xs) var(--spacing-md);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  user-select: none;
-}
-
-.monitoring-picker__item {
-  display: flex;
-  align-items: center;
-  padding: 5px var(--spacing-sm);
-  margin: 1px var(--spacing-xs);
-  width: calc(100% - 8px);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  cursor: pointer;
-  outline: none;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.monitoring-picker__item:hover,
-.monitoring-picker__item[data-highlighted] {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 /* Monitoring detail dropdown */
 .monitoring-menu__content {
   min-width: 220px;
