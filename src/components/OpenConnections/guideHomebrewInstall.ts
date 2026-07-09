@@ -1,7 +1,5 @@
-import { listAvailableShells } from "@/services/api";
-import { useAppStore } from "@/store/appStore";
-import type { ShellType } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
+import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 
 /**
  * Open a local terminal tab pre-loaded with the official Homebrew installer so
@@ -17,14 +15,10 @@ import { frontendLog } from "@/utils/frontendLog";
  * @throws if no local shell is available to host the installer.
  */
 export async function guideHomebrewInstall(command: string): Promise<void> {
-  const shells = await listAvailableShells();
-  if (shells.length === 0) {
+  const opened = await openLocalCommandTab("Install Homebrew", command);
+  if (!opened) {
     frontendLog("xserver", "no local shell available to guide Homebrew install");
     throw new Error("No local shell is available to run the Homebrew installer.");
   }
-  useAppStore.getState().addTab("Install Homebrew", "local", {
-    type: "local",
-    config: { shell: shells[0] as ShellType, initialCommand: command },
-  });
   frontendLog("xserver", "opened terminal for guided Homebrew install");
 }

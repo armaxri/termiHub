@@ -111,6 +111,14 @@ export interface XServerError {
 }
 
 /**
+ * The `dependency` value the macOS brew-absent error carries (#1117). It doubles
+ * as the discriminator the setup dialog branches on to offer the guided-Homebrew
+ * install (opening a terminal) instead of the generic install-and-retry. Must
+ * match the Rust `HOMEBREW_DEPENDENCY` (`src-tauri/src/terminal/xserver/types.rs`).
+ */
+export const HOMEBREW_DEPENDENCY = "Homebrew";
+
+/**
  * Type guard for {@link XServerError}: an object carrying a string `kind` and a
  * string `message`. Use to narrow the `unknown` a rejected Tauri command
  * surfaces before reading typed guidance.

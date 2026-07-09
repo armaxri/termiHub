@@ -7,6 +7,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The `dependency` name for the macOS brew-absent error (#1117). It doubles as
+/// the discriminator the frontend branches on to show the guided-Homebrew UI
+/// (opening a terminal) instead of the generic install-and-retry, so it must
+/// stay in sync with the TS `HOMEBREW_DEPENDENCY` (`src/types/xserver.ts`).
+pub(crate) const HOMEBREW_DEPENDENCY: &str = "Homebrew";
+
 /// The official Homebrew installer one-liner (brew.sh). The macOS brew-absent
 /// path hands this back as an [`XServerError::DependencyMissing`] `install_command`
 /// so the UI can open a local terminal tab that runs it, guiding the user through
@@ -186,7 +192,7 @@ impl XServerError {
                 Install Homebrew, then retry — or install XQuartz manually from \
                 https://www.xquartz.org."
                 .to_string(),
-            dependency: "Homebrew".to_string(),
+            dependency: HOMEBREW_DEPENDENCY.to_string(),
             install_hint: Some(
                 "Installing XQuartz automatically needs Homebrew. \"Install Homebrew\" opens a \
                 terminal with the official installer; once it finishes, retry to install XQuartz. \

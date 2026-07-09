@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Modal, Button } from "@/components/ui";
-import type { XServerError, XServerProgress } from "@/types/xserver";
+import { HOMEBREW_DEPENDENCY, type XServerError, type XServerProgress } from "@/types/xserver";
 import "./XServerSetupDialog.css";
 
 /** Which screen of the setup flow is showing. */
@@ -20,7 +20,7 @@ function isHomebrewRequired(error: XServerError | null): error is XServerError &
 } {
   return (
     error?.kind === "dependencyMissing" &&
-    error.dependency === "Homebrew" &&
+    error.dependency === HOMEBREW_DEPENDENCY &&
     typeof error.installCommand === "string"
   );
 }

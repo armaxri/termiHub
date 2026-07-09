@@ -30,10 +30,8 @@ import {
   Route,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { ShellType } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import {
-  listAvailableShells,
   createTerminal,
   removeCredential,
   storeCredential,
@@ -41,6 +39,7 @@ import {
   type AgentDefinitionInfo,
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Tooltip } from "@/components/ui";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
@@ -661,20 +660,12 @@ export function ConnectionList() {
     openConnectionEditorTab("new-remote-agent");
   }, [openConnectionEditorTab]);
 
-  const handlePingHost = useCallback(
-    async (connection: SavedConnection) => {
-      const cfg = connection.config.config as unknown as Record<string, unknown>;
-      const host = cfg.host as string | undefined;
-      if (!host) return;
-      const shells = await listAvailableShells();
-      if (shells.length === 0) return;
-      addTab(`Ping ${host}`, "local", {
-        type: "local",
-        config: { shell: shells[0] as ShellType, initialCommand: `ping ${host}` },
-      });
-    },
-    [addTab]
-  );
+  const handlePingHost = useCallback(async (connection: SavedConnection) => {
+    const cfg = connection.config.config as unknown as Record<string, unknown>;
+    const host = cfg.host as string | undefined;
+    if (!host) return;
+    await openLocalCommandTab(`Ping ${host}`, `ping ${host}`);
+  }, []);
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
