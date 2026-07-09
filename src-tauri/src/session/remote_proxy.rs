@@ -5,8 +5,13 @@
 //! the user specifies an `agent_id`. All terminal I/O, file browsing, and
 //! monitoring operations are proxied to the agent over the SSH transport.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+
+/// Default monitoring collection interval in milliseconds (#1233).
+///
+/// Matches the agent's own default; `set_interval` overrides it per subscription.
+const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
 
 // Note: `Mutex` is used only for fields that need interior mutability
 // through `&self` (remote_session_id, remote_type_id, etc.).
@@ -15,7 +20,7 @@ use std::sync::{mpsc, Arc, Mutex};
 // `disconnect(&mut self)`, so mutable access is guaranteed.
 
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
@@ -478,6 +483,7 @@ impl RemoteProxy {
                                         agent_id: self.agent_id.clone(),
                                         monitoring_host,
                                         agent_manager: self.agent_manager.clone(),
+                                        interval_ms: AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS),
                                     });
                                 }
                             }
@@ -630,6 +636,9 @@ pub struct RemoteMonitoringProxy {
     /// "self" for local sessions; the remote session ID for SSH sessions.
     monitoring_host: String,
     agent_manager: Arc<dyn AgentRpcClient>,
+    /// Current collection interval in ms (#1233). `set_interval` re-subscribes
+    /// the agent with the new cadence; `subscribe` reads it for the initial ask.
+    interval_ms: AtomicU64,
 }
 
 impl RemoteMonitoringProxy {
@@ -655,12 +664,13 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             .register_monitoring_output(&self.agent_id, &self.monitoring_host, tx)
             .map_err(|e| CoreError::Other(e.to_string()))?;
 
-        // Send subscribe request to agent.
+        // Send subscribe request to agent at the currently-configured cadence
+        // (#1233); the frontend may later change it via `set_interval`.
         self.rpc(
             "connection.monitoring.subscribe",
             serde_json::json!({
                 "host": self.monitoring_host,
-                "interval_ms": 2000,
+                "interval_ms": self.interval_ms.load(Ordering::SeqCst),
             }),
         )
         .await?;
@@ -694,6 +704,45 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         )
         .await?;
         Ok(())
+    }
+
+    async fn set_interval(&self, interval: std::time::Duration) {
+        // The agent's `connection.monitoring.subscribe` replaces an existing
+        // subscription, so re-issuing it with the new cadence changes the
+        // interval in place (#1233). The output channel stays registered.
+        let ms = (interval.as_millis() as u64).max(1);
+        self.interval_ms.store(ms, Ordering::SeqCst);
+        if let Err(e) = self
+            .rpc(
+                "connection.monitoring.subscribe",
+                serde_json::json!({
+                    "host": self.monitoring_host,
+                    "interval_ms": ms,
+                }),
+            )
+            .await
+        {
+            warn!(host = %self.monitoring_host, error = %e, "Failed to update agent monitoring interval");
+        }
+    }
+
+    async fn set_paused(&self, _paused: bool) {
+        // Agent-mediated pause requires a protocol addition to signal the remote
+        // collect loop; tracked as a follow-up to #1233. Desktop-direct SSH
+        // monitoring supports pause today via the SSH provider.
+        debug!(
+            host = %self.monitoring_host,
+            "Pause/resume not yet supported for agent-mediated monitoring (follow-up to #1233)"
+        );
+    }
+
+    async fn cancel_connect(&self) {
+        // Cancelling an agent-mediated connect requires a protocol addition;
+        // tracked as a follow-up to #1233. Unsubscribing already stops the loop.
+        debug!(
+            host = %self.monitoring_host,
+            "Cancel not yet supported for agent-mediated monitoring (follow-up to #1233)"
+        );
     }
 }
 

@@ -140,7 +140,7 @@ describe("appStore — monitoring (unified session-based push path, #1232)", () 
       expect(entry!.loading).toBe(false);
       expect(entry!.status).toBe("live");
       // It went through the provider push path…
-      expect(mockSessionMonitoringOpen).toHaveBeenCalledWith(SESSION_A);
+      expect(mockSessionMonitoringOpen).toHaveBeenCalledWith(SESSION_A, expect.any(Number));
       expect(mockOnSessionMonitoringStats).toHaveBeenCalledTimes(1);
       expect(mockOnSessionMonitoringStatus).toHaveBeenCalledTimes(1);
     });

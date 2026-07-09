@@ -90,6 +90,8 @@ function setActiveMonitor(patch: Partial<MonitoringEntry>) {
         error: null,
         status: null,
         sampleCount: 0,
+        paused: false,
+        intervalMs: 2000,
         ...patch,
       },
     },

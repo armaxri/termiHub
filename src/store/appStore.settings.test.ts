@@ -59,6 +59,8 @@ function openMonitor(sessionId: string, host: string): Record<string, Monitoring
       error: null,
       status: "live",
       sampleCount: 0,
+      paused: false,
+      intervalMs: 2000,
     },
   };
 }

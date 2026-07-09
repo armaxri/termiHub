@@ -320,15 +320,19 @@ pub async fn session_get_capabilities(
 }
 
 /// Start session-based monitoring, pushing stats as `session-monitoring-stats` events.
+///
+/// `interval_ms` sets the collection cadence for this monitor; when omitted the
+/// provider's default interval is used (#1233).
 #[tauri::command]
 pub async fn session_monitoring_open(
     session_id: String,
+    interval_ms: Option<u64>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
-    info!(session_id, "Starting session monitoring");
+    info!(session_id, interval_ms = ?interval_ms, "Starting session monitoring");
     manager
-        .start_session_monitoring(&session_id, app_handle)
+        .start_session_monitoring(&session_id, interval_ms, app_handle)
         .await
 }
 
@@ -340,6 +344,45 @@ pub async fn session_monitoring_close(
 ) -> Result<(), TerminalError> {
     info!(session_id, "Stopping session monitoring");
     manager.stop_session_monitoring(&session_id).await
+}
+
+/// Pause or resume a session monitor's collection loop (#1233).
+#[tauri::command]
+pub async fn session_monitoring_set_paused(
+    session_id: String,
+    paused: bool,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    info!(session_id, paused, "Setting session monitoring paused");
+    manager
+        .set_session_monitoring_paused(&session_id, paused)
+        .await
+}
+
+/// Change a session monitor's refresh interval (#1233).
+#[tauri::command]
+pub async fn session_monitoring_set_interval(
+    session_id: String,
+    interval_ms: u64,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    info!(
+        session_id,
+        interval_ms, "Setting session monitoring interval"
+    );
+    manager
+        .set_session_monitoring_interval(&session_id, interval_ms)
+        .await
+}
+
+/// Cancel a session monitor's in-flight connect / collect (#1233).
+#[tauri::command]
+pub async fn session_monitoring_cancel(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    info!(session_id, "Cancelling session monitoring connect");
+    manager.cancel_session_monitoring(&session_id).await
 }
 
 // --- Persistent session commands ---

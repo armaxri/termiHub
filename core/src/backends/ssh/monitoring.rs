@@ -11,7 +11,7 @@
 //! gap G3). The single sequential collect loop is the in-flight guard — no
 //! overlapping collects.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -31,8 +31,17 @@ use crate::monitoring::{
 use super::handler::{ForwardedChannelRegistry, SshSession};
 use super::jump_host::{connect_target, GatewayHold};
 
-/// Polling interval for collecting system stats.
+/// Default polling interval for collecting system stats.
+///
+/// Live-overridable per subscription via [`MonitoringProvider::set_interval`]
+/// (#1233); this is only the starting value.
 const MONITORING_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How often a paused loop wakes to re-check whether it should resume (#1233).
+///
+/// Short enough that Resume feels immediate, long enough to keep an idle paused
+/// monitor cheap.
+const PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Channel capacity for monitoring stats updates.
 const MONITORING_CHANNEL_CAPACITY: usize = 16;
@@ -107,13 +116,53 @@ impl MonitoringTransport for SshTransport {
     }
 }
 
+/// Shared, live-updatable controls for a running collect loop (#1233).
+///
+/// The loop reads these every tick, so the provider's `set_interval` /
+/// `set_paused` methods can steer a running subscription without tearing it
+/// down. `interval_ms` is stored as an atomic so updates are lock-free.
+struct LoopControls {
+    /// Poll interval in milliseconds, read afresh before each wait.
+    interval_ms: AtomicU64,
+    /// When set, the loop skips collection but keeps the transport open.
+    paused: AtomicBool,
+}
+
+impl LoopControls {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval_ms: AtomicU64::new(interval.as_millis() as u64),
+            paused: AtomicBool::new(false),
+        }
+    }
+
+    fn interval(&self) -> Duration {
+        Duration::from_millis(self.interval_ms.load(Ordering::SeqCst).max(1))
+    }
+
+    fn set_interval(&self, interval: Duration) {
+        self.interval_ms
+            .store(interval.as_millis().max(1) as u64, Ordering::SeqCst);
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
+    }
+}
+
 /// Background monitoring task state.
 struct MonitoringTask {
     alive: Arc<AtomicBool>,
-    /// Cancels an in-flight connect / collect (wired to Cancel controls in a
-    /// follow-up issue). Cancelled on drop so a torn-down subscription aborts
-    /// any pending SSH handshake promptly.
+    /// Cancels an in-flight connect / collect (Cancel control, #1233).
+    /// Cancelled on drop so a torn-down subscription aborts any pending SSH
+    /// handshake promptly.
     cancel: CancellationToken,
+    /// Live interval / pause controls read by the running loop (#1233).
+    controls: Arc<LoopControls>,
 }
 
 impl Drop for MonitoringTask {
@@ -132,6 +181,8 @@ impl Drop for MonitoringTask {
 pub(crate) struct SshMonitoringProviderImpl<T: MonitoringTransport> {
     transport: Arc<T>,
     collect_timeout: Duration,
+    /// Initial poll interval; live-updatable per subscription via `set_interval`.
+    interval: Duration,
     /// Consecutive collect failures tolerated before the loop reports `Stale`.
     stale_threshold: u32,
     /// Backoff schedule template for the bounded reconnect campaign (#1230, G2).
@@ -148,6 +199,7 @@ impl<T: MonitoringTransport> SshMonitoringProviderImpl<T> {
         Self {
             transport: Arc::new(transport),
             collect_timeout,
+            interval: MONITORING_INTERVAL,
             stale_threshold: DEFAULT_STALE_THRESHOLD,
             reconnect_backoff: BackoffSchedule::new(
                 DEFAULT_BACKOFF_BASE,
@@ -156,6 +208,14 @@ impl<T: MonitoringTransport> SshMonitoringProviderImpl<T> {
             ),
             task: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Access the running loop's live controls, if a task is active.
+    fn controls(&self) -> Option<Arc<LoopControls>> {
+        self.task
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|t| t.controls.clone()))
     }
 }
 
@@ -307,6 +367,8 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
         let stale_threshold = self.stale_threshold;
         let reconnect_backoff = self.reconnect_backoff.clone();
         let loop_cancel = cancel.clone();
+        let controls = Arc::new(LoopControls::new(self.interval));
+        let loop_controls = controls.clone();
 
         // The loop owns the session and re-dials it in place. It tracks its own
         // status via `CollectLoopState`: the first successful collect emits
@@ -320,6 +382,24 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
             let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
             while alive_clone.load(Ordering::SeqCst) {
+                // Paused: keep the transport open but skip collection. Emit
+                // `Paused` on the transition, then idle until resumed (#1233).
+                if loop_controls.is_paused() {
+                    if let Some(status) = loop_state.pause() {
+                        emit_status(&status_tx, status).await;
+                    }
+                    interruptible_sleep(PAUSE_POLL_INTERVAL, &alive_clone, &loop_cancel).await;
+                    continue;
+                }
+                // Just resumed after a pause: announce the transition so the UI
+                // un-dims and the next collect keeps the loop `Live`.
+                if let Some(status) = loop_state.resume() {
+                    emit_status(&status_tx, status).await;
+                    // Drop the stale CPU baseline so the first post-resume
+                    // sample does not report a spurious rate from the gap.
+                    cpu_tracker = CpuDeltaTracker::new();
+                }
+
                 // A collect error, a parse error, or a stat send failure all
                 // mean "no fresh sample this tick" → count as a failure.
                 let collected = match collect_once(&*transport, &session, collect_timeout).await {
@@ -385,15 +465,20 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     }
                 }
 
-                // Wait the poll interval in small increments so a torn-down
-                // subscription (or cancel) aborts the wait promptly.
-                interruptible_sleep(MONITORING_INTERVAL, &alive_clone, &loop_cancel).await;
+                // Wait the (live-updatable) poll interval in small increments so
+                // a torn-down subscription, a cancel, or an interval change take
+                // effect promptly (#1233).
+                interruptible_sleep(loop_controls.interval(), &alive_clone, &loop_cancel).await;
             }
             debug!("Monitoring task stopped");
         });
 
         if let Ok(mut guard) = self.task.lock() {
-            *guard = Some(MonitoringTask { alive, cancel });
+            *guard = Some(MonitoringTask {
+                alive,
+                cancel,
+                controls,
+            });
         }
 
         Ok(MonitoringSubscription {
@@ -407,6 +492,26 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
             *guard = None;
         }
         Ok(())
+    }
+
+    async fn set_interval(&self, interval: Duration) {
+        if let Some(controls) = self.controls() {
+            controls.set_interval(interval);
+        }
+    }
+
+    async fn set_paused(&self, paused: bool) {
+        if let Some(controls) = self.controls() {
+            controls.set_paused(paused);
+        }
+    }
+
+    async fn cancel_connect(&self) {
+        if let Ok(guard) = self.task.lock() {
+            if let Some(task) = guard.as_ref() {
+                task.cancel.cancel();
+            }
+        }
     }
 }
 
@@ -659,5 +764,111 @@ Linux 5.15.0";
         let result = collect_once(&transport, &(), Duration::from_secs(5)).await;
 
         assert_eq!(result.expect("collect should succeed"), "collected");
+    }
+
+    // ── Pause / Resume / Interval (#1233) ──────────────────────────────
+
+    /// A short-interval provider over a always-succeeding transport, ready to
+    /// exercise the live pause/resume/interval controls.
+    fn fast_live_provider() -> SshMonitoringProviderImpl<FakeTransport> {
+        let (transport, _collect_fail, _connect_fail) =
+            FakeTransport::with_collect_and_connect_flags();
+        let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+        // Tight interval so pause/interval/cancel tests observe cadence quickly.
+        provider.interval = Duration::from_millis(20);
+        provider
+    }
+
+    /// Pausing a live loop emits `Paused` and stops collecting; resuming emits
+    /// `Live` and collection continues (#1233).
+    #[tokio::test]
+    async fn set_paused_emits_paused_then_live_on_resume() {
+        let provider = fast_live_provider();
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+
+        provider.set_paused(true).await;
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Paused,
+            "pausing a live loop must emit Paused"
+        );
+
+        // A collect already in flight when the pause flag flipped may deliver one
+        // last buffered sample; drain whatever is queued, then assert the channel
+        // stays quiet — a paused loop must not push *further* stats.
+        while sub.stats.try_recv().is_ok() {}
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), sub.stats.recv())
+                .await
+                .is_err(),
+            "a paused loop must not push further stats once quiescent"
+        );
+
+        provider.set_paused(false).await;
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Live,
+            "resuming must emit Live"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// A larger interval visibly slows the collect cadence: with a long interval
+    /// the loop performs far fewer collects over a fixed window than a short one
+    /// (#1233).
+    #[tokio::test]
+    async fn set_interval_changes_collect_cadence() {
+        let provider = fast_live_provider();
+        let collect_calls = provider.transport.collect_calls.clone();
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+
+        // Stretch the interval well beyond the observation window so only the
+        // handful of ticks that already happened count.
+        provider.set_interval(Duration::from_secs(60)).await;
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        let after_slow = collect_calls.load(Ordering::SeqCst);
+
+        // A short window at the 60s interval must not accumulate many collects.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let later = collect_calls.load(Ordering::SeqCst);
+        assert!(
+            later <= after_slow + 1,
+            "a long interval must nearly halt collection (got {after_slow} then {later})"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// `cancel_connect` fires the loop's cancellation token so an in-flight
+    /// connect / collect is aborted promptly (#1233, Cancel control).
+    #[tokio::test]
+    async fn cancel_connect_fires_the_loop_token() {
+        let provider = fast_live_provider();
+        let sub = provider.subscribe().await.expect("subscribe");
+
+        // Grab the live token before cancelling so we can assert it fired.
+        let token = provider
+            .task
+            .lock()
+            .expect("task lock")
+            .as_ref()
+            .expect("task present")
+            .cancel
+            .clone();
+        assert!(!token.is_cancelled());
+
+        provider.cancel_connect().await;
+        assert!(
+            token.is_cancelled(),
+            "cancel_connect must fire the loop cancellation token"
+        );
+
+        drop(sub);
+        provider.unsubscribe().await.expect("unsubscribe");
     }
 }
