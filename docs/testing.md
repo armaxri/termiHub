@@ -960,6 +960,30 @@ Verify acquisition end-to-end on a **clean Windows box** (no VcXsrv installed):
    error offline) rather than launching a broken server.
    > > > > > > > origin/develop
 
+#### Connect-triggered X server consent + live progress (Windows, #1116)
+
+The first time an X11-forwarding SSH connection is opened with no local X server
+and automatic provisioning undecided, termiHub pauses the connect to ask for
+download consent and streams provisioning progress
+(`src-tauri/src/terminal/xserver/mod.rs`, `XServerConnectConsent.tsx`). The
+handshake and progress emission are unit-tested; the on-connect experience is
+Windows-only and manual. Verify on a clean Windows box (no VcXsrv, "Provide X
+server automatically" left at its default/undecided):
+
+1. Open an SSH connection with **X11 forwarding** enabled. Confirm the connect
+   **pauses** and the "Set up X server" consent dialog appears (nothing is
+   downloaded yet).
+2. Choose **Enable**. Confirm live progress is shown, provisioning completes, the
+   remote X client displays, and the choice is remembered — a second X11 connect
+   provisions **without** re-prompting.
+3. Repeat from a fresh undecided state and choose **Not now**. Confirm the SSH
+   connection still opens (shell works) but without X forwarding, and that the
+   next X11 connect prompts again.
+4. Repeat and press **Stop** while the consent dialog is up. Confirm the connect
+   aborts promptly rather than hanging.
+5. Sanity: a non-Windows connect, or a connect with a server already running, is
+   unaffected apart from gaining progress feedback (no prompt).
+
 #### Monitoring auto-reconnect on a mid-stream drop (#1230)
 
 Verifies that remote system monitoring auto-reconnects after a transient
