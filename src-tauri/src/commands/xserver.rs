@@ -16,25 +16,13 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use crate::terminal::xserver::manager::XServerStatus as ManagedStatus;
 use crate::terminal::xserver::{
-    self, XServerError, XServerManager, XServerPlatform, XServerProgress, XServerStatusReport,
-    X_SERVER_PROGRESS_EVENT,
+    self, emit_progress, ConnectConsentRegistry, ConsentDecision, XServerError, XServerManager,
+    XServerPlatform, XServerStatusReport,
 };
-
-/// Emit an X server provisioning progress event (best-effort).
-fn emit_progress(app: &AppHandle, step: &str, message: &str, progress: f64) {
-    let _ = app.emit(
-        X_SERVER_PROGRESS_EVENT,
-        XServerProgress {
-            step: step.to_string(),
-            message: message.to_string(),
-            progress,
-        },
-    );
-}
 
 /// Report the current local X server status without side effects.
 #[tauri::command]
@@ -125,4 +113,20 @@ fn finish(
         Err(err) => emit_progress(app, "failed", &err.to_string(), 1.0),
     }
     result
+}
+
+/// Deliver the user's reply to a connect-time X server download-consent prompt
+/// (#1116), waking the SSH connect paused on the matching `id`.
+///
+/// Emitted by the `x-server-consent-needed` event; `decision` is `enable`
+/// (consent — download/provision and remember it) or `notNow` (skip X
+/// forwarding this connect). Returns `true` when a paused connect matched the
+/// `id`, `false` when it was already resolved, cancelled, or unknown.
+#[tauri::command]
+pub fn x_server_connect_consent_reply(
+    id: String,
+    decision: ConsentDecision,
+    registry: State<'_, Arc<ConnectConsentRegistry>>,
+) -> bool {
+    registry.resolve(&id, decision)
 }

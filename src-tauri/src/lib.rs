@@ -86,6 +86,11 @@ pub fn run() {
     // (#1052) and the Tauri commands can both reference the same instance.
     let x_server_manager = Arc::new(build_xserver_manager());
 
+    // Registry routing connect-time X server download-consent replies (#1116)
+    // from the `x_server_connect_consent_reply` command back to the paused
+    // connect. Shared between that command and the provisioner.
+    let x_server_consent_registry = Arc::new(terminal::xserver::ConnectConsentRegistry::new());
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -97,6 +102,7 @@ pub fn run() {
         .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
         .manage(x_server_manager.clone())
+        .manage(x_server_consent_registry.clone())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
@@ -274,7 +280,11 @@ pub fn run() {
             // X server provisioning (#1052): register the provisioner so the SSH
             // connect path can ensure a local X server before X11 forwarding
             // starts. The manager itself (#1049) is created and managed above.
-            terminal::xserver::init(app.handle(), x_server_manager.clone());
+            terminal::xserver::init(
+                app.handle(),
+                x_server_manager.clone(),
+                x_server_consent_registry.clone(),
+            );
 
             // Initialize tunnel manager with recovery loading.
             // On failure, the app still starts but tunnels are unavailable.
@@ -633,6 +643,7 @@ pub fn run() {
             commands::xserver::x_server_ensure,
             commands::xserver::x_server_stop,
             commands::xserver::x_server_install_dependency,
+            commands::xserver::x_server_connect_consent_reply,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

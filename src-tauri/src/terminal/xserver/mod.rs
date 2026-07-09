@@ -26,19 +26,40 @@ mod types;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use termihub_core::backends::ssh::x11::{XServerLease, XServerProvisioner};
 use tokio_util::sync::CancellationToken;
 
 use crate::connection::manager::ConnectionManager;
 
+use consent::{await_consent, connect_consent_required, ConsentOutcome};
+
+pub use consent::{ConnectConsentRegistry, ConsentDecision};
 pub use manager::XServerManager;
 pub use orchestrator::{
     current_status, ensure_x_server, ensure_x_server_for_session, EnsureOutcome,
 };
 pub use types::{
-    XServerError, XServerPlatform, XServerProgress, XServerStatusReport, X_SERVER_PROGRESS_EVENT,
+    XServerConsentRequest, XServerError, XServerPlatform, XServerProgress, XServerState,
+    XServerStatusReport, X_SERVER_CONSENT_NEEDED_EVENT, X_SERVER_PROGRESS_EVENT,
 };
+
+/// Emit an X server provisioning progress event (best-effort).
+///
+/// Shared by the `x_server_*` commands and the connect-time provisioner so
+/// progress is reported identically whether setup was invoked manually from the
+/// Open Connections "X Servers" section or triggered automatically on connect
+/// (#1116).
+pub(crate) fn emit_progress(app: &AppHandle, step: &str, message: &str, progress: f64) {
+    let _ = app.emit(
+        X_SERVER_PROGRESS_EVENT,
+        XServerProgress {
+            step: step.to_string(),
+            message: message.to_string(),
+            progress,
+        },
+    );
+}
 
 /// Whether `name` resolves to an executable on `PATH` (best-effort).
 ///
@@ -77,18 +98,125 @@ pub fn resolve_provide_automatically(app: &AppHandle) -> bool {
 pub struct XServerProvisionerImpl {
     app: AppHandle,
     manager: Arc<XServerManager>,
+    consent_registry: Arc<ConnectConsentRegistry>,
+}
+
+/// The result of the connect-time consent gate (#1116).
+enum ConsentGate {
+    /// Proceed with provisioning (no prompt needed, or consent granted).
+    Proceed,
+    /// The user declined for now — skip X forwarding gracefully.
+    Skip,
+    /// The connect was aborted while the prompt was up — fail the ensure so the
+    /// connect stops rather than provisioning behind a Stop.
+    Cancelled,
 }
 
 impl XServerProvisionerImpl {
-    /// Create a provisioner bound to the app handle and shared manager.
-    pub fn new(app: AppHandle, manager: Arc<XServerManager>) -> Self {
-        Self { app, manager }
+    /// Create a provisioner bound to the app handle, shared manager, and the
+    /// connect-time consent registry the reply command resolves against.
+    pub fn new(
+        app: AppHandle,
+        manager: Arc<XServerManager>,
+        consent_registry: Arc<ConnectConsentRegistry>,
+    ) -> Self {
+        Self {
+            app,
+            manager,
+            consent_registry,
+        }
+    }
+
+    /// Pause for first-time download consent when required (#1116).
+    ///
+    /// Returns [`ConsentGate::Proceed`] immediately when no prompt is needed
+    /// (already-decided, a server already reachable, or a non-download platform).
+    /// Otherwise emits [`X_SERVER_CONSENT_NEEDED_EVENT`] and awaits the frontend
+    /// reply — abortable via the connect's `cancel` token (#1260) — persisting
+    /// the "enable" decision so later connects do not re-prompt.
+    async fn request_consent_if_needed(&self, cancel: Option<&CancellationToken>) -> ConsentGate {
+        let platform = XServerPlatform::current();
+        let provide_setting = self
+            .app
+            .try_state::<ConnectionManager>()
+            .and_then(|m| m.get_settings().provide_x_server_automatically);
+        // Side-effect-free probe: a server already reachable means adoption with
+        // no download, so no consent is needed.
+        let server_present = matches!(
+            current_status(&self.manager).state,
+            XServerState::Running | XServerState::Adopted
+        );
+
+        if !connect_consent_required(platform, provide_setting, server_present) {
+            return ConsentGate::Proceed;
+        }
+
+        let (id, receiver) = self.consent_registry.register();
+        let _ = self.app.emit(
+            X_SERVER_CONSENT_NEEDED_EVENT,
+            XServerConsentRequest {
+                id: id.clone(),
+                platform,
+            },
+        );
+        emit_progress(
+            &self.app,
+            "consent",
+            "Waiting for X server download consent…",
+            -1.0,
+        );
+        let outcome = await_consent(receiver, cancel).await;
+        // Drop any lingering prompt if we aborted before a reply arrived.
+        self.consent_registry.forget(&id);
+
+        match outcome {
+            ConsentOutcome::Proceed => {
+                self.persist_consent();
+                ConsentGate::Proceed
+            }
+            ConsentOutcome::Skip => ConsentGate::Skip,
+            ConsentOutcome::Cancelled => ConsentGate::Cancelled,
+        }
+    }
+
+    /// Persist that the user consented to automatic provisioning, so subsequent
+    /// connects provision silently without re-prompting.
+    fn persist_consent(&self) {
+        if let Some(manager) = self.app.try_state::<ConnectionManager>() {
+            let mut settings = manager.get_settings();
+            settings.provide_x_server_automatically = Some(true);
+            if let Err(e) = manager.save_settings(settings) {
+                tracing::warn!("Failed to persist X server consent: {e}");
+            }
+        }
     }
 }
 
 #[async_trait]
 impl XServerProvisioner for XServerProvisionerImpl {
     async fn ensure(&self, cancel: Option<CancellationToken>) -> Result<XServerLease, String> {
+        // Surface the same connect-time provisioning progress the manual
+        // `x_server_ensure` command emits so the frontend can show live feedback
+        // (#1116). Best-effort; no listener during a plain connect is harmless.
+        emit_progress(&self.app, "detect", "Checking for a local X server…", -1.0);
+
+        // Gate a first-time, download-backed provision on user consent (#1116).
+        match self.request_consent_if_needed(cancel.as_ref()).await {
+            ConsentGate::Proceed => {}
+            ConsentGate::Skip => {
+                // Declined for now: skip forwarding gracefully. Returning an
+                // empty lease lets the connect continue (falling back to any
+                // user-run server) without failing the SSH connect.
+                emit_progress(&self.app, "skipped", "X server setup skipped.", 1.0);
+                return Ok(XServerLease::default());
+            }
+            ConsentGate::Cancelled => {
+                let message = "X server setup was cancelled.".to_string();
+                emit_progress(&self.app, "failed", &message, 1.0);
+                return Err(message);
+            }
+        }
+
         // Run the orchestrator (adopt / spawn / launch XQuartz / typed error),
         // claiming a dependent session against the manager (#1107). The connect
         // path gets the resolved server — managed or adopted, with its cookie, so
@@ -99,13 +227,29 @@ impl XServerProvisioner for XServerProvisionerImpl {
         // XQuartz readiness wait (#1260). `Ok` always carries a resolved server;
         // the "nothing usable" case is an `Err`, and the "no provisioner
         // registered" case is handled in core.
-        let (outcome, guard) = ensure_session_off_reactor(&self.app, self.manager.clone(), cancel)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(XServerLease {
-            resolved: Some(outcome.resolved),
-            guard: Some(Box::new(guard)),
-        })
+        match ensure_session_off_reactor(&self.app, self.manager.clone(), cancel).await {
+            Ok((outcome, guard)) => {
+                emit_progress(
+                    &self.app,
+                    "ready",
+                    outcome
+                        .report
+                        .message
+                        .as_deref()
+                        .unwrap_or("X server ready."),
+                    1.0,
+                );
+                Ok(XServerLease {
+                    resolved: Some(outcome.resolved),
+                    guard: Some(Box::new(guard)),
+                })
+            }
+            Err(e) => {
+                let message = e.to_string();
+                emit_progress(&self.app, "failed", &message, 1.0);
+                Err(message)
+            }
+        }
     }
 }
 
@@ -146,7 +290,19 @@ pub(crate) async fn ensure_session_off_reactor(
 
 /// Install the X server provisioner into core so the SSH connect path can reach
 /// it. Call once at startup, after the manager is created.
-pub fn init(app: &AppHandle, manager: Arc<XServerManager>) {
-    let provisioner = Arc::new(XServerProvisionerImpl::new(app.clone(), manager));
+///
+/// `consent_registry` is the shared registry the `x_server_connect_consent_reply`
+/// command resolves against, so a connect paused for download consent (#1116) is
+/// woken by the frontend's reply.
+pub fn init(
+    app: &AppHandle,
+    manager: Arc<XServerManager>,
+    consent_registry: Arc<ConnectConsentRegistry>,
+) {
+    let provisioner = Arc::new(XServerProvisionerImpl::new(
+        app.clone(),
+        manager,
+        consent_registry,
+    ));
     termihub_core::backends::ssh::x11::set_x_server_provisioner(provisioner);
 }
