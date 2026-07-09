@@ -249,6 +249,7 @@ Fixed strings — match exactly.
 | `migration-dialog` | `src/components/Settings/PortableModeSettings.tsx` |
 | `migration-result` | `src/components/Settings/PortableModeSettings.tsx`, `src/components/Settings/SecuritySettings.tsx` |
 | `modal-close` | `src/components/ui/Modal.tsx` |
+| `monitoring-cancel-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-cpu` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disconnect` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-disk` | `src/components/StatusBar/StatusBar.tsx` |
@@ -256,6 +257,7 @@ Fixed strings — match exactly.
 | `monitoring-host` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-loading` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-mem` | `src/components/StatusBar/StatusBar.tsx` |
+| `monitoring-paused` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-retry-btn` | `src/components/StatusBar/StatusBar.tsx` |
 | `monitoring-stale` | `src/components/StatusBar/StatusBar.tsx` |
 | `multi-select-copy` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -590,8 +592,12 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `layout-remove-tab-*-*` | `layout-remove-tab-${idx}-${tabIdx}` | `src/components/WorkspaceEditor/LayoutDesigner.tsx` |
 | `layout-sidebar-*` | `layout-sidebar-${pos}` | `src/components/Settings/CustomizeLayoutDialog.tsx` |
 | `layout-split-*` | `layout-split-${node.direction}` | `src/components/WorkspaceEditor/LayoutDesigner.tsx` |
+| `monitor-interval-*` | `monitor-interval-${entry.key}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `monitor-interval-*-*` | `monitor-interval-${entry.key}-${opt}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `monitor-retry-*` | `monitor-retry-${entry.key}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `monitor-row-*` | `monitor-row-${config.id}` | `src/components/NetworkTools/HttpMonitorPanel.tsx`, `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `monitor-stale-*` | `monitor-stale-${config.id}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
+| `monitoring-interval-*` | `monitoring-interval-${opt}` | `src/components/StatusBar/StatusBar.tsx` |
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `oc-agent-disconnect-*` | `oc-agent-disconnect-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `oc-agent-shutdown-*` | `oc-agent-shutdown-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
@@ -650,6 +656,8 @@ where the component is used, not at the `data-testid` site.
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{killTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
+| `{paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}` | `src/components/StatusBar/StatusBar.tsx` |
+| `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{testId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |

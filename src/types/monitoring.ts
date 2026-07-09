@@ -46,7 +46,24 @@ export interface MonitoringEntry {
    * #1 as "priming" for the CPU field (audit gap G10).
    */
   sampleCount: number;
+  /**
+   * True while the user has paused collection (#1233). The transport stays open;
+   * the backend loop simply stops collecting. A paused monitor shows a neutral
+   * badge and dimmed stats.
+   */
+  paused: boolean;
+  /**
+   * Per-entry refresh interval in milliseconds (#1233). Drives the backend
+   * session monitoring loop cadence, replacing the previously hardcoded interval.
+   */
+  intervalMs: number;
 }
+
+/** Selectable monitoring refresh intervals, in milliseconds (#1233). */
+export const MONITORING_INTERVAL_OPTIONS = [1000, 2000, 5000, 10000] as const;
+
+/** Default monitoring refresh interval in milliseconds (#1233). */
+export const DEFAULT_MONITORING_INTERVAL_MS = 2000;
 
 /** System statistics retrieved from a remote Linux host. */
 export interface SystemStats {

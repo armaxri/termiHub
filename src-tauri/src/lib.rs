@@ -477,6 +477,9 @@ pub fn run() {
             commands::session::session_get_capabilities,
             commands::session::session_monitoring_open,
             commands::session::session_monitoring_close,
+            commands::session::session_monitoring_set_paused,
+            commands::session::session_monitoring_set_interval,
+            commands::session::session_monitoring_cancel,
             // Persistent session management
             commands::session::start_persistent_session,
             commands::session::adopt_persistent_session,

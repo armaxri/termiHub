@@ -66,6 +66,9 @@ import {
   sessionGetCapabilities,
   sessionMonitoringOpen,
   sessionMonitoringClose,
+  sessionMonitoringSetPaused,
+  sessionMonitoringSetInterval,
+  sessionMonitoringCancel,
   listAvailableShells,
   getDefaultShell,
   connectAgent as apiConnectAgent,
@@ -142,7 +145,7 @@ import {
   connectTimeoutMs,
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
-import { MonitoringEntry, SystemStats } from "@/types/monitoring";
+import { DEFAULT_MONITORING_INTERVAL_MS, MonitoringEntry, SystemStats } from "@/types/monitoring";
 import {
   onSessionMonitoringStats,
   onSessionMonitoringStatus,
@@ -837,6 +840,21 @@ interface AppState {
   disconnectMonitoring: (key?: string) => Promise<void>;
   /** Clear a lingering error on one entry so a stale tooltip cannot persist (audit gap G9). */
   clearMonitoringError: (key: string) => void;
+  /**
+   * Pause or resume one monitor (#1233). Signals the backend session monitoring
+   * loop to stop/resume collecting; the transport stays open either way.
+   */
+  setMonitoringPaused: (key: string, paused: boolean) => Promise<void>;
+  /**
+   * Change one monitor's refresh interval in milliseconds (#1233), reconfiguring
+   * the backend session monitoring loop cadence.
+   */
+  setMonitoringInterval: (key: string, intervalMs: number) => Promise<void>;
+  /**
+   * Cancel a monitor that is still connecting (#1233). Aborts the backend connect
+   * and tears the entry down so the picker/Retry is reachable again.
+   */
+  cancelMonitoring: (key: string) => Promise<void>;
   /** Per-session capabilities fetched after session creation (keyed by sessionId). */
   sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
   setSessionCapabilities: (
@@ -1082,6 +1100,8 @@ function emptyMonitor(key: string, host: string | null): MonitoringEntry {
     error: null,
     status: null,
     sampleCount: 0,
+    paused: false,
+    intervalMs: DEFAULT_MONITORING_INTERVAL_MS,
   };
 }
 
@@ -4324,7 +4344,7 @@ export const useAppStore = create<AppState>((set, get) => {
       })),
 
     connectMonitoring: async (sessionId: string, host: string | null = null) => {
-      const { monitoringStatsCache } = useAppStore.getState();
+      const { monitoringStatsCache, monitors } = useAppStore.getState();
 
       // Unified session-based (push) monitoring: the key is the id of the
       // terminal session that owns the monitor. The backend subscribes the
@@ -4332,6 +4352,10 @@ export const useAppStore = create<AppState>((set, get) => {
       // "session-monitoring-stats" / "session-monitoring-status" events (#1232).
       const key = sessionId;
       const cachedStats = monitoringStatsCache[key] ?? null;
+
+      // Preserve a previously-chosen refresh interval across a reconnect so the
+      // user's rate selection is not silently reset (#1233).
+      const intervalMs = monitors[key]?.intervalMs ?? DEFAULT_MONITORING_INTERVAL_MS;
 
       // Upsert a fresh loading entry keyed by MonitorKey. monitorSessionId stays
       // null until the backend subscription is established, which the UI reads as
@@ -4341,6 +4365,7 @@ export const useAppStore = create<AppState>((set, get) => {
         stats: cachedStats,
         loading: true,
         status: "connecting",
+        intervalMs,
       });
 
       try {
@@ -4375,7 +4400,7 @@ export const useAppStore = create<AppState>((set, get) => {
         });
         _monitoringStatusUnlisten.set(key, statusUnlisten);
 
-        await sessionMonitoringOpen(key);
+        await sessionMonitoringOpen(key, intervalMs);
         upsertMonitor(key, { monitorSessionId: key, loading: false, status: "live" });
       } catch (err) {
         // The stats/status listeners are attached before the open that may throw
@@ -4422,6 +4447,53 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         return { monitors: nextMonitors, monitoringStatsCache: nextCache };
       });
+    },
+
+    setMonitoringPaused: async (key, paused) => {
+      const entry = useAppStore.getState().monitors[key];
+      if (!entry) return;
+      // Optimistically flag the entry; the backend session loop drives the
+      // authoritative `status`, but the flag gates the local UI (neutral badge +
+      // dimmed stats) immediately (#1233).
+      upsertMonitor(key, { paused, status: paused ? "paused" : "live" });
+      if (entry.monitorSessionId) {
+        try {
+          await sessionMonitoringSetPaused(entry.monitorSessionId, paused);
+        } catch (err) {
+          frontendLog("monitoring", `set paused failed for ${key}: ${err}`);
+          // Roll back the optimistic flag so the UI reflects reality.
+          upsertMonitor(key, { paused: !paused });
+          throw err;
+        }
+      }
+    },
+
+    setMonitoringInterval: async (key, intervalMs) => {
+      const entry = useAppStore.getState().monitors[key];
+      if (!entry) return;
+      upsertMonitor(key, { intervalMs });
+      if (entry.monitorSessionId) {
+        try {
+          await sessionMonitoringSetInterval(entry.monitorSessionId, intervalMs);
+        } catch (err) {
+          frontendLog("monitoring", `set interval failed for ${key}: ${err}`);
+          throw err;
+        }
+      }
+    },
+
+    cancelMonitoring: async (key) => {
+      const entry = useAppStore.getState().monitors[key];
+      if (!entry) return;
+      // Abort the backend monitor connect (keyed by session id) so a stuck
+      // handshake stops promptly (#1233); ignore errors — torn down anyway.
+      try {
+        await sessionMonitoringCancel(key);
+      } catch (err) {
+        frontendLog("monitoring", `cancel failed for ${key}: ${err}`);
+      }
+      // Tear the entry down so the picker / Retry affordance is reachable again.
+      await useAppStore.getState().disconnectMonitoring(key);
     },
 
     // SSH Tunnels
