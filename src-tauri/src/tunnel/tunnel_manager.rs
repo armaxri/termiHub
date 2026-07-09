@@ -5,9 +5,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable as core_connect_cancellable;
-use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
-use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway;
+use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_with_liveness as core_connect_cancellable_with_liveness;
+use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
+use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
 use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
 use tokio_util::sync::CancellationToken;
 
@@ -36,6 +36,28 @@ fn block_on_runtime<F: std::future::Future>(fut: F) -> F::Output {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
 }
 
+/// A pooled endpoint SSH session together with its native liveness watch (#1297).
+///
+/// Pooled by connection id so every local/dynamic tunnel sharing the endpoint
+/// session also shares one [`LivenessWatch`] (cloned per supervisor); dropping the
+/// last pool reference drains the session. Bundling the watch with the session in
+/// the pooled value is what lets a shared session's death fan out to every
+/// supervisor riding it.
+struct LiveEndpoint {
+    session: Arc<SshSession>,
+    liveness: LivenessWatch,
+}
+
+/// What a jump-host tunnel connect yields: the target session, its forwarded-
+/// channel registry, the pooled gateway hold to keep alive for the session's
+/// lifetime, and the native session-[`LivenessWatch`] (#1297).
+type GatewayConnect = (
+    SshSession,
+    ForwardedChannelRegistry,
+    PooledRef<Arc<SshGateway>>,
+    LivenessWatch,
+);
+
 /// RAII holder for the pool references a tunnel's SSH session(s) depend on.
 ///
 /// Dropping it returns the references to their pools, draining sessions no
@@ -48,7 +70,7 @@ fn block_on_runtime<F: std::future::Future>(fut: F) -> F::Output {
 struct PooledSessionGuards {
     /// Pooled endpoint session, shared by local/dynamic forwarders on the same
     /// connection. `None` when the endpoint is reached through a jump host.
-    endpoint: Option<PooledRef<Arc<SshSession>>>,
+    endpoint: Option<PooledRef<Arc<LiveEndpoint>>>,
     /// Pooled jump-host gateway session shared across all connections that use
     /// the same bastion. `None` for direct (non-jump) connections.
     gateway: Option<PooledRef<Arc<SshGateway>>>,
@@ -56,7 +78,7 @@ struct PooledSessionGuards {
 
 impl PooledSessionGuards {
     /// Hold a pooled per-connection endpoint session.
-    fn endpoint(endpoint: PooledRef<Arc<SshSession>>) -> Self {
+    fn endpoint(endpoint: PooledRef<Arc<LiveEndpoint>>) -> Self {
         Self {
             endpoint: Some(endpoint),
             gateway: None,
@@ -227,7 +249,7 @@ pub struct TunnelManager {
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
     /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
-    endpoint_pool: Arc<RefPool<Arc<SshSession>>>,
+    endpoint_pool: Arc<RefPool<Arc<LiveEndpoint>>>,
     app_handle: AppHandle,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
     /// Handle to the single periodic live-stats emitter task (GAP 6, #1248).
@@ -421,7 +443,7 @@ impl TunnelManager {
         // handshake). On failure, surface it as `error` status instead of
         // leaving the tunnel stuck in `connecting` (#829) — unless a Stop was
         // requested mid-connect, in which case it has already gone disconnected.
-        let (forwarder, guards, probe) = match self.build_forwarder(&config, cancel) {
+        let (forwarder, guards, liveness) = match self.build_forwarder(&config, cancel) {
             Ok(built) => built,
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
@@ -456,7 +478,7 @@ impl TunnelManager {
             tunnel_id,
             forwarder,
             guards,
-            probe,
+            liveness,
             config.reconnect_on_disconnect,
         )?;
 
@@ -542,41 +564,32 @@ impl TunnelManager {
         &self,
         config: &TunnelConfig,
         cancel: CancellationToken,
-    ) -> Result<
-        (
-            ActiveForwarder,
-            PooledSessionGuards,
-            Option<Arc<SshSession>>,
-        ),
-        TerminalError,
-    > {
+    ) -> Result<(ActiveForwarder, PooledSessionGuards, Option<LivenessWatch>), TerminalError> {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
         let conn_id = &config.ssh_connection_id;
         let jumped = !ssh_config.proxy_jump.is_empty();
 
-        // The returned `Arc<SshSession>` is a probe handle the supervisor
-        // keepalive-pings so a dead SSH session surfaces as `Error` even while the
-        // local listener keeps accepting (#1243, GAP 1). Remote forwards own a
-        // dedicated non-`Arc` session (russh `Handle` is not `Clone`), so they get
-        // no probe here and rely on the forwarder death signal.
+        // The returned [`LivenessWatch`] is the native, event-driven session-death
+        // signal the supervisor selects over so a dead SSH session surfaces as
+        // `Error` even while the local listener keeps accepting (#1243/#1297, GAP 1).
+        // Remote forwards own a dedicated session driven purely by the forwarder
+        // death signal, so they get no watch here (`None`).
         match &config.tunnel_type {
             TunnelType::Local(local_config) => {
-                let (session, guards) =
+                let (session, guards, liveness) =
                     self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
-                let probe = Some(Arc::clone(&session));
                 let f = LocalForwarder::start(local_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start local forwarder: {}", e))
                 })?;
-                Ok((ActiveForwarder::Local(f), guards, probe))
+                Ok((ActiveForwarder::Local(f), guards, Some(liveness)))
             }
             TunnelType::Dynamic(dynamic_config) => {
-                let (session, guards) =
+                let (session, guards, liveness) =
                     self.acquire_endpoint(conn_id, &ssh_config, cancel, jumped)?;
-                let probe = Some(Arc::clone(&session));
                 let f = DynamicForwarder::start(dynamic_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start dynamic forwarder: {}", e))
                 })?;
-                Ok((ActiveForwarder::Dynamic(f), guards, probe))
+                Ok((ActiveForwarder::Dynamic(f), guards, Some(liveness)))
             }
             TunnelType::Remote(remote_config) => {
                 // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
@@ -604,20 +617,33 @@ impl TunnelManager {
         ssh_config: &SshConfig,
         cancel: CancellationToken,
         jumped: bool,
-    ) -> Result<(Arc<SshSession>, PooledSessionGuards), TerminalError> {
+    ) -> Result<(Arc<SshSession>, PooledSessionGuards, LivenessWatch), TerminalError> {
         if jumped {
-            let (session, _registry, gateway) = self.connect_through_gateway(ssh_config, cancel)?;
-            Ok((Arc::new(session), PooledSessionGuards::gateway(gateway)))
+            let (session, _registry, gateway, liveness) =
+                self.connect_through_gateway(ssh_config, cancel)?;
+            Ok((
+                Arc::new(session),
+                PooledSessionGuards::gateway(gateway),
+                liveness,
+            ))
         } else {
             let endpoint =
                 block_on_runtime(self.endpoint_pool.get_or_create(conn_id, || async move {
-                    core_connect_cancellable(ssh_config, Some(cancel))
+                    core_connect_cancellable_with_liveness(ssh_config, Some(cancel))
                         .await
-                        .map(|(session, _registry)| Arc::new(session))
+                        .map(|(session, _registry, liveness)| {
+                            Arc::new(LiveEndpoint {
+                                session: Arc::new(session),
+                                liveness,
+                            })
+                        })
                         .map_err(|e| TerminalError::SshError(e.to_string()))
                 }))?;
-            let session = (*endpoint).clone();
-            Ok((session, PooledSessionGuards::endpoint(endpoint)))
+            // Each supervisor gets its own watch receiver clone, so one shared
+            // pooled session's death fans out to every tunnel riding it (#1297).
+            let session = endpoint.session.clone();
+            let liveness = endpoint.liveness.clone();
+            Ok((session, PooledSessionGuards::endpoint(endpoint), liveness))
         }
     }
 
@@ -630,7 +656,10 @@ impl TunnelManager {
         jumped: bool,
     ) -> Result<(SshSession, ForwardedChannelRegistry, PooledSessionGuards), TerminalError> {
         if jumped {
-            let (session, registry, gateway) = self.connect_through_gateway(ssh_config, cancel)?;
+            // Remote forwards rely on the forwarder death signal, not the session
+            // liveness watch, so the watch is dropped here.
+            let (session, registry, gateway, _liveness) =
+                self.connect_through_gateway(ssh_config, cancel)?;
             Ok((session, registry, PooledSessionGuards::gateway(gateway)))
         } else {
             let (session, registry) = connect_with_registry_cancellable(ssh_config, cancel)
@@ -645,21 +674,14 @@ impl TunnelManager {
         &self,
         ssh_config: &SshConfig,
         cancel: CancellationToken,
-    ) -> Result<
-        (
-            SshSession,
-            ForwardedChannelRegistry,
-            PooledRef<Arc<SshGateway>>,
-        ),
-        TerminalError,
-    > {
+    ) -> Result<GatewayConnect, TerminalError> {
         block_on_runtime(async move {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => {
                     Err(TerminalError::TunnelError("SSH connect cancelled".to_string()))
                 }
-                res = connect_target_through_pooled_gateway(ssh_config, Some(&cancel)) => {
+                res = connect_target_through_pooled_gateway_with_liveness(ssh_config, Some(&cancel)) => {
                     res.map_err(|e| TerminalError::SshError(e.to_string()))
                 }
             }
@@ -681,7 +703,7 @@ impl TunnelManager {
         tunnel_id: &str,
         mut forwarder: ActiveForwarder,
         guards: PooledSessionGuards,
-        probe: Option<Arc<SshSession>>,
+        liveness: Option<LivenessWatch>,
         reconnect_on_disconnect: bool,
     ) -> Result<(), TerminalError> {
         let death = forwarder.take_death_signal();
@@ -693,7 +715,7 @@ impl TunnelManager {
         let supervisor = self.spawn_supervisor(
             tunnel_id.to_string(),
             death,
-            probe,
+            liveness,
             supervisor_cancel.clone(),
             reconnect_on_disconnect,
         );
@@ -734,13 +756,13 @@ impl TunnelManager {
                 return false;
             }
         };
-        let (forwarder, guards, probe) = built;
+        let (forwarder, guards, liveness) = built;
         if self
             .register_and_supervise(
                 tunnel_id,
                 forwarder,
                 guards,
-                probe,
+                liveness,
                 config.reconnect_on_disconnect,
             )
             .is_err()
@@ -758,7 +780,7 @@ impl TunnelManager {
         &self,
         tunnel_id: String,
         death: Option<tokio::sync::oneshot::Receiver<()>>,
-        probe: Option<Arc<SshSession>>,
+        liveness: Option<LivenessWatch>,
         cancel: CancellationToken,
         reconnect_on_disconnect: bool,
     ) -> tokio::task::JoinHandle<()> {
@@ -774,7 +796,7 @@ impl TunnelManager {
                 app_handle,
                 tunnel_id,
                 death,
-                probe,
+                liveness,
                 cancel,
                 reconnect_on_disconnect,
             )
@@ -962,9 +984,6 @@ impl TunnelManager {
     }
 }
 
-/// How long the supervisor waits between session keepalive probes (#1243).
-const SUPERVISOR_PROBE_INTERVAL: Duration = Duration::from_secs(20);
-
 /// Why a supervised tunnel died, for the recorded `Error` message.
 enum DeathCause {
     Forwarder,
@@ -1002,10 +1021,10 @@ fn emit_tunnel_status(
 /// Per-tunnel supervisor loop (#1243, GAP 1 + GAP 2).
 ///
 /// Waits for the first of: an explicit stop (cancel token — NOT a death), the
-/// forwarder death signal, or a failed session keepalive probe. On a real death
-/// it reaps the tunnel from `active_tunnels` (dropping its pool guards so the
-/// shared session drains exactly once), records the cause as the durable
-/// last-error (#1238), and emits the `Error` resting state.
+/// forwarder death signal, or the native session-liveness watch firing (#1297).
+/// On a real death it reaps the tunnel from `active_tunnels` (dropping its pool
+/// guards so the shared session drains exactly once), records the cause as the
+/// durable last-error (#1238), and emits the `Error` resting state.
 #[allow(clippy::too_many_arguments)]
 async fn supervise(
     active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
@@ -1014,7 +1033,7 @@ async fn supervise(
     app_handle: AppHandle,
     tunnel_id: String,
     death: Option<tokio::sync::oneshot::Receiver<()>>,
-    probe: Option<Arc<SshSession>>,
+    liveness: Option<LivenessWatch>,
     cancel: CancellationToken,
     reconnect_on_disconnect: bool,
 ) {
@@ -1024,7 +1043,7 @@ async fn supervise(
         // Error; the other branches are dropped.
         _ = cancel.cancelled() => return,
         _ = wait_forwarder_death(death) => DeathCause::Forwarder,
-        _ = session_probe_loop(probe, SUPERVISOR_PROBE_INTERVAL) => DeathCause::Session,
+        _ = wait_session_death(liveness) => DeathCause::Session,
     };
 
     let removed = match active_tunnels.lock() {
@@ -1177,30 +1196,23 @@ async fn wait_forwarder_death(death: Option<tokio::sync::oneshot::Receiver<()>>)
         Some(rx) => {
             let _ = rx.await;
         }
-        // No signal wired (should not happen) — never resolve so the keepalive
-        // probe alone governs liveness.
+        // No signal wired (should not happen) — never resolve so the session
+        // liveness watch alone governs liveness.
         None => std::future::pending::<()>().await,
     }
 }
 
-/// Resolve only once the SSH session is dead. Lightweight keepalive: open a
-/// throwaway session channel every `interval`; a failure means the transport is
-/// gone. (A native russh session-liveness watch is the Option-B upgrade.)
-async fn session_probe_loop(session: Option<Arc<SshSession>>, interval: Duration) {
-    // No probe handle (remote forward): never resolve — the forwarder death
-    // signal governs liveness for this tunnel.
-    let session = match session {
-        Some(s) => s,
-        None => {
-            std::future::pending::<()>().await;
-            return;
-        }
-    };
-    loop {
-        tokio::time::sleep(interval).await;
-        if session.channel_open_session().await.is_err() {
-            return;
-        }
+/// Resolve once the SSH session is dead, via the native russh liveness watch
+/// (#1297) — event-driven, no polling. russh fires the watch from its
+/// `disconnected` callback on a transport failure, a peer disconnect, or
+/// keepalive exhaustion (30 s × 3).
+///
+/// `None` (a remote forward, which has no shared endpoint session) never
+/// resolves — the forwarder death signal governs liveness for that tunnel.
+async fn wait_session_death(liveness: Option<LivenessWatch>) {
+    match liveness {
+        Some(mut watch) => watch.dead().await,
+        None => std::future::pending::<()>().await,
     }
 }
 
@@ -1235,7 +1247,7 @@ mod tests {
     use super::super::local_forward::ForwarderStats;
     use super::{
         backoff_delay, clear_last_error, last_error_for, record_last_error, resting_status,
-        run_reconnect_loop, session_probe_loop, snapshot_active_stats, wait_forwarder_death,
+        run_reconnect_loop, snapshot_active_stats, wait_forwarder_death, wait_session_death,
         ActiveTunnel, ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::tunnel::config::TunnelStatus;
@@ -1521,8 +1533,9 @@ mod tests {
     // As with the GAP-8 tests above, the full `supervise` task cannot run in a
     // unit test (it needs a Tauri `AppHandle` to emit and a real `SshSession`),
     // so these lock in its constituent behaviours with the same production
-    // building blocks: the real `wait_forwarder_death` / `session_probe_loop`
-    // futures and the RefPool guard-drain that the death path performs. The
+    // building blocks: the real `wait_forwarder_death` / `wait_session_death`
+    // futures and the RefPool guard-drain that the death path performs (the
+    // native `LivenessWatch` firing itself is unit-tested in `core`). The
     // end-to-end Connected → Error on a killed sshd is the Docker system test.
 
     /// The forwarder death oneshot resolves when its sender is dropped — i.e. when
@@ -1539,26 +1552,24 @@ mod tests {
             .expect("join");
     }
 
-    /// With no death signal wired, the wait never resolves — the keepalive probe
-    /// alone governs liveness (defensive default).
+    /// With no death signal wired, the wait never resolves — the session
+    /// liveness watch alone governs liveness (defensive default).
     #[tokio::test]
     async fn no_forwarder_signal_never_resolves() {
         let r = tokio::time::timeout(Duration::from_millis(100), wait_forwarder_death(None)).await;
         assert!(r.is_err(), "no death signal ⇒ the wait must never resolve");
     }
 
-    /// A remote-forward tunnel has no probe handle; the probe loop must never
-    /// resolve so the forwarder death signal governs (no spurious Error).
+    /// A remote-forward tunnel has no liveness watch; `wait_session_death(None)`
+    /// must never resolve so the forwarder death signal governs (no spurious
+    /// Error). The watch-fires case is covered by the `LivenessWatch` unit tests
+    /// in `core` (a real `SshSession` can't be fabricated here).
     #[tokio::test]
-    async fn session_probe_without_handle_never_resolves() {
-        let r = tokio::time::timeout(
-            Duration::from_millis(100),
-            session_probe_loop(None, Duration::from_millis(10)),
-        )
-        .await;
+    async fn session_death_without_watch_never_resolves() {
+        let r = tokio::time::timeout(Duration::from_millis(100), wait_session_death(None)).await;
         assert!(
             r.is_err(),
-            "no probe handle ⇒ the probe loop must never resolve"
+            "no liveness watch ⇒ the session-death wait must never resolve"
         );
     }
 
