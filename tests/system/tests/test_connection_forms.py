@@ -20,11 +20,13 @@ Divergences from the original, by design:
   ``password`` — ``core/src/backends/ssh/mod.rs``), so the option the old test
   selected no longer exists. The removed-feature gap is already recorded by the
   skipped ``test_ssh_agent_error.py``.
-* **X11 default-unchecked** (``MT-SSH-19``) is asserted by saving an SSH
-  connection and reading ``enableX11Forwarding`` back from the store: the bridge
-  reads an ``<input>``'s ``value`` (``"on"`` for a checkbox) / stale markup
-  attribute, neither of which reflects a React checkbox's live ``checked`` state,
-  whereas the persisted config captures the real default.
+* **X11 default** (``MT-SSH-19``) is asserted by saving an SSH connection and
+  reading ``enableX11Forwarding`` back from the store (the bridge reads an
+  ``<input>``'s ``value`` — ``"on"`` for a checkbox — not its live ``checked``
+  state, whereas the persisted config captures the real value). Note the schema
+  default is **on** (``core/src/backends/ssh/mod.rs``, from
+  ``feat(ui): default SSH shell integration and X11 forwarding to enabled``), and
+  the SSH settings persist nested under ``config.config``.
 """
 
 from __future__ import annotations
@@ -127,8 +129,11 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.wait(lambda: self.field_visible("port"), what="the SSH port field")
         assert self.driver.get_value("field-port") == "22"
 
-    # ── MT-SSH-19: X11 backward compatibility ──────────────────────────────────
-    def test_ssh_x11_field_present_and_defaults_off(self):
+    # ── MT-SSH-19: X11 default + toggle persistence ────────────────────────────
+    def test_ssh_x11_defaults_on(self):
+        # A fresh SSH connection has X11 forwarding ON by default (schema default,
+        # from feat "default SSH shell integration and X11 forwarding to
+        # enabled"). SSH settings persist nested under config.config.
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
         self.wait(
@@ -141,9 +146,32 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.driver.type("field-username", "tester")
         self.driver.click(self.EDITOR_SAVE)
         conn = self.require_connection(name)
-        # A fresh SSH connection has X11 forwarding off (false or unset) — the
-        # backward-compatible default for connections saved without the field.
-        assert not (conn.get("config") or {}).get("enableX11Forwarding", False)
+        cfg = (conn.get("config") or {}).get("config") or {}
+        assert cfg.get("enableX11Forwarding") is True, (
+            f"X11 should default on; config={conn.get('config')}"
+        )
+
+    def test_ssh_x11_toggle_off_persists(self):
+        # X11 defaults on, so a single click turns it OFF; that must persist as
+        # false — the automatable half of the guided-manual X11 test (#957), so
+        # the manual test only confirms the forwarded window.
+        self.open_new_connection_editor()
+        self.select_connection_type("ssh")
+        self.wait(
+            lambda: self.field_visible("enableX11Forwarding"),
+            what="the X11-forwarding field",
+        )
+        name = unique_name("x11-off")
+        self.driver.type(self.EDITOR_NAME, name)
+        self.driver.type("field-host", "127.0.0.1")
+        self.driver.type("field-username", "tester")
+        self.driver.click("field-enableX11Forwarding")  # on → off
+        self.driver.click(self.EDITOR_SAVE)
+        conn = self.require_connection(name)
+        cfg = (conn.get("config") or {}).get("config") or {}
+        assert cfg.get("enableX11Forwarding") is False, (
+            f"toggling X11 off did not persist; config={conn.get('config')}"
+        )
 
     # ── Serial form fields ─────────────────────────────────────────────────────
     def test_serial_fields_visible(self):

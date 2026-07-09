@@ -47,6 +47,16 @@ pub fn test_bridge_plugin<R: Runtime>() -> Option<TauriPlugin<R>> {
     )
 }
 
+/// Whether the app was launched in WebSocket test-bridge mode
+/// (`TERMIHUB_TEST_BRIDGE_PORT` names a valid port).
+///
+/// Used to apply harness-only window behaviour — e.g. keeping the window
+/// always-on-top so macOS never fully occludes the webview and throttles its
+/// rendering (see #957). Production launches return `false`.
+pub fn is_test_bridge_enabled() -> bool {
+    parse_port(std::env::var(TEST_BRIDGE_PORT_ENV).ok()).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +81,22 @@ mod tests {
         assert_eq!(parse_port(Some("0".to_string())), None);
         assert_eq!(parse_port(Some("70000".to_string())), None);
         assert_eq!(parse_port(Some("not-a-port".to_string())), None);
+    }
+
+    #[test]
+    fn is_test_bridge_enabled_tracks_the_env_var() {
+        // Mutates a process-global env var; no other test reads this key.
+        let key = TEST_BRIDGE_PORT_ENV;
+        let saved = std::env::var(key).ok();
+        unsafe { std::env::set_var(key, "48123") };
+        assert!(is_test_bridge_enabled());
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!is_test_bridge_enabled());
+        unsafe { std::env::remove_var(key) };
+        assert!(!is_test_bridge_enabled());
+        match saved {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
     }
 }

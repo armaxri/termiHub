@@ -8,6 +8,7 @@ root and platform, so they need no build and run anywhere.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -244,3 +245,56 @@ def test_start_omits_webview2_folder_off_windows(tmp_path, monkeypatch):
         assert "WEBVIEW2_USER_DATA_FOLDER" not in captured["env"]
     finally:
         instance.stop()
+
+
+class _LinesStdout:
+    """A stdout stand-in that yields the given lines then EOFs."""
+
+    def __init__(self, lines):
+        self._lines = lines
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def close(self):
+        pass
+
+
+class _LinesPopen:
+    """A Popen stand-in whose stdout replays ``lines``."""
+
+    def __init__(self, lines):
+        self.pid = 4322
+        self.stdout = _LinesStdout(lines)
+
+    def poll(self):
+        return None
+
+
+def _pump_instance(monkeypatch, tmp_path, *, echo_logs, lines):
+    monkeypatch.setattr(orchestrator, "app_binary_path", lambda: tmp_path / "app.exe")
+    inst = orchestrator.AppInstance(config_dir=tmp_path, echo_logs=echo_logs)
+    inst._process = _LinesPopen(lines)
+    inst._log_file = io.StringIO()
+    return inst
+
+
+def test_pump_echoes_to_console_when_enabled(tmp_path, monkeypatch, capsys):
+    inst = _pump_instance(
+        monkeypatch, tmp_path, echo_logs=True, lines=["boot A\n", "boot B\n"]
+    )
+    inst._pump_output()
+    out = capsys.readouterr().out
+    assert "boot A" in out and "boot B" in out
+    assert "boot A" in inst._log_file.getvalue()  # and still captured
+
+
+def test_pump_is_silent_on_console_when_disabled_but_still_logs(
+    tmp_path, monkeypatch, capsys
+):
+    # Guided-manual runs disable the echo so prompts stay readable; the log file
+    # must still receive everything (#957).
+    inst = _pump_instance(monkeypatch, tmp_path, echo_logs=False, lines=["boot A\n"])
+    inst._pump_output()
+    assert capsys.readouterr().out == ""
+    assert "boot A" in inst._log_file.getvalue()

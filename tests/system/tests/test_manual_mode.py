@@ -101,31 +101,51 @@ def _scripted(answers):
 
 class TestManualPrompter:
     def test_step_pass(self):
-        prompter, _ = _scripted(["", "p"])  # Enter to act, then [p]ass
+        prompter, _ = _scripted(["y"])  # one key: [y]es = pass
         result = prompter.step("Do the thing", "It works")
         assert result == ManualResult("pass")
 
     def test_step_fail_captures_note(self):
-        prompter, _ = _scripted(["", "f", "looked wrong"])
+        prompter, _ = _scripted(["n", "looked wrong"])
         result = prompter.step("Do the thing", "It works")
         assert result.status == "fail"
         assert result.note == "looked wrong"
 
     def test_step_skip(self):
-        prompter, _ = _scripted(["", "s"])
+        prompter, _ = _scripted(["s"])
         assert prompter.step("Do the thing", "It works").status == "skip"
 
     def test_step_reprompts_on_invalid_choice(self):
-        prompter, captured = _scripted(["", "x", "p"])
+        prompter, captured = _scripted(["x", "y"])
         assert prompter.step("Do it", "Works").status == "pass"
         assert any("Please enter one of" in line for line in captured)
 
+    def test_invalid_entry_drains_buffered_input(self, monkeypatch):
+        # A stray multi-line paste into the prompt must not cascade one rejection
+        # per line: the buffer is drained on the first invalid entry (#957).
+        drained = []
+        monkeypatch.setattr(
+            ManualPrompter, "_drain_input", staticmethod(lambda: drained.append(True))
+        )
+        prompter, _ = _scripted(["garbage", "y"])
+        assert prompter.step("Do it", "Works").status == "pass"
+        assert drained  # drained after the invalid "garbage" line
+
     def test_step_presents_instruction_and_expected(self):
-        prompter, captured = _scripted(["", "p"])
+        prompter, captured = _scripted(["y"])
         prompter.step("Click export", "A save dialog opens")
         blob = "\n".join(captured)
         assert "Click export" in blob
         assert "A save dialog opens" in blob
+
+    def test_step_is_a_single_keypress_no_perform_stage(self):
+        # The prompt must be minimal: one keypress, no "press Enter to continue"
+        # intermediate and no multi-line box (#957 operator-friendliness).
+        prompter, captured = _scripted(["y"])
+        prompter.step("Click export", "A save dialog opens")
+        blob = "\n".join(captured)
+        assert "Perform the step" not in blob
+        assert "┌─" not in blob  # no box border
 
     def test_confirm_yes_no(self):
         yes, _ = _scripted(["y"])
@@ -254,19 +274,19 @@ class TestManualUiBehavior:
         return ui
 
     def test_step_pass_records(self):
-        ui = self._ui(["", "p"])
+        ui = self._ui(["y"])
         ui.manual_step("do it", "works")
         rec = ui._manual_session.records[-1]
         assert rec.status == "pass" and rec.kind == "step"
 
     def test_step_fail_raises_and_records(self):
-        ui = self._ui(["", "f", "looked wrong"])
+        ui = self._ui(["n", "looked wrong"])
         with pytest.raises(AssertionError, match="looked wrong"):
             ui.manual_step("do it", "works")
         assert ui._manual_session.records[-1].status == "fail"
 
     def test_step_skip_raises_pytest_skip(self):
-        ui = self._ui(["", "s"])
+        ui = self._ui(["s"])
         with pytest.raises(pytest.skip.Exception):
             ui.manual_step("do it", "works")
         assert ui._manual_session.records[-1].status == "skip"
@@ -276,13 +296,22 @@ class TestManualUiBehavior:
         assert ui.manual_confirm("does it blink?") is True
         assert ui._manual_session.records[-1].status == "pass"
 
+    def test_observe_defaults_to_no_screenshot(self):
+        # Screenshot capture is opt-in: an observe step must not block on the
+        # bridge snapshot verb by default (it stalls under macOS occlusion #957).
+        ui = self._ui(["y"])
+        ui.manual_observe("look", "green")
+        rec = ui._manual_session.records[-1]
+        assert rec.kind == "observe" and rec.screenshot is None
+
     def test_observe_without_screenshot_verb_records_none(self):
-        ui = self._ui(["", "p"])
-        ui.manual_observe("look", "green", label="shot")
+        # Even when explicitly requested, a driver lacking the verb yields None.
+        ui = self._ui(["y"])
+        ui.manual_observe("look", "green", label="shot", screenshot=True)
         rec = ui._manual_session.records[-1]
         assert rec.kind == "observe" and rec.screenshot is None
 
     def test_recording_is_noop_without_session(self):
-        ui = self._ui(["", "p"])
+        ui = self._ui(["y"])
         ui._manual_session = None
         ui.manual_step("do it", "works")  # must not raise

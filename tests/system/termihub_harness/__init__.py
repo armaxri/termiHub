@@ -23,6 +23,8 @@ from .fixtures import (
     SSH_TUNNEL_PORT,
     SSH_TUNNEL_SERVICE,
     SSH_USERNAME,
+    SSH_X11_PORT,
+    SSH_X11_SERVICE,
     TELNET_HOST,
     TELNET_PORT,
     TELNET_SERVICE,
@@ -41,7 +43,10 @@ from .manual import (
     manual_skip_reason,
     write_manual_report,
 )
+from .clipboard import read_os_clipboard
+from .display import ensure_local_display
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
+from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
 from .systemtest import SystemTest, unique_name
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
 from .ui import (
@@ -133,6 +138,8 @@ __all__ = [
     "SSH_BANNER_PORT",
     "SSH_TUNNEL_SERVICE",
     "SSH_TUNNEL_PORT",
+    "SSH_X11_SERVICE",
+    "SSH_X11_PORT",
     "SSH_USERNAME",
     "SSH_PASSWORD",
     "SSH_KEY_PATH",
@@ -145,4 +152,9 @@ __all__ = [
     "ftp_list",
     "tftp_download",
     "TftpUnavailable",
+    "agent_has_key",
+    "key_fingerprint",
+    "sha256_fingerprints",
+    "ensure_local_display",
+    "read_os_clipboard",
 ]

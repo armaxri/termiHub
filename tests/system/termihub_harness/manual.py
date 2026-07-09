@@ -21,6 +21,7 @@ import datetime
 import json
 import os
 import platform as _platform
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -121,34 +122,27 @@ class ManualPrompter:
     def step(
         self, instruction: str, expected: str, *, screenshot: Optional[str] = None
     ) -> ManualResult:
-        """Show the instruction + expected result, wait, then ask pass/fail/skip."""
-        self._present("MANUAL STEP", [instruction], expected, screenshot)
-        self._read_line("  Perform the step, then press Enter to record the result… ")
+        """Show a short prompt and read a one-key pass/fail/skip verdict.
+
+        Deliberately minimal for the operator: the instruction, a one-line pass
+        condition, then a single keypress — no multi-line box and no separate
+        "press Enter to continue" stage.
+        """
+        self._print("")
+        self._print(f"  ❓ {instruction}")
+        if expected:
+            self._print(f"     pass if: {expected}")
+        if screenshot:
+            self._print(f"     screenshot: {screenshot}")
         return self._verdict()
 
     def confirm(self, question: str) -> bool:
-        """Ask a yes/no question; ``True`` for yes (EOF / Ctrl-C answers no)."""
-        self._present("CONFIRM", [question], "Answer yes or no.", None)
-        return self._read_choice("  [y]es / [n]o: ", ("y", "n"), default="n") == "y"
+        """Ask a one-key yes/no question; ``True`` for yes (EOF / Ctrl-C = no)."""
+        self._print("")
+        self._print(f"  ❓ {question}")
+        return self._read_choice("  → [y]es / [n]o: ", ("y", "n"), default="n") == "y"
 
     # -- internals -----------------------------------------------------------
-    def _present(
-        self,
-        title: str,
-        lines: Sequence[str],
-        expected: str,
-        screenshot: Optional[str],
-    ) -> None:
-        self._print("")
-        self._print(f"  ┌─ {title} " + "─" * max(0, 48 - len(title)))
-        for line in lines:
-            self._print(f"  │ {line}")
-        self._print("  │")
-        self._print(f"  │ Expected: {expected}")
-        if screenshot:
-            self._print(f"  │ Screenshot: {screenshot}")
-        self._print("  └" + "─" * 50)
-
     def _read_line(self, prompt: str) -> Optional[str]:
         """Read one line; ``None`` signals EOF / Ctrl-C (operator gave up)."""
         try:
@@ -160,7 +154,10 @@ class ManualPrompter:
         """Read until a valid single-letter choice; ``default`` on EOF / Ctrl-C.
 
         The ``default`` floor guarantees termination — a closed or non-interactive
-        stream resolves to a safe answer instead of looping forever.
+        stream resolves to a safe answer instead of looping forever. On an invalid
+        entry the terminal input buffer is drained first, so a stray multi-line
+        paste (e.g. pasting the clipboard into this prompt by mistake) collapses to
+        a single re-prompt instead of one rejection per pasted line.
         """
         while True:
             line = self._read_line(prompt)
@@ -169,17 +166,40 @@ class ManualPrompter:
             choice = line.strip().lower()[:1]
             if choice in valid:
                 return choice
+            self._drain_input()
             self._print(f"  Please enter one of: {', '.join(valid)}")
+
+    @staticmethod
+    def _drain_input() -> None:
+        """Discard buffered terminal input (best-effort, interactive tty only).
+
+        A no-op when stdin is not an interactive tty (scripted tests, pipes), so
+        it never disturbs the injected ``input_fn`` used in unit tests.
+        """
+        try:
+            if not sys.stdin.isatty():
+                return
+            try:
+                import termios
+
+                termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            except ImportError:  # Windows
+                import msvcrt
+
+                while msvcrt.kbhit():
+                    msvcrt.getch()
+        except Exception:  # noqa: BLE001 — draining is best-effort
+            pass
 
     def _verdict(self) -> ManualResult:
         choice = self._read_choice(
-            "  Result — [p]ass / [f]ail / [s]kip: ", ("p", "f", "s"), default="s"
+            "  → [y]es (pass) / [n]o (fail) / [s]kip: ", ("y", "n", "s"), default="s"
         )
-        if choice == "p":
+        if choice == "y":
             return ManualResult("pass")
         if choice == "s":
             return ManualResult("skip")
-        note = (self._read_line("  Failure note (optional): ") or "").strip() or None
+        note = (self._read_line("  what went wrong? (optional): ") or "").strip() or None
         return ManualResult("fail", note)
 
 
