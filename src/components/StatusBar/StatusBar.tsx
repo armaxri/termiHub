@@ -272,14 +272,14 @@ function MonitoringStatus() {
 
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
-  const activeTabSessionId = useAppStore((s) => getActiveTab(s)?.sessionId ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
   const activeTabExited = useAppStore((s) => !!(activeTabId && s.terminalExitedTabs[activeTabId]));
 
   // Per-host keying (#1231, audit gap G6): the status bar renders the entry for
-  // the active tab's monitor key (the owning session id). Switching tabs just
-  // changes which entry we show — other hosts keep monitoring independently.
+  // the active tab's monitor key — the owning terminal session id (#1232).
+  // Switching tabs just changes which entry we show — other hosts keep
+  // monitoring independently.
   const activeMonitorKey = useAppStore((s) => monitorKeyForTab(getActiveTab(s)));
   const activeMonitor = useAppStore((s) => selectMonitor(s, monitorKeyForTab(getActiveTab(s))));
   const monitoringConnected = !!activeMonitor?.monitorSessionId;
@@ -294,7 +294,7 @@ function MonitoringStatus() {
     connectionTypes,
     activeTabConnectionType ?? "",
     sessionCapabilities,
-    activeTabSessionId
+    activeMonitorKey
   );
   const monitoringEnabled = activeTabSupportsMonitoring
     ? resolveFeatureEnabled(activeTabConfig, "enableMonitoring", globalMonitoringEnabled)
@@ -327,6 +327,8 @@ function MonitoringStatus() {
     const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab) return;
 
+    // The monitor key is the owning terminal session id (#1232), so it doubles
+    // as the sessionId passed to connectMonitoring.
     const key = monitorKeyForTab(activeTab);
     if (!key) return;
 
@@ -337,13 +339,11 @@ function MonitoringStatus() {
     if (autoConnectFailedRef.current === key) return;
     autoConnectFailedRef.current = key;
 
-    const sessionId = activeTab.sessionId;
-    if (!sessionId) return;
     const cfg = activeTab.config.config;
-    const hostLabel = (cfg.host as string) || activeTab.title || sessionId;
+    const hostLabel = (cfg.host as string) || activeTab.title || key;
 
     const doConnect = async () => {
-      await useAppStore.getState().connectMonitoring(sessionId, hostLabel);
+      await useAppStore.getState().connectMonitoring(key, hostLabel);
       if (useAppStore.getState().monitors[key]?.monitorSessionId) {
         autoConnectFailedRef.current = null;
       }
@@ -352,7 +352,6 @@ function MonitoringStatus() {
     doConnect();
   }, [
     activeTabId,
-    activeTabSessionId,
     activeMonitorKey,
     monitoringConnected,
     monitoringEnabled,
