@@ -47,6 +47,7 @@ async function flush() {
 interface Handlers {
   onStart?: (id: string) => void | Promise<void>;
   onStop?: (id: string) => void | Promise<void>;
+  onReconnect?: (id: string) => void | Promise<void>;
 }
 
 function renderItem(state: TunnelState | undefined, handlers: Handlers = {}): void {
@@ -59,6 +60,7 @@ function renderItem(state: TunnelState | undefined, handlers: Handlers = {}): vo
           connections={[] as SavedConnection[]}
           onStart={handlers.onStart ?? noop}
           onStop={handlers.onStop ?? noop}
+          onReconnect={handlers.onReconnect ?? noop}
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
@@ -158,6 +160,40 @@ describe("TunnelListItem — shared Button primitive (#1259)", () => {
     });
 
     expect(stop.classList.contains("ui-btn--pending")).toBe(false);
+  });
+
+  it("offers a force-Reconnect on a connected tunnel that fires onReconnect (#1243)", async () => {
+    let resolveReconnect!: () => void;
+    const onReconnect = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveReconnect = resolve;
+        })
+    );
+    renderItem({ tunnelId: "tun-1", status: "connected" } as TunnelState, { onReconnect });
+    await flush();
+
+    const reconnect = container.querySelector<HTMLButtonElement>(
+      '[data-testid="tunnel-reconnect-tun-1"]'
+    )!;
+    expect(reconnect).toBeTruthy();
+    click(reconnect);
+    await flush();
+
+    expect(onReconnect).toHaveBeenCalledWith("tun-1");
+    expect(reconnect.classList.contains("ui-btn--pending")).toBe(true);
+
+    await act(async () => {
+      resolveReconnect();
+      await Promise.resolve();
+    });
+
+    expect(reconnect.classList.contains("ui-btn--pending")).toBe(false);
+  });
+
+  it("does not offer Reconnect on a disconnected tunnel", () => {
+    renderItem(undefined);
+    expect(container.querySelector('[data-testid="tunnel-reconnect-tun-1"]')).toBeNull();
   });
 
   it("drives the Button async lifecycle on Retry when the tunnel is in error", async () => {

@@ -852,6 +852,8 @@ interface AppState {
   deleteTunnel: (tunnelId: string) => Promise<void>;
   startTunnel: (tunnelId: string) => Promise<void>;
   stopTunnel: (tunnelId: string) => Promise<void>;
+  /** Force-reconnect a connected tunnel (stop + start), for a stale-but-green tunnel (#1243). */
+  reconnectTunnel: (tunnelId: string) => Promise<void>;
   updateTunnelState: (state: TunnelState) => void;
   openTunnelEditorTab: (tunnelId: string | null) => void;
 
@@ -4518,6 +4520,33 @@ export const useAppStore = create<AppState>((set, get) => {
         throw err;
       } finally {
         _tunnelStopInFlight.delete(tunnelId);
+      }
+    },
+
+    reconnectTunnel: async (tunnelId) => {
+      // Force-reconnect a connected tunnel: tear it down and start it again,
+      // even if the backend supervisor's liveness has not fired yet — covers a
+      // stale-but-green tunnel (#1243). Guarded by the same in-flight sets as
+      // start/stop so a rapid double-click cannot overlap the sequence.
+      if (_tunnelStartInFlight.has(tunnelId) || _tunnelStopInFlight.has(tunnelId)) return;
+      _tunnelStopInFlight.add(tunnelId);
+      _tunnelStartInFlight.add(tunnelId);
+      const name = get().tunnels.find((t) => t.id === tunnelId)?.name ?? "tunnel";
+      const toastId = toast.loading(`Reconnecting ${name}…`);
+      try {
+        await apiStopTunnel(tunnelId);
+        await apiStartTunnel(tunnelId);
+        toast.success(`Reconnected ${name}`, { id: toastId });
+      } catch (err) {
+        console.error("Failed to reconnect tunnel:", err);
+        toast.error(
+          `Failed to reconnect ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
+      } finally {
+        _tunnelStopInFlight.delete(tunnelId);
+        _tunnelStartInFlight.delete(tunnelId);
       }
     },
 

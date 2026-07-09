@@ -15,6 +15,7 @@ export function TunnelSidebar() {
   const connections = useAppStore((s) => s.connections);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
+  const reconnectTunnel = useAppStore((s) => s.reconnectTunnel);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const deleteTunnel = useAppStore((s) => s.deleteTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
@@ -99,6 +100,7 @@ export function TunnelSidebar() {
               connections={connections}
               onStart={startTunnel}
               onStop={stopTunnel}
+              onReconnect={reconnectTunnel}
               onEdit={handleEdit}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}

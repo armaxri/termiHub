@@ -625,6 +625,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `tunnel-edit-*` | `tunnel-edit-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-item-*` | `tunnel-item-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-name-*` | `tunnel-name-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
+| `tunnel-reconnect-*` | `tunnel-reconnect-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-retry-*` | `tunnel-retry-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-start-*` | `tunnel-start-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-status-*` | `tunnel-status-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |

@@ -17,6 +17,9 @@ pub struct RemoteForwarder {
     registry: ForwardedChannelRegistry,
     bound_port: u32,
     _session: SshSession,
+    /// Fires when the forward loop exits (the server-side channel source closed),
+    /// so the tunnel supervisor can observe forwarder death (#1243, GAP 2).
+    death: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 impl RemoteForwarder {
@@ -54,7 +57,9 @@ impl RemoteForwarder {
         let local_host = config.local_host.clone();
         let local_port = config.local_port;
 
+        let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
+            let _death = death_tx;
             Self::forward_loop(rx, &local_host, local_port, stats_clone).await;
         });
 
@@ -64,12 +69,18 @@ impl RemoteForwarder {
             registry,
             bound_port,
             _session: session,
+            death: Some(death_rx),
         })
     }
 
     /// Get current tunnel statistics.
     pub fn get_stats(&self) -> TunnelStats {
         self.stats.to_tunnel_stats()
+    }
+
+    /// Take the forwarder-death receiver (once) for the tunnel supervisor.
+    pub fn take_death_signal(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        self.death.take()
     }
 
     /// Stop the forwarder and deregister from the channel registry.
