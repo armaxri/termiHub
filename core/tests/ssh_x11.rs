@@ -83,7 +83,8 @@ async fn x11_forwarding_delivers_channel_to_local_server() {
     // Run a real X client on the remote with the allocated display. It connects
     // to localhost:<remote_display> → sshd's forwarded listener → forwarded-tcpip
     // channel → our forwarder → the fake local X server.
-    let cmd = format!("DISPLAY=localhost:{remote_display} timeout 5 xdpyinfo >/dev/null 2>&1; echo DONE");
+    let cmd =
+        format!("DISPLAY=localhost:{remote_display} timeout 5 xdpyinfo >/dev/null 2>&1; echo DONE");
     let _ = ssh_exec(&session, &cmd).await;
 
     // Give the proxy a moment to accept the inbound connection.
