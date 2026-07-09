@@ -7,6 +7,7 @@
 //! (like OpenSSH's `X11DisplayOffset`) rather than deriving a huge display from
 //! an arbitrary ephemeral port (`:26961`), which stricter X clients reject so no
 //! forwarded channel is ever opened.
+#![cfg(feature = "ssh")]
 
 mod common;
 
