@@ -10,6 +10,8 @@ import {
 } from "@/services/networkApi";
 import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
+import { NetworkNumberField } from "./NetworkNumberField";
+import { validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface PingPanelProps {
@@ -31,7 +33,7 @@ const MAX_CHART_POINTS = 120; // 2 minutes at 1s interval
  */
 export function PingPanel({ prefillHost }: PingPanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
-  const [intervalMs, setIntervalMs] = useState(1000);
+  const [intervalMs, setIntervalMs] = useState<number | "">(1000);
   const [count, setCount] = useState<number | "">(""); // empty = infinite
   const [status, setStatus] = useState<DiagnosticStatus>("idle");
   const [results, setResults] = useState<PingResult[]>([]);
@@ -59,8 +61,22 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     taskIdRef.current = null;
   }, [cleanup]);
 
+  // Inline validation of the numeric fields. Blocks Start while invalid.
+  const intervalError = validateIntRange(intervalMs, {
+    min: 1,
+    max: 3_600_000,
+    label: "Interval",
+  });
+  const countError = validateIntRange(count, {
+    min: 1,
+    max: 1_000_000,
+    label: "Count",
+    allowEmpty: true,
+  });
+  const canStart = !!host.trim() && !intervalError && !countError;
+
   const handleStart = useCallback(async () => {
-    if (!host.trim()) return;
+    if (!canStart) return;
 
     setStatus("running");
     setResults([]);
@@ -105,8 +121,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
 
       taskIdRef.current = await networkPingStart(
         host,
-        intervalMs,
-        count !== "" ? count : undefined
+        Number(intervalMs),
+        count !== "" ? Number(count) : undefined
       );
     } catch (err) {
       setError(String(err));
@@ -114,7 +130,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       endSession();
       frontendLog("ping_panel", `Ping failed: ${err}`);
     }
-  }, [host, intervalMs, count, endSession]);
+  }, [host, intervalMs, count, canStart, endSession]);
 
   const handleStop = useCallback(async () => {
     if (!taskIdRef.current) return;
@@ -159,7 +175,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
               size="sm"
               icon={<Play size={14} />}
               onClick={handleStart}
-              disabled={!host.trim()}
+              disabled={!canStart}
               data-testid="ping-start"
             >
               Start
@@ -179,25 +195,23 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
             data-testid="ping-host"
           />
         </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Interval (ms)</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={intervalMs}
-            onChange={(e) => setIntervalMs(Number(e.target.value))}
-          />
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Count (∞ = empty)</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={count}
-            onChange={(e) => setCount(e.target.value === "" ? "" : Number(e.target.value))}
-            placeholder="∞"
-          />
-        </label>
+        <NetworkNumberField
+          label="Interval (ms)"
+          value={intervalMs}
+          onChange={setIntervalMs}
+          error={intervalError}
+          small
+          data-testid="ping-interval"
+        />
+        <NetworkNumberField
+          label="Count (∞ = empty)"
+          value={count}
+          onChange={setCount}
+          error={countError}
+          small
+          placeholder="∞"
+          data-testid="ping-count"
+        />
       </div>
 
       {tcpFallback && (
@@ -210,7 +224,10 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       {results.length > 0 && (
         <div className="network-panel__chart-section" data-testid="ping-chart">
           <span className="network-panel__chart-title">Latency Graph</span>
-          <LatencyChart points={latencyPoints} intervalMs={intervalMs} />
+          <LatencyChart
+            points={latencyPoints}
+            intervalMs={intervalMs === "" ? undefined : intervalMs}
+          />
         </div>
       )}
 

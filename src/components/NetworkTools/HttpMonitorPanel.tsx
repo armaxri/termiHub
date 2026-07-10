@@ -12,6 +12,9 @@ import {
 } from "@/services/networkApi";
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
+import { NetworkNumberField } from "./NetworkNumberField";
+import { NetworkTextField } from "./NetworkTextField";
+import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 const MAX_HISTORY = 120;
@@ -29,10 +32,10 @@ const MAX_HISTORY = 120;
 export function HttpMonitorPanel() {
   const [url, setUrl] = useState("https://");
   // UI uses seconds; API takes milliseconds
-  const [intervalSecs, setIntervalSecs] = useState(30);
+  const [intervalSecs, setIntervalSecs] = useState<number | "">(30);
   const [method, setMethod] = useState("GET");
   const [expectedStatus, setExpectedStatus] = useState<number | "">(200);
-  const [timeoutSecs, setTimeoutSecs] = useState(10);
+  const [timeoutSecs, setTimeoutSecs] = useState<number | "">(10);
   const [monitors, setMonitors] = useState<HttpMonitorState[]>([]);
   const [history, setHistory] = useState<HttpCheckResult[]>([]);
   const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null);
@@ -76,8 +79,22 @@ export function HttpMonitorPanel() {
     stopListening();
   }, [stopListening]);
 
+  // Inline validation. A real scheme+host URL check replaces the brittle
+  // `url === "https://"` sentinel, and the numeric fields are range-checked.
+  const urlValid = isValidHttpUrl(url);
+  const urlError = url.trim() && !urlValid ? "Enter a valid http(s) URL" : null;
+  const intervalError = validateIntRange(intervalSecs, { min: 1, max: 86_400, label: "Interval" });
+  const timeoutError = validateIntRange(timeoutSecs, { min: 1, max: 3600, label: "Timeout" });
+  const statusError = validateIntRange(expectedStatus, {
+    min: 100,
+    max: 599,
+    label: "Expected status",
+    allowEmpty: true,
+  });
+  const canStart = urlValid && !intervalError && !timeoutError && !statusError;
+
   const handleStart = useCallback(async () => {
-    if (!url.trim()) return;
+    if (!canStart) return;
     // Reject a re-entrant start while one is already in flight (#1147, GAP #7).
     if (startInFlightRef.current) return;
     startInFlightRef.current = true;
@@ -102,10 +119,10 @@ export function HttpMonitorPanel() {
 
       const monitorId = await networkHttpMonitorStart(
         url.trim(),
-        intervalSecs * 1000,
+        Number(intervalSecs) * 1000,
         method,
         expectedStatus !== "" ? expectedStatus : undefined,
-        timeoutSecs * 1000
+        Number(timeoutSecs) * 1000
       );
       activeMonitorIdRef.current = monitorId;
       setActiveMonitorId(monitorId);
@@ -117,7 +134,16 @@ export function HttpMonitorPanel() {
     } finally {
       startInFlightRef.current = false;
     }
-  }, [url, intervalSecs, method, expectedStatus, timeoutSecs, loadMonitors, stopListening]);
+  }, [
+    canStart,
+    url,
+    intervalSecs,
+    method,
+    expectedStatus,
+    timeoutSecs,
+    loadMonitors,
+    stopListening,
+  ]);
 
   const handleStop = useCallback(async () => {
     if (!activeMonitorIdRef.current) return;
@@ -234,7 +260,7 @@ export function HttpMonitorPanel() {
               size="sm"
               icon={<Play size={14} />}
               onClick={handleStart}
-              disabled={!url.trim() || url === "https://"}
+              disabled={!canStart}
               data-testid="http-monitor-start"
             >
               Start
@@ -244,16 +270,14 @@ export function HttpMonitorPanel() {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>URL</span>
-          <input
-            className="network-panel__input"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            data-testid="http-monitor-url"
-          />
-        </label>
+        <NetworkTextField
+          label="URL"
+          value={url}
+          onChange={setUrl}
+          error={urlError}
+          placeholder="https://example.com"
+          data-testid="http-monitor-url"
+        />
         <label className="network-panel__field network-panel__field--small">
           <span>Method</span>
           <select
@@ -266,36 +290,33 @@ export function HttpMonitorPanel() {
             <option>POST</option>
           </select>
         </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Interval (s)</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={intervalSecs}
-            onChange={(e) => setIntervalSecs(Number(e.target.value))}
-            min={5}
-          />
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Expected status</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={expectedStatus}
-            onChange={(e) => setExpectedStatus(e.target.value === "" ? "" : Number(e.target.value))}
-            placeholder="200"
-          />
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Timeout (s)</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={timeoutSecs}
-            onChange={(e) => setTimeoutSecs(Number(e.target.value))}
-            min={1}
-          />
-        </label>
+        <NetworkNumberField
+          label="Interval (s)"
+          value={intervalSecs}
+          onChange={setIntervalSecs}
+          error={intervalError}
+          small
+          min={1}
+          data-testid="http-monitor-interval"
+        />
+        <NetworkNumberField
+          label="Expected status"
+          value={expectedStatus}
+          onChange={setExpectedStatus}
+          error={statusError}
+          small
+          placeholder="200"
+          data-testid="http-monitor-expected-status"
+        />
+        <NetworkNumberField
+          label="Timeout (s)"
+          value={timeoutSecs}
+          onChange={setTimeoutSecs}
+          error={timeoutError}
+          small
+          min={1}
+          data-testid="http-monitor-timeout"
+        />
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

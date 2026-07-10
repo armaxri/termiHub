@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useRef, useMemo } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -29,9 +29,12 @@ import {
   Terminal,
   X,
   Ban,
+  Search,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { Button, Tooltip, Progress, toast } from "@/components/ui";
+import { Button, Tooltip, Progress, Input, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
@@ -39,10 +42,18 @@ import { FileEntry } from "@/types/connection";
 import type { ShellType } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
-import { formatBytes } from "@/utils/formatters";
+import { formatBytes, formatRelativeTime } from "@/utils/formatters";
+import {
+  sortEntries,
+  filterEntries,
+  findTypeAheadIndex,
+  type FileSortKey,
+  type SortDirection,
+} from "@/utils/fileBrowserNav";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import "./FileBrowser.css";
 
 interface FileRowProps {
@@ -57,6 +68,10 @@ interface FileRowProps {
   selectedCount: number;
   onMultiContextAction: (action: string) => void;
   onShareVia?: (path: string, protocol: "http" | "ftp" | "tftp") => void;
+  /** Roving-tabindex value: 0 for the active row, -1 for the rest. */
+  tabIndex: number;
+  /** Ref callback so the parent can move focus to this row's button. */
+  rowRef: (el: HTMLButtonElement | null) => void;
 }
 
 /**
@@ -263,6 +278,42 @@ export function MultiSelectMenuItems({
   );
 }
 
+/** A single clickable sort-column header. Toggles direction when re-clicked. */
+function SortHeader({
+  label,
+  col,
+  activeKey,
+  direction,
+  onToggle,
+}: {
+  label: string;
+  col: FileSortKey;
+  activeKey: FileSortKey;
+  direction: SortDirection;
+  onToggle: (col: FileSortKey) => void;
+}) {
+  const active = activeKey === col;
+  return (
+    <button
+      type="button"
+      className={`file-browser__col file-browser__col--${col}${
+        active ? " file-browser__col--active" : ""
+      }`}
+      onClick={() => onToggle(col)}
+      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}
+      data-testid={`file-browser-sort-${col}`}
+    >
+      <span>{label}</span>
+      {active &&
+        (direction === "asc" ? (
+          <ChevronUp size={10} className="file-browser__col-caret" />
+        ) : (
+          <ChevronDown size={10} className="file-browser__col-caret" />
+        ))}
+    </button>
+  );
+}
+
 function FileRow({
   entry,
   vscodeAvailable,
@@ -275,6 +326,8 @@ function FileRow({
   selectedCount,
   onMultiContextAction,
   onShareVia,
+  tabIndex,
+  rowRef,
 }: FileRowProps) {
   const menuItemProps = {
     entry,
@@ -295,7 +348,9 @@ function FileRow({
           className={`file-browser__row-wrapper${isSelected ? " file-browser__row-wrapper--selected" : ""}`}
         >
           <button
+            ref={rowRef}
             className="file-browser__row"
+            tabIndex={tabIndex}
             data-testid={`file-row-${entry.name}`}
             onClick={(e) => onRowClick(entry, e)}
             onDoubleClick={() => {
@@ -312,6 +367,9 @@ function FileRow({
               <File size={16} className="file-browser__icon" />
             )}
             <span className="file-browser__name">{entry.name}</span>
+            {entry.modified && (
+              <span className="file-browser__modified">{formatRelativeTime(entry.modified)}</span>
+            )}
             {!entry.isDirectory && (
               <span className="file-browser__size">{formatBytes(entry.size)}</span>
             )}
@@ -721,6 +779,46 @@ export function FileBrowser() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
+  const [sort, setSort] = useState<{ key: FileSortKey; dir: SortDirection }>({
+    key: "name",
+    dir: "asc",
+  });
+  const [filterQuery, setFilterQuery] = useState("");
+  // Roving-tabindex focus index into `displayEntries` for keyboard navigation.
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const rowRefCbs = useRef<Map<number, (el: HTMLButtonElement | null) => void>>(new Map());
+  const typeAhead = useRef<{ buffer: string; ts: number }>({ buffer: "", ts: 0 });
+
+  // Sorted, then filtered — the single source of order for both the rendered
+  // rows and keyboard navigation, so the two never disagree. Kept as two memos
+  // so filter keystrokes don't re-sort the whole directory.
+  const sortedEntries = useMemo(
+    () => sortEntries(fileEntries, sort.key, sort.dir),
+    [fileEntries, sort.key, sort.dir]
+  );
+  const displayEntries = useMemo(
+    () => filterEntries(sortedEntries, filterQuery),
+    [sortedEntries, filterQuery]
+  );
+
+  // Stable per-index ref callback so rows don't detach/reattach every render.
+  const getRowRef = useCallback((index: number) => {
+    const cache = rowRefCbs.current;
+    let cb = cache.get(index);
+    if (!cb) {
+      cb = (el: HTMLButtonElement | null) => {
+        rowRefs.current[index] = el;
+      };
+      cache.set(index, cb);
+    }
+    return cb;
+  }, []);
+
+  // Keep the active index in range as the list length changes.
+  useEffect(() => {
+    setActiveIndex((i) => Math.min(Math.max(0, i), Math.max(0, displayEntries.length - 1)));
+  }, [displayEntries.length]);
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -739,16 +837,44 @@ export function FileBrowser() {
     };
   }, [refresh]);
 
+  const clearSelection = useCallback(() => {
+    setSelectedPaths(new Set());
+    setLastClickedPath(null);
+  }, []);
+
+  // Full reset when the listing changes underfoot (navigation): drop the
+  // selection, return roving focus to the top, and clear any active filter.
+  const resetNavState = useCallback(() => {
+    clearSelection();
+    setActiveIndex(0);
+    setFilterQuery("");
+  }, [clearSelection]);
+
+  const handleNavigatePath = useCallback(
+    (path: string) => {
+      resetNavState();
+      navigateTo(path);
+    },
+    [navigateTo, resetNavState]
+  );
+
   const handleNavigate = useCallback(
     (entry: FileEntry) => {
-      if (entry.isDirectory) {
-        setSelectedPaths(new Set());
-        setLastClickedPath(null);
-        navigateTo(entry.path);
-      }
+      if (entry.isDirectory) handleNavigatePath(entry.path);
     },
-    [navigateTo]
+    [handleNavigatePath]
   );
+
+  const handleNavigateUp = useCallback(() => {
+    resetNavState();
+    navigateUp();
+  }, [navigateUp, resetNavState]);
+
+  const toggleSort = useCallback((key: FileSortKey) => {
+    setSort((prev) =>
+      prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }
+    );
+  }, []);
 
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
 
@@ -828,6 +954,8 @@ export function FileBrowser() {
 
   const handleRowClick = useCallback(
     (entry: FileEntry, e: React.MouseEvent) => {
+      const index = displayEntries.findIndex((fe) => fe.path === entry.path);
+      if (index >= 0) setActiveIndex(index);
       if (e.ctrlKey || e.metaKey) {
         // Toggle this entry's selection
         setSelectedPaths((prev) => {
@@ -841,19 +969,14 @@ export function FileBrowser() {
         });
         setLastClickedPath(entry.path);
       } else if (e.shiftKey && lastClickedPath) {
-        // Range-select from lastClickedPath to this entry using the current sorted list
-        const sortedPaths = [...fileEntries]
-          .sort((a, b) => {
-            if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-            return a.name.localeCompare(b.name);
-          })
-          .map((fe) => fe.path);
-        const anchorIdx = sortedPaths.indexOf(lastClickedPath);
-        const targetIdx = sortedPaths.indexOf(entry.path);
+        // Range-select from lastClickedPath to this entry using the display order
+        const paths = displayEntries.map((fe) => fe.path);
+        const anchorIdx = paths.indexOf(lastClickedPath);
+        const targetIdx = paths.indexOf(entry.path);
         if (anchorIdx >= 0 && targetIdx >= 0) {
           const [start, end] =
             anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
-          setSelectedPaths(new Set(sortedPaths.slice(start, end + 1)));
+          setSelectedPaths(new Set(paths.slice(start, end + 1)));
         }
       } else {
         // Plain click: select only this entry
@@ -861,11 +984,101 @@ export function FileBrowser() {
         setLastClickedPath(entry.path);
       }
     },
-    [fileEntries, lastClickedPath]
+    [displayEntries, lastClickedPath]
   );
 
+  // Move the roving focus/selection to `index`. With `extend`, grows the
+  // selection from the anchor (last click) to `index`; otherwise selects just
+  // the target. Focus follows so keyboard and screen-reader users stay in sync.
+  const moveActive = useCallback(
+    (index: number, extend: boolean) => {
+      const entry = displayEntries[index];
+      if (!entry) return;
+      setActiveIndex(index);
+      rowRefs.current[index]?.focus();
+      if (extend && lastClickedPath) {
+        const anchorIdx = displayEntries.findIndex((fe) => fe.path === lastClickedPath);
+        if (anchorIdx >= 0) {
+          const [start, end] = anchorIdx < index ? [anchorIdx, index] : [index, anchorIdx];
+          setSelectedPaths(new Set(displayEntries.slice(start, end + 1).map((fe) => fe.path)));
+          return;
+        }
+      }
+      setSelectedPaths(new Set([entry.path]));
+      setLastClickedPath(entry.path);
+    },
+    [displayEntries, lastClickedPath]
+  );
+
+  const handleListKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const entries = displayEntries;
+      const len = entries.length;
+      const key = e.key;
+
+      if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === "a") {
+        e.preventDefault();
+        setSelectedPaths(new Set(entries.map((fe) => fe.path)));
+        if (entries.length > 0) setLastClickedPath(entries[entries.length - 1].path);
+        return;
+      }
+      if (key === "Escape") {
+        clearSelection();
+        return;
+      }
+      if (key === "Backspace" || (e.altKey && key === "ArrowLeft")) {
+        e.preventDefault();
+        handleNavigateUp();
+        return;
+      }
+      if (len === 0) return;
+
+      if (key === "ArrowDown" || key === "ArrowUp") {
+        e.preventDefault();
+        const delta = key === "ArrowDown" ? 1 : -1;
+        moveActive(Math.min(len - 1, Math.max(0, activeIndex + delta)), e.shiftKey);
+        return;
+      }
+      if (key === "Home" || key === "End") {
+        e.preventDefault();
+        moveActive(key === "Home" ? 0 : len - 1, e.shiftKey);
+        return;
+      }
+      if (key === "Enter") {
+        e.preventDefault();
+        const entry = entries[activeIndex];
+        if (!entry) return;
+        if (entry.isDirectory) handleNavigate(entry);
+        else handleContextAction(entry, "edit");
+        return;
+      }
+      // Type-ahead: a printable character with no command modifiers.
+      if (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const now = Date.now();
+        const ta = typeAhead.current;
+        const fresh = now - ta.ts > 700;
+        ta.buffer = fresh ? key : ta.buffer + key;
+        ta.ts = now;
+        const idx = findTypeAheadIndex(entries, ta.buffer, activeIndex, ta.buffer.length === 1);
+        if (idx >= 0) moveActive(idx, false);
+      }
+    },
+    [
+      displayEntries,
+      activeIndex,
+      moveActive,
+      clearSelection,
+      handleNavigate,
+      handleNavigateUp,
+      handleContextAction,
+    ]
+  );
+
+  // Resolve the currently-selected entries only when a multi-action fires,
+  // rather than filtering on every render.
   const handleMultiAction = useCallback(
-    (entries: FileEntry[], action: string) => {
+    (action: string) => {
+      const entries = displayEntries.filter((e) => selectedPaths.has(e.path));
       switch (action) {
         case "copy":
           copyEntry(entries);
@@ -888,7 +1101,7 @@ export function FileBrowser() {
         }
       }
     },
-    [copyEntry, cutEntry, deleteEntry]
+    [displayEntries, selectedPaths, copyEntry, cutEntry, deleteEntry]
   );
 
   const handleCreateDir = useCallback(() => {
@@ -988,13 +1201,6 @@ export function FileBrowser() {
     );
   }
 
-  const sortedEntries = [...fileEntries].sort((a, b) => {
-    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-
-  const selectedEntries = sortedEntries.filter((e) => selectedPaths.has(e.path));
-
   // In-flight transfers owned by the SFTP session this browser is showing
   // (#1247). Only these belong in the footer; other sessions' transfers live in
   // the Open Connections panel. The list above stays live regardless.
@@ -1023,20 +1229,14 @@ export function FileBrowser() {
         </div>
       )}
       <div className="file-browser__toolbar">
-        <span
-          className="file-browser__path"
-          title={currentPath}
-          data-testid="file-browser-current-path"
-        >
-          {currentPath}
-        </span>
+        <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
         <div className="file-browser__actions">
           <Tooltip content="Go Up" side="top">
             <Button
               variant="ghost"
               size="sm"
               icon={<ArrowUp size={14} />}
-              onClick={navigateUp}
+              onClick={handleNavigateUp}
               disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
               aria-label="Go up one directory"
               data-testid="file-browser-up"
@@ -1144,6 +1344,56 @@ export function FileBrowser() {
         </div>
       </div>
 
+      <div className="file-browser__subbar">
+        <div className="file-browser__filter">
+          <Search size={12} className="file-browser__filter-icon" />
+          <Input
+            inline
+            className="file-browser__filter-input"
+            placeholder="Filter"
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            aria-label="Filter files"
+            data-testid="file-browser-filter"
+          />
+          {filterQuery && (
+            <Tooltip content="Clear filter" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<X size={12} />}
+                onClick={() => setFilterQuery("")}
+                aria-label="Clear filter"
+                data-testid="file-browser-filter-clear"
+              />
+            </Tooltip>
+          )}
+        </div>
+        <div className="file-browser__columns">
+          <SortHeader
+            label="Name"
+            col="name"
+            activeKey={sort.key}
+            direction={sort.dir}
+            onToggle={toggleSort}
+          />
+          <SortHeader
+            label="Modified"
+            col="modified"
+            activeKey={sort.key}
+            direction={sort.dir}
+            onToggle={toggleSort}
+          />
+          <SortHeader
+            label="Size"
+            col="size"
+            activeKey={sort.key}
+            direction={sort.dir}
+            onToggle={toggleSort}
+          />
+        </div>
+      </div>
+
       {error && (
         <div className="file-browser__error">
           <AlertCircle size={14} />
@@ -1213,23 +1463,38 @@ export function FileBrowser() {
               <span>Loading...</span>
             </div>
           ) : (
-            <div className="file-browser__list">
-              {sortedEntries.map((entry) => (
-                <FileRow
-                  key={entry.path}
-                  entry={entry}
-                  vscodeAvailable={vscodeAvailable}
-                  onNavigate={handleNavigate}
-                  onContextAction={handleContextAction}
-                  onPaste={handlePaste}
-                  hasClipboard={fileClipboard !== null}
-                  isSelected={selectedPaths.has(entry.path)}
-                  onRowClick={handleRowClick}
-                  selectedCount={selectedPaths.size}
-                  onMultiContextAction={(action) => handleMultiAction(selectedEntries, action)}
-                  onShareVia={mode === "local" ? handleShareVia : undefined}
-                />
-              ))}
+            <div
+              className="file-browser__list"
+              data-testid="file-browser-list"
+              onKeyDown={handleListKeyDown}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) clearSelection();
+              }}
+            >
+              {displayEntries.length === 0 ? (
+                <div className="file-browser__empty">
+                  {filterQuery ? "No files match the filter" : "This folder is empty"}
+                </div>
+              ) : (
+                displayEntries.map((entry, index) => (
+                  <FileRow
+                    key={entry.path}
+                    entry={entry}
+                    vscodeAvailable={vscodeAvailable}
+                    onNavigate={handleNavigate}
+                    onContextAction={handleContextAction}
+                    onPaste={handlePaste}
+                    hasClipboard={fileClipboard !== null}
+                    isSelected={selectedPaths.has(entry.path)}
+                    onRowClick={handleRowClick}
+                    selectedCount={selectedPaths.size}
+                    onMultiContextAction={handleMultiAction}
+                    onShareVia={mode === "local" ? handleShareVia : undefined}
+                    tabIndex={index === activeIndex ? 0 : -1}
+                    rowRef={getRowRef(index)}
+                  />
+                ))
+              )}
             </div>
           )}
         </ContextMenu.Trigger>
@@ -1261,6 +1526,23 @@ export function FileBrowser() {
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+      {(mode === "local" || selectedPaths.size > 0) && (
+        <div className="file-browser__statusbar">
+          {mode === "local" && (
+            <span className="file-browser__drop-hint" data-testid="file-browser-drop-hint">
+              <Upload size={11} /> Drop files here
+            </span>
+          )}
+          {selectedPaths.size > 0 && (
+            <span
+              className="file-browser__selected-count"
+              data-testid="file-browser-selected-count"
+            >
+              {selectedPaths.size} selected
+            </span>
+          )}
+        </div>
+      )}
       <ConfirmDeleteDialog
         open={deleteConfirm !== null}
         message={deleteConfirm?.message ?? ""}

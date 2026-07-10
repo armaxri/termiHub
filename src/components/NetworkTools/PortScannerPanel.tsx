@@ -10,6 +10,8 @@ import {
 } from "@/services/networkApi";
 import type { PortScanSummary } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
+import { NetworkNumberField } from "./NetworkNumberField";
+import { validateIntRange } from "@/utils/fieldValidation";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
 interface PortScannerPanelProps {
@@ -27,10 +29,18 @@ interface ScanRow {
 export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
   const [ports, setPorts] = useState("22,80,443,8080,8443");
-  const [timeoutMs, setTimeoutMs] = useState(2000);
-  const [concurrency, setConcurrency] = useState(100);
+  const [timeoutMs, setTimeoutMs] = useState<number | "">(2000);
+  const [concurrency, setConcurrency] = useState<number | "">(100);
   const [results, setResults] = useState<ScanRow[]>([]);
   const [summary, setSummary] = useState<PortScanSummary | null>(null);
+
+  const timeoutError = validateIntRange(timeoutMs, { min: 1, max: 600_000, label: "Timeout" });
+  const concurrencyError = validateIntRange(concurrency, {
+    min: 1,
+    max: 2000,
+    label: "Concurrency",
+  });
+  const canRun = !!host.trim() && !timeoutError && !concurrencyError;
 
   // Warn user before scanning a very large range.
   const portCount = ports.split(",").reduce((acc, part) => {
@@ -70,7 +80,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const { status, error, run, stop } = useNetworkTask({
     logScope: "port_scanner",
     start: useCallback(
-      () => networkPortScan(host, ports, timeoutMs, concurrency),
+      () => networkPortScan(host, ports, Number(timeoutMs), Number(concurrency)),
       [host, ports, timeoutMs, concurrency]
     ),
     cancel: networkPortScanCancel,
@@ -82,6 +92,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   });
 
   const handleRun = useCallback(async () => {
+    if (!canRun) return;
     if (portCount > 1000) {
       const confirmed = window.confirm(
         `Scanning ${portCount} ports may take several minutes. Continue?`
@@ -89,7 +100,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
       if (!confirmed) return;
     }
     await run();
-  }, [portCount, run]);
+  }, [canRun, portCount, run]);
 
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results
@@ -131,7 +142,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
               size="sm"
               icon={<Play size={14} />}
               onClick={handleRun}
-              disabled={!host.trim()}
+              disabled={!canRun}
               data-testid="port-scanner-run"
             >
               Run
@@ -161,24 +172,22 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
             data-testid="port-scanner-ports"
           />
         </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Timeout (ms)</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={timeoutMs}
-            onChange={(e) => setTimeoutMs(Number(e.target.value))}
-          />
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Concurrency</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={concurrency}
-            onChange={(e) => setConcurrency(Number(e.target.value))}
-          />
-        </label>
+        <NetworkNumberField
+          label="Timeout (ms)"
+          value={timeoutMs}
+          onChange={setTimeoutMs}
+          error={timeoutError}
+          small
+          data-testid="port-scanner-timeout"
+        />
+        <NetworkNumberField
+          label="Concurrency"
+          value={concurrency}
+          onChange={setConcurrency}
+          error={concurrencyError}
+          small
+          data-testid="port-scanner-concurrency"
+        />
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

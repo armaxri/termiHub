@@ -160,9 +160,13 @@ Fixed strings — match exactly.
 | `external-files-add` | `src/components/Settings/ExternalFilesSettings.tsx` |
 | `field-error` | `src/components/ui/Field.tsx` |
 | `file-browser-cd-here` | `src/components/Sidebar/FileBrowser.tsx` |
-| `file-browser-current-path` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-crumb` | `src/components/Sidebar/FileBrowserPathBar.tsx` |
 | `file-browser-disconnect` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-drop-hint` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-filter` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-filter-clear` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-go-to-cwd` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-list` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-file` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-file-confirm` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-file-input` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -170,8 +174,11 @@ Fixed strings — match exactly.
 | `file-browser-new-folder-confirm` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-folder-input` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-paste` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-path-edit` | `src/components/Sidebar/FileBrowserPathBar.tsx` |
+| `file-browser-path-input` | `src/components/Sidebar/FileBrowserPathBar.tsx` |
 | `file-browser-placeholder` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-refresh` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-selected-count` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-session-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-dismiss` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -191,10 +198,13 @@ Fixed strings — match exactly.
 | `file-type-language-input` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-pattern-input` | `src/components/Settings/FileTypeSettings.tsx` |
 | `http-monitor-chart` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-expected-status` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-history` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-interval` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-panel` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-start` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-stop` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-timeout` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-url` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `icon-picker-apply` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
 | `icon-picker-clear` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
@@ -292,15 +302,19 @@ Fixed strings — match exactly.
 | `password-prompt-save-checkbox` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `password-prompt-save-label` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `ping-chart` | `src/components/NetworkTools/PingPanel.tsx` |
+| `ping-count` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-host` | `src/components/NetworkTools/PingPanel.tsx` |
+| `ping-interval` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-panel` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-start` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stats` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stop` | `src/components/NetworkTools/PingPanel.tsx` |
+| `port-scanner-concurrency` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-host` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-panel` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-ports` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-run` | `src/components/NetworkTools/PortScannerPanel.tsx` |
+| `port-scanner-timeout` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `portable-badge` | `src/components/StatusBar/PortableBadge.tsx` |
 | `portable-data-dir` | `src/components/Settings/PortableModeSettings.tsx` |
 | `portable-mode-settings` | `src/components/Settings/PortableModeSettings.tsx` |
@@ -418,6 +432,7 @@ Fixed strings — match exactly.
 | `toggle-file-browser` | `src/components/Settings/ExternalFilesSettings.tsx` |
 | `toggle-power-monitoring` | `src/components/Settings/ExternalFilesSettings.tsx` |
 | `traceroute-host` | `src/components/NetworkTools/TraceroutePanel.tsx` |
+| `traceroute-max-hops` | `src/components/NetworkTools/TraceroutePanel.tsx` |
 | `traceroute-panel` | `src/components/NetworkTools/TraceroutePanel.tsx` |
 | `traceroute-run` | `src/components/NetworkTools/TraceroutePanel.tsx` |
 | `tunnel-diagram` | `src/components/TunnelEditor/TunnelDiagram.tsx` |
@@ -466,8 +481,10 @@ Fixed strings — match exactly.
 | `update-notification-whats-new` | `src/components/UpdateNotification/UpdateNotification.tsx` |
 | `update-open-downloads` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-settings` | `src/components/Settings/UpdateSettings.tsx` |
+| `wol-broadcast` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-mac` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-panel` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-port` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-save-device` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-send` | `src/components/NetworkTools/WolPanel.tsx` |
 | `workspace-cancel-btn` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
@@ -557,7 +574,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `ctx-stop-*` | `ctx-stop-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `custom-grammar-remove-*` | `custom-grammar-remove-${g.id}` | `src/components/Settings/CustomGrammarsSettings.tsx` |
 | `dynamic-field-*` | `dynamic-field-${field.key}` | `src/components/DynamicForm/DynamicField.tsx` |
-| `field-*` | `field-${field.key}` | `src/components/DynamicForm/DynamicField.tsx` |
+| `field-*` | `field-${field.key}` | `src/components/ConnectionEditor/ConnectionEditor.tsx`, `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-*-*` | `field-${field.key}-${subField.key}-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-*-browse-*` | `field-${field.key}-${subField.key}-browse-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-add` | `field-${field.key}-add` | `src/components/DynamicForm/DynamicField.tsx` |
@@ -569,6 +586,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `field-*-key-*` | `field-${field.key}-key-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-remove-*` | `field-${field.key}-remove-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-value-*` | `field-${field.key}-value-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
+| `file-browser-sort-*` | `file-browser-sort-${col}` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-row-*` | `file-row-${entry.name}` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-row-menu-*` | `file-row-menu-${entry.name}` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-type-copy-*` | `file-type-copy-${pattern}` | `src/components/Settings/FileTypeSettings.tsx` |
@@ -666,7 +684,7 @@ where the component is used, not at the `data-testid` site.
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
-| `{testId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
