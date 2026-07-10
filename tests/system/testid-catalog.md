@@ -510,11 +510,11 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `*-edit` | `${testIdPrefix}-edit` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-enable` | `${testIdPrefix}-enable` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-error` | `${testIdPrefix}-error` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-guided-install` | `${testIdPrefix}-guided-install` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-install-dep` | `${testIdPrefix}-install-dep` | `src/components/OpenConnections/XServerSetupContent.tsx` |
-| `*-install-homebrew` | `${testIdPrefix}-install-homebrew` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-not-now` | `${testIdPrefix}-not-now` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-open` | `${testIdPrefix}-open` | `src/components/Sidebar/FileBrowser.tsx` |
-| `*-open-xquartz` | `${testIdPrefix}-open-xquartz` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-open-fallback` | `${testIdPrefix}-open-fallback` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-paste` | `${testIdPrefix}-paste` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-progress` | `${testIdPrefix}-progress` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-rename` | `${testIdPrefix}-rename` | `src/components/Sidebar/FileBrowser.tsx` |

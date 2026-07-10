@@ -7,8 +7,18 @@ import "./XServerSetupDialog.css";
 /** Which screen of the setup flow is showing. */
 export type XServerSetupPhase = "consent" | "provisioning" | "error";
 
-/** Manual XQuartz download page — the fallback when the user declines Homebrew. */
-const XQUARTZ_DOWNLOAD_URL = "https://www.xquartz.org";
+/**
+ * Label for the manual-download fallback button, derived from the backend-supplied
+ * URL's host (#1312) — e.g. `https://www.xquartz.org` → `Open xquartz.org`. Falls
+ * back to generic copy if the URL can't be parsed.
+ */
+function fallbackButtonLabel(url: string): string {
+  try {
+    return `Open ${new URL(url).hostname.replace(/^www\./, "")}`;
+  } catch {
+    return "Open download page";
+  }
+}
 
 /**
  * Whether the recovery is a guided-terminal install (#1309): the user runs
@@ -64,11 +74,12 @@ interface XServerSetupContentProps {
   /** Install the missing dependency (dependencyMissing only). Async for feedback. */
   onInstallDependency: () => Promise<void>;
   /**
-   * Run a guided-terminal install (#1309): opens a local terminal tab pre-loaded
-   * with `command` (e.g. the official Homebrew installer) so the user can drive
-   * its interactive prompts. Used for a `guidedTerminal` install-mode error.
+   * Run a guided-terminal install (#1309): opens a local terminal tab titled
+   * `tabTitle` pre-loaded with `command` (e.g. the official Homebrew installer)
+   * so the user can drive its interactive prompts. Used for a `guidedTerminal`
+   * install-mode error.
    */
-  onGuideHomebrewInstall: (command: string) => void | Promise<void>;
+  onGuideTerminalInstall: (command: string, tabTitle: string) => void | Promise<void>;
   /** Close from the error screen. */
   onClose: () => void;
 }
@@ -94,7 +105,7 @@ export function XServerSetupContent({
   onNotNow,
   onRetry,
   onInstallDependency,
-  onGuideHomebrewInstall,
+  onGuideTerminalInstall,
   onClose,
 }: XServerSetupContentProps) {
   const title = phase === "error" ? "X server setup failed" : "Set up X server";
@@ -194,27 +205,32 @@ export function XServerSetupContent({
   /**
    * The dependency-recovery action(s) on the error screen. A `guidedTerminal`
    * install (#1309, today the macOS brew-absent case) opens a terminal running
-   * the installer plus a manual xquartz.org fallback for a user who declines; a
-   * `backend` install is the plain install-and-retry against the backend.
+   * the installer, plus a manual-download fallback button when the error carries
+   * an `installFallbackUrl` (#1312); a `backend` install is the plain
+   * install-and-retry against the backend.
    */
   function renderInstallAction() {
     if (isGuidedTerminalInstall(error)) {
       const command = error.installCommand;
+      const dependency = error.dependency ?? "dependency";
+      const fallbackUrl = error.installFallbackUrl;
       return (
         <>
-          <Button
-            variant="ghost"
-            onClick={() => openUrl(XQUARTZ_DOWNLOAD_URL)}
-            data-testid={`${testIdPrefix}-open-xquartz`}
-          >
-            Open xquartz.org
-          </Button>
+          {fallbackUrl && (
+            <Button
+              variant="ghost"
+              onClick={() => openUrl(fallbackUrl)}
+              data-testid={`${testIdPrefix}-open-fallback`}
+            >
+              {fallbackButtonLabel(fallbackUrl)}
+            </Button>
+          )}
           <Button
             variant="secondary"
-            onClick={() => onGuideHomebrewInstall(command)}
-            data-testid={`${testIdPrefix}-install-homebrew`}
+            onClick={() => onGuideTerminalInstall(command, `Install ${dependency}`)}
+            data-testid={`${testIdPrefix}-guided-install`}
           >
-            Install {error.dependency ?? "dependency"}
+            Install {dependency}
           </Button>
         </>
       );
