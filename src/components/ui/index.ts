@@ -20,6 +20,9 @@ export type { SelectProps, SelectOption } from "./Select";
 export { Modal } from "./Modal";
 export type { ModalProps } from "./Modal";
 
+export { ConfirmDialog } from "./ConfirmDialog";
+export type { ConfirmDialogProps, ConfirmDontAskAgain } from "./ConfirmDialog";
+
 export { Toggle } from "./Toggle";
 export type { ToggleProps } from "./Toggle";
 

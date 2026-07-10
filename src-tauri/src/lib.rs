@@ -589,6 +589,7 @@ pub fn run() {
             commands::connection::import_connections,
             commands::connection::get_settings,
             commands::connection::save_settings,
+            commands::shell_integration::get_shell_integration_status,
             commands::connection::move_connection_to_file,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,

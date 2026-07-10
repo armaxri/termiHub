@@ -64,6 +64,9 @@ Fixed strings — match exactly.
 | `confirm-delete-cancel` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
 | `confirm-delete-confirm` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
 | `confirm-delete-dialog` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
+| `confirm-dialog-cancel` | `src/components/ui/ConfirmDialog.tsx` |
+| `confirm-dialog-confirm` | `src/components/ui/ConfirmDialog.tsx` |
+| `confirm-session-close-dialog` | `src/components/Terminal/ConfirmSessionCloseDialog.tsx` |
 | `confirm-switch-confirm-btn` | `src/components/Settings/SecuritySettings.tsx` |
 | `confirm-switch-dialog` | `src/components/Settings/SecuritySettings.tsx` |
 | `connection-editor-cancel` | `src/components/ConnectionEditor/ConnectionEditor.tsx` |
@@ -193,6 +196,7 @@ Fixed strings — match exactly.
 | `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-scratch-badge` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-row-rename-input` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-type-add-btn` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-add-error` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-language-input` | `src/components/Settings/FileTypeSettings.tsx` |
@@ -309,6 +313,9 @@ Fixed strings — match exactly.
 | `ping-start` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stats` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stop` | `src/components/NetworkTools/PingPanel.tsx` |
+| `port-scan-warn-cancel` | `src/components/NetworkTools/PortScannerPanel.tsx` |
+| `port-scan-warn-confirm` | `src/components/NetworkTools/PortScannerPanel.tsx` |
+| `port-scan-warn-modal` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-concurrency` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-host` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-panel` | `src/components/NetworkTools/PortScannerPanel.tsx` |
@@ -357,6 +364,7 @@ Fixed strings — match exactly.
 | `server-sidebar` | `src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx` |
 | `services-indicator` | `src/components/StatusBar/StatusBar.tsx` |
 | `settings-ask-open-saved-file-in-tab` | `src/components/Settings/TerminalSettings.tsx` |
+| `settings-confirm-close-live-session` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-confirm-close-tab-on-shortcut` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-cursor-style` | `src/components/Settings/TerminalSettings.tsx` |
 | `settings-default-shell` | `src/components/Settings/GeneralSettings.tsx` |
@@ -489,7 +497,12 @@ Fixed strings — match exactly.
 | `wol-mac` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-panel` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-port` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-cancel` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-confirm` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-save-device` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-mac` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-modal` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-name` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-send` | `src/components/NetworkTools/WolPanel.tsx` |
 | `workspace-cancel-btn` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-description-input` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
@@ -674,15 +687,16 @@ where the component is used, not at the `data-testid` site.
 | expression | source |
 | ---------- | ------ |
 | `{badgeTestId}` | `src/components/SidebarListItem/SidebarListItem.tsx` |
-| `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
+| `{confirmTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
+| `{dontAskAgain["data-testid"] ?? "confirm-dialog-dont-ask-again"}` | `src/components/ui/ConfirmDialog.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{killTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{nameTestId}` | `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
 | `{paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}` | `src/components/StatusBar/StatusBar.tsx` |
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
-| `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
+| `{rest["data-testid"]}` | `src/components/ui/ConfirmDialog.tsx`, `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |

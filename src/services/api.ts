@@ -20,6 +20,7 @@ import {
   FileEntry,
   ExternalFileError,
   AppSettings,
+  ShellIntegrationStatus,
   AgentCapabilities,
   AgentSettings,
   RecoveryWarning,
@@ -480,6 +481,15 @@ export async function getSettings(): Promise<AppSettings> {
 /** Update and persist application settings */
 export async function saveSettings(settings: AppSettings): Promise<void> {
   await invoke("save_settings", { settings });
+}
+
+/**
+ * Get the current shell-integration registration + staleness status
+ * (registered state, whether the recorded exe path matches the current
+ * executable, portable-mode flag, and detected file managers).
+ */
+export async function getShellIntegrationStatus(): Promise<ShellIntegrationStatus> {
+  return await invoke<ShellIntegrationStatus>("get_shell_integration_status");
 }
 
 /** Save an external connection file to disk */

@@ -66,6 +66,21 @@ export function validateHost(value: string | null | undefined, label = "Host"): 
   return value && value.trim() !== "" ? null : `${label} is required`;
 }
 
+/** Matches a MAC address as six hex pairs separated uniformly by `:` or `-`. */
+const MAC_RE = /^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$|^(?:[0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2}$/;
+
+/**
+ * Validate a 48-bit MAC address in the colon- or hyphen-separated form
+ * (`AA:BB:CC:DD:EE:FF` or `AA-BB-CC-DD-EE-FF`), case-insensitive.
+ *
+ * @returns an error message when invalid, or `null` when acceptable.
+ */
+export function validateMac(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  if (trimmed === "") return "MAC address is required";
+  return MAC_RE.test(trimmed) ? null : "Enter a valid MAC address (e.g. AA:BB:CC:DD:EE:FF)";
+}
+
 /**
  * Check whether a string is a usable HTTP(S) URL — a real scheme + host check,
  * replacing the brittle `url === "https://"` sentinel comparison.
