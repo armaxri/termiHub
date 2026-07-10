@@ -6,16 +6,16 @@
 //! terminal) is detected from the raw process arguments *before* Tauri
 //! initialises, turned into a [`SpawnRequest`], and forwarded over a per-user
 //! platform IPC channel to an already-running instance. If no instance is
-//! reachable, the request is stashed in [`PENDING_SPAWN`] and this process
-//! launches as the running instance, handling the request itself.
+//! reachable, the request is handed back to the caller, which launches as the
+//! running instance and handles the request itself.
 //!
-//! This module owns the wire types, the CLI parser, the pre-init command
-//! classifier, and the pending-request store. The transport lives in
-//! [`ipc_server`] and [`ipc_client`].
-
-use std::sync::Mutex;
+//! This module owns the wire types, the CLI parser, and the pre-init command
+//! classifier. The transport lives in [`ipc_server`] and [`ipc_client`].
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(not(any(unix, windows)))]
+compile_error!("spawn IPC requires a Unix or Windows target");
 
 pub mod ipc_client;
 pub mod ipc_server;
@@ -134,32 +134,30 @@ pub fn parse_spawn_args(args: &[String]) -> SpawnRequest {
             Some((k, v)) => (k, Some(v.to_string())),
             None => (raw, None),
         };
-        match key {
-            "--new-window" => req.new_window = true,
-            "--pick" => req.pick = true,
-            "--location" | "--entry-id" | "--connection" | "--container-image"
-            | "--container-mount" => {
-                let value = match inline {
-                    Some(v) => Some(v),
-                    None => {
-                        if i + 1 < args.len() {
-                            i += 1;
-                            Some(args[i].clone())
-                        } else {
-                            None
-                        }
-                    }
-                };
-                match key {
-                    "--location" => req.location = value,
-                    "--entry-id" => req.entry_id = value,
-                    "--connection" => req.connection = value,
-                    "--container-image" => req.container_image = value,
-                    "--container-mount" => req.container_mount = value,
-                    _ => unreachable!("guarded by the outer match arm"),
-                }
+        // Value flags map to a slot to fill; boolean flags are handled inline
+        // and yield no slot.
+        let slot: Option<&mut Option<String>> = match key {
+            "--new-window" => {
+                req.new_window = true;
+                None
             }
-            _ => {}
+            "--pick" => {
+                req.pick = true;
+                None
+            }
+            "--location" => Some(&mut req.location),
+            "--entry-id" => Some(&mut req.entry_id),
+            "--connection" => Some(&mut req.connection),
+            "--container-image" => Some(&mut req.container_image),
+            "--container-mount" => Some(&mut req.container_mount),
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            // Take an inline `--flag=value`, else the next argument.
+            *slot = inline.or_else(|| {
+                i += 1;
+                args.get(i).cloned()
+            });
         }
         i += 1;
     }
@@ -223,10 +221,7 @@ fn default_address() -> anyhow::Result<String> {
 
 #[cfg(all(test, windows))]
 fn test_address(tag: &str) -> String {
-    format!(
-        r"\\.\pipe\termihub-spawn-test-{}-{tag}",
-        std::process::id()
-    )
+    format!(r"\\.\pipe\termihub-spawn-test-{}-{tag}", std::process::id())
 }
 
 #[cfg(all(test, unix))]
@@ -240,22 +235,6 @@ fn test_address(tag: &str) -> String {
         .into_owned()
 }
 
-/// Request that this instance must handle itself because no running instance
-/// accepted it. Populated during pre-init and drained in `setup()`.
-pub static PENDING_SPAWN: Mutex<Option<SpawnRequest>> = Mutex::new(None);
-
-/// Store a spawn request for the launching instance to handle.
-pub fn set_pending(req: SpawnRequest) {
-    if let Ok(mut guard) = PENDING_SPAWN.lock() {
-        *guard = Some(req);
-    }
-}
-
-/// Take and clear the pending spawn request, if any.
-pub fn take_pending() -> Option<SpawnRequest> {
-    PENDING_SPAWN.lock().ok().and_then(|mut guard| guard.take())
-}
-
 /// Attempt to forward a spawn request to an already-running instance,
 /// blocking on a short-lived current-thread runtime.
 ///
@@ -266,7 +245,7 @@ pub fn forward_to_running_instance(
     req: &SpawnRequest,
 ) -> anyhow::Result<SpawnResponse> {
     let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
+        .enable_io()
         .build()?;
     runtime.block_on(ipc_client::send(endpoint, req))
 }

@@ -69,27 +69,25 @@ fn build_xserver_manager() -> terminal::xserver::XServerManager {
 ///
 /// A `--new-window` request always launches a fresh instance; otherwise the
 /// request is forwarded to an already-running instance over the per-user IPC
-/// rendezvous. If no instance is reachable (or the endpoint cannot be
-/// resolved), the request is stashed in `PENDING_SPAWN` and this process
-/// launches as the running instance to handle it in `setup()`.
-fn handle_spawn_command(request: spawn::SpawnRequest) {
+/// rendezvous. On a successful forward the process exits. If no instance is
+/// reachable (or the endpoint cannot be resolved), the request is returned so
+/// the caller can launch as the running instance and handle it in `setup()`.
+fn handle_spawn_command(request: spawn::SpawnRequest) -> Option<spawn::SpawnRequest> {
+    if request.new_window {
+        return Some(request);
+    }
+
     let endpoint = match spawn::SpawnEndpoint::for_current_user() {
         Ok(endpoint) => endpoint,
         Err(e) => {
             eprintln!("Could not resolve spawn endpoint: {e}");
-            spawn::set_pending(request);
-            return;
+            return Some(request);
         }
     };
 
-    if request.new_window {
-        spawn::set_pending(request);
-        return;
-    }
-
     match spawn::forward_to_running_instance(&endpoint, &request) {
         Ok(_response) => std::process::exit(0),
-        Err(_) => spawn::set_pending(request),
+        Err(_) => Some(request),
     }
 }
 
@@ -97,17 +95,19 @@ fn handle_spawn_command(request: spawn::SpawnRequest) {
 pub fn run() {
     // Pre-init CLI routing: `spawn` / `(un)install-shell-integration` must be
     // handled from the raw args before the Tauri window is created, since
-    // `cli().matches()` is only available inside `setup()` (#1364).
+    // `cli().matches()` is only available inside `setup()` (#1364). A spawn
+    // request this instance must handle itself (no running instance accepted
+    // the forward) is threaded into `setup()` via `pending_spawn`.
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    match spawn::classify_command(&raw_args) {
+    let pending_spawn = match spawn::classify_command(&raw_args) {
         spawn::Command::Spawn(request) => handle_spawn_command(request),
         spawn::Command::InstallShellIntegration | spawn::Command::UninstallShellIntegration => {
             // Registration lands in a later epic issue (SI-5/6/7).
             eprintln!("Shell integration registration is not yet implemented.");
             std::process::exit(0);
         }
-        spawn::Command::None => {}
-    }
+        spawn::Command::None => None,
+    };
 
     let log_buffer = create_log_buffer();
     let capture_layer = LogCaptureLayer::new(log_buffer.clone());
@@ -496,8 +496,8 @@ pub fn run() {
 
             // Process a spawn request this instance launched to handle itself
             // (no running instance accepted the pre-init forward).
-            if let Some(req) = spawn::take_pending() {
-                if let Err(e) = app.handle().emit("spawn-request", &req) {
+            if let Some(req) = &pending_spawn {
+                if let Err(e) = app.handle().emit("spawn-request", req) {
                     tracing::warn!("failed to emit pending spawn-request: {e}");
                 }
             }

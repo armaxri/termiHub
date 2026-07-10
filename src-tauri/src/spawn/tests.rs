@@ -7,11 +7,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::{ipc_client, ipc_server};
 use super::{
-    classify_command, parse_spawn_args, set_pending, take_pending, Command, SpawnEndpoint,
-    SpawnHandler, SpawnRequest, SpawnResponse, SpawnStatus,
+    classify_command, parse_spawn_args, Command, SpawnEndpoint, SpawnHandler, SpawnRequest,
+    SpawnResponse, SpawnStatus,
 };
+use super::{ipc_client, ipc_server};
 
 fn full_request() -> SpawnRequest {
     SpawnRequest {
@@ -139,19 +139,6 @@ fn classify_shell_integration_and_none() {
         Command::None
     );
     assert_eq!(classify_command(&[]), Command::None);
-}
-
-// ── pending request store ────────────────────────────────────────────────
-
-#[test]
-fn pending_spawn_set_and_take() {
-    let req = SpawnRequest {
-        location: Some("/z".to_string()),
-        ..Default::default()
-    };
-    set_pending(req.clone());
-    assert_eq!(take_pending(), Some(req));
-    assert_eq!(take_pending(), None);
 }
 
 // ── transport over an in-memory duplex (all platforms) ───────────────────
