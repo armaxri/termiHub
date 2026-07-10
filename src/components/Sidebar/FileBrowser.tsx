@@ -779,20 +779,41 @@ export function FileBrowser() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
-  const [sortKey, setSortKey] = useState<FileSortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDirection>("asc");
+  const [sort, setSort] = useState<{ key: FileSortKey; dir: SortDirection }>({
+    key: "name",
+    dir: "asc",
+  });
   const [filterQuery, setFilterQuery] = useState("");
   // Roving-tabindex focus index into `displayEntries` for keyboard navigation.
   const [activeIndex, setActiveIndex] = useState(0);
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const rowRefCbs = useRef<Map<number, (el: HTMLButtonElement | null) => void>>(new Map());
   const typeAhead = useRef<{ buffer: string; ts: number }>({ buffer: "", ts: 0 });
 
-  // Sorted + filtered entries — the single source of order for both the
-  // rendered rows and keyboard navigation, so the two never disagree.
-  const displayEntries = useMemo(
-    () => filterEntries(sortEntries(fileEntries, sortKey, sortDir), filterQuery),
-    [fileEntries, sortKey, sortDir, filterQuery]
+  // Sorted, then filtered — the single source of order for both the rendered
+  // rows and keyboard navigation, so the two never disagree. Kept as two memos
+  // so filter keystrokes don't re-sort the whole directory.
+  const sortedEntries = useMemo(
+    () => sortEntries(fileEntries, sort.key, sort.dir),
+    [fileEntries, sort.key, sort.dir]
   );
+  const displayEntries = useMemo(
+    () => filterEntries(sortedEntries, filterQuery),
+    [sortedEntries, filterQuery]
+  );
+
+  // Stable per-index ref callback so rows don't detach/reattach every render.
+  const getRowRef = useCallback((index: number) => {
+    const cache = rowRefCbs.current;
+    let cb = cache.get(index);
+    if (!cb) {
+      cb = (el: HTMLButtonElement | null) => {
+        rowRefs.current[index] = el;
+      };
+      cache.set(index, cb);
+    }
+    return cb;
+  }, []);
 
   // Keep the active index in range as the list length changes.
   useEffect(() => {
@@ -816,52 +837,43 @@ export function FileBrowser() {
     };
   }, [refresh]);
 
-  const handleNavigate = useCallback(
-    (entry: FileEntry) => {
-      if (entry.isDirectory) {
-        setSelectedPaths(new Set());
-        setLastClickedPath(null);
-        setActiveIndex(0);
-        setFilterQuery("");
-        navigateTo(entry.path);
-      }
-    },
-    [navigateTo]
-  );
-
-  const handleNavigatePath = useCallback(
-    (path: string) => {
-      setSelectedPaths(new Set());
-      setLastClickedPath(null);
-      setActiveIndex(0);
-      setFilterQuery("");
-      navigateTo(path);
-    },
-    [navigateTo]
-  );
-
   const clearSelection = useCallback(() => {
     setSelectedPaths(new Set());
     setLastClickedPath(null);
   }, []);
 
-  const handleNavigateUp = useCallback(() => {
-    setSelectedPaths(new Set());
-    setLastClickedPath(null);
+  // Full reset when the listing changes underfoot (navigation): drop the
+  // selection, return roving focus to the top, and clear any active filter.
+  const resetNavState = useCallback(() => {
+    clearSelection();
     setActiveIndex(0);
     setFilterQuery("");
+  }, [clearSelection]);
+
+  const handleNavigatePath = useCallback(
+    (path: string) => {
+      resetNavState();
+      navigateTo(path);
+    },
+    [navigateTo, resetNavState]
+  );
+
+  const handleNavigate = useCallback(
+    (entry: FileEntry) => {
+      if (entry.isDirectory) handleNavigatePath(entry.path);
+    },
+    [handleNavigatePath]
+  );
+
+  const handleNavigateUp = useCallback(() => {
+    resetNavState();
     navigateUp();
-  }, [navigateUp]);
+  }, [navigateUp, resetNavState]);
 
   const toggleSort = useCallback((key: FileSortKey) => {
-    setSortKey((prevKey) => {
-      if (prevKey === key) {
-        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-        return prevKey;
-      }
-      setSortDir("asc");
-      return key;
-    });
+    setSort((prev) =>
+      prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }
+    );
   }, []);
 
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
@@ -1062,8 +1074,11 @@ export function FileBrowser() {
     ]
   );
 
+  // Resolve the currently-selected entries only when a multi-action fires,
+  // rather than filtering on every render.
   const handleMultiAction = useCallback(
-    (entries: FileEntry[], action: string) => {
+    (action: string) => {
+      const entries = displayEntries.filter((e) => selectedPaths.has(e.path));
       switch (action) {
         case "copy":
           copyEntry(entries);
@@ -1086,7 +1101,7 @@ export function FileBrowser() {
         }
       }
     },
-    [copyEntry, cutEntry, deleteEntry]
+    [displayEntries, selectedPaths, copyEntry, cutEntry, deleteEntry]
   );
 
   const handleCreateDir = useCallback(() => {
@@ -1185,8 +1200,6 @@ export function FileBrowser() {
       </div>
     );
   }
-
-  const selectedEntries = displayEntries.filter((e) => selectedPaths.has(e.path));
 
   // In-flight transfers owned by the SFTP session this browser is showing
   // (#1247). Only these belong in the footer; other sessions' transfers live in
@@ -1360,22 +1373,22 @@ export function FileBrowser() {
           <SortHeader
             label="Name"
             col="name"
-            activeKey={sortKey}
-            direction={sortDir}
+            activeKey={sort.key}
+            direction={sort.dir}
             onToggle={toggleSort}
           />
           <SortHeader
             label="Modified"
             col="modified"
-            activeKey={sortKey}
-            direction={sortDir}
+            activeKey={sort.key}
+            direction={sort.dir}
             onToggle={toggleSort}
           />
           <SortHeader
             label="Size"
             col="size"
-            activeKey={sortKey}
-            direction={sortDir}
+            activeKey={sort.key}
+            direction={sort.dir}
             onToggle={toggleSort}
           />
         </div>
@@ -1475,12 +1488,10 @@ export function FileBrowser() {
                     isSelected={selectedPaths.has(entry.path)}
                     onRowClick={handleRowClick}
                     selectedCount={selectedPaths.size}
-                    onMultiContextAction={(action) => handleMultiAction(selectedEntries, action)}
+                    onMultiContextAction={handleMultiAction}
                     onShareVia={mode === "local" ? handleShareVia : undefined}
                     tabIndex={index === activeIndex ? 0 : -1}
-                    rowRef={(el) => {
-                      rowRefs.current[index] = el;
-                    }}
+                    rowRef={getRowRef(index)}
                   />
                 ))
               )}

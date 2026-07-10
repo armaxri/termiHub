@@ -112,9 +112,10 @@ export function findTypeAheadIndex(
   if (!buffer || entries.length === 0) return -1;
   const needle = buffer.toLowerCase();
   const n = entries.length;
+  // `currentIndex` (the roving active index) is always >= 0, so `start` is too.
   const start = advance ? currentIndex + 1 : currentIndex;
   for (let i = 0; i < n; i++) {
-    const idx = (((start + i) % n) + n) % n;
+    const idx = (start + i) % n;
     if (entries[idx].name.toLowerCase().startsWith(needle)) return idx;
   }
   return -1;
