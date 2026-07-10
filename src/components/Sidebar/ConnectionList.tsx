@@ -712,22 +712,30 @@ export function ConnectionList() {
         }
       };
 
-      // Warn before deleting a connection still used as a jump host elsewhere — it
-      // would silently break those connections' chains (#941).
+      // Always confirm a delete — it is irreversible (#1343). Build a
+      // count-aware base message, then append a jump-host warning when any
+      // target is still referenced as a saved jump host (#941): deleting it
+      // would silently break those connections' chains.
+      const target = connections.find((c) => c.id === connectionId);
+      const baseMessage = bulk
+        ? `Delete ${targetIds.length} connections? This cannot be undone.`
+        : `Delete “${target?.name ?? "this connection"}”? This cannot be undone.`;
+
       const dependents = findJumpHostDependents(connections, targetIds);
+      let message = baseMessage;
       if (dependents.length > 0) {
         const names = dependents.map((d) => d.name).join(", ");
         const subject = bulk ? "These connections are" : "This connection is";
-        setDeleteConfirm({
-          message: `${subject} used as a jump host by ${dependents.length} other connection(s): ${names}. Delete anyway?`,
-          onConfirm: () => {
-            setDeleteConfirm(null);
-            doDelete();
-          },
-        });
-        return;
+        message = `${baseMessage} ${subject} used as a jump host by ${dependents.length} other connection(s): ${names}.`;
       }
-      doDelete();
+
+      setDeleteConfirm({
+        message,
+        onConfirm: () => {
+          setDeleteConfirm(null);
+          doDelete();
+        },
+      });
     },
     [
       deleteConnection,
