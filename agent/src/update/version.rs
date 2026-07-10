@@ -12,8 +12,13 @@ use semver::Version;
 ///
 /// A single leading `v`/`V` (as used by GitHub tags like `v0.3.0`) is stripped
 /// before parsing. Surrounding whitespace is ignored.
-pub fn parse_version(_tag: &str) -> Result<Version> {
-    todo!("parse_version not yet implemented")
+pub fn parse_version(tag: &str) -> Result<Version> {
+    let trimmed = tag.trim();
+    let stripped = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))
+        .unwrap_or(trimmed);
+    Version::parse(stripped).with_context(|| format!("invalid semantic version: {tag:?}"))
 }
 
 /// Return `true` when `candidate` is strictly newer than `current`.
@@ -21,8 +26,10 @@ pub fn parse_version(_tag: &str) -> Result<Version> {
 /// Both inputs are parsed via [`parse_version`]; a parse failure on either side
 /// yields `Ok(false)` semantics only through the caller — this function returns
 /// the raw comparison and surfaces parse errors so the caller can log and skip.
-pub fn is_newer(_candidate: &str, _current: &str) -> Result<bool> {
-    todo!("is_newer not yet implemented")
+pub fn is_newer(candidate: &str, current: &str) -> Result<bool> {
+    let candidate = parse_version(candidate)?;
+    let current = parse_version(current)?;
+    Ok(candidate > current)
 }
 
 #[cfg(test)]

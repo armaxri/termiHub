@@ -6,4 +6,5 @@
 //! SHA-256-verified download, the `agent.update_available` notification, and the
 //! background 24-hour timer.
 
+mod github;
 mod version;
