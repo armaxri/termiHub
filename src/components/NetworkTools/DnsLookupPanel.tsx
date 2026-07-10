@@ -4,6 +4,8 @@ import { Button } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType, DiagnosticStatus } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import { frontendLog } from "@/utils/frontendLog";
 
 const RECORD_TYPES: DnsRecordType[] = [
@@ -33,6 +35,8 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   const [queryMs, setQueryMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const hostnameRef = useAutofocusSelect<HTMLInputElement>();
+
   const handleRun = useCallback(async () => {
     if (!hostname.trim()) return;
     setStatus("running");
@@ -52,6 +56,9 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
     }
   }, [hostname, recordType, server]);
 
+  // Enter submits the form (respects the Run button's disabled state).
+  const handleSubmit = useFormSubmit(status !== "running" && !!hostname.trim(), handleRun);
+
   const columns = [
     { key: "recordType", label: "Type" },
     { key: "name", label: "Name" },
@@ -67,15 +74,15 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   }));
 
   return (
-    <div className="network-panel" data-testid="dns-lookup-panel">
+    <form className="network-panel" data-testid="dns-lookup-panel" onSubmit={handleSubmit}>
       <div className="network-panel__header">
         <span className="network-panel__title">DNS Lookup</span>
         <div className="network-panel__actions">
           <Button
+            type="submit"
             variant="primary"
             size="sm"
             icon={<Play size={14} />}
-            onClick={handleRun}
             disabled={!hostname.trim() || status === "running"}
             data-testid="dns-run"
           >
@@ -88,6 +95,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
         <label className="network-panel__field">
           <span>Hostname</span>
           <input
+            ref={hostnameRef}
             className="network-panel__input"
             value={hostname}
             onChange={(e) => setHostname(e.target.value)}
@@ -135,6 +143,6 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
               : null
         }
       />
-    </div>
+    </form>
   );
 }

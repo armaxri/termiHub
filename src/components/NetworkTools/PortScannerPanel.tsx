@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button, Modal } from "@/components/ui";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
   networkPortScan,
   networkPortScanCancel,
@@ -38,6 +40,8 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const [results, setResults] = useState<ScanRow[]>([]);
   const [summary, setSummary] = useState<PortScanSummary | null>(null);
   const [warnOpen, setWarnOpen] = useState(false);
+
+  const hostRef = useAutofocusSelect<HTMLInputElement>();
 
   const timeoutError = validateIntRange(timeoutMs, { min: 1, max: 600_000, label: "Timeout" });
   const concurrencyError = validateIntRange(concurrency, {
@@ -105,6 +109,10 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     await run();
   }, [run]);
 
+  // Enter submits the form (handleRun re-checks and may open the large-scan
+  // confirmation instead).
+  const handleSubmit = useFormSubmit(status !== "running" && canRun, handleRun);
+
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results
   // can grow to tens of thousands of rows on a CIDR-range scan.
@@ -131,7 +139,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   }));
 
   return (
-    <div className="network-panel" data-testid="port-scanner-panel">
+    <form className="network-panel" data-testid="port-scanner-panel" onSubmit={handleSubmit}>
       <div className="network-panel__header">
         <span className="network-panel__title">Port Scanner</span>
         <div className="network-panel__actions">
@@ -141,10 +149,10 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
             </Button>
           ) : (
             <Button
+              type="submit"
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
-              onClick={handleRun}
               disabled={!canRun}
               data-testid="port-scanner-run"
             >
@@ -158,6 +166,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         <label className="network-panel__field">
           <span>Host / CIDR</span>
           <input
+            ref={hostRef}
             className="network-panel__input"
             value={host}
             onChange={(e) => setHost(e.target.value)}
@@ -237,6 +246,6 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         This scan will probe about {probeEstimate.toLocaleString()} host/port combinations and may
         take several minutes. Continue?
       </Modal>
-    </div>
+    </form>
   );
 }
