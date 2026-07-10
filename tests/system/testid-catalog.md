@@ -389,7 +389,29 @@ Fixed strings — match exactly.
 | `settings-right-click-behavior` | `src/components/Settings/TerminalSettings.tsx` |
 | `settings-saved-ack` | `src/components/Settings/SettingsPanel.tsx` |
 | `settings-serial-port-prefixes` | `src/components/Settings/SerialPortSettings.tsx` |
+| `settings-shell-integration` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `settings-stop-x-server-idle` | `src/components/Settings/GeneralSettings.tsx` |
+| `shell-integration-add-entry` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-banner` | `src/components/ShellIntegrationBanner/ShellIntegrationBanner.tsx` |
+| `shell-integration-banner-dismiss` | `src/components/ShellIntegrationBanner/ShellIntegrationBanner.tsx` |
+| `shell-integration-banner-install` | `src/components/ShellIntegrationBanner/ShellIntegrationBanner.tsx` |
+| `shell-integration-banner-not-now` | `src/components/ShellIntegrationBanner/ShellIntegrationBanner.tsx` |
+| `shell-integration-entries-empty` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-entry-connection` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-editor` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-list` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-entry-name` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-save` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-visibility` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-fallback` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-linux` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-new-window` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-reinstall` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-stale-badge` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-stale-banner` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-status-card` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-status-text` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-uninstall` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shortcuts-overlay` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `shortcuts-overlay-search` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `sidebar` | `src/components/Sidebar/Sidebar.tsx` |
@@ -657,6 +679,10 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `server-start-*` | `server-start-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-stop-*` | `server-stop-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `settings-nav-*` | `settings-nav-${cat.id}` | `src/components/Settings/SettingsNav.tsx` |
+| `shell-integration-entry-*` | `shell-integration-entry-${entry.id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-entry-delete-*` | `shell-integration-entry-delete-${entry.id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-entry-edit-*` | `shell-integration-entry-edit-${entry.id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
+| `shell-integration-linux-*` | `shell-integration-linux-${id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shortcut-row-*` | `shortcut-row-${binding.action}` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `sidebar-group-separator-*` | `sidebar-group-separator-${i - 1}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `tab-*` | `tab-${tab.id}` | `src/components/Terminal/Tab.tsx` |
