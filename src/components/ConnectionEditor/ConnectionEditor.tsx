@@ -47,6 +47,7 @@ import { sshJumpHostOptions } from "@/utils/jumpHost";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
+import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
 
@@ -962,6 +963,26 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     closeThisTab();
   }, [closeThisTab]);
 
+  // Escape dismisses the editor through the same unsaved-changes guard as the
+  // tab close (TabBar): when the form is dirty, open the confirmation dialog via
+  // pendingCloseRequest; otherwise close immediately.
+  const handleEscapeCancel = useCallback(() => {
+    if (useAppStore.getState().editorDirtyTabs[tabId]) {
+      const leaf = findLeafByTab(rootPanel, tabId);
+      if (leaf) setPendingCloseRequest({ tabId, panelId: leaf.id });
+      return;
+    }
+    closeThisTab();
+  }, [tabId, rootPanel, setPendingCloseRequest, closeThisTab]);
+
+  // Enter (from a single-line text field) saves; Escape cancels. Jump-host list
+  // inputs are exempt so Enter there doesn't save the whole connection.
+  const handleKeyDown = useEditorKeyboard({
+    onSubmit: () => void handleSave(),
+    onCancel: handleEscapeCancel,
+    exemptSelector: '[data-testid="jump-host-section"]',
+  });
+
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
 
   // Filter Docker runtime options based on what's actually installed
@@ -1174,6 +1195,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       ref={containerRef}
       className="connection-editor"
       style={{ display: isVisible ? undefined : "none" }}
+      onKeyDown={handleKeyDown}
     >
       <div className="connection-editor__header">
         {isAgentDefinitionMode
