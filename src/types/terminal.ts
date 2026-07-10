@@ -204,6 +204,17 @@ export interface TerminalTab {
   persistentConnectionId?: string;
 }
 
+/**
+ * The minimal data needed to reopen a just-closed terminal tab from an
+ * Undo/Reopen affordance — a fresh session is created, scrollback is not
+ * restored. `null` reopen means the tab had no reconnectable config.
+ */
+export interface ReopenTabPayload {
+  title: string;
+  connectionType: ConnectionType;
+  config: ConnectionConfig;
+}
+
 export interface LeafPanel {
   type: "leaf";
   id: string;

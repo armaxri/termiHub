@@ -123,8 +123,28 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <span className="settings-panel__toggle-slider" />
             </label>
             <span className="settings-form__hint">
-              Ask for confirmation when closing a tab or tab group via keyboard shortcut. The X
-              button on tabs is unaffected.
+              Ask for confirmation when closing a tab or tab group via keyboard shortcut.
+            </span>
+          </div>
+        )}
+
+        {show("confirmCloseLiveSession") && (
+          <div className="settings-form__field">
+            <span className="settings-form__label">Confirm Closing a Live Session</span>
+            <label className="settings-panel__toggle">
+              <input
+                type="checkbox"
+                checked={settings.confirmCloseLiveSession ?? true}
+                onChange={(e) =>
+                  onChange({ ...settings, confirmCloseLiveSession: e.target.checked })
+                }
+                data-testid="settings-confirm-close-live-session"
+              />
+              <span className="settings-panel__toggle-slider" />
+            </label>
+            <span className="settings-form__hint">
+              Ask for confirmation before closing a tab (X or middle-click) or split panel that
+              holds a live SSH, serial, or shell session.
             </span>
           </div>
         )}

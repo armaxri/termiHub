@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
+import { countLiveSessions } from "@/utils/tabLiveSession";
 import { Tooltip } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
@@ -238,6 +239,10 @@ export function TerminalView() {
   const rootPanel = useAppStore((s) => s.rootPanel);
   const activePanelId = useAppStore((s) => s.activePanelId);
   const removePanel = useAppStore((s) => s.removePanel);
+  const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
+  const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
+  const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
+  const confirmCloseLiveSession = useAppStore((s) => s.settings.confirmCloseLiveSession);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const isMac = navigator.platform.toUpperCase().includes("MAC");
@@ -258,9 +263,25 @@ export function TerminalView() {
   };
 
   const handleClosePanel = () => {
-    if (activePanelId && allLeaves.length > 1) {
-      removePanel(activePanelId);
+    if (!activePanelId || allLeaves.length <= 1) return;
+    const panel = allLeaves.find((p) => p.id === activePanelId);
+    const panelTabs = panel?.tabs ?? [];
+    const liveCount = countLiveSessions(panelTabs, {
+      terminalExitedTabs,
+      terminalSpawnErrors,
+    });
+    // Confirm before destroying every tab/session in the panel, unless the user
+    // opted out or nothing live would be lost.
+    if (liveCount > 0 && confirmCloseLiveSession !== false) {
+      setPendingSessionCloseConfirm({
+        kind: "panel",
+        panelId: activePanelId,
+        liveCount,
+        tabCount: panelTabs.length,
+      });
+      return;
     }
+    removePanel(activePanelId);
   };
 
   return (

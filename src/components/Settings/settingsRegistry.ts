@@ -242,6 +242,29 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "confirmCloseLiveSession",
+    label: "Confirm Closing a Live Session",
+    description:
+      "Ask for confirmation before closing a tab or split panel that holds a live session",
+    category: "general",
+    keywords: [
+      "confirm",
+      "close",
+      "tab",
+      "panel",
+      "split",
+      "live",
+      "session",
+      "ssh",
+      "serial",
+      "shell",
+      "middle-click",
+      "kill",
+      "prompt",
+      "dialog",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:

@@ -3,6 +3,8 @@ import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortabl
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { deriveTabStatus } from "@/utils/tabStatus";
+import { tabHasLiveSession } from "@/utils/tabLiveSession";
+import { reopenPayloadForTab, showReopenToast } from "@/utils/reopenTab";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
@@ -25,6 +27,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const renameTab = useAppStore((s) => s.renameTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
+  const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
   // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
   const terminalConnecting = useAppStore((s) => s.terminalConnecting);
   const terminalReconnectingTabs = useAppStore((s) => s.terminalReconnectingTabs);
@@ -41,9 +44,10 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     // Read fresh state directly from the store to avoid stale closure values:
     // the render-time editorDirtyTabs snapshot may lag behind a setEditorDirty
     // call that hasn't caused a re-render yet (e.g. the user reverted changes).
-    const isDirty = useAppStore.getState().editorDirtyTabs[tabId];
+    const state = useAppStore.getState();
+    const tab = tabs.find((t) => t.id === tabId);
+    const isDirty = state.editorDirtyTabs[tabId];
     if (isDirty) {
-      const tab = tabs.find((t) => t.id === tabId);
       if (
         tab?.contentType === "connection-editor" ||
         tab?.contentType === "settings" ||
@@ -54,6 +58,30 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
       }
       if (!window.confirm("This file has unsaved changes. Close anyway?")) return;
     }
+
+    // Warn before the X / middle-click tears down a live session — unless the
+    // user opted out via "Don't ask again". The keyboard close path is gated
+    // separately by `confirmCloseTabOnShortcut`.
+    if (tab) {
+      const isLive = tabHasLiveSession(tab, {
+        terminalExitedTabs: state.terminalExitedTabs,
+        terminalSpawnErrors: state.terminalSpawnErrors,
+      });
+      if (isLive && state.settings.confirmCloseLiveSession !== false) {
+        setPendingSessionCloseConfirm({
+          kind: "tab",
+          tabId,
+          panelId,
+          label: tab.title,
+          reopen: reopenPayloadForTab(tab),
+        });
+        return;
+      }
+      closeTab(tabId, panelId);
+      showReopenToast(reopenPayloadForTab(tab));
+      return;
+    }
+
     closeTab(tabId, panelId);
   };
 

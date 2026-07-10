@@ -595,3 +595,14 @@
     width: 100%;
   }
 }
+
+/* ── ConfirmDialog "don't ask again" opt-out row ──────────────────────── */
+.ui-confirm__ask-again {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
