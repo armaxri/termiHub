@@ -337,7 +337,7 @@ The frontend is built on a shared **design system** (`src/components/ui/`) that 
 - **Feedback** — a `Toast` hub (`src/components/ui/Toast/`, over `sonner`) plus an async `Button` lifecycle (idle → pending → success/error). Every mutating/async action gives immediate feedback; nothing resolves silently.
 - **Tokens** — all visual values come from `src/styles/variables.css` (colors, spacing, radii, shadows, control heights, z-index, transitions). No raw hex, per-component overlays, or ad-hoc scrollbars.
 
-The system is authoritative: its concept lives at [`docs/concepts/backlog/ui-modernization.html`](concepts/backlog/ui-modernization.html), the rules are in `.claude/CLAUDE.md` (UI / Design System), and the `ui-design` subagent (`.claude/agents/ui-design.md`) enforces them. New UI must compose from the primitives and use tokens only.
+The system is authoritative: its concept lives at [`docs/concepts/partial/ui-modernization.html`](concepts/partial/ui-modernization.html), the rules are in `.claude/CLAUDE.md` (UI / Design System), and the `ui-design` subagent (`.claude/agents/ui-design.md`) enforces them. New UI must compose from the primitives and use tokens only.
 
 ### Level 2: Backend Modules
 
@@ -1059,7 +1059,7 @@ Experimental features may ship in public releases. The flag is not a hidden deve
 
 ### X Server Provisioning (SSH X11 Forwarding)
 
-SSH **X11 forwarding** renders a remote GUI app (`xeyes`, a graphical IDE) as a native window on the machine running termiHub. That requires a **local X server** — something Linux users usually already have, macOS users install (XQuartz), and Windows users historically had to source and configure by hand. The X-server provisioning subsystem (epic #1047, concept `docs/concepts/backlog/x-server-provisioning.html`) makes a usable local X server available, forwards to it, and tears it down cleanly — with the acquisition **strategy chosen per platform** (see [ADR-10](#adr-10-per-platform-x-server-provisioning)).
+SSH **X11 forwarding** renders a remote GUI app (`xeyes`, a graphical IDE) as a native window on the machine running termiHub. That requires a **local X server** — something Linux users usually already have, macOS users install (XQuartz), and Windows users historically had to source and configure by hand. The X-server provisioning subsystem (epic #1047, concept `docs/concepts/implemented/x-server-provisioning.html`) makes a usable local X server available, forwards to it, and tears it down cleanly — with the acquisition **strategy chosen per platform** (see [ADR-10](#adr-10-per-platform-x-server-provisioning)).
 
 #### Where it lives
 

@@ -2,7 +2,7 @@
 //!
 //! Makes a usable local X server available and manages its lifecycle so remote
 //! GUI apps can render as native windows. See the concept document
-//! `docs/concepts/backlog/x-server-provisioning.html`.
+//! `docs/concepts/implemented/x-server-provisioning.html`.
 //!
 //! - [`windows`] (#1318, Windows) detects VcXsrv and installs it via `winget`
 //!   (the analog of the macOS Homebrew path), replacing the retired

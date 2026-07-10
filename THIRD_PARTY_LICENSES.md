@@ -10,7 +10,7 @@ Source Licenses** entry.
 > **Scope note.** This file covers redistributed/hosted _binary artifacts_ whose
 > licenses impose attribution or source-availability obligations — today, the X
 > servers used for SSH X11 forwarding (see the
-> [X server provisioning concept](docs/concepts/backlog/x-server-provisioning.html)
+> [X server provisioning concept](docs/concepts/implemented/x-server-provisioning.html)
 > and Epic #1047). Ordinary build-time Rust crates and npm packages are covered
 > by their own license metadata in `Cargo.toml` / `package.json` and are not
 > redistributed as standalone binaries by termiHub.
