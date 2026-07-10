@@ -52,7 +52,7 @@
   color: var(--text-primary);
 }
 
-/* Update-available count next to the connected-agents indicator (#1347). */
+/* Update-available count next to the connected-agents indicator (issue 1347). */
 .status-bar__agent-updates {
   display: inline-flex;
   align-items: center;
