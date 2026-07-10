@@ -503,10 +503,71 @@ pub struct MonitoringData {
     pub os_info: String,
 }
 
+// ── agent.update_available (notification payload) ───────────────────
+
+/// JSON-RPC method name for the agent self-update notification (#1355).
+///
+/// Emitted (Agent → Desktop) when the agent's background GitHub poll finds a
+/// newer release; the desktop surfaces it as the self-update toast.
+pub const AGENT_UPDATE_AVAILABLE: &str = "agent.update_available";
+
+/// Payload of an [`AGENT_UPDATE_AVAILABLE`] notification.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAvailableNotification {
+    /// The agent's currently running version (`CARGO_PKG_VERSION`).
+    pub current_version: String,
+    /// The newer version available on GitHub Releases (release tag semver).
+    pub available_version: String,
+    /// Download URL of the matching binary asset, when one is published for
+    /// this platform.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
+    /// `true` once the binary has been downloaded and SHA-256-verified to the
+    /// agent's staging path; `false` when only a newer version was detected.
+    pub staged: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn update_available_notification_serializes_camel_case() {
+        let payload = UpdateAvailableNotification {
+            current_version: "0.2.1".to_string(),
+            available_version: "0.3.0".to_string(),
+            download_url: Some("https://example.test/termihub-agent-linux-x64".to_string()),
+            staged: true,
+        };
+        let value = serde_json::to_value(&payload).unwrap();
+        assert_eq!(value["currentVersion"], "0.2.1");
+        assert_eq!(value["availableVersion"], "0.3.0");
+        assert_eq!(
+            value["downloadUrl"],
+            "https://example.test/termihub-agent-linux-x64"
+        );
+        assert_eq!(value["staged"], true);
+    }
+
+    #[test]
+    fn update_available_notification_omits_absent_download_url() {
+        let payload = UpdateAvailableNotification {
+            current_version: "0.2.1".to_string(),
+            available_version: "0.3.0".to_string(),
+            download_url: None,
+            staged: false,
+        };
+        let value = serde_json::to_value(&payload).unwrap();
+        assert!(value.get("downloadUrl").is_none());
+        assert_eq!(value["staged"], false);
+    }
+
+    #[test]
+    fn agent_update_available_method_name() {
+        assert_eq!(AGENT_UPDATE_AVAILABLE, "agent.update_available");
+    }
 
     #[test]
     fn initialize_params_serde() {
