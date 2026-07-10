@@ -10,6 +10,12 @@ use super::shell_integration::ShellIntegrationSettings;
 
 const FILE_NAME: &str = "settings.json";
 
+/// Application bundle identifier, mirroring `tauri.conf.json`'s `identifier`.
+/// Used by [`SettingsStorage::new_standalone`] to resolve the config directory
+/// where an `AppHandle` (and thus Tauri's own path resolver) is not yet
+/// available — i.e. from pre-init CLI subcommands.
+const APP_IDENTIFIER: &str = "com.termihub.app";
+
 /// Configuration for a single external connection file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalFileConfig {
@@ -292,6 +298,24 @@ impl SettingsStorage {
         })
     }
 
+    /// Create a settings storage instance without a Tauri [`AppHandle`].
+    ///
+    /// Used by the pre-init CLI subcommands (`install/uninstall-shell-integration`)
+    /// which run before the Tauri app — and its path resolver — exist. Mirrors the
+    /// startup config-dir resolution in `run()`'s setup (`TERMIHUB_CONFIG_DIR`
+    /// override → portable `data/` directory → per-user config dir joined with the
+    /// app identifier, equivalent to Tauri's `app_config_dir()`). It cannot reuse
+    /// [`new`](Self::new), which relies on `run()` having already exported
+    /// `TERMIHUB_CONFIG_DIR` for portable mode — an env var this pre-init path
+    /// runs *before*, so it must detect portable mode itself.
+    pub fn new_standalone() -> Result<Self> {
+        let config_dir = resolve_standalone_config_dir()?;
+        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
+        Ok(Self {
+            file_path: config_dir.join(FILE_NAME),
+        })
+    }
+
     /// Create a storage instance pointing directly at `file_path`.
     /// Only available in tests; production code must go through `new()`.
     #[cfg(test)]
@@ -361,6 +385,27 @@ impl SettingsStorage {
     }
 }
 
+/// Resolve the settings config directory without a Tauri `AppHandle`.
+///
+/// Resolution order: an explicit `TERMIHUB_CONFIG_DIR` override wins; otherwise
+/// the portable `data/` directory is used when running portably; otherwise the OS
+/// per-user config directory joined with [`APP_IDENTIFIER`] (equivalent to
+/// Tauri's `app_config_dir()`). Unlike [`SettingsStorage::new`], this detects
+/// portable mode itself because it runs before `run()` exports
+/// `TERMIHUB_CONFIG_DIR`.
+fn resolve_standalone_config_dir() -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("TERMIHUB_CONFIG_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    if let Ok(mode) = crate::utils::portable::detect_app_mode() {
+        if let Some(data_dir) = mode.data_dir() {
+            return Ok(data_dir.to_path_buf());
+        }
+    }
+    let base = dirs::config_dir().context("Failed to resolve user config directory")?;
+    Ok(base.join(APP_IDENTIFIER))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +415,27 @@ mod tests {
         SettingsStorage {
             file_path: dir.path().join(FILE_NAME),
         }
+    }
+
+    #[test]
+    fn app_identifier_matches_tauri_conf() {
+        // `new_standalone()` resolves the config dir as `<config>/APP_IDENTIFIER`,
+        // duplicating the bundle identifier that Tauri's own `app_config_dir()`
+        // reads from `tauri.conf.json`. If the identifier there is ever changed
+        // without updating this constant, the pre-init CLI subcommands would
+        // read/write a different `settings.json` than the running app. Guard the
+        // duplication with a build-time assertion.
+        let conf = include_str!("../../tauri.conf.json");
+        let parsed: serde_json::Value =
+            serde_json::from_str(conf).expect("tauri.conf.json is valid JSON");
+        let identifier = parsed
+            .get("identifier")
+            .and_then(serde_json::Value::as_str)
+            .expect("tauri.conf.json has a string identifier");
+        assert_eq!(
+            identifier, APP_IDENTIFIER,
+            "APP_IDENTIFIER is out of sync with tauri.conf.json's identifier"
+        );
     }
 
     #[test]

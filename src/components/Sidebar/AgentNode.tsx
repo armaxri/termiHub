@@ -50,6 +50,9 @@ import {
   cancelConnectAgent,
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { resolveAgentUpdateState } from "@/utils/agentVersion";
+import { useDesktopVersion } from "@/hooks/useDesktopVersion";
+import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
@@ -573,6 +576,16 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const isDisconnected = agent.connectionState === "disconnected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
+  // Agent version + derived update state (visible only; no update triggering yet, #1347).
+  // The desktop version is the expected version the agent is checked against,
+  // mirroring the Rust `check_version` rule. While the desktop version is still
+  // loading, the badge stays hidden ("unknown") rather than flashing incompatible.
+  const desktopVersion = useDesktopVersion();
+  const agentVersion = agent.capabilities?.agentVersion;
+  const agentUpdateState = isConnected
+    ? resolveAgentUpdateState(agentVersion, desktopVersion)
+    : "unknown";
+
   // Derived: root-level folders and definitions (no parent/folder)
   const rootFolders = useMemo(
     () => agentFolders.filter((f) => f.parentId === null || f.parentId === undefined),
@@ -900,6 +913,11 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
               />
               <Server size={14} />
               <span className="connection-list__group-title">{agent.name}</span>
+              <AgentVersionBadge
+                version={agentVersion}
+                state={agentUpdateState}
+                data-testid={`agent-version-badge-${agent.id}`}
+              />
             </button>
             {isConnected && (
               <div className="connection-list__group-actions">

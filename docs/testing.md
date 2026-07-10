@@ -867,6 +867,38 @@ through save/load. See PR #1388.
    the update still succeeds via the immediate path, and the app log records a
    warning that the coordinated/deferred strategy is not yet honored (#1351/#1352).
 
+### Windows Explorer context-menu registration (#1368)
+
+Verifies that shell-integration registration writes/removes the Windows Explorer
+context-menu entries. **Windows only** — the registry writes are `#[cfg(windows)]`
+and validated automatically by the Windows CI job; these steps confirm the live
+Explorer behavior, which CI cannot observe. See PR #1368.
+
+Prerequisites: a Windows build of termiHub, with at least one shell-integration
+entry configured (an "Open in termiHub" folders entry exists by default once the
+settings UI lands; until then, seed `shellIntegration.entries` in `settings.json`).
+
+1. Install from the CLI: run `termiHub.exe install-shell-integration` (or invoke
+   the `install_shell_integration` command from the app). It prints
+   `Shell integration installed.` and exits 0.
+2. In File Explorer, **right-click a folder** → the configured entry (e.g. "Open
+   in termiHub") appears. Choosing it opens termiHub with a session at that folder.
+3. **Right-click empty space** inside an open folder (folder background) → the
+   entry appears and opens a session at the current folder (`%V`).
+4. **Right-click a file** → if the entry enables the _Files_ target, it appears
+   and opens a session at the file's parent directory.
+5. For an entry set to **Extended** visibility: it is hidden on a normal
+   right-click and appears only under **Shift + right-click**.
+6. Configure **three or more** always-visible entries and reinstall → the entries
+   are grouped under a single cascading **termiHub** submenu instead of appearing
+   at the top level.
+7. Reinstall again without changes → no duplicate entries appear (idempotent).
+8. Uninstall: run `termiHub.exe uninstall-shell-integration` (or the
+   `uninstall_shell_integration` command) → all entries and the submenu disappear
+   from every right-click surface, and no `termihub_*` / `termiHubMenu` keys
+   remain under `HKCU\Software\Classes\Directory\shell`,
+   `…\Directory\Background\shell`, or `…\*\shell` (verify with `regedit`).
+
 ### Agent GitHub self-update (opt-in, #1355)
 
 Verifies the optional agent-side self-update check is gated behind
@@ -900,6 +932,35 @@ See PR #1389.
 
 > Note: automatic apply-on-idle of a staged update is deferred to #1352; this PR
 > stops after staging and notifying.
+
+### Agent version + update-state badge — light/dark colors (#1347)
+
+Verifies the agent version chip and update-state badge render with the correct,
+legible colors in both themes, across all four states. See PR for #1347. Badge
+colors: up-to-date = success/green, update available = notice/amber,
+incompatible = error/red, updating = accent/blue.
+
+1. Connect a remote agent whose version matches the desktop. In the Connections
+   sidebar, confirm the agent header shows a neutral monospace version chip
+   (e.g. `v0.1.0`) followed by a green check badge (**up to date**). Hover the
+   badge — the tooltip reads "Agent up to date (v…)".
+2. Toggle the app between light and dark themes (Settings → Appearance). In both
+   themes confirm the chip text stays legible against its neutral background and
+   the green badge is clearly readable (not washed out).
+3. Open **Open Connections** (Settings wheel → Open Connections). Confirm the
+   agent row shows the same version chip plus a **labelled** state badge
+   (e.g. "Up to date"). Verify legibility in both themes.
+4. Simulate the other states (e.g. point the agent at an older/newer/mismatched
+   binary, or temporarily adjust the compared versions): confirm an **amber**
+   up-arrow badge for _update available_, a **red** warning badge for
+   _incompatible_ (major mismatch or unparseable version), and — for the
+   transient _updating_ state — a **blue** spinner that respects
+   `prefers-reduced-motion` (no spin when reduced motion is enabled). Each must
+   remain legible in light and dark.
+5. In the status bar, with at least one agent connected, confirm the
+   `N agents` summary appears; when an agent has an update available, confirm the
+   amber `· M updates available` count shows and clicking the item opens the
+   Connections sidebar.
 
 ### Guided-Manual Tests in the Python Harness (preferred)
 

@@ -87,6 +87,9 @@ keyring = { version = "3", default-features = false, features = ["windows-native
 # the X server subsystem provisions VcXsrv, which does not exist on other
 # platforms. (SHA-256 hashing is a shared dependency; see `[dependencies]`.)
 zip = "2"
+# Windows Registry access for Explorer context-menu registration (#1368).
+# Writes user-level HKCU keys (no elevation); Windows-only by nature.
+winreg = "0.55"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux Secret Service backend. The `async-secret-service` backend talks to the
