@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseAgentSemver, resolveAgentUpdateState } from "./agentVersion";
+import { parseAgentSemver, resolveAgentUpdateState, summarizeAgentUpdates } from "./agentVersion";
 
 describe("parseAgentSemver", () => {
   it("parses a plain major.minor.patch version", () => {
@@ -60,5 +60,45 @@ describe("resolveAgentUpdateState", () => {
   it("returns unknown when no agent version is known", () => {
     expect(resolveAgentUpdateState("", "0.1.0")).toBe("unknown");
     expect(resolveAgentUpdateState(undefined, "0.1.0")).toBe("unknown");
+  });
+});
+
+describe("summarizeAgentUpdates", () => {
+  const agent = (connectionState: string, agentVersion?: string) => ({
+    connectionState,
+    capabilities: agentVersion ? { agentVersion } : undefined,
+  });
+
+  it("counts only connected agents", () => {
+    const summary = summarizeAgentUpdates(
+      [
+        agent("connected", "0.1.0"),
+        agent("connecting", "0.1.0"),
+        agent("disconnected"),
+        agent("connected", "0.1.0"),
+      ],
+      "0.1.0"
+    );
+    expect(summary.connectedCount).toBe(2);
+  });
+
+  it("counts connected agents that have an update available", () => {
+    const summary = summarizeAgentUpdates(
+      [
+        agent("connected", "0.1.0"), // update-available vs 0.2.0
+        agent("connected", "0.2.0"), // up-to-date
+        agent("connected", "1.0.0"), // incompatible (not counted as update)
+        agent("connecting", "0.1.0"), // not connected
+      ],
+      "0.2.0"
+    );
+    expect(summary.connectedCount).toBe(3);
+    expect(summary.updatesAvailable).toBe(1);
+  });
+
+  it("reports zero updates while the desktop version is unknown", () => {
+    const summary = summarizeAgentUpdates([agent("connected", "0.1.0")], null);
+    expect(summary.connectedCount).toBe(1);
+    expect(summary.updatesAvailable).toBe(0);
   });
 });
