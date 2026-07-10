@@ -21,7 +21,11 @@ use crate::session::manager::SessionManager;
 /// persist when a client disconnects and reconnects.
 ///
 /// The accept loop exits when the cancellation token is triggered.
-pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow::Result<()> {
+pub async fn run_tcp_listener(
+    addr: &str,
+    shutdown: CancellationToken,
+    allow_self_update: bool,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!("Listening on {}", listener.local_addr()?);
 
@@ -30,6 +34,7 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
     let registry = Arc::new(build_registry());
     let session_manager = Arc::new(SessionManager::new(notification_tx.clone(), registry));
     let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
+    let update_tx = notification_tx.clone();
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
         connection_store.clone(),
@@ -40,6 +45,14 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
 
     // Recover sessions from previous agent run
     session_manager.recover_sessions().await;
+
+    // Optional background GitHub self-update check (off unless opted in).
+    crate::update::spawn_self_update_task(
+        crate::update::UpdateConfig::from_env(allow_self_update, env!("CARGO_PKG_VERSION")),
+        session_manager.clone(),
+        update_tx,
+        shutdown.child_token(),
+    );
 
     loop {
         tokio::select! {
