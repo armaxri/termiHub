@@ -1587,3 +1587,250 @@ describe("FileBrowser – failed-connect recovery UI (S1)", () => {
     expect(useAppStore.getState().sftpError).toBeNull();
   });
 });
+
+describe("FileBrowser – navigation UX (#1361)", () => {
+  const navEntries = [
+    {
+      name: "adir",
+      path: "/home/adir",
+      isDirectory: true,
+      size: 0,
+      modified: "2026-01-05T00:00:00Z",
+    },
+    {
+      name: "bdir",
+      path: "/home/bdir",
+      isDirectory: true,
+      size: 0,
+      modified: "2026-01-04T00:00:00Z",
+    },
+    {
+      name: "big.log",
+      path: "/home/big.log",
+      isDirectory: false,
+      size: 900,
+      modified: "2026-01-01T00:00:00Z",
+    },
+    {
+      name: "small.txt",
+      path: "/home/small.txt",
+      isDirectory: false,
+      size: 5,
+      modified: "2026-01-02T00:00:00Z",
+    },
+  ];
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(navEntries);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  async function renderLocalAt(path: string) {
+    const localTab = makeTab({ connectionType: "local", config: { type: "local", config: {} } });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files", tabCwds: { "tab-1": path } });
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+  }
+
+  it("renders a clickable breadcrumb for the current path", async () => {
+    await renderLocalAt("/home");
+    const crumbs = container.querySelectorAll('[data-testid="file-browser-crumb"]');
+    const labels = Array.from(crumbs).map((c) => c.textContent);
+    expect(labels).toEqual(["/", "home"]);
+  });
+
+  it("navigates when a breadcrumb segment is clicked", async () => {
+    await renderLocalAt("/home");
+    const rootCrumb = container.querySelectorAll(
+      '[data-testid="file-browser-crumb"]'
+    )[0] as HTMLElement;
+    await act(async () => {
+      rootCrumb.click();
+    });
+    await flushAsync();
+    expect(useAppStore.getState().localCurrentPath).toBe("/");
+  });
+
+  it("reveals a path input prefilled with the current path when edit is clicked", async () => {
+    await renderLocalAt("/home");
+    const editBtn = container.querySelector(
+      '[data-testid="file-browser-path-edit"]'
+    ) as HTMLElement;
+    await act(async () => {
+      editBtn.click();
+    });
+    const input = container.querySelector(
+      '[data-testid="file-browser-path-input"]'
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("/home");
+  });
+
+  it("navigates to a typed path on Enter", async () => {
+    await renderLocalAt("/home");
+    const editBtn = container.querySelector(
+      '[data-testid="file-browser-path-edit"]'
+    ) as HTMLElement;
+    await act(async () => {
+      editBtn.click();
+    });
+    const input = container.querySelector(
+      '[data-testid="file-browser-path-input"]'
+    ) as HTMLInputElement;
+    await act(async () => {
+      input.value = "/var/log";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushAsync();
+    expect(useAppStore.getState().localCurrentPath).toBe("/var/log");
+  });
+
+  it("cancels path editing on Escape without navigating", async () => {
+    await renderLocalAt("/home");
+    const editBtn = container.querySelector(
+      '[data-testid="file-browser-path-edit"]'
+    ) as HTMLElement;
+    await act(async () => {
+      editBtn.click();
+    });
+    const input = container.querySelector(
+      '[data-testid="file-browser-path-input"]'
+    ) as HTMLInputElement;
+    await act(async () => {
+      input.value = "/should/not/apply";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="file-browser-path-input"]')).toBeNull();
+    expect(useAppStore.getState().localCurrentPath).toBe("/home");
+  });
+
+  it("filters the list by name", async () => {
+    await renderLocalAt("/home");
+    const filter = container.querySelector(
+      '[data-testid="file-browser-filter"]'
+    ) as HTMLInputElement;
+    await act(async () => {
+      filter.value = "dir";
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushAsync();
+    expect(container.querySelector('[data-testid="file-row-adir"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-row-bdir"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-row-small.txt"]')).toBeNull();
+  });
+
+  it("opens the focused directory with ArrowDown + Enter", async () => {
+    await renderLocalAt("/home");
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+    // active starts at index 0 (adir); ArrowDown → bdir; Enter opens it.
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushAsync();
+    expect(useAppStore.getState().localCurrentPath).toBe("/home/bdir");
+  });
+
+  it("navigates up a level on Backspace", async () => {
+    await renderLocalAt("/home/adir");
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+    });
+    await flushAsync();
+    expect(useAppStore.getState().localCurrentPath).toBe("/home");
+  });
+
+  it("selects all entries with Ctrl+A", async () => {
+    await renderLocalAt("/home");
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+    });
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(
+      navEntries.length
+    );
+  });
+
+  it("shows an 'N selected' indicator when multiple rows are selected", async () => {
+    await renderLocalAt("/home");
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+    });
+    const indicator = container.querySelector('[data-testid="file-browser-selected-count"]');
+    expect(indicator?.textContent).toContain(String(navEntries.length));
+  });
+
+  it("clears the selection on Escape", async () => {
+    await renderLocalAt("/home");
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+    });
+    expect(
+      container.querySelectorAll(".file-browser__row-wrapper--selected").length
+    ).toBeGreaterThan(0);
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(0);
+  });
+
+  it("shows a persistent 'Drop files here' hint in local mode", async () => {
+    await renderLocalAt("/home");
+    expect(container.querySelector('[data-testid="file-browser-drop-hint"]')).toBeTruthy();
+  });
+
+  it("sorts files by size when the size column header is clicked", async () => {
+    await renderLocalAt("/home");
+    const sizeHeader = container.querySelector(
+      '[data-testid="file-browser-sort-size"]'
+    ) as HTMLElement;
+    await act(async () => {
+      sizeHeader.click();
+    });
+    const rows = Array.from(container.querySelectorAll('[data-testid^="file-row-"]')).map((r) =>
+      r.getAttribute("data-testid")
+    );
+    // Directories always first; files sorted by size ascending: small.txt (5) before big.log (900).
+    expect(rows).toEqual([
+      "file-row-adir",
+      "file-row-bdir",
+      "file-row-small.txt",
+      "file-row-big.log",
+    ]);
+  });
+
+  it("renders a modified-time column for file rows", async () => {
+    await renderLocalAt("/home");
+    const modifiedCells = container.querySelectorAll(".file-browser__modified");
+    expect(modifiedCells.length).toBeGreaterThan(0);
+  });
+});
