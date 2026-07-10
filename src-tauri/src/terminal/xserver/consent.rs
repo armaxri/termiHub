@@ -52,7 +52,7 @@ pub enum ConsentOutcome {
     Cancelled,
 }
 
-/// Whether opening this X11-forwarding connect must pause for download consent.
+/// Whether opening this X11-forwarding connect must pause for install consent.
 ///
 /// Pausing is required only when a **download** would actually happen and the
 /// user has not decided yet:

@@ -17,9 +17,9 @@ pub(crate) const HOMEBREW_INSTALL_COMMAND: &str =
 
 /// The winget invocation that installs VcXsrv on Windows (#1318) — the analog of
 /// macOS's `brew install --cask xquartz`. Shown as the `install_command` for the
-/// VcXsrv-missing error; the backend runs it when winget is present. `-h` (silent)
-/// + the agreement flags keep it non-interactive; `-e --id marha.VcXsrv` pins the
-/// exact winget package. Single source of truth for the command.
+/// VcXsrv-missing error; the backend runs it when winget is present. The agreement
+/// flags plus `-h` (silent) keep it non-interactive, and `-e --id marha.VcXsrv`
+/// pins the exact winget package. Single source of truth for the command.
 pub(crate) const WINGET_INSTALL_VCXSRV_COMMAND: &str =
     "winget install -e --id marha.VcXsrv --accept-package-agreements --accept-source-agreements -h";
 

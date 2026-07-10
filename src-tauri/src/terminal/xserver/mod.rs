@@ -127,7 +127,7 @@ impl XServerProvisionerImpl {
         }
     }
 
-    /// Pause for first-time download consent when required (#1116).
+    /// Pause for first-time install consent when required (#1116).
     ///
     /// Returns [`ConsentGate::Proceed`] immediately when no prompt is needed
     /// (already-decided, a server already reachable, or a non-download platform).
@@ -175,7 +175,7 @@ impl XServerProvisionerImpl {
         emit_progress(
             &self.app,
             "consent",
-            "Waiting for X server download consent…",
+            "Waiting for X server install consent…",
             -1.0,
         );
         let outcome = await_consent(receiver, cancel).await;
@@ -213,7 +213,7 @@ impl XServerProvisioner for XServerProvisionerImpl {
         // (#1116). Best-effort; no listener during a plain connect is harmless.
         emit_progress(&self.app, "detect", "Checking for a local X server…", -1.0);
 
-        // Gate a first-time, download-backed provision on user consent (#1116).
+        // Gate a first-time, install-backed provision on user consent (#1116).
         match self.request_consent_if_needed(cancel.as_ref()).await {
             ConsentGate::Proceed => {}
             ConsentGate::Skip => {
@@ -305,7 +305,7 @@ pub(crate) async fn ensure_session_off_reactor(
 /// it. Call once at startup, after the manager is created.
 ///
 /// `consent_registry` is the shared registry the `x_server_connect_consent_reply`
-/// command resolves against, so a connect paused for download consent (#1116) is
+/// command resolves against, so a connect paused for install consent (#1116) is
 /// woken by the frontend's reply.
 pub fn init(
     app: &AppHandle,
