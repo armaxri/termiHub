@@ -13,9 +13,12 @@ import {
   Play,
   X,
   Check,
+  ArrowUpCircle,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
+import { useDesktopVersion } from "@/hooks/useDesktopVersion";
+import { summarizeAgentUpdates } from "@/utils/agentVersion";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
@@ -102,6 +105,7 @@ export function StatusBar() {
         <JumpHostStatus />
         <MonitoringStatus />
         <ServicesIndicator />
+        <AgentUpdatesIndicator />
         <TransfersIndicator />
         <CredentialStoreIndicator />
       </div>
@@ -238,6 +242,47 @@ function ServicesIndicator() {
       >
         <Server size={12} />
         {runningCount}
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * Connected-agent summary in the status bar (#1347). Shows `N agents` and, when
+ * any connected agent's version is older than the desktop's, `· M updates
+ * available`. Clicking opens the Connections sidebar. Renders nothing when no
+ * agent is connected.
+ */
+function AgentUpdatesIndicator() {
+  const remoteAgents = useAppStore((s) => s.remoteAgents);
+  const setSidebarView = useAppStore((s) => s.setSidebarView);
+  const desktopVersion = useDesktopVersion();
+
+  const { connectedCount, updatesAvailable } = summarizeAgentUpdates(remoteAgents, desktopVersion);
+  if (connectedCount === 0) return null;
+
+  const agentLabel = `${connectedCount} agent${connectedCount !== 1 ? "s" : ""}`;
+  const summary =
+    updatesAvailable > 0
+      ? `${agentLabel} · ${updatesAvailable} update${updatesAvailable !== 1 ? "s" : ""} available — click to open Connections`
+      : `${agentLabel} connected — click to open Connections`;
+
+  return (
+    <Tooltip content={summary} side="top">
+      <button
+        className="status-bar__item status-bar__item--interactive"
+        aria-label={summary}
+        data-testid="agent-updates-indicator"
+        onClick={() => setSidebarView("connections")}
+      >
+        <Server size={12} />
+        {connectedCount}
+        {updatesAvailable > 0 && (
+          <span className="status-bar__agent-updates" data-testid="agent-updates-count">
+            <ArrowUpCircle size={11} />
+            {updatesAvailable}
+          </span>
+        )}
       </button>
     </Tooltip>
   );
