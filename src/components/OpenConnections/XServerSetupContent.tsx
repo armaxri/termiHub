@@ -20,6 +20,9 @@ function fallbackButtonLabel(url: string): string {
   }
 }
 
+/** Microsoft Store page for App Installer (winget) — the Windows guided prerequisite. */
+const APP_INSTALLER_URL = "https://apps.microsoft.com/detail/9NBLGGH4NNS1";
+
 /**
  * Whether the recovery is a guided-terminal install (#1309): the user runs
  * `installCommand` in a terminal termiHub opens, rather than the generic
@@ -35,6 +38,16 @@ function isGuidedTerminalInstall(error: XServerError | null): error is XServerEr
     error.installMode === "guidedTerminal" &&
     typeof error.installCommand === "string"
   );
+}
+
+/**
+ * Whether the recovery is a guided-external install (#1318): a prerequisite
+ * package manager is missing and isn't a terminal command, so the UI opens an
+ * external page/store (Windows winget-absent → App Installer + a manual VcXsrv
+ * download). Keyed on the typed `installMode`, not the dependency name.
+ */
+function isGuidedExternalInstall(error: XServerError | null): boolean {
+  return error?.kind === "dependencyMissing" && error.installMode === "guidedExternal";
 }
 
 interface XServerSetupContentProps {
@@ -203,10 +216,11 @@ export function XServerSetupContent({
   }
 
   /**
-   * The dependency-recovery action(s) on the error screen. A `guidedTerminal`
-   * install (#1309, today the macOS brew-absent case) opens a terminal running
-   * the installer, plus a manual-download fallback button when the error carries
-   * an `installFallbackUrl` (#1312); a `backend` install is the plain
+   * The dependency-recovery action(s) on the error screen, keyed on the typed
+   * `installMode`. `guidedTerminal` (#1309, macOS brew-absent) opens a terminal
+   * running the installer; `guidedExternal` (#1318, Windows winget-absent) opens
+   * the Store for App Installer; both add a manual-download fallback button when
+   * the error carries an `installFallbackUrl` (#1312). `backend` is the plain
    * install-and-retry against the backend.
    */
   function renderInstallAction() {
@@ -231,6 +245,32 @@ export function XServerSetupContent({
             data-testid={`${testIdPrefix}-guided-install`}
           >
             Install {dependency}
+          </Button>
+        </>
+      );
+    }
+    if (isGuidedExternalInstall(error)) {
+      // Windows winget-absent: open the Store for App Installer, then Retry
+      // re-detects winget and installs VcXsrv; the payload-driven fallback URL
+      // (#1312) is the manual VcXsrv download for a user who declines (#1318).
+      const fallbackUrl = error?.installFallbackUrl;
+      return (
+        <>
+          {fallbackUrl && (
+            <Button
+              variant="ghost"
+              onClick={() => openUrl(fallbackUrl)}
+              data-testid={`${testIdPrefix}-open-fallback`}
+            >
+              {fallbackButtonLabel(fallbackUrl)}
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            onClick={() => openUrl(APP_INSTALLER_URL)}
+            data-testid={`${testIdPrefix}-install-app-installer`}
+          >
+            Install App Installer
           </Button>
         </>
       );

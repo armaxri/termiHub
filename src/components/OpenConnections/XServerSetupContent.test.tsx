@@ -111,7 +111,7 @@ describe("XServerSetupContent", () => {
     const onRetry = vi.fn();
     renderContent({
       phase: "error",
-      error: { kind: "provisioningUnavailable", message: "Not available here" },
+      error: { kind: "launchFailed", message: "Not available here" },
       onRetry,
     });
     expect(query("x-server-setup-error")?.textContent).toContain("Not available here");
@@ -245,6 +245,35 @@ describe("XServerSetupContent", () => {
     expect(query("x-server-setup-guided-install")).toBeNull();
     expect(query("x-server-setup-open-fallback")).toBeNull();
     expect(query("x-server-setup-install-dep")?.textContent).toContain("Install Homebrew");
+  });
+
+  it("offers App Installer + a payload-driven fallback for an installMode:guidedExternal error", () => {
+    // No terminal command and no backend install: the winget-absent case opens
+    // the Store for App Installer plus the payload-driven manual VcXsrv download
+    // (#1312/#1318). The generic "Install <dep>" backend action must NOT be shown
+    // (it would loop back to winget_required).
+    const onInstallDependency = vi.fn(() => Promise.resolve());
+    renderContent({
+      phase: "error",
+      error: {
+        kind: "dependencyMissing",
+        message: "VcXsrv can't be installed because winget is missing",
+        dependency: "winget",
+        installMode: "guidedExternal",
+        installHint: "Install App Installer, or download VcXsrv manually",
+        installFallbackUrl: "https://sourceforge.net/projects/vcxsrv/",
+      },
+      onInstallDependency,
+    });
+    expect(query("x-server-setup-install-dep")).toBeNull();
+    const appInstaller = query("x-server-setup-install-app-installer");
+    expect(appInstaller).not.toBeNull();
+    expect(appInstaller?.textContent).toContain("Install App Installer");
+    // Manual fallback is payload-driven: label derived from the URL host.
+    expect(query("x-server-setup-open-fallback")?.textContent).toContain("Open sourceforge.net");
+    // Retry (re-detect winget) is always present on the error screen.
+    expect(query("x-server-setup-retry")).not.toBeNull();
+    expect(onInstallDependency).not.toHaveBeenCalled();
   });
 
   it("falls back to the raw error message when no typed error is present", () => {

@@ -5,7 +5,7 @@
 //! *connection flow* — best-effort XQuartz launch on macOS, cross-platform
 //! detection of a Unix-socket server the manager's TCP probe can't see, and
 //! typed, actionable per-platform errors — and reports a frontend-friendly
-//! status. The per-platform install internals (VcXsrv download #1047 remainder,
+//! status. The per-platform install internals (VcXsrv winget install #1318,
 //! XQuartz install #1054, Linux gap classification #1055) are their own issues.
 
 use std::sync::Arc;
@@ -236,9 +236,14 @@ pub fn classify_failure(
     linux_env: &LinuxXEnv,
 ) -> XServerError {
     match platform {
-        XServerPlatform::Windows if provide_automatically => {
-            XServerError::windows_provisioning_unavailable()
+        // VcXsrv installed but no server on :0 — a launch issue, not a missing dep.
+        XServerPlatform::Windows if dependency_available => {
+            XServerError::windows_server_unreachable()
         }
+        // Auto-provisioning on and VcXsrv absent → guide the winget install (#1318),
+        // mirroring macOS's `xquartz_missing`.
+        XServerPlatform::Windows if provide_automatically => XServerError::vcxsrv_missing(),
+        // Auto-provisioning off → the user manages the server themselves.
         XServerPlatform::Windows => XServerError::windows_no_local_server(),
         XServerPlatform::MacOs if dependency_available => XServerError::macos_server_unreachable(),
         XServerPlatform::MacOs => XServerError::xquartz_missing(),
@@ -283,8 +288,9 @@ fn report(
 ///
 /// - macOS: XQuartz at `/opt/X11` or `/Applications/Utilities/XQuartz.app`.
 /// - Linux: the X socket dir or an `Xorg`/`Xwayland` binary on `PATH`.
-/// - Windows: currently `false` — a user-installed VcXsrv is discovered via the
-///   running-server TCP probe, and managed acquisition is #1048.
+/// - Windows: VcXsrv at its canonical install location (#1318) — so a missing
+///   dependency is distinguished from installed-but-not-running, and the winget
+///   install is offered only when VcXsrv is actually absent.
 fn dependency_available(platform: XServerPlatform) -> bool {
     match platform {
         XServerPlatform::MacOs => super::macos::xquartz_installed(),
@@ -293,22 +299,44 @@ fn dependency_available(platform: XServerPlatform) -> bool {
                 || super::binary_on_path("Xwayland")
                 || super::binary_on_path("Xorg")
         }
-        XServerPlatform::Windows => false,
+        XServerPlatform::Windows => super::windows::vcxsrv_installed(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::xserver::types::InstallMode;
 
     // Windows/macOS cases ignore the Linux env; pass the neutral `unknown()`
     // snapshot. The Linux gap logic itself is covered exhaustively in
     // `linux_gap`'s own tests.
 
     #[test]
-    fn windows_with_auto_provisioning_returns_provisioning_unavailable() {
+    fn windows_auto_provisioning_without_vcxsrv_offers_the_winget_install() {
+        // Auto-provisioning on + VcXsrv absent → a DependencyMissing that the UI
+        // turns into an "Install VcXsrv" action (winget), mirroring macOS (#1318).
         let err = classify_failure(XServerPlatform::Windows, true, false, &LinuxXEnv::unknown());
-        assert!(matches!(err, XServerError::ProvisioningUnavailable { .. }));
+        match err {
+            XServerError::DependencyMissing {
+                dependency,
+                install_mode,
+                install_command,
+                ..
+            } => {
+                assert_eq!(dependency, "VcXsrv");
+                assert_eq!(install_mode, InstallMode::Backend);
+                assert!(install_command.unwrap_or_default().contains("winget"));
+            }
+            other => panic!("expected DependencyMissing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn windows_with_vcxsrv_installed_reports_server_unreachable() {
+        // VcXsrv present but no server on :0 → a launch issue, not a missing dep.
+        let err = classify_failure(XServerPlatform::Windows, true, true, &LinuxXEnv::unknown());
+        assert!(matches!(err, XServerError::ServerUnreachable { .. }));
     }
 
     #[test]

@@ -84,7 +84,6 @@ export type XServerConsentDecision = "enable" | "notNow";
  * the rest offer a plain retry with the human-readable `message`.
  */
 export type XServerErrorKind =
-  | "provisioningUnavailable"
   | "noLocalServer"
   | "dependencyMissing"
   | "serverUnreachable"
@@ -100,8 +99,11 @@ export type XServerErrorKind =
  *   any `installCommand` is shown for information only.
  * - `guidedTerminal` — the user runs `installCommand` in a terminal termiHub opens
  *   for them (the install has interactive prompts termiHub can't drive).
+ * - `guidedExternal` — a prerequisite package manager is missing and isn't a
+ *   terminal command either, so the user installs it from an external page/store
+ *   termiHub opens, then retries (Windows winget-absent: App Installer, #1318).
  */
-export type XServerInstallMode = "backend" | "guidedTerminal";
+export type XServerInstallMode = "backend" | "guidedTerminal" | "guidedExternal";
 
 /**
  * Typed error rejected by `x_server_ensure` / `x_server_install_dependency`.

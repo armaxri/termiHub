@@ -4,8 +4,9 @@
 //! GUI apps can render as native windows. See the concept document
 //! `docs/concepts/backlog/x-server-provisioning.html`.
 //!
-//! - [`acquire`] (#1048, Windows-only) resolves a known-good VcXsrv install on
-//!   disk via `cache → bundled → download → verify → extract`.
+//! - [`windows`] (#1318, Windows) detects VcXsrv and installs it via `winget`
+//!   (the analog of the macOS Homebrew path), replacing the retired
+//!   download-and-extract acquisition.
 //! - [`manager`] (#1049) owns the lifecycle of a single shared X server: adopt,
 //!   spawn/supervise, reuse across sessions, idle shutdown.
 //! - This module (#1052) adds the cross-platform [`ensure_x_server`]
@@ -13,8 +14,6 @@
 //!   path (which cannot depend on the desktop app layer) to it, and the Tauri
 //!   command surface in [`crate::commands::xserver`].
 
-#[cfg(windows)]
-pub mod acquire;
 pub mod auth;
 mod consent;
 mod linux_gap;
@@ -22,6 +21,7 @@ pub(crate) mod macos;
 pub mod manager;
 mod orchestrator;
 mod types;
+pub(crate) mod windows;
 
 use std::sync::Arc;
 
@@ -69,6 +69,13 @@ pub(crate) fn emit_progress(app: &AppHandle, step: &str, message: &str, progress
 /// hand-rolled split.
 pub(super) fn binary_on_path(name: &str) -> bool {
     which::which(name).is_ok()
+}
+
+/// Whether any of `paths` exists. Pure over injected paths so the per-platform
+/// dependency detectors ([`macos::xquartz_installed`], [`windows::vcxsrv_installed`])
+/// are unit-testable against temp directories (mock FS) without a real install.
+pub(super) fn any_path_exists<P: AsRef<std::path::Path>>(paths: &[P]) -> bool {
+    paths.iter().any(|p| p.as_ref().exists())
 }
 
 /// Resolve whether automatic X server provisioning is enabled.
@@ -127,10 +134,10 @@ impl XServerProvisionerImpl {
         }
     }
 
-    /// Pause for first-time download consent when required (#1116).
+    /// Pause for first-time install consent when required (#1116).
     ///
     /// Returns [`ConsentGate::Proceed`] immediately when no prompt is needed
-    /// (already-decided, a server already reachable, or a non-download platform).
+    /// (already-decided, a server already reachable, or a non-install platform).
     /// Otherwise emits [`X_SERVER_CONSENT_NEEDED_EVENT`] and awaits the frontend
     /// reply — abortable via the connect's `cancel` token (#1260) — persisting
     /// the "enable" decision so later connects do not re-prompt.
@@ -144,7 +151,7 @@ impl XServerProvisionerImpl {
         // A prompt is only possible on a Windows, undecided connect — expressed
         // via the same authority function with `server_present = false`. Only
         // then is it worth probing for an already-running server (which would
-        // make it an adoption, not a download). The probe does a brief blocking
+        // make it an adoption, not an install). The probe does a brief blocking
         // TCP check, so run it off the async reactor.
         let server_present = if connect_consent_required(platform, provide_setting, false) {
             let manager = self.manager.clone();
@@ -175,7 +182,7 @@ impl XServerProvisionerImpl {
         emit_progress(
             &self.app,
             "consent",
-            "Waiting for X server download consent…",
+            "Waiting for X server install consent…",
             -1.0,
         );
         let outcome = await_consent(receiver, cancel).await;
@@ -213,7 +220,7 @@ impl XServerProvisioner for XServerProvisionerImpl {
         // (#1116). Best-effort; no listener during a plain connect is harmless.
         emit_progress(&self.app, "detect", "Checking for a local X server…", -1.0);
 
-        // Gate a first-time, download-backed provision on user consent (#1116).
+        // Gate a first-time, install-backed provision on user consent (#1116).
         match self.request_consent_if_needed(cancel.as_ref()).await {
             ConsentGate::Proceed => {}
             ConsentGate::Skip => {
@@ -305,7 +312,7 @@ pub(crate) async fn ensure_session_off_reactor(
 /// it. Call once at startup, after the manager is created.
 ///
 /// `consent_registry` is the shared registry the `x_server_connect_consent_reply`
-/// command resolves against, so a connect paused for download consent (#1116) is
+/// command resolves against, so a connect paused for install consent (#1116) is
 /// woken by the frontend's reply.
 pub fn init(
     app: &AppHandle,
@@ -318,4 +325,27 @@ pub fn init(
         consent_registry,
     ));
     termihub_core::backends::ssh::x11::set_x_server_provisioner(provisioner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::any_path_exists;
+
+    #[test]
+    fn detects_when_a_path_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let present = tmp.path().join("present");
+        std::fs::write(&present, b"x").unwrap();
+        let absent = tmp.path().join("absent");
+        assert!(any_path_exists(&[present.as_path(), absent.as_path()]));
+        assert!(any_path_exists(&[absent.as_path(), present.as_path()]));
+    }
+
+    #[test]
+    fn not_detected_when_no_path_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("nope-a");
+        let b = tmp.path().join("nope-b");
+        assert!(!any_path_exists(&[a.as_path(), b.as_path()]));
+    }
 }

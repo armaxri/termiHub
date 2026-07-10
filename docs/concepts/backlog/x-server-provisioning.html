@@ -152,7 +152,7 @@ flowchart LR
             manual X-server install on the common path.
           </li>
           <li>
-            On <strong>Windows</strong>, bundle/auto-download and manage a real X server (VcXsrv)
+            On <strong>Windows</strong>, install (via winget) and manage a real X server (VcXsrv)
             transparently.
           </li>
           <li>
@@ -254,37 +254,30 @@ flowchart LR
                 </div>
                 <div class="menu__row" style="display: block; color: var(--text-secondary)">
                   Remote GUI apps need a local X server to open as native windows. termiHub can
-                  download and set up <strong>VcXsrv</strong> (~7&nbsp;MB, one time).
+                  install <strong>VcXsrv</strong> for you via <strong>winget</strong> (one time).
                 </div>
                 <div class="menu__footer">
                   <button class="btn btn--primary">
-                    <svg class="li"><use href="#i-download" /></svg> Download &amp; Enable
+                    <svg class="li"><use href="#i-download" /></svg> Install &amp; Enable
                   </button>
                   <button class="btn">Not now</button>
                 </div>
               </div>
             </div>
             <div>
-              <p class="state-label">Step 2 — provisioning</p>
+              <p class="state-label">Step 2 — installing</p>
               <div class="menu">
                 <div class="menu__title">
                   <svg class="li"><use href="#i-download" /></svg> Setting up X server
                 </div>
-                <div class="menu__row menu__row--selected">
-                  <span class="check">✓</span> Download VcXsrv
-                </div>
-                <div class="menu__row menu__row--selected">
-                  <span class="check">✓</span> Verify checksum
-                </div>
                 <div class="menu__row">
-                  <span class="state-dot state-dot--connecting"></span> Extract &amp; start
-                  <span class="count">62%</span>
+                  <span class="state-dot state-dot--connecting"></span> Installing VcXsrv via winget…
                 </div>
                 <div style="padding: 0 14px 12px">
                   <div style="height: 4px; border-radius: 2px; background: var(--bg-active)">
                     <div
                       style="
-                        width: 62%;
+                        width: 60%;
                         height: 100%;
                         border-radius: 2px;
                         background: var(--accent-color);
@@ -315,12 +308,14 @@ flowchart LR
           <div class="legend">
             <ul>
               <li>
-                <span class="callout">C</span> No network request happens until the user picks
-                <strong>Download &amp; Enable</strong>. Progress is driven by backend events (<code
-                  >download</code
+                <span class="callout">C</span> Nothing is installed until the user picks
+                <strong>Install &amp; Enable</strong>. Progress is driven by backend events (<code
+                  >install</code
                 >
-                / <code>verifying</code> / <code>status</code>). On later runs (VcXsrv cached)
-                Steps&nbsp;1–2 are skipped — the server just starts.
+                / <code>status</code>). Once VcXsrv is installed, later runs skip Steps&nbsp;1–2 —
+                the server just starts. If <strong>winget is absent</strong>, Step&nbsp;1 instead
+                guides the user to install App Installer (opening the Microsoft Store), with a manual
+                VcXsrv download fallback.
               </li>
             </ul>
           </div>
@@ -482,9 +477,8 @@ flowchart LR
             stopped; it is always stopped on app exit (no orphan <code>vcxsrv.exe</code>).
           </li>
           <li>
-            <strong>Per-platform strategy:</strong> Windows → provide (bundle/download VcXsrv);
-            macOS → detect + guided install XQuartz (cannot bundle); Linux → detect + guide (never
-            bundle).
+            <strong>Per-platform strategy:</strong> Windows → guided install of VcXsrv via winget;
+            macOS → guided install of XQuartz via Homebrew; Linux → detect + guide (never bundle).
           </li>
           <li>
             <strong>Failure is actionable, never silent.</strong> If provisioning fails at any
@@ -530,7 +524,7 @@ flowchart TD
           <pre class="mermaid">
 flowchart LR
     subgraph WIN[Windows]
-        W1[No native X server] --> W2[Download/adopt VcXsrv<br/>spawn + manage]
+        W1[No native X server] --> W2[Adopt, or install VcXsrv via winget<br/>spawn + manage]
     end
     subgraph MAC[macOS]
         M1[No embeddable server] --> M2[Detect XQuartz]
@@ -551,22 +545,19 @@ flowchart LR
 flowchart TD
     A[ensure_x_server: Windows] --> B{VcXsrv reachable<br/>at 127.0.0.1:6000?}
     B -->|Yes| Z[Adopt external server]
-    B -->|No| C{Pinned VcXsrv<br/>extracted in data dir?}
+    B -->|No| C{vcxsrv.exe installed?<br/>C:\Program Files\VcXsrv}
     C -->|Yes| L[Launch managed server]
-    C -->|No| D{Bundled with app?}
-    D -->|Yes| K[Copy into place] --> L
-    D -->|No| E[Show consent prompt]
+    C -->|No| E[Show consent prompt]
     E -->|Not now| W[Skip: no server]
-    E -->|Download & Enable| F[Download pinned .zip<br/>from GitHub releases]
-    F --> G[Verify SHA-256]
-    G -->|mismatch| G2[Discard + retry once] --> F
-    G -->|ok| H[Extract → atomic rename]
-    H --> L
+    E -->|Install & Enable| F{winget present?}
+    F -->|Yes| G[winget install -e --id marha.VcXsrv]
+    F -->|No| GX[Guide App Installer<br/>open Microsoft Store<br/>+ manual VcXsrv link]
+    G --> L
     L --> M[Generate MIT-MAGIC-COOKIE-1<br/>write .Xauthority]
     M --> N["vcxsrv.exe :0 -multiwindow<br/>-clipboard -auth &lt;file&gt;"]
     N --> O[Register managed server<br/>display :0 + cookie]
     O --> Z
-    style F fill:#e87d0d,stroke:#333,color:#fff
+    style G fill:#e87d0d,stroke:#333,color:#fff
     style L fill:#e87d0d,stroke:#333,color:#fff
           </pre>
         </div>
@@ -577,11 +568,9 @@ flowchart TD
 stateDiagram-v2
     [*] --> Absent
     Absent --> Adopted: external server detected on display 0 (port 6000)
-    Absent --> Downloading: provision consented
-    Downloading --> Verifying: zip fetched
-    Verifying --> Downloading: checksum mismatch (retry once)
-    Verifying --> Extracting: checksum ok
-    Extracting --> Starting: files in place
+    Absent --> Installing: provision consented (winget)
+    Installing --> Starting: VcXsrv installed
+    Installing --> Failed: winget error / winget absent
     Starting --> Running: process up + reachable
     Starting --> Failed: spawn/port error
     Running --> Running: new X11 session adopts same server
@@ -603,7 +592,7 @@ sequenceDiagram
     participant Conn as connector.rs
     participant Orch as ensure_x_server()
     participant Mgr as XServerManager
-    participant Acq as acquire.rs
+    participant Win as windows.rs
     participant VcX as vcxsrv.exe
     participant Fwd as X11Forwarder
     User->>Conn: Open SSH conn (enableX11Forwarding)
@@ -612,11 +601,11 @@ sequenceDiagram
     alt server already running/adopted
         Mgr-->>Orch: Some(ResolvedXServer(:0, cookie))
     else must provision
-        Orch->>User: consent prompt (download ~N MB?)
-        User-->>Orch: Download & Enable
-        Orch->>Acq: resolve VcXsrv (cache→bundled→download+verify+unzip)
-        Acq-->>Orch: path
-        Orch->>Mgr: start(path)
+        Orch->>User: consent prompt (install VcXsrv via winget?)
+        User-->>Orch: Install & Enable
+        Orch->>Win: install_vcxsrv() [winget install marha.VcXsrv]
+        Win-->>Orch: installed
+        Orch->>Mgr: start(resolve_vcxsrv_path)
         Mgr->>Mgr: gen cookie + write .Xauthority
         Mgr->>VcX: spawn :0 -multiwindow -auth file
         Mgr-->>Orch: Some(ResolvedXServer(:0, cookie))
@@ -699,7 +688,7 @@ flowchart TB
     subgraph BE[Backend]
         ORCH[orchestrator.rs]
         MGR[manager.rs]
-        ACQ[acquire.rs]
+        ACQ[windows.rs winget install]
         AUTH[auth.rs]
         DET[x11.rs detection]
         PORT[portable.rs]
@@ -739,21 +728,19 @@ flowchart TB
                 <td>Pick the next free display number; register that display</td>
               </tr>
               <tr>
-                <td>Download fails / checksum mismatch</td>
+                <td>winget install fails</td>
+                <td>Surface winget's error verbatim (never run a partial install)</td>
+              </tr>
+              <tr>
+                <td>winget (App Installer) absent</td>
                 <td>
-                  Discard, retry once, then surface an actionable error (never run a bad binary)
+                  Guide the user to install App Installer (open the Microsoft Store), with a manual
+                  VcXsrv download fallback — never silent
                 </td>
               </tr>
               <tr>
-                <td>Offline, pinned version already cached</td>
-                <td>No network call; launch from cache</td>
-              </tr>
-              <tr>
-                <td>Portable install</td>
-                <td>
-                  Store VcXsrv under <code>&lt;data&gt;/xserver/…</code> next to the exe; nothing
-                  outside app tree
-                </td>
+                <td>VcXsrv already installed</td>
+                <td>Skip the install; launch the managed server directly</td>
               </tr>
               <tr>
                 <td>Managed VcXsrv dies mid-session</td>
@@ -809,10 +796,10 @@ flowchart TB
                 <td><strong>New</strong> — provisioning module root</td>
               </tr>
               <tr>
-                <td><code>src-tauri/src/terminal/xserver/acquire.rs</code></td>
+                <td><code>src-tauri/src/terminal/xserver/windows.rs</code></td>
                 <td>
-                  <strong>New (Windows)</strong> — resolve VcXsrv: cache → bundled →
-                  download+verify+unzip
+                  <strong>New (Windows)</strong> — detect VcXsrv + install via winget; guided App
+                  Installer fallback (#1318)
                 </td>
               </tr>
               <tr>
@@ -878,30 +865,32 @@ flowchart TB
                 </td>
               </tr>
               <tr>
-                <td><code>THIRD_PARTY_LICENSES</code> / installer</td>
-                <td><strong>Modify</strong> — GPL-3.0 text + source offer for VcXsrv</td>
+                <td><code>THIRD_PARTY_LICENSES</code></td>
+                <td>
+                  <strong>No change for VcXsrv redistribution</strong> — winget/the user fetches it;
+                  termiHub only runs it as a separate process
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <h3>Windows: VcXsrv acquisition (decision)</h3>
+        <h3>Windows: VcXsrv install (decision)</h3>
         <p>
-          Deliver VcXsrv as a <strong>pinned, pre-extracted minimal tree</strong> (<code
-            >vcxsrv.exe</code
+          Install VcXsrv via <strong>winget</strong> (<code
+            >winget install -e --id marha.VcXsrv --accept-package-agreements
+            --accept-source-agreements -h</code
+          >), the analog of macOS's <code>brew install --cask xquartz</code>. Detect the installed
+          binary at its canonical location (<code>C:\Program Files\VcXsrv\vcxsrv.exe</code>, or the
+          <code>(x86)</code> tree); the managed launcher spawns that path. When winget (App
+          Installer) is absent, guide the user to install it (open the Microsoft Store), with a
+          manual VcXsrv download fallback (<code>sourceforge.net/projects/vcxsrv</code>). Rationale:
+          no hosted/pinned <code>.zip</code>, no checksum machinery, and — because winget (or the
+          user) fetches VcXsrv and termiHub only <em>runs</em> it as a separate process — <strong
+            >no GPL-3.0 redistribution obligation</strong
           >
-          + required DLLs + <code>fonts/</code>) hosted as a
-          <strong>versioned <code>.zip</code> on termiHub's own GitHub releases</strong> (same host
-          as agent binaries). Rationale: avoids running an NSIS installer that writes to
-          <code>Program&nbsp;Files</code>, keeps the install self-contained/portable, and gives a
-          stable pinned URL + checksum we control. Resolution order mirrors
-          <code>agent_setup.rs</code> (<code>cache → bundled → download</code>). Storage via
-          <code>resolve_portable_path</code> / <code>AppMode</code>: portable →
-          <code>&lt;data&gt;/xserver/vcxsrv-&lt;version&gt;/</code>; installed →
-          <code>dirs::data_local_dir()/termiHub/xserver/vcxsrv-&lt;version&gt;/</code>. Pinned table
-          <code>{ version, zip_url, sha256 }</code> compiled into the app; version-keyed dirs give
-          safe upgrade + rollback + prune. New deps: <code>zip</code>, <code>sha2</code>;
-          <code>reqwest</code> (blocking) + <code>dirs</code> already exist.
+          (dropping the burden of the earlier download approach, #1076/#1056). Symmetric to the
+          macOS path (#1318).
         </p>
 
         <h3>Windows: launch, auth, DISPLAY</h3>
@@ -976,20 +965,22 @@ flowchart TB
           shape.
         </p>
 
-        <h3>Licensing (GPL-3.0)</h3>
+        <h3>Licensing</h3>
         <p>
-          Hosting/redistributing VcXsrv (GPL-3.0) obliges shipping the GPL-3.0 text + a source
-          offer/link for the exact pinned version (<code>github.com/marchaesen/vcxsrv</code>).
-          VcXsrv runs strictly as a <strong>separate process</strong> (no linking), so termiHub's
-          own license is unaffected — document this boundary; confirm with counsel before release.
-          XQuartz (MIT + APSL2) needs attribution on the macOS path.
+          termiHub no longer hosts or redistributes VcXsrv — winget (or the user) fetches it, and
+          termiHub only <strong>runs</strong> it as a separate process (no linking). So the earlier
+          GPL-3.0 <em>redistribution</em> obligation (ship the GPL-3.0 text + a source offer for the
+          exact pinned build, #1076/#1056) no longer applies to this path; the residual posture is
+          just the standard "we run a package-manager-installed program". XQuartz (MIT + APSL2) is
+          likewise installed via Homebrew on macOS, not redistributed. Confirm the reduced footprint
+          with #1056.
         </p>
 
         <h3>Implementation order</h3>
         <ol>
           <li>
-            Windows acquisition (<code>acquire.rs</code>) — pinned zip
-            resolve/download/verify/extract, portable-aware.
+            Windows install (<code>windows.rs</code>) — detect VcXsrv + <code>winget install</code>,
+            guided App Installer fallback (#1318).
           </li>
           <li>
             Lifecycle manager (<code>manager.rs</code>) — spawn/supervise/reuse/idle-shutdown.
@@ -1004,7 +995,7 @@ flowchart TB
             UI — settings toggle, first-run/progress prompt, Open Connections "X Servers" section.
           </li>
           <li>macOS guided install; Linux detect-and-guide.</li>
-          <li>GPL-3.0 compliance; integration/manual tests + docs.</li>
+          <li>Integration/manual tests + docs.</li>
         </ol>
       </section>
 
@@ -1083,6 +1074,22 @@ flowchart TB
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>2026-07-10</td>
+                <td>#1318</td>
+                <td>
+                  Rescoped the Windows path from the hosted pinned-<code>.zip</code> download
+                  (<code>acquire.rs</code>, #1076 — unwired foundation) to a <strong>winget</strong>
+                  install, symmetric to the macOS Homebrew path. New <code>windows.rs</code> detects
+                  VcXsrv + runs <code>winget install -e --id marha.VcXsrv …</code>; winget-absent is
+                  a guided <code>InstallMode::GuidedExternal</code> (open the Microsoft Store for App
+                  Installer + a manual VcXsrv download). <code>acquire.rs</code> and the dead
+                  <code>package-vcxsrv</code> scripts were deleted. Reconciled the Windows mockups,
+                  flowchart, state + sequence diagrams, per-platform strategy, edge cases, and the
+                  licensing section (no more VcXsrv redistribution → the GPL-3.0 hosting obligation,
+                  #1076/#1056, no longer applies to this path).
+                </td>
+              </tr>
               <tr>
                 <td>2026-07-07</td>
                 <td>#1100</td>

@@ -30,24 +30,27 @@ license) and the compliance checklist.
   <https://sourceforge.net/projects/vcxsrv/>.
 - **License:** GNU General Public License, version 3.0 (GPL-3.0-or-later),
   with X.Org components under the MIT/X11 license.
-- **License text:** [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt)
-- **How termiHub uses it:** On Windows, termiHub can download a pinned,
-  pre-extracted minimal VcXsrv tree (`vcxsrv.exe` + required DLLs + `fonts/`)
-  from termiHub's own GitHub releases, verify its SHA-256, and launch it as a
-  **separate process** to provide a local X server for SSH X11 forwarding.
-  termiHub does **not** statically or dynamically link against VcXsrv code.
+- **License text:** [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt) (retained for
+  reference)
+- **How termiHub uses it:** On Windows, termiHub **installs VcXsrv via winget**
+  (`winget install -e --id marha.VcXsrv …`) — or the user installs it manually —
+  and then launches the installed `vcxsrv.exe` as a **separate process** to
+  provide a local X server for SSH X11 forwarding (#1318). termiHub does **not**
+  host, redistribute, or link against VcXsrv; winget (or the user) fetches it from
+  upstream.
 
-### Written offer for corresponding source (GPL-3.0 §6)
+> **Note (#1318).** termiHub no longer redistributes or hosts a VcXsrv binary, so
+> the GPL-3.0 redistribution obligations below (source offer for a pinned build)
+> no longer apply to termiHub's distribution — VcXsrv is now obtained via winget.
+> This entry is retained for reference; the full licensing reconciliation is
+> tracked in #1056.
 
-The complete corresponding source code for the exact VcXsrv version that
-termiHub redistributes is publicly available, at no charge, from the upstream
-repository above at the matching release tag. In addition, for any binary
-artifact hosted on termiHub's releases, the project offers — valid for as long
-as termiHub distributes that artifact, and for at least three years thereafter —
-to provide the complete corresponding source for the exact pinned version on
-request. Contact: open an issue at
-<https://github.com/armaxri/termiHub/issues> or email the maintainer listed in
-[LICENSE](LICENSE).
+### Written offer for corresponding source (GPL-3.0 §6) — historical
+
+_No longer applicable: termiHub does not redistribute a VcXsrv binary as of #1318._
+The complete corresponding source for any VcXsrv version remains publicly
+available, at no charge, from the upstream repository above at the matching
+release tag.
 
 The pinned version string above **must** match `PINNED_VCXSRV.version` in
 `src-tauri/src/terminal/xserver/acquire.rs`; the download URL and SHA-256 for

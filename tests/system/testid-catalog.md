@@ -511,6 +511,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `*-enable` | `${testIdPrefix}-enable` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-error` | `${testIdPrefix}-error` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-guided-install` | `${testIdPrefix}-guided-install` | `src/components/OpenConnections/XServerSetupContent.tsx` |
+| `*-install-app-installer` | `${testIdPrefix}-install-app-installer` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-install-dep` | `${testIdPrefix}-install-dep` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-not-now` | `${testIdPrefix}-not-now` | `src/components/OpenConnections/XServerSetupContent.tsx` |
 | `*-open` | `${testIdPrefix}-open` | `src/components/Sidebar/FileBrowser.tsx` |

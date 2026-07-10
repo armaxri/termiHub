@@ -15,6 +15,14 @@ use serde::{Deserialize, Serialize};
 pub(crate) const HOMEBREW_INSTALL_COMMAND: &str =
     "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"";
 
+/// The winget invocation that installs VcXsrv on Windows (#1318) — the analog of
+/// macOS's `brew install --cask xquartz`. Shown as the `install_command` for the
+/// VcXsrv-missing error; the backend runs it when winget is present. The agreement
+/// flags plus `-h` (silent) keep it non-interactive, and `-e --id marha.VcXsrv`
+/// pins the exact winget package. Single source of truth for the command.
+pub(crate) const WINGET_INSTALL_VCXSRV_COMMAND: &str =
+    "winget install -e --id marha.VcXsrv --accept-package-agreements --accept-source-agreements -h";
+
 /// The host platform, as it matters for X server provisioning.
 ///
 /// Each platform has a different strategy: Windows provisions VcXsrv, macOS
@@ -110,6 +118,12 @@ pub enum InstallMode {
     /// opens for them — the install has interactive prompts termiHub can't drive
     /// (e.g. the official Homebrew installer's `sudo` / RETURN steps, #1117).
     GuidedTerminal,
+    /// termiHub can't install the dependency because a prerequisite package
+    /// manager is missing, and that prerequisite isn't a terminal command either
+    /// — the UI opens an external page/store for the user to get it, then Retry
+    /// (e.g. Windows winget-absent: open the Microsoft Store for App Installer,
+    /// with a manual VcXsrv download fallback, #1318).
+    GuidedExternal,
 }
 
 /// A typed, actionable provisioning failure surfaced to the UI.
@@ -120,11 +134,6 @@ pub enum InstallMode {
 #[derive(Debug, Clone, Serialize, thiserror::Error)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum XServerError {
-    /// Automatic provisioning is enabled but not yet implemented in this build
-    /// (Windows VcXsrv download consent flow — remaining epic #1047 work).
-    #[error("{message}")]
-    ProvisioningUnavailable { message: String },
-
     /// No local X server is running and automatic provisioning is disabled.
     #[error("{message}")]
     NoLocalServer { message: String },
@@ -170,13 +179,62 @@ pub enum XServerError {
 }
 
 impl XServerError {
-    /// Windows: automatic VcXsrv provisioning is enabled but not yet wired
-    /// (awaiting the download-consent flow). Shared by the orchestrator and the
-    /// install command so the guidance text has a single source.
-    pub fn windows_provisioning_unavailable() -> Self {
-        XServerError::ProvisioningUnavailable {
-            message: "Automatic VcXsrv provisioning is not yet available in this build. Install \
-                VcXsrv and start it on display :0, then retry."
+    /// Windows: VcXsrv isn't installed. Install it via winget (#1318) — the
+    /// analog of macOS's [`xquartz_missing`](Self::xquartz_missing). `Backend`
+    /// mode: the install button drives `x_server_install_dependency`, which runs
+    /// `winget install ... marha.VcXsrv`. Shared by the orchestrator and the
+    /// install command so the guidance has a single source.
+    pub fn vcxsrv_missing() -> Self {
+        XServerError::DependencyMissing {
+            message: "VcXsrv is not installed. Install it to use X11 forwarding.".to_string(),
+            dependency: "VcXsrv".to_string(),
+            install_mode: InstallMode::Backend,
+            install_hint: Some(
+                "termiHub can install VcXsrv for you with winget, or download it from \
+                https://sourceforge.net/projects/vcxsrv/."
+                    .to_string(),
+            ),
+            install_command: Some(WINGET_INSTALL_VCXSRV_COMMAND.to_string()),
+            // Backend install (winget) — no manual-fallback button, mirroring
+            // `xquartz_missing`; the download URL stays in the hint text.
+            install_fallback_url: None,
+        }
+    }
+
+    /// Windows: VcXsrv isn't installed and winget — the automatic installer — is
+    /// absent, so there is no package manager to install it with (#1318).
+    ///
+    /// The analog of macOS's [`homebrew_required`](Self::homebrew_required), but
+    /// winget (App Installer) isn't a terminal command, so this is an
+    /// [`InstallMode::GuidedExternal`]: the UI opens the Microsoft Store for App
+    /// Installer, then a retry re-detects winget and installs VcXsrv. If the user
+    /// declines, the hint points at the manual VcXsrv download (help ends there).
+    pub fn winget_required() -> Self {
+        XServerError::DependencyMissing {
+            message: "VcXsrv can't be installed automatically because winget (App Installer) is \
+                not available. Install App Installer, then retry — or install VcXsrv manually from \
+                https://sourceforge.net/projects/vcxsrv/."
+                .to_string(),
+            dependency: "winget".to_string(),
+            install_mode: InstallMode::GuidedExternal,
+            install_hint: Some(
+                "Installing VcXsrv automatically needs winget. \"Install App Installer\" opens the \
+                Microsoft Store; once it's installed, retry to install VcXsrv. Prefer not to? \
+                Install VcXsrv manually from https://sourceforge.net/projects/vcxsrv/."
+                    .to_string(),
+            ),
+            install_command: Some(WINGET_INSTALL_VCXSRV_COMMAND.to_string()),
+            // The manual VcXsrv download is the payload-driven fallback the UI
+            // turns into an "Open …" button when the user declines App Installer.
+            install_fallback_url: Some("https://sourceforge.net/projects/vcxsrv/".to_string()),
+        }
+    }
+
+    /// Windows: VcXsrv is installed but no server is running on `:0`.
+    pub fn windows_server_unreachable() -> Self {
+        XServerError::ServerUnreachable {
+            message: "VcXsrv is installed but no X server is running. termiHub starts one \
+                automatically on connect; if this persists, launch VcXsrv on display :0 and retry."
                 .to_string(),
         }
     }
@@ -348,7 +406,7 @@ pub const X_SERVER_PROGRESS_EVENT: &str = "x-server-progress";
 pub struct XServerConsentRequest {
     /// Opaque id correlating this prompt with the reply command that resolves it.
     pub id: String,
-    /// Host platform, so the UI can tailor the consent copy (download size, name).
+    /// Host platform, so the UI can tailor the consent copy (installer name, etc.).
     pub platform: XServerPlatform,
 }
 
@@ -427,6 +485,53 @@ mod tests {
     }
 
     #[test]
+    fn vcxsrv_missing_uses_backend_install_mode_with_winget_command() {
+        // VcXsrv-missing (winget present): a Backend install the button drives via
+        // `x_server_install_dependency`, carrying the winget command (#1318).
+        match XServerError::vcxsrv_missing() {
+            XServerError::DependencyMissing {
+                dependency,
+                install_mode,
+                install_command,
+                ..
+            } => {
+                assert_eq!(dependency, "VcXsrv");
+                assert_eq!(install_mode, InstallMode::Backend);
+                let cmd = install_command.expect("winget command must be present");
+                assert!(
+                    cmd.contains("winget install"),
+                    "should winget-install: {cmd}"
+                );
+                assert!(
+                    cmd.contains("marha.VcXsrv"),
+                    "should pin the package: {cmd}"
+                );
+            }
+            other => panic!("expected DependencyMissing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn winget_required_uses_guided_external_install_mode() {
+        // winget-absent post-click response: the typed `install_mode` is
+        // `GuidedExternal` (open the Store / a URL, not a terminal), and the manual
+        // VcXsrv download is carried as the payload-driven fallback URL (#1312/#1318).
+        match XServerError::winget_required() {
+            XServerError::DependencyMissing {
+                dependency,
+                install_mode,
+                install_fallback_url,
+                ..
+            } => {
+                assert_eq!(dependency, "winget");
+                assert_eq!(install_mode, InstallMode::GuidedExternal);
+                assert!(install_fallback_url.unwrap_or_default().contains("vcxsrv"));
+            }
+            other => panic!("expected DependencyMissing, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn backend_install_carries_no_manual_fallback_url() {
         // The manual-fallback button is payload-driven (#1312): the backend-install
         // XQuartz case offers no fallback URL, so the field is omitted from the wire.
@@ -467,5 +572,8 @@ mod tests {
 
         let guided = serde_json::to_string(&XServerError::homebrew_required()).unwrap();
         assert!(guided.contains("\"installMode\":\"guidedTerminal\""));
+
+        let external = serde_json::to_string(&XServerError::winget_required()).unwrap();
+        assert!(external.contains("\"installMode\":\"guidedExternal\""));
     }
 }

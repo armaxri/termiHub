@@ -78,10 +78,11 @@ pub fn x_server_stop(
 
 /// Install (or guide the install of) the platform's X dependency.
 ///
-/// macOS runs a guided, consent-based XQuartz install (#1054): Homebrew when
-/// present, otherwise actionable download guidance. Windows VcXsrv acquisition
-/// (#1048) and Linux (never installs) still return their typed guidance so the
-/// UI (#1053) has something concrete to show.
+/// macOS runs a guided XQuartz install (#1054): Homebrew when present, otherwise
+/// guidance to install it. Windows runs a guided VcXsrv install via winget (#1318,
+/// symmetric to macOS): winget when present, otherwise guidance to install App
+/// Installer. Linux (never installs) returns typed guidance so the UI (#1053) has
+/// something concrete to show.
 #[tauri::command]
 pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerError> {
     emit_progress(&app, "install", "Preparing X dependency install…", -1.0);
@@ -93,8 +94,8 @@ pub async fn x_server_install_dependency(app: AppHandle) -> Result<(), XServerEr
         ),
         XServerPlatform::Windows => finish(
             &app,
-            Err(XServerError::windows_provisioning_unavailable()),
-            "",
+            xserver::windows::install_vcxsrv().await,
+            "VcXsrv is ready.",
         ),
         XServerPlatform::Linux => finish(&app, Err(XServerError::linux_install_unsupported()), ""),
     }
