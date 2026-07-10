@@ -111,7 +111,7 @@ describe("XServerSetupContent", () => {
     const onRetry = vi.fn();
     renderContent({
       phase: "error",
-      error: { kind: "provisioningUnavailable", message: "Not available here" },
+      error: { kind: "launchFailed", message: "Not available here" },
       onRetry,
     });
     expect(query("x-server-setup-error")?.textContent).toContain("Not available here");

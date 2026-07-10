@@ -4,8 +4,9 @@
 //! GUI apps can render as native windows. See the concept document
 //! `docs/concepts/backlog/x-server-provisioning.html`.
 //!
-//! - [`acquire`] (#1048, Windows-only) resolves a known-good VcXsrv install on
-//!   disk via `cache → bundled → download → verify → extract`.
+//! - [`windows`] (#1318, Windows) detects VcXsrv and installs it via `winget`
+//!   (the analog of the macOS Homebrew path), replacing the retired
+//!   download-and-extract acquisition.
 //! - [`manager`] (#1049) owns the lifecycle of a single shared X server: adopt,
 //!   spawn/supervise, reuse across sessions, idle shutdown.
 //! - This module (#1052) adds the cross-platform [`ensure_x_server`]
@@ -13,8 +14,6 @@
 //!   path (which cannot depend on the desktop app layer) to it, and the Tauri
 //!   command surface in [`crate::commands::xserver`].
 
-#[cfg(windows)]
-pub mod acquire;
 pub mod auth;
 mod consent;
 mod linux_gap;
@@ -22,6 +21,7 @@ pub(crate) mod macos;
 pub mod manager;
 mod orchestrator;
 mod types;
+pub(crate) mod windows;
 
 use std::sync::Arc;
 

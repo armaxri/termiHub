@@ -84,7 +84,6 @@ export type XServerConsentDecision = "enable" | "notNow";
  * the rest offer a plain retry with the human-readable `message`.
  */
 export type XServerErrorKind =
-  | "provisioningUnavailable"
   | "noLocalServer"
   | "dependencyMissing"
   | "serverUnreachable"

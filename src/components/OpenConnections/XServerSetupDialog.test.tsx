@@ -177,7 +177,7 @@ describe("XServerSetupDialog", () => {
     await flush();
 
     const err: XServerError = {
-      kind: "provisioningUnavailable",
+      kind: "launchFailed",
       message: "Provisioning is not available on this platform",
     };
     await act(async () => {

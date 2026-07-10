@@ -2,8 +2,7 @@
 //!
 //! [`download_to_file`] centralizes the `reqwest::blocking` "GET a URL, report
 //! progress, write the body to a destination path" boilerplate that agent-binary
-//! resolution ([`crate::terminal::agent_binary`]) and VcXsrv acquisition
-//! ([`crate::terminal::xserver::acquire`]) both need (consolidated per #1077).
+//! resolution ([`crate::terminal::agent_binary`]) needs (consolidated per #1077).
 
 use std::fs;
 use std::io::{Read, Write};

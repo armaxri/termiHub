@@ -38,12 +38,11 @@ use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer}
 /// report-only no-op that adopts the system's existing X server. The default
 /// policy is to stop the managed server once the last X11 session closes.
 ///
-/// A placeholder `vcxsrv.exe` resolver is injected: adoption of an
-/// already-running X server works today, while spawning a managed server
-/// surfaces a clear error. The acquisition module (`xserver::acquire`, #1048)
-/// exists, but resolving it downloads VcXsrv, which the concept gates behind a
-/// user consent prompt — so the real resolver is wired by the provisioning
-/// orchestrator (#1052) once the consent flow exists, not here.
+/// The managed-server binary resolver returns the winget-installed `vcxsrv.exe`
+/// at its canonical location (#1318). Adoption of an already-running X server
+/// works on any platform; spawning a managed server is Windows-only (`cfg!(windows)`),
+/// and if VcXsrv isn't installed the resolver surfaces a clear error pointing the
+/// user at the X Servers panel to install it via winget.
 ///
 /// The cookie provider (#1050) writes `.Xauthority` files under a temp
 /// subdirectory; the files are ephemeral, regenerated per server start and
@@ -57,11 +56,7 @@ fn build_xserver_manager() -> terminal::xserver::XServerManager {
     terminal::xserver::XServerManager::new(
         Box::new(TcpPortProbe),
         Box::new(CommandLauncher),
-        Box::new(|| {
-            anyhow::bail!(
-                "managed X server provisioning is not wired yet (awaiting consent flow, #1052)"
-            )
-        }),
+        Box::new(terminal::xserver::windows::resolve_vcxsrv_path),
         Box::new(FileXAuthProvider::new(auth_dir)),
         cfg!(windows),
         true,
