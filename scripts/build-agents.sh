@@ -41,6 +41,29 @@ agent_binary_name() {
     fi
 }
 
+# Write a "<binary>.sha256" sidecar next to a built binary, matching the format
+# published by release.yml so the desktop can verify integrity before install
+# (#1350). Uses sha256sum where available (Linux, Git Bash) and falls back to
+# `shasum -a 256` (macOS). Runs in the binary's directory so the sidecar records
+# a bare file name rather than a full path.
+write_checksum() {
+    local binary="$1"
+    local dir base
+    dir="$(dirname "$binary")"
+    base="$(basename "$binary")"
+    (
+        cd "$dir" || exit 1
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$base" >"$base.sha256"
+        elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$base" >"$base.sha256"
+        else
+            echo "  WARNING: no sha256sum/shasum found; skipping checksum for $base" >&2
+            return 1
+        fi
+    )
+}
+
 # True if the current host is Windows (Git Bash / MSYS / Cygwin).
 host_is_windows() {
     case "$(uname -s)" in
@@ -290,6 +313,7 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
             binary="target/$target/$PROFILE_DIR/$(agent_binary_name "$target")"
             if [ -f "$binary" ]; then
                 size=$(du -h "$binary" | cut -f1)
+                write_checksum "$binary" || true
                 results+=("  OK    $target  ($size)")
                 echo "  -> $binary ($size)"
                 built=$((built + 1))
@@ -405,6 +429,7 @@ else
                 mkdir -p "$dst_dir"
                 cp "$src_binary" "$dst_binary"
                 size=$(du -h "$dst_binary" | cut -f1)
+                write_checksum "$dst_binary" || true
                 results+=("  OK    $target  ($size)")
                 echo "  -> $dst_binary ($size)"
                 built=$((built + 1))
