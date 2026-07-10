@@ -28,6 +28,8 @@ import {
   Server,
   ArrowLeftRight,
   Route,
+  Search,
+  X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
@@ -41,12 +43,14 @@ import {
 import { frontendLog } from "@/utils/frontendLog";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Tooltip } from "@/components/ui";
+import { Tooltip, Input } from "@/components/ui";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
-import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
+import { useTreeKeyboardNav } from "@/hooks/useTreeKeyboardNav";
+import { computeVisibleTreeNodes } from "@/utils/computeVisibleTreeNodes";
+import { filterConnectionTree, type ConnectionTreeFilter } from "@/utils/connectionSearch";
 import {
   getJumpHosts,
   jumpHostTooltip,
@@ -60,7 +64,22 @@ import { InlineFolderInput } from "./InlineFolderInput";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
 
-interface TreeNodeProps {
+/**
+ * Shared keyboard-navigation / filter plumbing threaded through the tree so
+ * every row participates in roving-tabindex focus and search filtering (#1356).
+ */
+interface TreeNavProps {
+  /** Active search filter, or `null` when no query is entered. */
+  filter: ConnectionTreeFilter | null;
+  /** Row that currently owns `tabindex=0`. */
+  focusedId: string | null;
+  /** Keyboard handler for a tree row, keyed by its node id. */
+  onTreeKeyDown: (event: React.KeyboardEvent, nodeId: string) => void;
+  /** Sync the roving-tabindex focus when a row gains DOM focus. */
+  onFocusNode: (id: string) => void;
+}
+
+interface TreeNodeProps extends TreeNavProps {
   folder: ConnectionFolder;
   connections: SavedConnection[];
   childFolders: ConnectionFolder[];
@@ -98,9 +117,22 @@ function TreeNode({
   selectedConnectionIds,
   onConnectionClick,
   depth,
+  filter,
+  focusedId,
+  onTreeKeyDown,
+  onFocusNode,
 }: TreeNodeProps) {
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
-  const Chevron = folder.isExpanded ? ChevronDown : ChevronRight;
+  // Under an active filter, matched folders are force-expanded regardless of
+  // their stored state (auto-expand matches).
+  const expanded = filter ? filter.visibleFolderIds.has(folder.id) : folder.isExpanded;
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  const visibleChildFolders = filter
+    ? childFolders.filter((f) => filter.visibleFolderIds.has(f.id))
+    : childFolders;
+  const visibleConnections = filter
+    ? connections.filter((c) => filter.matchingConnectionIds.has(c.id))
+    : connections;
 
   const { setNodeRef, isOver } = useDroppable({
     id: folder.id,
@@ -113,7 +145,7 @@ function TreeNode({
     active?.data.current?.type !== "agent-connection";
 
   return (
-    <div className="connection-tree__node">
+    <div className="connection-tree__node" role="none">
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <button
@@ -122,6 +154,13 @@ function TreeNode({
             onClick={() => onToggle(folder.id)}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
             data-testid={`folder-toggle-${folder.id}`}
+            role="treeitem"
+            aria-expanded={expanded}
+            aria-level={depth + 1}
+            tabIndex={focusedId === folder.id ? 0 : -1}
+            data-tree-node-id={folder.id}
+            onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
+            onFocus={() => onFocusNode(folder.id)}
           >
             <Folder size={16} />
             <span className="connection-tree__label">{folder.name}</span>
@@ -155,8 +194,8 @@ function TreeNode({
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
-      {folder.isExpanded && (
-        <div className="connection-tree__children">
+      {expanded && (
+        <div className="connection-tree__children" role="group">
           {creatingSubfolder && (
             <InlineFolderInput
               depth={depth + 1}
@@ -167,7 +206,7 @@ function TreeNode({
               onCancel={() => setCreatingSubfolder(false)}
             />
           )}
-          {childFolders.map((child) => (
+          {visibleChildFolders.map((child) => (
             <TreeNode
               key={child.id}
               folder={child}
@@ -187,9 +226,13 @@ function TreeNode({
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={onConnectionClick}
               depth={depth + 1}
+              filter={filter}
+              focusedId={focusedId}
+              onTreeKeyDown={onTreeKeyDown}
+              onFocusNode={onFocusNode}
             />
           ))}
-          {connections.map((conn) => (
+          {visibleConnections.map((conn) => (
             <ConnectionItem
               key={conn.id}
               connection={conn}
@@ -201,6 +244,9 @@ function TreeNode({
               onDuplicate={onDuplicate}
               onPingHost={onPingHost}
               onConnectionClick={onConnectionClick}
+              focusedId={focusedId}
+              onTreeKeyDown={onTreeKeyDown}
+              onFocusNode={onFocusNode}
             />
           ))}
         </div>
@@ -209,7 +255,10 @@ function TreeNode({
   );
 }
 
-interface ConnectionItemProps {
+interface ConnectionItemProps extends Pick<
+  TreeNavProps,
+  "focusedId" | "onTreeKeyDown" | "onFocusNode"
+> {
   connection: SavedConnection;
   depth: number;
   isSelected: boolean;
@@ -231,6 +280,9 @@ function ConnectionItem({
   onDuplicate,
   onPingHost,
   onConnectionClick,
+  focusedId,
+  onTreeKeyDown,
+  onFocusNode,
 }: ConnectionItemProps) {
   const {
     attributes,
@@ -260,33 +312,57 @@ function ConnectionItem({
       )}
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
-          <button
-            ref={setDragRef}
-            className={className}
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            onClick={(e) => onConnectionClick(connection.id, e)}
-            onDoubleClick={() => onConnect(connection)}
-            title={`Double-click to connect: ${connection.name}`}
-            data-testid={`connection-item-${connection.id}`}
-            {...attributes}
-            {...listeners}
-          >
-            <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
-            <span className="connection-tree__label">{connection.name}</span>
-            {jumpHosts.length > 0 && (
-              <span
-                className="connection-tree__jump-badge"
-                title={jumpHostTooltip(jumpHosts, connection.name)}
-                data-testid={`connection-jump-badge-${connection.id}`}
+          <div className="connection-tree__item-row" role="none">
+            <button
+              ref={setDragRef}
+              className={className}
+              style={{ paddingLeft: `${depth * 16 + 8}px` }}
+              onClick={(e) => onConnectionClick(connection.id, e)}
+              onDoubleClick={() => onConnect(connection)}
+              title={`Double-click to connect: ${connection.name}`}
+              data-testid={`connection-item-${connection.id}`}
+              {...attributes}
+              {...listeners}
+              role="treeitem"
+              aria-level={depth + 1}
+              aria-selected={isSelected}
+              tabIndex={focusedId === connection.id ? 0 : -1}
+              data-tree-node-id={connection.id}
+              onKeyDown={(e) => onTreeKeyDown(e, connection.id)}
+              onFocus={() => onFocusNode(connection.id)}
+            >
+              <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
+              <span className="connection-tree__label">{connection.name}</span>
+              {jumpHosts.length > 0 && (
+                <span
+                  className="connection-tree__jump-badge"
+                  title={jumpHostTooltip(jumpHosts, connection.name)}
+                  data-testid={`connection-jump-badge-${connection.id}`}
+                >
+                  <ArrowLeftRight size={12} />
+                  {jumpHosts.length > 1 && (
+                    <span className="connection-tree__jump-count">{jumpHosts.length}</span>
+                  )}
+                </span>
+              )}
+              <span className="connection-tree__type">{connection.config.type}</span>
+            </button>
+            <Tooltip content="Connect" side="right">
+              <button
+                type="button"
+                className="connection-tree__connect-btn"
+                aria-label={`Connect to ${connection.name}`}
+                tabIndex={-1}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onConnect(connection);
+                }}
+                data-testid={`connection-connect-${connection.id}`}
               >
-                <ArrowLeftRight size={12} />
-                {jumpHosts.length > 1 && (
-                  <span className="connection-tree__jump-count">{jumpHosts.length}</span>
-                )}
-              </span>
-            )}
-            <span className="connection-tree__type">{connection.config.type}</span>
-          </button>
+                <Play size={14} />
+              </button>
+            </Tooltip>
+          </div>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
@@ -369,6 +445,7 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
 
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [filterQuery, setFilterQuery] = useState("");
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
   const [draggingAgentName, setDraggingAgentName] = useState<string | null>(null);
   const [draggingAgentDef, setDraggingAgentDef] = useState<AgentDefinitionInfo | null>(null);
@@ -410,9 +487,23 @@ export function ConnectionList() {
     [connections]
   );
 
+  // Live search filter over the connection tree (name/host). `null` when empty.
+  const filter = useMemo(
+    () => filterConnectionTree(filterQuery, folders, connections),
+    [filterQuery, folders, connections]
+  );
+
+  // Flattened, in-order list of the rows actually rendered — drives both
+  // roving-tabindex keyboard navigation and Shift+Click range selection, so
+  // both stay in sync with the active filter.
+  const treeNodes = useMemo(
+    () => computeVisibleTreeNodes(folders, connections, filter),
+    [folders, connections, filter]
+  );
+
   const flatVisibleConnectionIds = useMemo(
-    () => computeFlatVisibleIds(rootFolders, rootConnections, folders, connections),
-    [rootFolders, rootConnections, folders, connections]
+    () => treeNodes.filter((n) => n.kind === "connection").map((n) => n.id),
+    [treeNodes]
   );
 
   const {
@@ -571,6 +662,34 @@ export function ConnectionList() {
       );
     },
     [addTab, requestPassword]
+  );
+
+  const { containerRef, focusedId, setFocusedId, handleKeyDown } = useTreeKeyboardNav(treeNodes, {
+    onConnect: handleConnect,
+    onToggleFolder: toggleFolder,
+  });
+
+  // The row that owns tabindex=0: the tracked focus if still present, else the
+  // first visible row (so Tab always lands somewhere sensible).
+  const effectiveFocusedId =
+    focusedId && treeNodes.some((n) => n.id === focusedId) ? focusedId : (treeNodes[0]?.id ?? null);
+
+  const handleFilterKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        // Top hit = first connection row in filter-aware visual order.
+        const topHitId = flatVisibleConnectionIds[0];
+        if (topHitId) {
+          const target = connections.find((c) => c.id === topHitId);
+          if (target) handleConnect(target);
+        }
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        setFilterQuery("");
+      }
+    },
+    [flatVisibleConnectionIds, connections, handleConnect]
   );
 
   const handleEdit = useCallback(
@@ -869,7 +988,7 @@ export function ConnectionList() {
   );
 
   return (
-    <div className="connection-list">
+    <div className="connection-list" ref={containerRef}>
       <DndContext
         sensors={sensors}
         collisionDetection={pointerWithin}
@@ -923,6 +1042,33 @@ export function ConnectionList() {
             </div>
           </div>
           {!localCollapsed && (
+            <div className="connection-list__filter">
+              <Search size={14} className="connection-list__filter-icon" aria-hidden="true" />
+              <Input
+                className="connection-list__filter-input"
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+                onKeyDown={handleFilterKeyDown}
+                placeholder="Filter connections…"
+                aria-label="Filter connections"
+                data-testid="connection-filter-input"
+              />
+              {filterQuery && (
+                <Tooltip content="Clear filter" side="top">
+                  <button
+                    type="button"
+                    className="connection-list__filter-clear"
+                    onClick={() => setFilterQuery("")}
+                    aria-label="Clear filter"
+                    data-testid="connection-filter-clear"
+                  >
+                    <X size={14} />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
+          )}
+          {!localCollapsed && (
             <RootDropZone
               isCreatingFolder={creatingFolder}
               onCreateFolder={(name) => {
@@ -948,6 +1094,10 @@ export function ConnectionList() {
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={handleConnectionClick}
               onTreeAreaClick={handleTreeAreaClick}
+              filter={filter}
+              focusedId={effectiveFocusedId}
+              onTreeKeyDown={handleKeyDown}
+              onFocusNode={setFocusedId}
             />
           )}
         </div>
@@ -1067,7 +1217,7 @@ export function ConnectionList() {
   );
 }
 
-interface RootDropZoneProps {
+interface RootDropZoneProps extends TreeNavProps {
   isCreatingFolder: boolean;
   onCreateFolder: (name: string) => void;
   onCancelCreateFolder: () => void;
@@ -1113,11 +1263,22 @@ function RootDropZone({
   selectedConnectionIds,
   onConnectionClick,
   onTreeAreaClick,
+  filter,
+  focusedId,
+  onTreeKeyDown,
+  onFocusNode,
 }: RootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: "root",
     data: { type: "root" },
   });
+  const visibleRootFolders = filter
+    ? rootFolders.filter((f) => filter.visibleFolderIds.has(f.id))
+    : rootFolders;
+  const visibleRootConnections = filter
+    ? rootConnections.filter((c) => filter.matchingConnectionIds.has(c.id))
+    : rootConnections;
+  const hasVisibleResults = visibleRootFolders.length + visibleRootConnections.length > 0;
   const { active } = useDndContext();
   const isConnectionOver =
     isOver &&
@@ -1131,6 +1292,8 @@ function RootDropZone({
           ref={setNodeRef}
           className={`connection-list__tree${isConnectionOver ? " connection-tree__root-drop--over" : ""}`}
           onClick={onTreeAreaClick}
+          role="tree"
+          aria-label="Connections"
         >
           {isCreatingFolder && (
             <InlineFolderInput
@@ -1139,7 +1302,12 @@ function RootDropZone({
               onCancel={onCancelCreateFolder}
             />
           )}
-          {rootFolders.map((folder) => (
+          {filter && !hasVisibleResults && (
+            <p className="connection-list__empty" role="status">
+              No connections match “{filter.query}”.
+            </p>
+          )}
+          {visibleRootFolders.map((folder) => (
             <TreeNode
               key={folder.id}
               folder={folder}
@@ -1159,9 +1327,13 @@ function RootDropZone({
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={onConnectionClick}
               depth={0}
+              filter={filter}
+              focusedId={focusedId}
+              onTreeKeyDown={onTreeKeyDown}
+              onFocusNode={onFocusNode}
             />
           ))}
-          {rootConnections.map((conn) => (
+          {visibleRootConnections.map((conn) => (
             <ConnectionItem
               key={conn.id}
               connection={conn}
@@ -1173,6 +1345,9 @@ function RootDropZone({
               onDuplicate={onDuplicate}
               onPingHost={onPingHost}
               onConnectionClick={onConnectionClick}
+              focusedId={focusedId}
+              onTreeKeyDown={onTreeKeyDown}
+              onFocusNode={onFocusNode}
             />
           ))}
         </div>

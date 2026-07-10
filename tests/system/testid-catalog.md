@@ -84,6 +84,8 @@ Fixed strings — match exactly.
 | `connection-error-message` | `src/components/Sidebar/ConnectionErrorDialog.tsx` |
 | `connection-error-setup-agent` | `src/components/Sidebar/ConnectionErrorDialog.tsx` |
 | `connection-error-title` | `src/components/Sidebar/ConnectionErrorDialog.tsx` |
+| `connection-filter-clear` | `src/components/Sidebar/ConnectionList.tsx` |
+| `connection-filter-input` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-list-group-connections` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-list-group-toggle` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-list-new-agent` | `src/components/Sidebar/ConnectionList.tsx` |
@@ -539,6 +541,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `agent-shutdown-*` | `agent-shutdown-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
+| `connection-connect-*` | `connection-connect-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-jump-badge-*` | `connection-jump-badge-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-picker-agent-def-*` | `connection-picker-agent-def-${def.id}` | `src/components/WorkspaceEditor/ConnectionPicker.tsx` |
