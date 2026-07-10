@@ -23,6 +23,13 @@ interface ConnectionSettingsFormProps {
    * agent definition so the dropdown reflects the remote machine's ports.
    */
   availablePorts?: string[];
+  /**
+   * Reports overall client-side validity plus a per-field error map (keyed by
+   * field key) whenever validation state changes. Only currently-visible fields
+   * are considered, so a required field hidden by `visibleWhen` never blocks.
+   * The parent uses this to disable Save/Save & Connect on invalid input.
+   */
+  onValidityChange?: (valid: boolean, errors: Record<string, string>) => void;
 }
 
 /**
@@ -38,6 +45,7 @@ export function ConnectionSettingsForm({
   onChange,
   credentialSavedHint,
   availablePorts,
+  onValidityChange,
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
 
@@ -98,6 +106,44 @@ export function ConnectionSettingsForm({
 
   // Live form values used for visibleWhen evaluation.
   const watchedValues = useWatch({ control });
+
+  // Overall validity + per-field error map for currently-visible fields. We run
+  // the zod schema directly against the watched values (rather than reading
+  // react-hook-form's async error proxy) so the signal is deterministic and
+  // recomputes on every value change. A required field hidden by `visibleWhen`
+  // is excluded, so it never blocks the parent's Save.
+  const validity = useMemo(() => {
+    const errorMap: Record<string, string> = {};
+    const result = zodSchema.safeParse(watchedValues);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const key = issue.path[0];
+        if (typeof key === "string" && !(key in errorMap)) {
+          errorMap[key] = issue.message;
+        }
+      }
+    }
+    const visibleErrors: Record<string, string> = {};
+    for (const group of schema.groups) {
+      for (const field of group.fields) {
+        if (isFieldVisible(field, watchedValues) && errorMap[field.key]) {
+          visibleErrors[field.key] = errorMap[field.key];
+        }
+      }
+    }
+    return { valid: Object.keys(visibleErrors).length === 0, errors: visibleErrors };
+  }, [zodSchema, watchedValues, schema]);
+
+  // Only propagate when the reported validity actually changes, so typing more
+  // characters into an already-valid (or already-invalid, same-errors) field
+  // doesn't churn a fresh error object into the parent every keystroke.
+  const lastReportedRef = useRef<string>("");
+  useEffect(() => {
+    const signal = `${validity.valid}|${JSON.stringify(validity.errors)}`;
+    if (signal === lastReportedRef.current) return;
+    lastReportedRef.current = signal;
+    onValidityChange?.(validity.valid, validity.errors);
+  }, [validity, onValidityChange]);
 
   return (
     <div data-testid="connection-settings-form">

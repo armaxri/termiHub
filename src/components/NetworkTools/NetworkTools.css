@@ -81,6 +81,17 @@
   border-color: var(--focus-border);
 }
 
+.network-panel__input--error,
+.network-panel__input--error:focus {
+  border-color: var(--color-error);
+}
+
+/* Inline per-field validation message shown beneath a form control. */
+.network-panel__field-error {
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
 /* Status / info / error messages */
 .network-panel__info {
   padding: var(--spacing-xs) var(--spacing-sm);
