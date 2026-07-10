@@ -6,7 +6,24 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
-import { TooltipProvider } from "@/components/ui";
+import { TooltipProvider, toast } from "@/components/ui";
+
+// Partial-mock the toast surface so Save & Connect feedback can be asserted
+// without a real Sonner portal. Other ui exports (TooltipProvider, Button, …)
+// keep their real implementations.
+vi.mock("@/components/ui", async () => {
+  const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
+  return {
+    ...actual,
+    toast: {
+      success: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+      loading: vi.fn(),
+      dismiss: vi.fn(),
+    },
+  };
+});
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
@@ -326,6 +343,46 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
 
     // No stored credential → password dialog must appear
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("surfaces a recoverable state (no silent success) when the password prompt is cancelled", async () => {
+    // #1344: handleSaveAndConnect previously returned silently when the user
+    // dismissed the password prompt, so the async Button flashed success even
+    // though nothing connected. It must instead surface a recoverable state
+    // (toast) and never open a session / close the editor.
+    const addTab = vi.fn();
+    useAppStore.setState({
+      requestPassword: vi.fn().mockResolvedValue(null), // user dismisses the prompt
+      addTab,
+    });
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(SSH_CONN_PASSWORD.id);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // No session was opened (connect aborted)…
+    expect(addTab).not.toHaveBeenCalled();
+    // …and the cancellation surfaced a recoverable state instead of silence.
+    expect(toast.info).toHaveBeenCalled();
   });
 
   it("prompts to unlock the credential store before resolving when locked (G3, #1144)", async () => {
