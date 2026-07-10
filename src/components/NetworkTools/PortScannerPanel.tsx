@@ -49,8 +49,8 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
 
   // Warn before a very large scan. The estimate factors in the CIDR host-count
   // as well as the port count, so a small port list over a wide block still
-  // trips the warning.
-  const probeEstimate = estimateScanProbes(host, ports);
+  // trips the warning. Recomputed only when the host/ports inputs change.
+  const probeEstimate = useMemo(() => estimateScanProbes(host, ports), [host, ports]);
 
   const subscribe = useCallback(async ({ matchesTask, register, finish }: NetworkTaskContext) => {
     register(
@@ -211,7 +211,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
 
       <Modal
         open={warnOpen}
-        onOpenChange={(open) => !open && setWarnOpen(false)}
+        onOpenChange={setWarnOpen}
         title="Large scan"
         description="Confirm before starting a scan that may take a while."
         data-testid="port-scan-warn-modal"

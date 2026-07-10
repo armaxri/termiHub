@@ -322,10 +322,20 @@ function SortHeader({
   );
 }
 
+/** The leading folder/file glyph shared by file rows and the rename editor. */
+function FileEntryIcon({ entry }: { entry: FileEntry }) {
+  return entry.isDirectory ? (
+    <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
+  ) : (
+    <File size={16} className="file-browser__icon" />
+  );
+}
+
 /**
- * Inline rename editor rendered in place of a file row. Commits on Enter or
- * blur, cancels on Escape. A guard ref ensures the commit fires exactly once
- * (Enter followed by the unmount blur must not double-submit).
+ * Inline rename editor rendered in place of a file row. Mirrors the New File /
+ * New Folder inline-input idiom: an uncontrolled input that commits on Enter
+ * and cancels on Escape (the base name is pre-selected so the extension is
+ * preserved).
  */
 function RenameRow({
   entry,
@@ -336,30 +346,12 @@ function RenameRow({
   onSubmit: (entry: FileEntry, newName: string) => void;
   onCancel: () => void;
 }) {
-  const doneRef = useRef(false);
-
-  const commit = (value: string) => {
-    if (doneRef.current) return;
-    doneRef.current = true;
-    onSubmit(entry, value);
-  };
-
-  const cancel = () => {
-    if (doneRef.current) return;
-    doneRef.current = true;
-    onCancel();
-  };
-
   return (
     <div className="file-browser__row-wrapper file-browser__row-wrapper--renaming">
       <div className="file-browser__row file-browser__row--renaming">
-        {entry.isDirectory ? (
-          <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
-        ) : (
-          <File size={16} className="file-browser__icon" />
-        )}
+        <FileEntryIcon entry={entry} />
         <input
-          className="file-browser__rename-input"
+          className="file-browser__new-dir-input"
           defaultValue={entry.name}
           autoFocus
           spellCheck={false}
@@ -373,13 +365,12 @@ function RenameRow({
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              commit(e.currentTarget.value);
+              onSubmit(entry, e.currentTarget.value);
             } else if (e.key === "Escape") {
               e.preventDefault();
-              cancel();
+              onCancel();
             }
           }}
-          onBlur={(e) => commit(e.currentTarget.value)}
         />
       </div>
     </div>
@@ -440,11 +431,7 @@ function FileRow({
               }
             }}
           >
-            {entry.isDirectory ? (
-              <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
-            ) : (
-              <File size={16} className="file-browser__icon" />
-            )}
+            <FileEntryIcon entry={entry} />
             <span className="file-browser__name">{entry.name}</span>
             {entry.modified && (
               <span className="file-browser__modified">{formatRelativeTime(entry.modified)}</span>

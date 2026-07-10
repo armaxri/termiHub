@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
 import { Button, Tooltip, toast, Modal, Field, Input } from "@/components/ui";
 import {
@@ -34,7 +34,8 @@ export function WolPanel() {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
 
-  const macError = validateMac(mac);
+  const macError = useMemo(() => validateMac(mac), [mac]);
+  const canSaveDevice = saveName.trim().length > 0 && !macError;
 
   const loadDevices = useCallback(async () => {
     try {
@@ -213,7 +214,7 @@ export function WolPanel() {
 
       <Modal
         open={saveModalOpen}
-        onOpenChange={(open) => !open && setSaveModalOpen(false)}
+        onOpenChange={setSaveModalOpen}
         title="Save Wake-on-LAN Device"
         description="Give this device a name to save its MAC address, broadcast, and port."
         data-testid="wol-save-modal"
@@ -230,7 +231,7 @@ export function WolPanel() {
               variant="primary"
               onClick={handleConfirmSave}
               errorToast={false}
-              disabled={!saveName.trim() || !!macError}
+              disabled={!canSaveDevice}
               data-testid="wol-save-confirm"
             >
               Save
@@ -244,7 +245,7 @@ export function WolPanel() {
             value={saveName}
             onChange={(e) => setSaveName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && saveName.trim() && !macError) {
+              if (e.key === "Enter" && canSaveDevice) {
                 e.preventDefault();
                 void handleConfirmSave();
               }
