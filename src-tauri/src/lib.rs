@@ -8,6 +8,7 @@ mod embedded_servers;
 pub mod files;
 mod network;
 mod session;
+mod spawn;
 mod terminal;
 mod tunnel;
 mod utils;
