@@ -25,9 +25,9 @@ vi.mock("@/components/ui", async () => {
   };
 });
 
-const writeText = vi.fn(() => Promise.resolve());
+const writeText = vi.fn((_text?: string) => Promise.resolve());
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
-  writeText: (...args: unknown[]) => writeText(...args),
+  writeText: (text: string) => writeText(text),
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({

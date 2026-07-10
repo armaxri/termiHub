@@ -12,6 +12,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
 }));
 
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
+import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -34,7 +35,7 @@ const baseProps = {
   open: true,
   onOpenChange: () => {},
   config: null,
-  onSave: () => {},
+  onSave: (_config: EmbeddedServerConfig): boolean => true,
 };
 
 describe("EmbeddedServerDialog", () => {
@@ -70,7 +71,7 @@ describe("EmbeddedServerDialog", () => {
   it("Save is disabled until name + root are set, then fires onSave with the config", async () => {
     // onSave resolves true (saved) so the dialog closes; a false/rejected result
     // keeps it open (covered by EmbeddedServerSidebar's feedback tests).
-    const onSave = vi.fn(() => Promise.resolve(true));
+    const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
     const onOpenChange = vi.fn();
     render(<EmbeddedServerDialog {...baseProps} onSave={onSave} onOpenChange={onOpenChange} />);
 
