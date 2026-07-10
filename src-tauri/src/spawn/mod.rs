@@ -19,6 +19,7 @@ compile_error!("spawn IPC requires a Unix or Windows target");
 
 pub mod ipc_client;
 pub mod ipc_server;
+pub mod registry;
 
 #[cfg(test)]
 mod tests;
