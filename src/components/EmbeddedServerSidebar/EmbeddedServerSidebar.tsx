@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button } from "@/components/ui";
+import { Button, toast } from "@/components/ui";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
@@ -37,8 +37,12 @@ export function EmbeddedServerSidebar() {
     [servers]
   );
 
+  /**
+   * Persist a server from the dialog. Resolves `true` when the save succeeded
+   * (so the dialog closes) and `false` on failure (dialog stays open to retry).
+   */
   const handleSave = useCallback(
-    (config: EmbeddedServerConfig) => {
+    async (config: EmbeddedServerConfig): Promise<boolean> => {
       const isNew = !config.id;
       const cfg = isNew
         ? {
@@ -46,13 +50,22 @@ export function EmbeddedServerSidebar() {
             id: `srv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           }
         : config;
-      saveEmbeddedServer(cfg).catch((err: unknown) => console.error("Failed to save server:", err));
+      try {
+        await saveEmbeddedServer(cfg);
+        toast.success(isNew ? `Created "${cfg.name}"` : `Saved "${cfg.name}"`);
+        return true;
+      } catch (err) {
+        toast.error(`Failed to save "${cfg.name}"`, {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+      }
     },
     [saveEmbeddedServer]
   );
 
   const handleDuplicate = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const original = servers.find((s) => s.id === id);
       if (!original) return;
       const dupe: EmbeddedServerConfig = {
@@ -61,9 +74,14 @@ export function EmbeddedServerSidebar() {
         name: `Copy of ${original.name}`,
         autoStart: false,
       };
-      saveEmbeddedServer(dupe).catch((err: unknown) =>
-        console.error("Failed to duplicate server:", err)
-      );
+      try {
+        await saveEmbeddedServer(dupe);
+        toast.success(`Duplicated "${original.name}"`);
+      } catch (err) {
+        toast.error(`Failed to duplicate "${original.name}"`, {
+          description: err instanceof Error ? err.message : String(err),
+        });
+      }
     },
     [servers, saveEmbeddedServer]
   );

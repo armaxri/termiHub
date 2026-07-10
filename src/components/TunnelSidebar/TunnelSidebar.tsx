@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import type { TunnelStatus } from "@/types/tunnel";
 import { TunnelListItem } from "./TunnelListItem";
@@ -44,7 +45,13 @@ export function TunnelSidebar() {
         name: `Copy of ${original.name}`,
         autoStart: false,
       };
-      saveTunnel(duplicate).catch((err) => console.error("Failed to duplicate tunnel:", err));
+      saveTunnel(duplicate)
+        .then(() => toast.success(`Duplicated "${original.name}"`))
+        .catch((err: unknown) =>
+          toast.error(`Failed to duplicate "${original.name}"`, {
+            description: err instanceof Error ? err.message : String(err),
+          })
+        );
     },
     [tunnels, saveTunnel]
   );

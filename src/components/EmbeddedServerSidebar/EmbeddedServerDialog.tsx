@@ -16,7 +16,11 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** Existing config to edit, or null for a new server. */
   config: EmbeddedServerConfig | null;
-  onSave: (config: EmbeddedServerConfig) => void;
+  /**
+   * Persist the config. Resolve `true` when the save succeeded (the dialog
+   * closes) or `false` on failure (the dialog stays open so the user can retry).
+   */
+  onSave: (config: EmbeddedServerConfig) => boolean | Promise<boolean>;
 }
 
 /** Blank default config used when creating a new server. */
@@ -88,10 +92,12 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     setLanWarning(false);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.name.trim() || !form.rootDirectory.trim()) return;
-    onSave(form);
-    onOpenChange(false);
+    // Close only when the save actually succeeded; on failure the dialog stays
+    // open (the sidebar surfaces the error via toast) so the user can retry.
+    const saved = await onSave(form);
+    if (saved) onOpenChange(false);
   };
 
   const ftpAnon = !form.ftpAuth || form.ftpAuth.type === "anonymous";

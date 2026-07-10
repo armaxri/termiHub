@@ -102,7 +102,11 @@ export function EmbeddedServerItem({
   }, [busy, onStop, config.id, config.name]);
 
   const handleCopyUrl = () => {
-    writeClipboard(url).catch(() => {});
+    writeClipboard(url)
+      .then(() => toast.success("Copied URL to clipboard"))
+      .catch((err: unknown) =>
+        toast.error("Failed to copy URL", { description: errorMessage(err) })
+      );
   };
 
   const handleOpenBrowser = () => {
