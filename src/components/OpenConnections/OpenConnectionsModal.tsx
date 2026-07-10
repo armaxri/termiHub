@@ -49,6 +49,9 @@ import {
 } from "@/services/networkApi";
 import { frontendLog } from "@/utils/frontendLog";
 import { XServerStatusReport } from "@/types/xserver";
+import { resolveAgentUpdateState } from "@/utils/agentVersion";
+import { useDesktopVersion } from "@/hooks/useDesktopVersion";
+import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
 import { XServerSetupDialog } from "./XServerSetupDialog";
 import "./OpenConnectionsModal.css";
 
@@ -71,6 +74,7 @@ interface ProxySessionsState {
  */
 export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModalProps) {
   const remoteAgents = useAppStore((s) => s.remoteAgents);
+  const desktopVersion = useDesktopVersion();
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
   const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
@@ -624,6 +628,18 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 icon={<Server size={14} />}
                 title={a.name}
                 badge="connected"
+                meta={
+                  <AgentVersionBadge
+                    version={a.capabilities?.agentVersion}
+                    state={
+                      desktopVersion
+                        ? resolveAgentUpdateState(a.capabilities?.agentVersion, desktopVersion)
+                        : "unknown"
+                    }
+                    showLabel
+                    data-testid={`oc-agent-version-${a.id}`}
+                  />
+                }
                 actions={
                   // Two distinct teardown intents mirroring the agent header
                   // (G9, #1237/#1277). Disconnect detaches the transport but keeps
@@ -1095,6 +1111,8 @@ interface ConnectionRowProps {
   /** Secondary line of context (e.g. the X display number). */
   detail?: string;
   badge: BadgeVariant;
+  /** Extra info rendered between the title and the status badge (e.g. agent version). */
+  meta?: React.ReactNode;
   /** When omitted, no per-row kill button is rendered. */
   onKill?: () => void | Promise<void>;
   /** Label for the kill button (defaults to "Kill"). */
@@ -1115,6 +1133,7 @@ function ConnectionRow({
   title,
   detail,
   badge,
+  meta,
   onKill,
   killLabel = "Kill",
   "data-testid": testId,
@@ -1128,6 +1147,7 @@ function ConnectionRow({
         {title}
         {detail && <span className="oc-row__detail">{detail}</span>}
       </span>
+      {meta}
       <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
       {actions ??
         (onKill && (
