@@ -1,28 +1,34 @@
-//! Windows Explorer context-menu registry registration (#1368).
+//! OS context-menu / Quick Action registration.
 //!
-//! Part of the Shell Context Menu & CLI Spawn Integration epic (#1363). Writes
-//! and removes the user-level (`HKCU\Software\Classes\…`) registry keys that make
-//! configured [`ShellEntry`]s appear as "Open in termiHub" entries in Windows
-//! Explorer's right-click menus — for folders, folder backgrounds, and files.
+//! Part of the Shell Context Menu & CLI Spawn Integration epic (#1363).
 //!
-//! All keys live under `HKEY_CURRENT_USER`, so **no administrator rights** are
-//! required. Registration is idempotent: install first clears any prior termiHub
-//! keys, then rewrites them from the current entry list.
+//! * **Windows** (#1368): writes and removes the user-level
+//!   (`HKCU\Software\Classes\…`) registry keys that make configured
+//!   [`ShellEntry`]s appear as "Open in termiHub" entries in Explorer's
+//!   right-click menus — for folders, folder backgrounds, and files. All keys
+//!   live under `HKEY_CURRENT_USER`, so **no administrator rights** are required.
+//! * **macOS** (#1369): writes and removes per-entry Automator Quick Action
+//!   bundles under `~/Library/Services/<name>.workflow`, each carrying its own
+//!   `NSServices` declaration so the entry surfaces under Finder's Quick Actions
+//!   and the Services menu. User-level only.
+//!
+//! Registration is idempotent on both platforms: install first clears any prior
+//! termiHub registration, then rewrites it from the current entry list.
 //!
 //! Callers use the cross-platform [`register`] / [`unregister`] seam, which
 //! records the registration facts into [`ShellIntegrationSettings`]. On
-//! non-Windows platforms the underlying registry work returns a clear
+//! platforms without an implementation the underlying work returns a clear
 //! "unsupported on this platform" error before any state changes, so the calling
 //! Tauri commands and CLI subcommands behave predictably everywhere.
 
 use crate::connection::shell_integration::{ShellEntry, ShellIntegrationSettings};
 use anyhow::Context;
 
-/// Message returned by the install / uninstall entry points on non-Windows
-/// platforms, where Explorer registry registration does not apply.
-#[cfg(not(windows))]
+/// Message returned by the install / uninstall entry points on platforms that
+/// have no context-menu / Quick Action registration implementation.
+#[cfg(not(any(windows, target_os = "macos")))]
 const UNSUPPORTED_MESSAGE: &str =
-    "Windows Explorer context-menu registration is only supported on Windows";
+    "file-manager context-menu registration is not supported on this platform";
 
 /// Register the integration for `settings.entries`, recording the registration
 /// facts (`registered` flag + executable path) back into `settings`.
@@ -73,16 +79,376 @@ fn uninstall() -> anyhow::Result<()> {
     imp::Registrar::system().uninstall()
 }
 
-/// Non-Windows stub: Explorer registry registration does not apply here.
-#[cfg(not(windows))]
+/// Register the given entries as macOS Finder Quick Action bundles under
+/// `~/Library/Services`. Idempotent — an existing registration is replaced.
+/// Private: callers go through the cross-platform [`register`] seam.
+#[cfg(target_os = "macos")]
+fn install(entries: &[ShellEntry], exe_path: &str) -> anyhow::Result<()> {
+    macos::Registrar::user()?.install(entries, exe_path)
+}
+
+/// Remove every termiHub Quick Action bundle from `~/Library/Services`
+/// (macOS-only). Private: callers go through the cross-platform [`unregister`]
+/// seam.
+#[cfg(target_os = "macos")]
+fn uninstall() -> anyhow::Result<()> {
+    macos::Registrar::user()?.uninstall()
+}
+
+/// Stub for platforms without a context-menu registration implementation.
+#[cfg(not(any(windows, target_os = "macos")))]
 fn install(_entries: &[ShellEntry], _exe_path: &str) -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
 }
 
-/// Non-Windows stub: Explorer registry registration does not apply here.
-#[cfg(not(windows))]
+/// Stub for platforms without a context-menu registration implementation.
+#[cfg(not(any(windows, target_os = "macos")))]
 fn uninstall() -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
+}
+
+/// macOS Finder Quick Action / Services registration (#1369).
+///
+/// Each configured [`ShellEntry`] is written as a self-contained Automator
+/// "Run Shell Script" workflow bundle under `~/Library/Services/<name>.workflow`.
+/// The bundle's `document.wflow` runs `termiHub spawn --entry-id <id> --location
+/// "$@"` with the selected paths passed as arguments; its `Info.plist` declares
+/// an `NSServices` entry so Finder surfaces it under both Quick Actions and the
+/// Services menu. Every generated `Info.plist` carries the [`MARKER_KEY`] so
+/// uninstall removes only termiHub-owned bundles and never touches foreign ones.
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::ShellEntry;
+    use crate::connection::shell_integration::ShowForTargets;
+    use anyhow::{Context, Result};
+    use std::path::{Path, PathBuf};
+
+    /// Custom `Info.plist` key stamped into every generated bundle so uninstall
+    /// can distinguish termiHub bundles from unrelated Quick Actions.
+    pub(super) const MARKER_KEY: &str = "TermiHubShellIntegration";
+
+    /// Writes and removes the per-entry Quick Action bundles under a
+    /// `Library/Services` directory.
+    ///
+    /// The `services_dir` is injectable so tests target a throwaway directory
+    /// instead of the user's real `~/Library/Services`.
+    pub struct Registrar {
+        services_dir: PathBuf,
+    }
+
+    impl Registrar {
+        /// Registrar targeting the real per-user `~/Library/Services`.
+        pub fn user() -> Result<Self> {
+            let services_dir = dirs::home_dir()
+                .context("resolve home directory for macOS Services registration")?
+                .join("Library/Services");
+            Ok(Self { services_dir })
+        }
+
+        /// Registrar targeting a throwaway directory so a test never touches the
+        /// user's real Quick Actions.
+        #[cfg(test)]
+        pub fn for_test(services_dir: PathBuf) -> Self {
+            Self { services_dir }
+        }
+
+        /// Install a Quick Action bundle per entry (idempotent).
+        ///
+        /// Any prior termiHub registration is cleared first, so calling this with
+        /// the current entry list always converges to exactly that set.
+        pub fn install(&self, entries: &[ShellEntry], exe_path: &str) -> Result<()> {
+            // Idempotency: start from a clean slate.
+            self.uninstall()?;
+            if entries.is_empty() {
+                return Ok(());
+            }
+            std::fs::create_dir_all(&self.services_dir)
+                .with_context(|| format!("create services dir {}", self.services_dir.display()))?;
+            for entry in entries {
+                self.write_bundle(entry, exe_path)
+                    .with_context(|| format!("write workflow bundle for entry {}", entry.id))?;
+            }
+            Ok(())
+        }
+
+        /// Remove every termiHub-owned Quick Action bundle. Foreign bundles (no
+        /// [`MARKER_KEY`]) are left untouched. Never fails when nothing is
+        /// registered or the services directory does not exist.
+        pub fn uninstall(&self) -> Result<()> {
+            if !self.services_dir.exists() {
+                return Ok(());
+            }
+            for dir_entry in std::fs::read_dir(&self.services_dir)
+                .with_context(|| format!("read services dir {}", self.services_dir.display()))?
+            {
+                let path = dir_entry
+                    .with_context(|| {
+                        format!("enumerate services dir {}", self.services_dir.display())
+                    })?
+                    .path();
+                if is_workflow_bundle(&path) && bundle_is_ours(&path) {
+                    std::fs::remove_dir_all(&path)
+                        .with_context(|| format!("remove workflow bundle {}", path.display()))?;
+                }
+            }
+            Ok(())
+        }
+
+        /// Write one entry's `<name>.workflow` bundle (`Contents/document.wflow`
+        /// + `Contents/Info.plist`).
+        fn write_bundle(&self, entry: &ShellEntry, exe_path: &str) -> Result<()> {
+            let contents = self
+                .services_dir
+                .join(bundle_dir_name(entry))
+                .join("Contents");
+            std::fs::create_dir_all(&contents)
+                .with_context(|| format!("create bundle contents {}", contents.display()))?;
+            std::fs::write(
+                contents.join("document.wflow"),
+                workflow_xml(entry, exe_path),
+            )
+            .context("write document.wflow")?;
+            std::fs::write(contents.join("Info.plist"), info_plist_xml(entry))
+                .context("write bundle Info.plist")?;
+            Ok(())
+        }
+    }
+
+    /// True when `path` is a `*.workflow` bundle directory.
+    fn is_workflow_bundle(path: &Path) -> bool {
+        path.is_dir() && path.extension().and_then(|e| e.to_str()) == Some("workflow")
+    }
+
+    /// True when the bundle's `Info.plist` carries the termiHub owner marker.
+    fn bundle_is_ours(bundle: &Path) -> bool {
+        std::fs::read_to_string(bundle.join("Contents/Info.plist"))
+            .map(|contents| contents.contains(MARKER_KEY))
+            .unwrap_or(false)
+    }
+
+    /// Filesystem-safe `<name>.workflow` directory name for an entry.
+    ///
+    /// Path separators (`/`, `\`) and the colon (`:`, shown as `/` in Finder)
+    /// are replaced with `-`; an entry whose name reduces to empty falls back to
+    /// its stable id.
+    fn bundle_dir_name(entry: &ShellEntry) -> String {
+        let sanitized: String = entry
+            .name
+            .chars()
+            .map(|c| match c {
+                '/' | '\\' | ':' => '-',
+                other => other,
+            })
+            .collect();
+        let base = sanitized.trim();
+        let base = if base.is_empty() {
+            entry.id.as_str()
+        } else {
+            base
+        };
+        format!("{base}.workflow")
+    }
+
+    /// The Uniform Type Identifiers a bundle accepts, derived from the entry's
+    /// `show_for` targets. Folders (and folder-background) map to `public.folder`;
+    /// files map to `public.data`. An entry with neither falls back to the
+    /// catch-all `public.item` so it still surfaces somewhere.
+    pub(super) fn send_file_types(show_for: &ShowForTargets) -> Vec<&'static str> {
+        let mut types = Vec::new();
+        if show_for.folders || show_for.folder_background {
+            types.push("public.folder");
+        }
+        if show_for.files {
+            types.push("public.data");
+        }
+        if types.is_empty() {
+            types.push("public.item");
+        }
+        types
+    }
+
+    /// The shell script the Quick Action runs: the spawn subcommand with the
+    /// selected paths passed as positional arguments.
+    fn shell_command(entry: &ShellEntry, exe_path: &str) -> String {
+        format!(
+            r#""{exe_path}" spawn --entry-id {id} --location "$@""#,
+            id = entry.id,
+        )
+    }
+
+    /// Escape the five XML predefined entities so arbitrary names / paths embed
+    /// safely into the plist templates.
+    fn xml_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    }
+
+    /// Render the bundle's `Info.plist`: an `NSServices` declaration plus the
+    /// termiHub owner marker.
+    fn info_plist_xml(entry: &ShellEntry) -> String {
+        let name = xml_escape(&entry.name);
+        let types = send_file_types(&entry.show_for)
+            .iter()
+            .map(|t| format!("\t\t\t\t<string>{t}</string>"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>{name}</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>runWorkflowAsService</string>
+			<key>NSSendFileTypes</key>
+			<array>
+{types}
+			</array>
+		</dict>
+	</array>
+	<key>{MARKER_KEY}</key>
+	<true/>
+</dict>
+</plist>
+"#
+        )
+    }
+
+    /// Render the Automator `document.wflow` for the entry: a single "Run Shell
+    /// Script" action wired as a Finder services-menu workflow, receiving the
+    /// selected file-system objects as arguments.
+    fn workflow_xml(entry: &ShellEntry, exe_path: &str) -> String {
+        let command = xml_escape(&shell_command(entry, exe_path));
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationBuild</key>
+	<string>521</string>
+	<key>AMApplicationVersion</key>
+	<string>2.10</string>
+	<key>AMDocumentVersion</key>
+	<string>2</string>
+	<key>actions</key>
+	<array>
+		<dict>
+			<key>action</key>
+			<dict>
+				<key>AMAccepts</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Optional</key>
+					<true/>
+					<key>Types</key>
+					<array>
+						<string>com.apple.cocoa.string</string>
+					</array>
+				</dict>
+				<key>AMActionVersion</key>
+				<string>2.0.3</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>AMProvides</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Types</key>
+					<array>
+						<string>com.apple.cocoa.string</string>
+					</array>
+				</dict>
+				<key>ActionBundlePath</key>
+				<string>/System/Library/Automator/Run Shell Script.action</string>
+				<key>ActionName</key>
+				<string>Run Shell Script</string>
+				<key>ActionParameters</key>
+				<dict>
+					<key>COMMAND_STRING</key>
+					<string>{command}</string>
+					<key>CheckedForUserDefaultShell</key>
+					<true/>
+					<key>inputMethod</key>
+					<integer>1</integer>
+					<key>shell</key>
+					<string>/bin/zsh</string>
+					<key>source</key>
+					<string></string>
+				</dict>
+				<key>BundleIdentifier</key>
+				<string>com.apple.RunShellScript</string>
+				<key>CFBundleVersion</key>
+				<string>2.0.3</string>
+				<key>CanShowSelectedItemsWhenRun</key>
+				<false/>
+				<key>CanShowWhenRun</key>
+				<true/>
+				<key>Category</key>
+				<array>
+					<string>AMCategoryUtilities</string>
+				</array>
+				<key>Class Name</key>
+				<string>RunShellScriptAction</string>
+				<key>InputUUID</key>
+				<string>4F1C9A20-1369-4A11-9C01-000000000001</string>
+				<key>Keywords</key>
+				<array>
+					<string>Shell</string>
+					<string>Script</string>
+					<string>Command</string>
+					<string>Run</string>
+					<string>Unix</string>
+				</array>
+				<key>OutputUUID</key>
+				<string>4F1C9A20-1369-4A11-9C01-000000000002</string>
+				<key>UUID</key>
+				<string>4F1C9A20-1369-4A11-9C01-000000000003</string>
+				<key>UnlocalizedApplications</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>isViewVisible</key>
+				<integer>1</integer>
+			</dict>
+			<key>isViewVisible</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>connectors</key>
+	<dict/>
+	<key>workflowMetaData</key>
+	<dict>
+		<key>serviceApplicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>serviceApplicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
+		<key>serviceInputTypeIdentifier</key>
+		<string>com.apple.Automator.fileSystemObject</string>
+		<key>serviceOutputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<integer>0</integer>
+		<key>workflowTypeIdentifier</key>
+		<string>com.apple.Automator.servicesMenu</string>
+	</dict>
+</dict>
+</plist>
+"#
+        )
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
