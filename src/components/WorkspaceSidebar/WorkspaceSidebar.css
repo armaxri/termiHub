@@ -12,24 +12,6 @@
   border-bottom: 1px solid var(--border-primary);
 }
 
-.workspace-sidebar__add-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  border-radius: var(--radius-sm);
-}
-
-.workspace-sidebar__add-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .workspace-sidebar__list {
   flex: 1;
   overflow-y: auto;
@@ -49,71 +31,7 @@
   gap: 8px;
 }
 
-.workspace-item {
-  display: flex;
-  flex-direction: column;
-  padding: 6px 12px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.workspace-item:hover {
-  background: var(--bg-hover);
-}
-
-.workspace-item__header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.workspace-item__name {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-item__actions {
-  display: flex;
-  gap: 2px;
-  opacity: 0;
-}
-
-.workspace-item:hover .workspace-item__actions {
-  opacity: 1;
-}
-
-.workspace-item__action {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  padding: 0;
-}
-
-.workspace-item__action:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.workspace-item__action:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.workspace-item__action:disabled:hover {
-  background: none;
-  color: var(--text-secondary);
-}
+/* Workspace rows compose the shared SidebarListItem shell (issue #1358). */
 
 /* Launch-in-flight indicator (GAP G6, issue 1146). */
 .workspace-item__spinner {

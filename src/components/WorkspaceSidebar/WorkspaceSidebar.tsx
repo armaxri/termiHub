@@ -3,7 +3,7 @@ import { Plus, Save, Download, Upload } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
-import { toast, Tooltip } from "@/components/ui";
+import { Button, toast, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { WorkspaceListItem } from "./WorkspaceListItem";
@@ -142,46 +142,50 @@ export function WorkspaceSidebar() {
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
       <div className="workspace-sidebar__actions">
         <Tooltip content="New Workspace" side="top">
-          <button
-            className="workspace-sidebar__add-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Plus size={14} />}
             onClick={handleNew}
             aria-label="New Workspace"
             data-testid="workspace-new-btn"
           >
-            <Plus size={14} />
             New Workspace
-          </button>
+          </Button>
         </Tooltip>
         <Tooltip content="Save Current Layout" side="top">
-          <button
-            className="workspace-sidebar__add-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Save size={14} />}
             onClick={() => setShowSaveDialog(true)}
             aria-label="Save Current Layout"
             data-testid="workspace-save-current-btn"
           >
-            <Save size={14} />
             Save Current
-          </button>
+          </Button>
         </Tooltip>
         <Tooltip content="Export Workspaces" side="top">
-          <button
-            className="workspace-sidebar__add-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<Download size={14} />}
             onClick={handleExport}
             aria-label="Export Workspaces"
             data-testid="workspace-export-btn"
-          >
-            <Download size={14} />
-          </button>
+          />
         </Tooltip>
         <Tooltip content="Import Workspaces" side="top">
-          <button
-            className="workspace-sidebar__add-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<Upload size={14} />}
             onClick={handleImport}
             aria-label="Import Workspaces"
             data-testid="workspace-import-btn"
-          >
-            <Upload size={14} />
-          </button>
+          />
         </Tooltip>
       </div>
       {workspaces.length === 0 ? (
