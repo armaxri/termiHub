@@ -21,6 +21,7 @@ import {
   ExternalFileError,
   AppSettings,
   ShellIntegrationStatus,
+  ShellIntegrationSettings,
   AgentCapabilities,
   AgentSettings,
   RecoveryWarning,
@@ -490,6 +491,35 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
  */
 export async function getShellIntegrationStatus(): Promise<ShellIntegrationStatus> {
   return await invoke<ShellIntegrationStatus>("get_shell_integration_status");
+}
+
+/**
+ * Persist the shell-integration settings and, when the integration is currently
+ * registered, refresh the OS context-menu registration so it reflects the edited
+ * entries. Returns the recomputed registration + staleness status.
+ */
+export async function saveShellIntegrationSettings(
+  shellIntegration: ShellIntegrationSettings
+): Promise<ShellIntegrationStatus> {
+  return await invoke<ShellIntegrationStatus>("save_shell_integration_settings", {
+    shellIntegration,
+  });
+}
+
+/**
+ * Register the configured entries as OS file-manager context-menu items and
+ * persist the updated registration status. Returns the refreshed status.
+ */
+export async function installShellIntegration(): Promise<ShellIntegrationStatus> {
+  return await invoke<ShellIntegrationStatus>("install_shell_integration");
+}
+
+/**
+ * Remove all OS file-manager context-menu registrations and persist the updated
+ * registration status. Returns the refreshed status.
+ */
+export async function uninstallShellIntegration(): Promise<ShellIntegrationStatus> {
+  return await invoke<ShellIntegrationStatus>("uninstall_shell_integration");
 }
 
 /** Save an external connection file to disk */
