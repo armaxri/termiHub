@@ -867,6 +867,38 @@ through save/load. See PR #1388.
    the update still succeeds via the immediate path, and the app log records a
    warning that the coordinated/deferred strategy is not yet honored (#1351/#1352).
 
+### Windows Explorer context-menu registration (#1368)
+
+Verifies that shell-integration registration writes/removes the Windows Explorer
+context-menu entries. **Windows only** — the registry writes are `#[cfg(windows)]`
+and validated automatically by the Windows CI job; these steps confirm the live
+Explorer behavior, which CI cannot observe. See PR #1368.
+
+Prerequisites: a Windows build of termiHub, with at least one shell-integration
+entry configured (an "Open in termiHub" folders entry exists by default once the
+settings UI lands; until then, seed `shellIntegration.entries` in `settings.json`).
+
+1. Install from the CLI: run `termiHub.exe install-shell-integration` (or invoke
+   the `install_shell_integration` command from the app). It prints
+   `Shell integration installed.` and exits 0.
+2. In File Explorer, **right-click a folder** → the configured entry (e.g. "Open
+   in termiHub") appears. Choosing it opens termiHub with a session at that folder.
+3. **Right-click empty space** inside an open folder (folder background) → the
+   entry appears and opens a session at the current folder (`%V`).
+4. **Right-click a file** → if the entry enables the _Files_ target, it appears
+   and opens a session at the file's parent directory.
+5. For an entry set to **Extended** visibility: it is hidden on a normal
+   right-click and appears only under **Shift + right-click**.
+6. Configure **three or more** always-visible entries and reinstall → the entries
+   are grouped under a single cascading **termiHub** submenu instead of appearing
+   at the top level.
+7. Reinstall again without changes → no duplicate entries appear (idempotent).
+8. Uninstall: run `termiHub.exe uninstall-shell-integration` (or the
+   `uninstall_shell_integration` command) → all entries and the submenu disappear
+   from every right-click surface, and no `termihub_*` / `termiHubMenu` keys
+   remain under `HKCU\Software\Classes\Directory\shell`,
+   `…\Directory\Background\shell`, or `…\*\shell` (verify with `regedit`).
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
