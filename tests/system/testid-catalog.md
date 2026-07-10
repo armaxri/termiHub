@@ -64,6 +64,9 @@ Fixed strings — match exactly.
 | `confirm-delete-cancel` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
 | `confirm-delete-confirm` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
 | `confirm-delete-dialog` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
+| `confirm-dialog-cancel` | `src/components/ui/ConfirmDialog.tsx` |
+| `confirm-dialog-confirm` | `src/components/ui/ConfirmDialog.tsx` |
+| `confirm-session-close-dialog` | `src/components/Terminal/ConfirmSessionCloseDialog.tsx` |
 | `confirm-switch-confirm-btn` | `src/components/Settings/SecuritySettings.tsx` |
 | `confirm-switch-dialog` | `src/components/Settings/SecuritySettings.tsx` |
 | `connection-editor-cancel` | `src/components/ConnectionEditor/ConnectionEditor.tsx` |
@@ -361,6 +364,7 @@ Fixed strings — match exactly.
 | `server-sidebar` | `src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx` |
 | `services-indicator` | `src/components/StatusBar/StatusBar.tsx` |
 | `settings-ask-open-saved-file-in-tab` | `src/components/Settings/TerminalSettings.tsx` |
+| `settings-confirm-close-live-session` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-confirm-close-tab-on-shortcut` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-cursor-style` | `src/components/Settings/TerminalSettings.tsx` |
 | `settings-default-shell` | `src/components/Settings/GeneralSettings.tsx` |
@@ -683,15 +687,16 @@ where the component is used, not at the `data-testid` site.
 | expression | source |
 | ---------- | ------ |
 | `{badgeTestId}` | `src/components/SidebarListItem/SidebarListItem.tsx` |
-| `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
+| `{confirmTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
+| `{dontAskAgain["data-testid"] ?? "confirm-dialog-dont-ask-again"}` | `src/components/ui/ConfirmDialog.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{killTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{nameTestId}` | `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
 | `{paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}` | `src/components/StatusBar/StatusBar.tsx` |
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
-| `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
+| `{rest["data-testid"]}` | `src/components/ui/ConfirmDialog.tsx`, `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |

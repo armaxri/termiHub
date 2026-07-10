@@ -280,9 +280,15 @@ export interface AppSettings {
   /**
    * Show a confirmation dialog when the user closes a tab via the
    * close-tab or close-tab-group keyboard shortcut. Defaults to true.
-   * The X-button on tabs always closes immediately and is unaffected by this setting.
    */
   confirmCloseTabOnShortcut?: boolean;
+  /**
+   * Show a confirmation dialog before closing a tab or split panel that holds a
+   * live session (SSH/serial/local shell/telnet) via the tab X, middle-click, or
+   * the panel close button. Defaults to true. The dialog's "Don't ask again"
+   * opt-out flips this off; it can be re-enabled from General settings.
+   */
+  confirmCloseLiveSession?: boolean;
   /**
    * When true (default), saving terminal content to a file shows a dialog
    * offering to open the saved file in a Monaco editor tab. When false, the

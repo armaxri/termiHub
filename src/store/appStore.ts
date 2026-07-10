@@ -18,6 +18,7 @@ import {
   NetworkTool,
   TabGroup,
   TerminalExitInfo,
+  SessionCloseConfirmRequest,
 } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import {
@@ -419,6 +420,15 @@ interface AppState {
       | { kind: "tab-group"; tabGroupId: string; label: string }
       | null
   ) => void;
+  /**
+   * Confirmation request shown before tearing down a live session by closing a
+   * tab (X / middle-click) or a split panel, while
+   * `settings.confirmCloseLiveSession` is enabled. Null when no dialog is open.
+   * The `tab` variant carries an optional `reopen` payload so the follow-up
+   * toast can offer an Undo/Reopen affordance when the connection is known.
+   */
+  pendingSessionCloseConfirm: SessionCloseConfirmRequest | null;
+  setPendingSessionCloseConfirm: (req: SessionCloseConfirmRequest | null) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -2325,6 +2335,9 @@ export const useAppStore = create<AppState>((set, get) => {
     pendingShortcutCloseConfirm: null,
     setPendingShortcutCloseConfirm: (req) => set({ pendingShortcutCloseConfirm: req }),
 
+    pendingSessionCloseConfirm: null,
+    setPendingSessionCloseConfirm: (req) => set({ pendingSessionCloseConfirm: req }),
+
     closeTab: (tabId, panelId) => {
       // Close every SFTP session owned by this tab and drop it from the map —
       // the L1 leak fix (#1241). Fire the async closes here (fire-and-forget)
@@ -2649,6 +2662,7 @@ export const useAppStore = create<AppState>((set, get) => {
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
       confirmCloseTabOnShortcut: true,
+      confirmCloseLiveSession: true,
       askOpenSavedFileInTab: true,
     },
     savedSettings: {
@@ -2657,6 +2671,7 @@ export const useAppStore = create<AppState>((set, get) => {
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
       confirmCloseTabOnShortcut: true,
+      confirmCloseLiveSession: true,
       askOpenSavedFileInTab: true,
     },
 

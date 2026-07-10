@@ -96,6 +96,15 @@ export function Tab({
       style={style}
       className={`tab ${tab.isActive ? "tab--active" : ""}`}
       onClick={onActivate}
+      onAuxClick={(e) => {
+        // Middle-click closes the tab (routes through the same live-session
+        // confirmation as the X button).
+        if (e.button === 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      }}
       title={tab.title}
       data-testid={`tab-${tab.id}`}
       {...attributes}

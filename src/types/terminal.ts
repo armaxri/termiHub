@@ -221,6 +221,26 @@ export interface TerminalTab {
   persistentConnectionId?: string;
 }
 
+/**
+ * The minimal data needed to reopen a just-closed terminal tab from an
+ * Undo/Reopen affordance — a fresh session is created, scrollback is not
+ * restored. `null` reopen means the tab had no reconnectable config.
+ */
+export interface ReopenTabPayload {
+  title: string;
+  connectionType: ConnectionType;
+  config: ConnectionConfig;
+}
+
+/**
+ * A pending confirmation before tearing down a live session by closing a tab
+ * (X / middle-click) or a split panel. The `tab` variant carries the optional
+ * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen.
+ */
+export type SessionCloseConfirmRequest =
+  | { kind: "tab"; tabId: string; panelId: string; label: string; reopen: ReopenTabPayload | null }
+  | { kind: "panel"; panelId: string; liveCount: number; tabCount: number };
+
 export interface LeafPanel {
   type: "leaf";
   id: string;

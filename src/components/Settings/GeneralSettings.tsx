@@ -131,8 +131,25 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               data-testid="settings-confirm-close-tab-on-shortcut"
             />
             <span className="settings-form__hint">
-              Ask for confirmation when closing a tab or tab group via keyboard shortcut. The X
-              button on tabs is unaffected.
+              Ask for confirmation when closing a tab or tab group via keyboard shortcut.
+            </span>
+          </div>
+        )}
+
+        {show("confirmCloseLiveSession") && (
+          <div className="settings-form__field">
+            <span className="settings-form__label">Confirm Closing a Live Session</span>
+            <Toggle
+              aria-label="Confirm Closing a Live Session"
+              checked={settings.confirmCloseLiveSession ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, confirmCloseLiveSession: checked })
+              }
+              data-testid="settings-confirm-close-live-session"
+            />
+            <span className="settings-form__hint">
+              Ask for confirmation before closing a tab (X or middle-click) or split panel that
+              holds a live SSH, serial, or shell session.
             </span>
           </div>
         )}

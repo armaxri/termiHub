@@ -14,6 +14,7 @@ import { OverlayViewPanel } from "@/components/Settings/OverlayViewPanel";
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
+import { ConfirmSessionCloseDialog } from "@/components/Terminal/ConfirmSessionCloseDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
 import { ToastProvider, TooltipProvider } from "@/components/ui";
@@ -303,6 +304,7 @@ function App() {
           />
           <UpdateNotification />
           <ConfirmCloseTabDialog />
+          <ConfirmSessionCloseDialog />
           <XServerConnectConsent />
           <ToastProvider />
         </div>

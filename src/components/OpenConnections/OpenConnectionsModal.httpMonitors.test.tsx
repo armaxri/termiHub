@@ -175,6 +175,15 @@ describe("OpenConnectionsModal — HTTP Monitors section", () => {
       killAll.click();
     });
 
+    // Bulk teardown now confirms first (#1343) — accept the dialog to proceed.
+    const confirm = document.querySelector(
+      '[data-testid="confirm-dialog-confirm"]'
+    ) as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => {
+      confirm.click();
+    });
+
     expect(networkHttpMonitorStopAll).toHaveBeenCalledTimes(1);
   });
 
