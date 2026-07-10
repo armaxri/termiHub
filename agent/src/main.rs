@@ -28,8 +28,30 @@ fn print_usage() {
     eprintln!("  --daemon <id>        Run as a session daemon (internal use only)");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --version   Print version and exit");
-    eprintln!("  --help      Print this help message");
+    eprintln!("  --version             Print version and exit");
+    eprintln!("  --help                Print this help message");
+    eprintln!(
+        "  --allow-self-update   Enable the background GitHub self-update check (off by default)"
+    );
+}
+
+/// CLI flag / env var that opts the agent into the background self-update check.
+const SELF_UPDATE_FLAG: &str = "--allow-self-update";
+const SELF_UPDATE_ENV: &str = "TERMIHUB_AGENT_ALLOW_SELF_UPDATE";
+
+/// Determine whether the agent should run the optional self-update check.
+///
+/// Enabled when the `--allow-self-update` flag is passed (the desktop appends it
+/// to the SSH exec command when the connection has self-update enabled) or when
+/// `TERMIHUB_AGENT_ALLOW_SELF_UPDATE` is set to a truthy value. Off by default.
+fn self_update_enabled(args: &[String]) -> bool {
+    if args.iter().any(|a| a == SELF_UPDATE_FLAG) {
+        return true;
+    }
+    matches!(
+        std::env::var(SELF_UPDATE_ENV).ok().as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    )
 }
 
 #[tokio::main]
@@ -59,22 +81,27 @@ async fn main() -> anyhow::Result<()> {
             init_tracing();
 
             let shutdown = setup_shutdown_signal();
+            let allow_self_update = self_update_enabled(&args);
             info!("termihub-agent {} starting in stdio mode", VERSION);
-            io::stdio::run_stdio_loop(shutdown).await
+            io::stdio::run_stdio_loop(shutdown, allow_self_update).await
         }
         "--listen" => {
             init_tracing();
 
+            // The listen address is optional; skip it (and any other flags) when
+            // resolving the address so `--allow-self-update` is not mistaken for it.
             let addr = args
                 .get(2)
+                .filter(|s| !s.starts_with("--"))
                 .map(|s| s.as_str())
                 .unwrap_or(DEFAULT_LISTEN_ADDR);
             let shutdown = setup_shutdown_signal();
+            let allow_self_update = self_update_enabled(&args);
             info!(
                 "termihub-agent {} starting in TCP listener mode on {}",
                 VERSION, addr
             );
-            io::tcp::run_tcp_listener(addr, shutdown).await
+            io::tcp::run_tcp_listener(addr, shutdown, allow_self_update).await
         }
         "--daemon" => {
             init_tracing();
@@ -140,4 +167,34 @@ fn setup_shutdown_signal() -> CancellationToken {
     });
 
     token
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn self_update_flag_present_enables() {
+        assert!(self_update_enabled(&args(&[
+            "termihub-agent",
+            "--stdio",
+            SELF_UPDATE_FLAG
+        ])));
+        assert!(self_update_enabled(&args(&[
+            "termihub-agent",
+            "--listen",
+            "127.0.0.1:7685",
+            SELF_UPDATE_FLAG
+        ])));
+    }
+
+    #[test]
+    fn self_update_absent_is_disabled_by_default() {
+        // No flag, and the env var is not set in this test process.
+        assert!(!self_update_enabled(&args(&["termihub-agent", "--stdio"])));
+    }
 }

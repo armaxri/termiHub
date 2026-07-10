@@ -17,13 +17,17 @@ use crate::session::manager::SessionManager;
 /// Reads JSON-RPC messages from stdin (one per line) and writes
 /// responses to stdout. Backend notifications are interleaved via
 /// a `tokio::select!` loop. Logs go to stderr.
-pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
+pub async fn run_stdio_loop(
+    shutdown: CancellationToken,
+    allow_self_update: bool,
+) -> anyhow::Result<()> {
     let (notification_tx, mut notification_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
 
     let registry = Arc::new(build_registry());
     let session_manager = Arc::new(SessionManager::new(notification_tx.clone(), registry));
     let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
+    let update_tx = notification_tx.clone();
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
         connection_store.clone(),
@@ -34,6 +38,14 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
 
     // Recover sessions from previous agent run
     session_manager.recover_sessions().await;
+
+    // Optional background GitHub self-update check (off unless opted in).
+    crate::update::spawn_self_update_task(
+        crate::update::UpdateConfig::from_env(allow_self_update, env!("CARGO_PKG_VERSION")),
+        session_manager.clone(),
+        update_tx,
+        shutdown.child_token(),
+    );
 
     let handler = AgentHandler::new(
         session_manager.clone(),
