@@ -86,6 +86,23 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     }, SAVED_ACK_MS);
   }, []);
 
+  /**
+   * Cancel any pending debounced save and persist it immediately, so the last
+   * <=300ms of edits aren't lost when the tab closes or the panel unmounts.
+   */
+  const flushPendingSave = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const toSave = pendingSettingsRef.current;
+    if (toSave) {
+      pendingSettingsRef.current = null;
+      useAppStore.setState({ savedSettings: toSave });
+      updateSettings(toSave);
+    }
+  }, [updateSettings]);
+
   useEffect(() => {
     getAppInfo()
       .then(setAppInfo)
@@ -159,17 +176,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     if (pendingCloseRequest?.tabId !== tabId) return;
     frontendLog("settings_panel", `close request for tabId=${tabId} — flush and close`);
 
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    const toSave = pendingSettingsRef.current;
-    if (toSave) {
-      pendingSettingsRef.current = null;
-      useAppStore.setState({ savedSettings: toSave });
-      updateSettings(toSave);
-    }
-
+    flushPendingSave();
     setEditorDirty(tabId, false);
     const req = pendingCloseRequest;
     setPendingCloseRequest(null);
@@ -177,31 +184,22 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   }, [
     pendingCloseRequest,
     tabId,
-    updateSettings,
+    flushPendingSave,
     setEditorDirty,
     setPendingCloseRequest,
     closeTab,
   ]);
 
-  // Cleanup debounce timer on unmount
+  // Flush any pending debounced save and clear the ack timer on unmount.
   useEffect(() => {
     return () => {
       if (ackTimerRef.current) {
         clearTimeout(ackTimerRef.current);
         ackTimerRef.current = null;
       }
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        // Flush pending save
-        const toSave = pendingSettingsRef.current;
-        if (toSave) {
-          pendingSettingsRef.current = null;
-          useAppStore.setState({ savedSettings: toSave });
-          updateSettings(toSave);
-        }
-      }
+      flushPendingSave();
     };
-  }, [updateSettings]);
+  }, [flushPendingSave]);
 
   // Search filtering
   const isSearchActive = searchQuery.trim().length > 0;

@@ -763,14 +763,24 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
    * Save without closing. Returns true on success. On failure the underlying
    * save rejects, which propagates to the calling async Button so it surfaces a
    * recoverable error toast (rather than the save failing silently).
+   *
+   * Success feedback: regular connections get their success/error toast from the
+   * store's async persist (`addConnection`/`updateConnection`), which is the
+   * accurate source of truth — so we only toast here for the paths the store
+   * leaves silent: agent definitions and remote-agent transport saves.
    */
   const handleSaveOnly = useCallback(async (): Promise<boolean> => {
     if (!canSave) {
       focusFirstInvalidField();
       return false;
     }
-    const ok = isAgentDefinitionMode ? await saveAgentDefinition() : saveConnection() !== null;
-    if (ok) {
+    if (isAgentDefinitionMode) {
+      const ok = await saveAgentDefinition();
+      if (ok) toast.success(`Saved "${name.trim()}"`);
+      return ok;
+    }
+    const ok = saveConnection() !== null;
+    if (ok && isAgentTransportMode) {
       toast.success(`Saved "${name.trim()}"`);
     }
     return ok;
@@ -778,6 +788,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     canSave,
     focusFirstInvalidField,
     isAgentDefinitionMode,
+    isAgentTransportMode,
     saveAgentDefinition,
     saveConnection,
     name,
