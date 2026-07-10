@@ -378,6 +378,7 @@ mod tests {
                 save_password: None,
                 agent_path: None,
                 external_connection_files: vec![],
+                ..Default::default()
             },
             agent_settings: AgentSettings::default(),
         };

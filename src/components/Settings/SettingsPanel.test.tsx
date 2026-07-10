@@ -54,26 +54,32 @@ function render() {
   });
 }
 
-function findShellIntegrationCheckbox(): HTMLInputElement | null {
+function findShellIntegrationCheckbox(): HTMLElement | null {
   return container.querySelector(
     "[data-testid='settings-default-shell-integration']"
-  ) as HTMLInputElement | null;
+  ) as HTMLElement | null;
 }
 
-function findProvideXServerCheckbox(): HTMLInputElement | null {
-  return container.querySelector(
-    "[data-testid='settings-provide-x-server']"
-  ) as HTMLInputElement | null;
+function findProvideXServerCheckbox(): HTMLElement | null {
+  return container.querySelector("[data-testid='settings-provide-x-server']") as HTMLElement | null;
 }
 
-function findStopXServerIdleCheckbox(): HTMLInputElement | null {
+function findStopXServerIdleCheckbox(): HTMLElement | null {
   return container.querySelector(
     "[data-testid='settings-stop-x-server-idle']"
-  ) as HTMLInputElement | null;
+  ) as HTMLElement | null;
 }
 
-/** Toggle a controlled React checkbox by clicking it and returning the new value. */
-async function clickCheckbox(checkbox: HTMLInputElement) {
+/**
+ * Read the on/off state of a shared Toggle (Radix Switch), which exposes
+ * `aria-checked` rather than a native checkbox `.checked` property.
+ */
+function isChecked(el: HTMLElement): boolean {
+  return el.getAttribute("aria-checked") === "true";
+}
+
+/** Toggle a shared Toggle by clicking it. */
+async function clickCheckbox(checkbox: HTMLElement) {
   await act(async () => {
     checkbox.click();
   });
@@ -126,16 +132,16 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     const checkbox = findShellIntegrationCheckbox();
     expect(checkbox).not.toBeNull();
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
 
     // User disables shell integration → dirty
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(false);
+    expect(isChecked(checkbox!)).toBe(false);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
     // User reverts to original (enabled) value → clean
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 
@@ -152,17 +158,17 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     const checkbox = findShellIntegrationCheckbox();
     expect(checkbox).not.toBeNull();
     // Displayed value is true (from FULL_SETTINGS or the ?? true fallback)
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
 
     // User disables shell integration → dirty
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(false);
+    expect(isChecked(checkbox!)).toBe(false);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
     // User reverts → because lastSavedSettingsRef was synced when the external update arrived,
     // the comparison correctly finds no difference → clean
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 
@@ -195,17 +201,17 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     const checkbox = findProvideXServerCheckbox();
     expect(checkbox).not.toBeNull();
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
 
     // User disables auto-provisioning → dirty
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(false);
+    expect(isChecked(checkbox!)).toBe(false);
     expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(false);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
     // User reverts to original (enabled) value → clean
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
     expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(true);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
@@ -219,7 +225,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
       savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: true },
     });
     render();
-    expect(findProvideXServerCheckbox()!.checked).toBe(true);
+    expect(isChecked(findProvideXServerCheckbox()!)).toBe(true);
 
     // A persisted decline (Some(false)) shows as unchecked.
     act(() => root.unmount());
@@ -229,7 +235,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
       savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: false },
     });
     render();
-    expect(findProvideXServerCheckbox()!.checked).toBe(false);
+    expect(isChecked(findProvideXServerCheckbox()!)).toBe(false);
   });
 
   it("marks settings dirty when toggling Stop X Server When Idle", async () => {
@@ -238,17 +244,17 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     const checkbox = findStopXServerIdleCheckbox();
     expect(checkbox).not.toBeNull();
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
 
     // User disables idle shutdown → dirty
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(false);
+    expect(isChecked(checkbox!)).toBe(false);
     expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(false);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
     // User reverts to original (enabled) value → clean
     await clickCheckbox(checkbox!);
-    expect(checkbox!.checked).toBe(true);
+    expect(isChecked(checkbox!)).toBe(true);
     expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(true);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });

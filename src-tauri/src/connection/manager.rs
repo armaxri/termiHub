@@ -1305,6 +1305,7 @@ mod tests {
                 save_password,
                 agent_path: None,
                 external_connection_files: vec![],
+                ..Default::default()
             },
             agent_settings: Default::default(),
         }

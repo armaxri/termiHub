@@ -82,4 +82,13 @@ describe("PasswordInput", () => {
     expect(input().disabled).toBe(true);
     expect(toggleBtn().disabled).toBe(true);
   });
+
+  it("keeps the visibility toggle reachable by keyboard (not removed from tab order)", () => {
+    act(() => {
+      root.render(<PasswordInput value="secret" onChange={() => {}} />);
+    });
+    // tabIndex={-1} pulled the show/hide affordance out of the tab order, hiding
+    // it from keyboard-only users (issue #1358).
+    expect(toggleBtn().tabIndex).not.toBe(-1);
+  });
 });
