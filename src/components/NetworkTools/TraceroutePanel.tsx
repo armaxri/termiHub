@@ -10,6 +10,8 @@ import {
 } from "@/services/networkApi";
 import type { TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
+import { NetworkNumberField } from "./NetworkNumberField";
+import { validateIntRange } from "@/utils/fieldValidation";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
 interface TraceroutePanelProps {
@@ -19,8 +21,11 @@ interface TraceroutePanelProps {
 /** Traceroute diagnostic tab content. */
 export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
-  const [maxHops, setMaxHops] = useState(30);
+  const [maxHops, setMaxHops] = useState<number | "">(30);
   const [hops, setHops] = useState<TracerouteHop[]>([]);
+
+  const maxHopsError = validateIntRange(maxHops, { min: 1, max: 255, label: "Max hops" });
+  const canRun = !!host.trim() && !maxHopsError;
 
   const subscribe = useCallback(async ({ matchesTask, register, finish }: NetworkTaskContext) => {
     register(
@@ -45,7 +50,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
 
   const { status, error, run, stop } = useNetworkTask({
     logScope: "traceroute",
-    start: useCallback(() => networkTraceroute(host, maxHops), [host, maxHops]),
+    start: useCallback(() => networkTraceroute(host, Number(maxHops)), [host, maxHops]),
     cancel: networkTracerouteCancel,
     onReset: useCallback(() => setHops([]), []),
     subscribe,
@@ -87,7 +92,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
               size="sm"
               icon={<Play size={14} />}
               onClick={run}
-              disabled={!host.trim()}
+              disabled={!canRun}
               data-testid="traceroute-run"
             >
               Run
@@ -107,15 +112,14 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
             data-testid="traceroute-host"
           />
         </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Max Hops</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={maxHops}
-            onChange={(e) => setMaxHops(Number(e.target.value))}
-          />
-        </label>
+        <NetworkNumberField
+          label="Max Hops"
+          value={maxHops}
+          onChange={setMaxHops}
+          error={maxHopsError}
+          small
+          data-testid="traceroute-max-hops"
+        />
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

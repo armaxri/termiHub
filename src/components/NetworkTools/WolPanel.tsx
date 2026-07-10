@@ -8,6 +8,8 @@ import {
   networkWolDeviceDelete,
 } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
+import { NetworkNumberField } from "./NetworkNumberField";
+import { validatePort, validateHost } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface WolHistoryEntry {
@@ -19,7 +21,11 @@ interface WolHistoryEntry {
 export function WolPanel() {
   const [mac, setMac] = useState("");
   const [broadcast, setBroadcast] = useState("255.255.255.255");
-  const [port, setPort] = useState(9);
+  const [port, setPort] = useState<number | "">(9);
+
+  const portError = validatePort(port);
+  const broadcastError = validateHost(broadcast, "Broadcast address");
+  const canSend = !!mac.trim() && !portError && !broadcastError;
   const [savedDevices, setSavedDevices] = useState<WolDevice[]>([]);
   const [history, setHistory] = useState<WolHistoryEntry[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -39,18 +45,18 @@ export function WolPanel() {
   }, [loadDevices]);
 
   const handleSend = useCallback(async () => {
-    if (!mac.trim()) return;
+    if (!mac.trim() || portError || broadcastError) return;
     setError(null);
     setStatus(null);
     try {
-      await networkWolSend(mac, broadcast, port);
+      await networkWolSend(mac, broadcast, Number(port));
       setStatus(`Magic packet sent to ${mac}`);
       setHistory((prev) => [{ mac, sentAt: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)]);
     } catch (err) {
       setError(String(err));
       frontendLog("wol_panel", `WoL send failed: ${err}`);
     }
-  }, [mac, broadcast, port]);
+  }, [mac, broadcast, port, portError, broadcastError]);
 
   const handleWakeDevice = useCallback(async (device: WolDevice) => {
     try {
@@ -68,7 +74,7 @@ export function WolPanel() {
   }, []);
 
   const handleSaveDevice = useCallback(async () => {
-    if (!mac.trim()) return;
+    if (!mac.trim() || portError || broadcastError) return;
     const name = window.prompt("Device name:");
     if (!name) return;
     try {
@@ -77,7 +83,7 @@ export function WolPanel() {
         name,
         mac,
         broadcast,
-        port,
+        port: Number(port),
       });
       await loadDevices();
       toast.success(`Saved device "${name}"`);
@@ -86,7 +92,7 @@ export function WolPanel() {
       frontendLog("wol_panel", `WoL device save failed: ${err}`);
       toast.error(`Save failed: ${err}`);
     }
-  }, [mac, broadcast, port, loadDevices]);
+  }, [mac, broadcast, port, portError, broadcastError, loadDevices]);
 
   const handleDeleteDevice = useCallback(
     async (id: string) => {
@@ -112,7 +118,7 @@ export function WolPanel() {
             size="sm"
             icon={<Power size={14} />}
             onClick={handleSend}
-            disabled={!mac.trim()}
+            disabled={!canSend}
             data-testid="wol-send"
           >
             Send
@@ -134,20 +140,21 @@ export function WolPanel() {
         <label className="network-panel__field">
           <span>Broadcast</span>
           <input
-            className="network-panel__input"
+            className={`network-panel__input${broadcastError ? " network-panel__input--error" : ""}`}
             value={broadcast}
             onChange={(e) => setBroadcast(e.target.value)}
+            aria-invalid={broadcastError ? true : undefined}
           />
+          {broadcastError && <span className="network-panel__field-error">{broadcastError}</span>}
         </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Port</span>
-          <input
-            className="network-panel__input"
-            type="number"
-            value={port}
-            onChange={(e) => setPort(Number(e.target.value))}
-          />
-        </label>
+        <NetworkNumberField
+          label="Port"
+          value={port}
+          onChange={setPort}
+          error={portError}
+          small
+          data-testid="wol-port"
+        />
       </div>
 
       {status && <div className="network-panel__info">{status}</div>}
@@ -188,7 +195,7 @@ export function WolPanel() {
         size="sm"
         icon={<Save size={13} />}
         onClick={handleSaveDevice}
-        disabled={!mac.trim()}
+        disabled={!canSend}
         data-testid="wol-save-device"
         style={{ alignSelf: "flex-start" }}
       >
