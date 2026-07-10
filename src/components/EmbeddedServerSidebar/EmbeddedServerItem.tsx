@@ -126,11 +126,8 @@ export function EmbeddedServerItem({
           status={
             <SidebarStatusDot tone={statusTone(status)} testId={`server-status-${config.id}`} />
           }
-          badge={
-            <span className="sidebar-list-item__badge" data-testid={`server-type-${config.id}`}>
-              {PROTOCOL_LABELS[config.serverType]}
-            </span>
-          }
+          badge={PROTOCOL_LABELS[config.serverType]}
+          badgeTestId={`server-type-${config.id}`}
           actions={
             <>
               {active ? (

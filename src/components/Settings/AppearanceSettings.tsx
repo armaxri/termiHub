@@ -1,5 +1,15 @@
 import { AppSettings } from "@/types/connection";
 import { Select } from "@/components/ui";
+import type { SelectOption } from "@/components/ui";
+
+/** Static theme options, hoisted so they are not rebuilt on every render. */
+const THEME_OPTIONS: SelectOption[] = [
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+  { value: "solarized-dark", label: "Solarized Dark" },
+  { value: "solarized-light", label: "Solarized Light" },
+  { value: "system", label: "System" },
+];
 
 const DEFAULT_FONT_FAMILY =
   "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
@@ -29,13 +39,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
                 theme: value as "dark" | "light" | "solarized-dark" | "solarized-light" | "system",
               })
             }
-            options={[
-              { value: "dark", label: "Dark" },
-              { value: "light", label: "Light" },
-              { value: "solarized-dark", label: "Solarized Dark" },
-              { value: "solarized-light", label: "Solarized Light" },
-              { value: "system", label: "System" },
-            ]}
+            options={THEME_OPTIONS}
           />
           <span className="settings-form__hint">Application color theme.</span>
         </div>

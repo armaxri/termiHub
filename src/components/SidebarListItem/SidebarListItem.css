@@ -1,5 +1,6 @@
 /* Shared sidebar list-item shell (issue 1358). Mirrors the former per-sidebar
-   *-item blocks so services, workspaces, and tunnels render one structure. */
+   *-item blocks so services and workspaces render one structure (tunnels to
+   follow). */
 
 .sidebar-list-item {
   display: flex;

@@ -617,7 +617,6 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `server-edit-*` | `server-edit-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-start-*` | `server-start-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-stop-*` | `server-stop-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-type-*` | `server-type-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `settings-nav-*` | `settings-nav-${cat.id}` | `src/components/Settings/SettingsNav.tsx` |
 | `shortcut-row-*` | `shortcut-row-${binding.action}` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
 | `sidebar-group-separator-*` | `sidebar-group-separator-${i - 1}` | `src/components/Sidebar/ConnectionList.tsx` |
@@ -653,6 +652,7 @@ where the component is used, not at the `data-testid` site.
 
 | expression | source |
 | ---------- | ------ |
+| `{badgeTestId}` | `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |

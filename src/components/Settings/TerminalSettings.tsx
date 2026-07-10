@@ -2,9 +2,28 @@ import { AppSettings } from "@/types/connection";
 import { LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
 import { Select, Toggle } from "@/components/ui";
+import type { SelectOption } from "@/components/ui";
 
 /** Sentinel for the "platform default" right-click option (Radix Select forbids empty-string item values). */
 const RIGHT_CLICK_PLATFORM_DEFAULT = "__platform_default__";
+
+/** Static Select option lists, hoisted so they are not rebuilt on every render. */
+const CURSOR_STYLE_OPTIONS: SelectOption[] = [
+  { value: "block", label: "Block" },
+  { value: "underline", label: "Underline" },
+  { value: "bar", label: "Bar" },
+];
+
+const LINE_ENDING_SELECT_OPTIONS: SelectOption[] = LINE_ENDING_OPTIONS.map((opt) => ({
+  value: opt.value,
+  label: opt.label,
+}));
+
+const RIGHT_CLICK_OPTIONS: SelectOption[] = [
+  { value: RIGHT_CLICK_PLATFORM_DEFAULT, label: "Platform Default" },
+  { value: "contextMenu", label: "Context Menu" },
+  { value: "quickAction", label: "Quick Copy/Paste" },
+];
 
 interface TerminalSettingsProps {
   settings: AppSettings;
@@ -65,11 +84,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
                 cursorStyle: value as "block" | "underline" | "bar",
               })
             }
-            options={[
-              { value: "block", label: "Block" },
-              { value: "underline", label: "Underline" },
-              { value: "bar", label: "Bar" },
-            ]}
+            options={CURSOR_STYLE_OPTIONS}
           />
           <span className="settings-form__hint">Terminal cursor shape.</span>
         </label>
@@ -98,7 +113,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
                 defaultLineEnding: value as LineEnding,
               })
             }
-            options={LINE_ENDING_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+            options={LINE_ENDING_SELECT_OPTIONS}
           />
           <span className="settings-form__hint">
             Sequence sent when pressing Enter and used to normalize line endings in pasted text.
@@ -123,11 +138,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
                     : (value as "contextMenu" | "quickAction"),
               })
             }
-            options={[
-              { value: RIGHT_CLICK_PLATFORM_DEFAULT, label: "Platform Default" },
-              { value: "contextMenu", label: "Context Menu" },
-              { value: "quickAction", label: "Quick Copy/Paste" },
-            ]}
+            options={RIGHT_CLICK_OPTIONS}
           />
           <span className="settings-form__hint">
             Context Menu shows the full right-click menu. Quick Copy/Paste copies selected text or

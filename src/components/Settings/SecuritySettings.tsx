@@ -59,6 +59,12 @@ const AUTO_LOCK_OPTIONS: AutoLockOption[] = [
   { value: 60, label: "1 hour" },
 ];
 
+/** Auto-lock options as string-valued Select options, hoisted so they are not rebuilt each render. */
+const AUTO_LOCK_SELECT_OPTIONS = AUTO_LOCK_OPTIONS.map((opt) => ({
+  value: String(opt.value),
+  label: opt.label,
+}));
+
 /**
  * Security settings panel for credential storage configuration.
  */
@@ -355,10 +361,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   data-testid="auto-lock-timeout"
                   value={String(settings.credentialAutoLockMinutes ?? 15)}
                   onChange={(value) => handleAutoLockChange(Number(value))}
-                  options={AUTO_LOCK_OPTIONS.map((opt) => ({
-                    value: String(opt.value),
-                    label: opt.label,
-                  }))}
+                  options={AUTO_LOCK_SELECT_OPTIONS}
                 />
                 <span className="settings-form__hint">
                   Lock the credential store after a period of inactivity.

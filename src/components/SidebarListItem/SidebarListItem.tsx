@@ -10,27 +10,19 @@ export interface SidebarStatusDotProps {
   tone: SidebarStatusTone;
   /** Test hook forwarded to the dot element. */
   testId?: string;
-  /** Optional extra class (e.g. a per-status test class kept for compatibility). */
-  className?: string;
 }
 
 /**
  * A small coloured status dot for sidebar rows. Colours come from design tokens
  * via the `--tone` modifier so every sidebar renders the same status affordance.
  */
-export function SidebarStatusDot({
-  tone,
-  testId,
-  className,
-}: SidebarStatusDotProps): React.ReactElement {
-  const classes = [
-    "sidebar-list-item__status",
-    `sidebar-list-item__status--${tone}`,
-    className ?? "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  return <span className={classes} data-testid={testId} />;
+export function SidebarStatusDot({ tone, testId }: SidebarStatusDotProps): React.ReactElement {
+  return (
+    <span
+      className={`sidebar-list-item__status sidebar-list-item__status--${tone}`}
+      data-testid={testId}
+    />
+  );
 }
 
 /**
@@ -47,8 +39,10 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
   actions: React.ReactNode;
   /** Optional leading status indicator (typically a {@link SidebarStatusDot}). */
   status?: React.ReactNode;
-  /** Optional badge shown next to the name (e.g. a protocol/type tag). */
+  /** Optional badge content shown next to the name (e.g. a protocol/type tag). */
   badge?: React.ReactNode;
+  /** Test hook forwarded to the badge element. */
+  badgeTestId?: string;
   /** Optional detail lines shown beneath the header. */
   details?: React.ReactNode;
   /** Test hook for the row container. */
@@ -59,10 +53,12 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
 
 /**
  * The shared sidebar list-item shell: status dot / badge / name / actions /
- * details. Every management sidebar (services, workspaces, tunnels) composes
- * from this so rows share one structure, hover behaviour, and token'd styling
- * rather than each hand-rolling a bespoke `*-item` block. Forwards its ref and
- * any extra `div` props so it can serve as a Radix `ContextMenu.Trigger asChild`.
+ * details. Management sidebars (services and workspaces today; tunnels to
+ * follow) compose from this so rows share one structure, hover behaviour, and
+ * token'd styling rather than each hand-rolling a bespoke `*-item` block. The
+ * shell owns the badge styling — pass badge content, not a class. Forwards its
+ * ref and any extra `div` props so it can serve as a Radix
+ * `ContextMenu.Trigger asChild`.
  */
 export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemProps>(
   function SidebarListItem(
@@ -72,6 +68,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       actions,
       status,
       badge,
+      badgeTestId,
       details,
       testId,
       className,
@@ -88,7 +85,11 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       <div ref={ref} className={classes} data-testid={testId} {...rest}>
         <div className="sidebar-list-item__header">
           {status}
-          {badge}
+          {badge != null && (
+            <span className="sidebar-list-item__badge" data-testid={badgeTestId}>
+              {badge}
+            </span>
+          )}
           <span className="sidebar-list-item__name" data-testid={nameTestId}>
             {name}
           </span>
