@@ -29,6 +29,28 @@ pub struct ExternalAgentFile {
     pub enabled: bool,
 }
 
+/// Strategy governing how a shared remote agent binary is updated.
+///
+/// Only [`UpdateStrategy::Immediate`] has an implemented dispatch path today
+/// (hard shutdown + redeploy). `Coordinated` (SI-5) and `Deferred` (SI-6) are
+/// configuration-only until those subsystems land; selecting them currently
+/// resolves back to `Immediate` at update time (see
+/// [`RemoteAgentConfig::effective_update_strategy`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateStrategy {
+    /// Shut the running agent down and redeploy immediately (the only path
+    /// implemented today). Active sessions on other hosts are cut over hard.
+    #[default]
+    Immediate,
+    /// Broadcast an update notice to connected hosts and wait for a clean
+    /// disconnect before applying. Not yet implemented (SI-5).
+    Coordinated,
+    /// Defer the update until the last session disconnects. Not yet
+    /// implemented (SI-6).
+    Deferred,
+}
+
 /// SSH transport configuration for a remote agent (no session details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,10 +76,41 @@ pub struct RemoteAgentConfig {
     /// External connection files to load on the remote host.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_connection_files: Vec<ExternalAgentFile>,
+    /// Whether the agent may check GitHub and update itself in the background.
+    ///
+    /// Opt-in (`false` by default). The self-update mechanism (SI-8) is not yet
+    /// implemented; this flag persists the user's preference until it lands.
+    #[serde(default)]
+    pub allow_self_update: bool,
+    /// How this agent's binary is updated when a newer desktop version deploys.
+    ///
+    /// Defaults to [`UpdateStrategy::Immediate`]. See
+    /// [`RemoteAgentConfig::effective_update_strategy`] for how non-immediate
+    /// strategies are currently resolved.
+    #[serde(default)]
+    pub update_strategy: UpdateStrategy,
 }
 
 fn default_auth_method() -> String {
     "password".to_string()
+}
+
+impl Default for RemoteAgentConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: 22,
+            username: String::new(),
+            auth_method: default_auth_method(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+            external_connection_files: Vec::new(),
+            allow_self_update: false,
+            update_strategy: UpdateStrategy::default(),
+        }
+    }
 }
 
 /// Build a Windows agent invocation: `<path> <args>`.
@@ -131,6 +184,21 @@ impl RemoteAgentConfig {
         self
     }
 
+    /// The update strategy that can actually be honored at update time today.
+    ///
+    /// Only [`UpdateStrategy::Immediate`] has an implemented dispatch path
+    /// (hard shutdown + redeploy). `Coordinated` (SI-5) and `Deferred` (SI-6)
+    /// have no dispatch path yet, so they fall back to `Immediate` — the
+    /// configured preference is still persisted so it takes effect once those
+    /// subsystems land. See #1354.
+    pub fn effective_update_strategy(&self) -> UpdateStrategy {
+        match self.update_strategy {
+            UpdateStrategy::Immediate => UpdateStrategy::Immediate,
+            // No coordinated/deferred dispatch path exists yet — fall back.
+            UpdateStrategy::Coordinated | UpdateStrategy::Deferred => UpdateStrategy::Immediate,
+        }
+    }
+
     /// Build an `SshConfig` from this agent config for SSH connection.
     pub fn to_ssh_config(&self) -> SshConfig {
         SshConfig {
@@ -193,6 +261,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -225,6 +294,7 @@ mod tests {
                     save_password: None,
                     agent_path: None,
                     external_connection_files: vec![],
+                    ..Default::default()
                 };
                 let expanded = config.expand();
                 assert_eq!(expanded.host, "10.0.0.99");
@@ -251,6 +321,7 @@ mod tests {
                     save_password: None,
                     agent_path: None,
                     external_connection_files: vec![],
+                    ..Default::default()
                 };
                 let expanded = config.expand();
                 assert_eq!(expanded.host, "10.20.30.40");
@@ -271,6 +342,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.host, "pi.local");
@@ -292,6 +364,7 @@ mod tests {
             save_password: Some(true),
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -310,6 +383,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -331,6 +405,7 @@ mod tests {
             save_password: Some(true),
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.save_password, Some(true));
@@ -410,6 +485,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         assert_eq!(
             config.agent_exec_command(),
@@ -429,6 +505,7 @@ mod tests {
             save_password: None,
             agent_path: Some("~/bin/termihub-agent".to_string()),
             external_connection_files: vec![],
+            ..Default::default()
         };
         assert_eq!(
             config.agent_exec_command(),
@@ -448,6 +525,7 @@ mod tests {
             save_password: None,
             agent_path: Some("/usr/local/bin/termihub-agent".to_string()),
             external_connection_files: vec![],
+            ..Default::default()
         };
         assert_eq!(
             config.agent_exec_command(),
@@ -467,6 +545,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         assert_eq!(
             config.agent_version_command(),
@@ -486,6 +565,7 @@ mod tests {
             save_password: None,
             agent_path: Some("/opt/termihub-agent".to_string()),
             external_connection_files: vec![],
+            ..Default::default()
         };
         assert_eq!(
             config.agent_version_command(),
@@ -505,6 +585,7 @@ mod tests {
             save_password: None,
             agent_path: path.map(str::to_string),
             external_connection_files: vec![],
+            ..Default::default()
         }
     }
 
@@ -595,6 +676,7 @@ mod tests {
                 save_password: None,
                 agent_path,
                 external_connection_files: vec![],
+                ..Default::default()
             };
             let cmd = config.agent_exec_command();
             let binary = cmd.split_whitespace().next().unwrap();
@@ -624,6 +706,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -654,6 +737,7 @@ mod tests {
                     enabled: false,
                 },
             ],
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -678,6 +762,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();

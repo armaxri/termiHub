@@ -2468,6 +2468,7 @@ mod tests {
             save_password: None,
             agent_path: None,
             external_connection_files: vec![],
+            ..Default::default()
         };
         let settings = AgentSettings::default();
         let mut request_id = 0u64;
