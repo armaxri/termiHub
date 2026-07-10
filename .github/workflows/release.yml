@@ -241,10 +241,13 @@ jobs:
       - name: Build agent
         run: CROSS_CONFIG=agent/Cross.toml cross build --release --target ${{ matrix.target }} -p termihub-agent
 
-      - name: Upload agent binary as release asset
+      - name: Upload agent binary and checksum as release assets
         run: |
           cp target/${{ matrix.target }}/release/termihub-agent ${{ matrix.artifact_name }}
-          gh release upload v${{ needs.create-release.outputs.version }} "${{ matrix.artifact_name }}"
+          # Publish a SHA-256 sidecar the desktop verifies before install (#1350).
+          sha256sum "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
+          gh release upload v${{ needs.create-release.outputs.version }} \
+            "${{ matrix.artifact_name }}" "${{ matrix.artifact_name }}.sha256"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -280,10 +283,14 @@ jobs:
       - name: Build agent
         run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
 
-      - name: Upload agent binary as release asset
+      - name: Upload agent binary and checksum as release assets
         run: |
           cp target/${{ matrix.target }}/release/termihub-agent ${{ matrix.artifact_name }}
-          gh release upload v${{ needs.create-release.outputs.version }} "${{ matrix.artifact_name }}"
+          # macOS runners have `shasum`, not `sha256sum`; emit the same
+          # "<hex>  <file>" sidecar the desktop verifies before install (#1350).
+          shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
+          gh release upload v${{ needs.create-release.outputs.version }} \
+            "${{ matrix.artifact_name }}" "${{ matrix.artifact_name }}.sha256"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -319,11 +326,14 @@ jobs:
       - name: Build agent
         run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
 
-      - name: Upload agent binary as release asset
+      - name: Upload agent binary and checksum as release assets
         shell: bash
         run: |
           cp target/${{ matrix.target }}/release/termihub-agent.exe ${{ matrix.artifact_name }}
-          gh release upload v${{ needs.create-release.outputs.version }} "${{ matrix.artifact_name }}"
+          # Git Bash on the Windows runner provides `sha256sum` (#1350).
+          sha256sum "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
+          gh release upload v${{ needs.create-release.outputs.version }} \
+            "${{ matrix.artifact_name }}" "${{ matrix.artifact_name }}.sha256"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

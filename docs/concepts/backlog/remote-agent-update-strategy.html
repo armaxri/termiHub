@@ -1542,8 +1542,14 @@ pub struct UpdatePendingNotification {
           </li>
         </ul>
         <p>
-          Binary integrity verification: SHA-256 checksum published as a release asset
-          (<code>termihub-agent-linux-x64.sha256</code>) and verified before exec-replace.
+          Binary integrity verification (implemented in #1350): a SHA-256 checksum is published
+          as a release asset next to <em>every</em> agent artifact on all three platforms
+          (<code>termihub-agent-linux-x64.sha256</code>,
+          <code>termihub-agent-macos-arm64.sha256</code>,
+          <code>termihub-agent-windows-x64.exe.sha256</code>, …). The desktop verifies the binary
+          against its sidecar on the resolve chain (cache → bundled → download) before deploy,
+          redeploy, or exec-replace — a mismatched or tampered binary is rejected with a clear
+          error and never installed or executed.
         </p>
 
         <h3>Config / State Schema</h3>
