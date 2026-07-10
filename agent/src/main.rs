@@ -9,6 +9,7 @@ mod registry;
 mod session;
 mod state;
 mod transport;
+mod update;
 
 use tokio_util::sync::CancellationToken;
 use tracing::info;

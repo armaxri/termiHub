@@ -35,6 +35,17 @@ russh = { workspace = true }
 shellexpand = "3"
 sysinfo = "0.38"
 dirs = "6"
+# Agent-side GitHub self-update (#1355): outbound HTTP to the Releases API and
+# asset download, semver comparison, and SHA-256 integrity verification of the
+# downloaded binary. rustls-tls avoids an OpenSSL dependency for musl
+# cross-compilation of the agent.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+] }
+semver = "1"
+sha2 = "0.10"
+hex = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "term", "poll", "fs"] }
@@ -56,3 +67,5 @@ windows-sys = { version = "0.59", features = [
 tempfile = "3"
 serde_json = { workspace = true }
 base64 = "0.22"
+# Mock GitHub Releases HTTP endpoints in self-update tests without real network.
+wiremock = "0.6"
