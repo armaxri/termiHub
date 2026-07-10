@@ -139,19 +139,15 @@ impl<T: Clone> RefPool<T> {
     fn try_acquire(&self, key: &str, is_alive: &impl Fn(&T) -> bool) -> Option<(T, u64)> {
         let evicted = {
             let mut entries = self.entries.lock().expect("session pool mutex poisoned");
-            match entries.get_mut(key) {
-                None => return None,
-                Some(entry) => {
-                    if is_alive(&entry.value) {
-                        entry.ref_count += 1;
-                        return Some((entry.value.clone(), entry.generation));
-                    }
-                    // Dead: retire this generation so a fresh session is dialed.
-                    // Existing PooledRefs keep their own clones alive and release
-                    // as no-ops (their generation no longer matches).
-                    entries.remove(key)
-                }
+            let entry = entries.get_mut(key)?;
+            if is_alive(&entry.value) {
+                entry.ref_count += 1;
+                return Some((entry.value.clone(), entry.generation));
             }
+            // Dead: retire this generation so a fresh session is dialed. Existing
+            // PooledRefs keep their own clones alive and release as no-ops (their
+            // generation no longer matches).
+            entries.remove(key)
         };
         drop(evicted); // dropped outside the entries lock
         None
