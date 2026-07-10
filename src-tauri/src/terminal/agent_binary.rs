@@ -613,4 +613,177 @@ mod tests {
         assert!(url.contains("agent-branch-main"));
         assert!(url.contains("linux-x64"));
     }
+
+    // --- SHA-256 integrity verification -----------------------------------
+
+    /// Known SHA-256 of the ASCII string "abc" (NIST test vector), used to pin
+    /// the hashing implementation.
+    const SHA256_OF_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn sha256_hex_of_file_matches_known_vector() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        fs::write(&path, b"abc").unwrap();
+
+        let digest = sha256_hex_of_file(&path).unwrap();
+        assert_eq!(digest, SHA256_OF_ABC);
+    }
+
+    #[test]
+    fn sha256_hex_of_file_is_lowercase_hex() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        fs::write(&path, b"some binary content").unwrap();
+
+        let digest = sha256_hex_of_file(&path).unwrap();
+        assert_eq!(digest.len(), 64, "SHA-256 hex must be 64 chars");
+        assert!(
+            digest
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "digest must be lowercase hex, got: {digest}"
+        );
+    }
+
+    #[test]
+    fn sha256_hex_of_file_missing_file_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("does-not-exist.bin");
+        assert!(sha256_hex_of_file(&path).is_err());
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_plain_hex() {
+        assert_eq!(
+            parse_sha256_sidecar(SHA256_OF_ABC),
+            Some(SHA256_OF_ABC.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_sha256sum_text_format() {
+        // Standard `sha256sum` text-mode output: "<hex>  <filename>".
+        let line = format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n");
+        assert_eq!(parse_sha256_sidecar(&line), Some(SHA256_OF_ABC.to_string()));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_sha256sum_binary_format() {
+        // Binary-mode output prefixes the filename with '*'.
+        let line = format!("{SHA256_OF_ABC} *termihub-agent-windows-x64.exe\n");
+        assert_eq!(parse_sha256_sidecar(&line), Some(SHA256_OF_ABC.to_string()));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_uppercase_is_normalized() {
+        let upper = SHA256_OF_ABC.to_ascii_uppercase();
+        assert_eq!(
+            parse_sha256_sidecar(&upper),
+            Some(SHA256_OF_ABC.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_rejects_garbage() {
+        assert_eq!(parse_sha256_sidecar(""), None);
+        assert_eq!(parse_sha256_sidecar("   \n"), None);
+        assert_eq!(parse_sha256_sidecar("not-a-hash"), None);
+        // Too short.
+        assert_eq!(parse_sha256_sidecar("deadbeef"), None);
+        // 64 chars but contains a non-hex char ('g').
+        assert_eq!(parse_sha256_sidecar(&"g".repeat(64)), None);
+    }
+
+    #[test]
+    fn verify_file_checksum_ok_on_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        fs::write(&path, b"abc").unwrap();
+
+        assert!(verify_file_checksum(&path, SHA256_OF_ABC).is_ok());
+        // Case-insensitive on the expected side too.
+        assert!(verify_file_checksum(&path, &SHA256_OF_ABC.to_ascii_uppercase()).is_ok());
+    }
+
+    #[test]
+    fn verify_file_checksum_rejects_mismatch_with_clear_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        // Content whose digest is NOT SHA256_OF_ABC.
+        fs::write(&path, b"tampered content").unwrap();
+
+        let err = verify_file_checksum(&path, SHA256_OF_ABC).unwrap_err();
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("checksum"),
+            "error should mention checksum, got: {err}"
+        );
+        assert!(
+            msg.contains(SHA256_OF_ABC),
+            "error should include the expected checksum, got: {err}"
+        );
+    }
+
+    #[test]
+    fn checksum_sidecar_path_appends_sha256() {
+        let binary = PathBuf::from("/cache/0.1.0/termihub-agent-linux-x64");
+        let sidecar = checksum_sidecar_path(&binary);
+        assert_eq!(
+            sidecar,
+            PathBuf::from("/cache/0.1.0/termihub-agent-linux-x64.sha256")
+        );
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_ok_when_matching() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"abc").unwrap();
+        fs::write(
+            checksum_sidecar_path(&binary),
+            format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n"),
+        )
+        .unwrap();
+
+        assert!(verify_with_adjacent_sidecar(&binary).is_ok());
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_rejects_tampered_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        // Sidecar claims the "abc" digest, but the binary has been tampered with.
+        fs::write(&binary, b"tampered").unwrap();
+        fs::write(checksum_sidecar_path(&binary), SHA256_OF_ABC).unwrap();
+
+        assert!(
+            verify_with_adjacent_sidecar(&binary).is_err(),
+            "a binary that does not match its sidecar must be rejected"
+        );
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_ok_when_sidecar_absent() {
+        // No sidecar present → cannot verify, but must not fail (legacy cache
+        // entries and out-of-scope dev builds have no published checksum yet).
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"abc").unwrap();
+
+        assert!(verify_with_adjacent_sidecar(&binary).is_ok());
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_errors_on_malformed_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"abc").unwrap();
+        fs::write(checksum_sidecar_path(&binary), "this-is-not-a-checksum").unwrap();
+
+        assert!(
+            verify_with_adjacent_sidecar(&binary).is_err(),
+            "a malformed sidecar must be treated as an integrity failure"
+        );
+    }
 }
