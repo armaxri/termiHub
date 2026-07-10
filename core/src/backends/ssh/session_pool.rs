@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::Mutex as AsyncMutex;
@@ -21,9 +22,15 @@ use tokio::sync::Mutex as AsyncMutex;
 use super::handler::{ForwardedChannelRegistry, SshSession};
 
 /// One pooled value together with its live-consumer reference count.
+///
+/// `generation` disambiguates successive entries under the same key: when a dead
+/// entry is evicted and replaced (see [`RefPool::get_or_create_live`]), the
+/// replacement gets a fresh generation, so a stale [`PooledRef`] from the evicted
+/// entry releases as a no-op instead of decrementing the replacement (#1315).
 struct Entry<T> {
     value: T,
     ref_count: usize,
+    generation: u64,
 }
 
 /// A reference-counted, single-flight pool of cloneable values keyed by string.
@@ -40,6 +47,8 @@ pub struct RefPool<T: Clone> {
     entries: Mutex<HashMap<String, Entry<T>>>,
     /// Per-key async gates ensuring only one creation runs at a time for a key.
     gates: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    /// Monotonic source of per-entry generations (see [`Entry::generation`]).
+    next_generation: AtomicU64,
 }
 
 impl<T: Clone> RefPool<T> {
@@ -48,6 +57,7 @@ impl<T: Clone> RefPool<T> {
         Arc::new(Self {
             entries: Mutex::new(HashMap::new()),
             gates: Mutex::new(HashMap::new()),
+            next_generation: AtomicU64::new(0),
         })
     }
 
@@ -68,43 +78,22 @@ impl<T: Clone> RefPool<T> {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        if let Some(value) = self.try_acquire(key) {
-            return Ok(self.make_ref(key, value));
-        }
-
-        // Single-flight: only one creator per key proceeds past the gate; the
-        // others block here and re-check the map once the winner inserts.
-        let gate = self.gate_for(key);
-        let _guard = gate.lock().await;
-
-        if let Some(value) = self.try_acquire(key) {
-            return Ok(self.make_ref(key, value));
-        }
-
-        let value = connect().await?;
-        {
-            let mut entries = self.entries.lock().expect("session pool mutex poisoned");
-            entries.insert(
-                key.to_string(),
-                Entry {
-                    value: value.clone(),
-                    ref_count: 1,
-                },
-            );
-        }
-        Ok(self.make_ref(key, value))
+        self.get_or_create_live(key, |_| true, connect).await
     }
 
-    /// Like [`get_or_create`](Self::get_or_create), but skip and evict a cached
-    /// entry that `is_alive` reports dead, dialing a fresh value instead (#1315).
+    /// Like [`get_or_create`](Self::get_or_create), but skip and **evict** a
+    /// cached entry that `is_alive` reports dead, creating a fresh value instead.
     ///
-    /// NOTE: eviction is not yet implemented — this currently delegates to
-    /// [`get_or_create`](Self::get_or_create), so a dead cached entry is still
-    /// handed out (the failing behavior the regression test below pins).
+    /// A pooled SSH session can die while a dying consumer's [`PooledRef`] is
+    /// still in flight (the entry outlives the session until its refcount drops).
+    /// Without this check, a new acquirer for the same key would adopt that dead
+    /// session and fail immediately; here it dials a fresh one. The evicted
+    /// entry's generation is retired, so the stale references release harmlessly
+    /// (#1315).
     pub async fn get_or_create_live<P, F, Fut, E>(
         self: &Arc<Self>,
         key: &str,
-        _is_alive: P,
+        is_alive: P,
         connect: F,
     ) -> Result<PooledRef<T>, E>
     where
@@ -112,15 +101,60 @@ impl<T: Clone> RefPool<T> {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, E>>,
     {
-        self.get_or_create(key, connect).await
+        if let Some((value, generation)) = self.try_acquire(key, &is_alive) {
+            return Ok(self.make_ref(key, value, generation));
+        }
+
+        // Single-flight: only one creator per key proceeds past the gate; the
+        // others block here and re-check the map once the winner inserts.
+        let gate = self.gate_for(key);
+        let _guard = gate.lock().await;
+
+        if let Some((value, generation)) = self.try_acquire(key, &is_alive) {
+            return Ok(self.make_ref(key, value, generation));
+        }
+
+        let value = connect().await?;
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut entries = self.entries.lock().expect("session pool mutex poisoned");
+            entries.insert(
+                key.to_string(),
+                Entry {
+                    value: value.clone(),
+                    ref_count: 1,
+                    generation,
+                },
+            );
+        }
+        Ok(self.make_ref(key, value, generation))
     }
 
-    /// Increment the ref count and clone the value if the key is present.
-    fn try_acquire(&self, key: &str) -> Option<T> {
-        let mut entries = self.entries.lock().expect("session pool mutex poisoned");
-        let entry = entries.get_mut(key)?;
-        entry.ref_count += 1;
-        Some(entry.value.clone())
+    /// Increment the ref count and clone the live value if the key is present.
+    ///
+    /// Returns the value together with its entry generation. If the cached entry
+    /// is present but `is_alive` reports it dead, it is evicted (removed from the
+    /// map) and `None` is returned so the caller creates a fresh value; the
+    /// evicted value is dropped outside the lock to avoid `Drop` re-entrancy.
+    fn try_acquire(&self, key: &str, is_alive: &impl Fn(&T) -> bool) -> Option<(T, u64)> {
+        let evicted = {
+            let mut entries = self.entries.lock().expect("session pool mutex poisoned");
+            match entries.get_mut(key) {
+                None => return None,
+                Some(entry) => {
+                    if is_alive(&entry.value) {
+                        entry.ref_count += 1;
+                        return Some((entry.value.clone(), entry.generation));
+                    }
+                    // Dead: retire this generation so a fresh session is dialed.
+                    // Existing PooledRefs keep their own clones alive and release
+                    // as no-ops (their generation no longer matches).
+                    entries.remove(key)
+                }
+            }
+        };
+        drop(evicted); // dropped outside the entries lock
+        None
     }
 
     fn gate_for(&self, key: &str) -> Arc<AsyncMutex<()>> {
@@ -134,25 +168,30 @@ impl<T: Clone> RefPool<T> {
             .clone()
     }
 
-    fn make_ref(self: &Arc<Self>, key: &str, value: T) -> PooledRef<T> {
+    fn make_ref(self: &Arc<Self>, key: &str, value: T, generation: u64) -> PooledRef<T> {
         PooledRef {
             value,
             key: key.to_string(),
+            generation,
             pool: Arc::clone(self),
         }
     }
 
-    /// Release one reference for `key`. When the count reaches zero the entry is
-    /// removed and its value dropped.
+    /// Release one reference for `key`'s entry of `generation`. When the count
+    /// reaches zero the entry is removed and its value dropped.
+    ///
+    /// A `generation` that no longer matches the entry at `key` (the entry was
+    /// evicted-and-replaced while this reference was in flight, #1315) is a no-op,
+    /// so a stale reference never decrements the replacement entry.
     ///
     /// The removed value is dropped *outside* the entries lock so that a value
     /// whose `Drop` re-enters the pool (e.g. a pooled session that itself holds a
     /// [`PooledRef`] to a gateway) cannot deadlock on the non-reentrant mutex.
-    pub fn release(&self, key: &str) {
+    pub fn release(&self, key: &str, generation: u64) {
         let removed = {
             let mut entries = self.entries.lock().expect("session pool mutex poisoned");
             match entries.get_mut(key) {
-                Some(entry) => {
+                Some(entry) if entry.generation == generation => {
                     entry.ref_count = entry.ref_count.saturating_sub(1);
                     if entry.ref_count == 0 {
                         entries.remove(key)
@@ -160,7 +199,7 @@ impl<T: Clone> RefPool<T> {
                         None
                     }
                 }
-                None => None,
+                _ => None,
             }
         };
         if removed.is_some() {
@@ -203,6 +242,9 @@ impl<T: Clone> RefPool<T> {
 pub struct PooledRef<T: Clone> {
     value: T,
     key: String,
+    /// Generation of the pool entry this reference was issued against; releases
+    /// only affect a matching entry (see [`RefPool::release`]).
+    generation: u64,
     pool: Arc<RefPool<T>>,
 }
 
@@ -222,7 +264,7 @@ impl<T: Clone> Deref for PooledRef<T> {
 
 impl<T: Clone> Drop for PooledRef<T> {
     fn drop(&mut self) {
-        self.pool.release(&self.key);
+        self.pool.release(&self.key, self.generation);
     }
 }
 
@@ -268,7 +310,7 @@ mod tests {
     #[tokio::test]
     async fn release_unknown_key_is_noop() {
         let pool = RefPool::<Arc<i32>>::new();
-        pool.release("missing");
+        pool.release("missing", 0);
         assert!(pool.is_empty());
     }
 
@@ -417,14 +459,25 @@ mod tests {
 
         // A new acquire for the same key must dial a fresh E2, not adopt the corpse.
         let e2 = pool.get_or_create_live("k", alive, make()).await.unwrap();
-        assert_eq!(creates.load(Ordering::SeqCst), 2, "must dial a fresh session");
-        assert!(!Arc::ptr_eq(&e1, &e2), "must not hand out the dead endpoint");
+        assert_eq!(
+            creates.load(Ordering::SeqCst),
+            2,
+            "must dial a fresh session"
+        );
+        assert!(
+            !Arc::ptr_eq(&e1, &e2),
+            "must not hand out the dead endpoint"
+        );
         assert!(e2.load(Ordering::SeqCst), "the fresh endpoint is alive");
         assert_eq!(pool.ref_count("k"), 1, "only the fresh entry is counted");
 
         // Dropping the stale E1 reference must not disturb E2's entry.
         drop(e1);
-        assert_eq!(pool.ref_count("k"), 1, "stale release is a no-op for the new gen");
+        assert_eq!(
+            pool.ref_count("k"),
+            1,
+            "stale release is a no-op for the new gen"
+        );
         assert!(!pool.is_empty());
 
         drop(e2);

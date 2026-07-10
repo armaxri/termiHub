@@ -472,11 +472,18 @@ pub async fn connect_target_through_pooled_gateway_with_liveness(
     let key = gateway_pool_key(&target.proxy_jump);
 
     let gateway = pool
-        .get_or_create(&key, || async {
-            connect_gateway_chain(&target.proxy_jump, cancel)
-                .await
-                .map(Arc::new)
-        })
+        .get_or_create_live(
+            &key,
+            // Don't reuse a pooled gateway whose chain has dropped — a closed
+            // innermost or intermediate session can no longer carry a
+            // direct-tcpip channel to the target. Evict it and redial (#1315).
+            |gw| !gw.session.is_closed() && gw.intermediate_sessions.iter().all(|s| !s.is_closed()),
+            || async {
+                connect_gateway_chain(&target.proxy_jump, cancel)
+                    .await
+                    .map(Arc::new)
+            },
+        )
         .await?;
 
     let (session, registry, liveness) =
