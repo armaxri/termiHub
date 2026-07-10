@@ -189,10 +189,13 @@ Fixed strings — match exactly.
 | `file-type-language-input` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-pattern-input` | `src/components/Settings/FileTypeSettings.tsx` |
 | `http-monitor-chart` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-expected-status` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-history` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-interval` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-panel` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-start` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-stop` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-timeout` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-url` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `icon-picker-apply` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
 | `icon-picker-clear` | `src/components/ConnectionEditor/IconPickerDialog.tsx` |
@@ -290,15 +293,19 @@ Fixed strings — match exactly.
 | `password-prompt-save-checkbox` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `password-prompt-save-label` | `src/components/PasswordPrompt/PasswordPrompt.tsx` |
 | `ping-chart` | `src/components/NetworkTools/PingPanel.tsx` |
+| `ping-count` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-host` | `src/components/NetworkTools/PingPanel.tsx` |
+| `ping-interval` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-panel` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-start` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stats` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stop` | `src/components/NetworkTools/PingPanel.tsx` |
+| `port-scanner-concurrency` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-host` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-panel` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-ports` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-run` | `src/components/NetworkTools/PortScannerPanel.tsx` |
+| `port-scanner-timeout` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `portable-badge` | `src/components/StatusBar/PortableBadge.tsx` |
 | `portable-data-dir` | `src/components/Settings/PortableModeSettings.tsx` |
 | `portable-mode-settings` | `src/components/Settings/PortableModeSettings.tsx` |
@@ -416,6 +423,7 @@ Fixed strings — match exactly.
 | `toggle-file-browser` | `src/components/Settings/ExternalFilesSettings.tsx` |
 | `toggle-power-monitoring` | `src/components/Settings/ExternalFilesSettings.tsx` |
 | `traceroute-host` | `src/components/NetworkTools/TraceroutePanel.tsx` |
+| `traceroute-max-hops` | `src/components/NetworkTools/TraceroutePanel.tsx` |
 | `traceroute-panel` | `src/components/NetworkTools/TraceroutePanel.tsx` |
 | `traceroute-run` | `src/components/NetworkTools/TraceroutePanel.tsx` |
 | `tunnel-diagram` | `src/components/TunnelEditor/TunnelDiagram.tsx` |
@@ -466,6 +474,7 @@ Fixed strings — match exactly.
 | `update-settings` | `src/components/Settings/UpdateSettings.tsx` |
 | `wol-mac` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-panel` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-port` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-save-device` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-send` | `src/components/NetworkTools/WolPanel.tsx` |
 | `workspace-cancel-btn` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
@@ -554,7 +563,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `ctx-stop-*` | `ctx-stop-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `custom-grammar-remove-*` | `custom-grammar-remove-${g.id}` | `src/components/Settings/CustomGrammarsSettings.tsx` |
 | `dynamic-field-*` | `dynamic-field-${field.key}` | `src/components/DynamicForm/DynamicField.tsx` |
-| `field-*` | `field-${field.key}` | `src/components/DynamicForm/DynamicField.tsx` |
+| `field-*` | `field-${field.key}` | `src/components/ConnectionEditor/ConnectionEditor.tsx`, `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-*-*` | `field-${field.key}-${subField.key}-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-*-browse-*` | `field-${field.key}-${subField.key}-browse-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-add` | `field-${field.key}-add` | `src/components/DynamicForm/DynamicField.tsx` |
@@ -663,7 +672,7 @@ where the component is used, not at the `data-testid` site.
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
-| `{testId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
