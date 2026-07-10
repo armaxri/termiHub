@@ -17,6 +17,9 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+pub mod ipc_client;
+pub mod ipc_server;
+
 #[cfg(test)]
 mod tests;
 
@@ -251,4 +254,19 @@ pub fn set_pending(req: SpawnRequest) {
 /// Take and clear the pending spawn request, if any.
 pub fn take_pending() -> Option<SpawnRequest> {
     PENDING_SPAWN.lock().ok().and_then(|mut guard| guard.take())
+}
+
+/// Attempt to forward a spawn request to an already-running instance,
+/// blocking on a short-lived current-thread runtime.
+///
+/// Returns `Ok` if a running instance accepted the request, `Err` if none is
+/// reachable (in which case the caller should launch and handle it locally).
+pub fn forward_to_running_instance(
+    endpoint: &SpawnEndpoint,
+    req: &SpawnRequest,
+) -> anyhow::Result<SpawnResponse> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(ipc_client::send(endpoint, req))
 }
