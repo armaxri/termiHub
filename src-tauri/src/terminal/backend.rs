@@ -694,4 +694,75 @@ mod tests {
         let config: RemoteAgentConfig = serde_json::from_str(json).unwrap();
         assert!(config.external_connection_files.is_empty());
     }
+
+    // ── Update strategy (#1354) ─────────────────────────────────────────
+
+    #[test]
+    fn update_strategy_defaults_to_immediate() {
+        assert_eq!(UpdateStrategy::default(), UpdateStrategy::Immediate);
+    }
+
+    /// New fields must round-trip through save/load per agent.
+    #[test]
+    fn update_settings_serde_round_trip() {
+        let config = RemoteAgentConfig {
+            allow_self_update: true,
+            update_strategy: UpdateStrategy::Deferred,
+            ..RemoteAgentConfig::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.allow_self_update);
+        assert_eq!(deserialized.update_strategy, UpdateStrategy::Deferred);
+    }
+
+    /// The camelCase wire names must match the TS type + schema keys.
+    #[test]
+    fn update_settings_use_camel_case_wire_names() {
+        let config = RemoteAgentConfig {
+            allow_self_update: true,
+            update_strategy: UpdateStrategy::Coordinated,
+            ..RemoteAgentConfig::default()
+        };
+        let v: serde_json::Value = serde_json::to_value(&config).unwrap();
+        assert_eq!(
+            v.get("allowSelfUpdate").and_then(|b| b.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            v.get("updateStrategy").and_then(|s| s.as_str()),
+            Some("coordinated")
+        );
+    }
+
+    /// Configs saved before these fields existed must deserialize with defaults:
+    /// `update_strategy` = immediate, `allow_self_update` = false (opt-in).
+    #[test]
+    fn update_settings_default_when_missing_from_json() {
+        let json = r#"{"host":"pi.local","port":22,"username":"pi","authMethod":"key"}"#;
+        let config: RemoteAgentConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.update_strategy, UpdateStrategy::Immediate);
+        assert!(!config.allow_self_update);
+    }
+
+    /// Only the immediate dispatch path exists today; coordinated/deferred fall
+    /// back to it until SI-5/SI-6 land.
+    #[test]
+    fn effective_update_strategy_falls_back_to_immediate() {
+        for requested in [
+            UpdateStrategy::Immediate,
+            UpdateStrategy::Coordinated,
+            UpdateStrategy::Deferred,
+        ] {
+            let config = RemoteAgentConfig {
+                update_strategy: requested,
+                ..RemoteAgentConfig::default()
+            };
+            assert_eq!(
+                config.effective_update_strategy(),
+                UpdateStrategy::Immediate,
+                "requested {requested:?} should currently resolve to Immediate"
+            );
+        }
+    }
 }
