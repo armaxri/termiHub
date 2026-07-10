@@ -238,3 +238,54 @@ describe("FileEditor — close while in error state (#971)", () => {
     expect(useAppStore.getState().pendingCloseRequest).toBeNull();
   });
 });
+
+describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  it("renders the Save action as a shared Button primitive", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "sftp_read_file_content") return Promise.resolve("data\n");
+      return Promise.resolve(undefined);
+    });
+    render();
+    await flush();
+
+    const saveBtn = query("file-editor-save") as HTMLButtonElement;
+    expect(saveBtn).not.toBeNull();
+    expect(saveBtn.classList.contains("ui-btn")).toBe(true);
+  });
+
+  it("renders the save-error dismiss as a shared Button primitive", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "sftp_read_file_content") return Promise.resolve("data\n");
+      if (cmd === "sftp_write_file_content") return Promise.reject(new Error("permission denied"));
+      return Promise.resolve(undefined);
+    });
+    render();
+    await flush();
+    editContent("data\nmore\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const dismiss = query("file-editor-save-error-dismiss") as HTMLButtonElement;
+    expect(dismiss).not.toBeNull();
+    expect(dismiss.classList.contains("ui-btn")).toBe(true);
+  });
+});
