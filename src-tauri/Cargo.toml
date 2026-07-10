@@ -50,6 +50,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 semver = "1"
 dirs = "6"
 which = "7"
+# Streaming XML reader/writer used to append/remove termiHub's Thunar custom
+# action inside a shared ~/.config/Thunar/uca.xml without disturbing foreign
+# actions (Linux file-manager registration, #1370).
+quick-xml = "0.39"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "fmt", "env-filter"] }
 chrono = "0.4"
