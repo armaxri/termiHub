@@ -8,6 +8,7 @@ pub mod logs;
 pub mod network;
 pub mod portable;
 pub mod session;
+pub mod shell_integration;
 pub mod tunnel;
 pub mod update;
 pub mod workspace;

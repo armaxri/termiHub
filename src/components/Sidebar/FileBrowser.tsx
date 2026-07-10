@@ -51,6 +51,8 @@ import {
   type SortDirection,
 } from "@/utils/fileBrowserNav";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
+import { baseNameSelectionEnd } from "@/utils/fileNameSelection";
+import { frontendLog } from "@/utils/frontendLog";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { FileBrowserPathBar } from "./FileBrowserPathBar";
@@ -72,6 +74,12 @@ interface FileRowProps {
   tabIndex: number;
   /** Ref callback so the parent can move focus to this row's button. */
   rowRef: (el: HTMLButtonElement | null) => void;
+  /** When true, the row renders an inline rename input instead of the name. */
+  isRenaming: boolean;
+  /** Commit a rename to `newName` (parent validates and clears the edit). */
+  onRenameSubmit: (entry: FileEntry, newName: string) => void;
+  /** Abandon the in-progress rename. */
+  onRenameCancel: () => void;
 }
 
 /**
@@ -314,6 +322,61 @@ function SortHeader({
   );
 }
 
+/** The leading folder/file glyph shared by file rows and the rename editor. */
+function FileEntryIcon({ entry }: { entry: FileEntry }) {
+  return entry.isDirectory ? (
+    <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
+  ) : (
+    <File size={16} className="file-browser__icon" />
+  );
+}
+
+/**
+ * Inline rename editor rendered in place of a file row. Mirrors the New File /
+ * New Folder inline-input idiom: an uncontrolled input that commits on Enter
+ * and cancels on Escape (the base name is pre-selected so the extension is
+ * preserved).
+ */
+function RenameRow({
+  entry,
+  onSubmit,
+  onCancel,
+}: {
+  entry: FileEntry;
+  onSubmit: (entry: FileEntry, newName: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="file-browser__row-wrapper file-browser__row-wrapper--renaming">
+      <div className="file-browser__row file-browser__row--renaming">
+        <FileEntryIcon entry={entry} />
+        <input
+          className="file-browser__new-dir-input"
+          defaultValue={entry.name}
+          autoFocus
+          spellCheck={false}
+          data-testid="file-row-rename-input"
+          aria-label={`Rename ${entry.name}`}
+          onFocus={(e) => {
+            // Pre-select the base name, preserving the extension.
+            e.currentTarget.setSelectionRange(0, baseNameSelectionEnd(entry.name));
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSubmit(entry, e.currentTarget.value);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              onCancel();
+            }
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function FileRow({
   entry,
   vscodeAvailable,
@@ -328,6 +391,9 @@ function FileRow({
   onShareVia,
   tabIndex,
   rowRef,
+  isRenaming,
+  onRenameSubmit,
+  onRenameCancel,
 }: FileRowProps) {
   const menuItemProps = {
     entry,
@@ -340,6 +406,10 @@ function FileRow({
   };
 
   const showMultiSelect = isSelected && selectedCount > 1;
+
+  if (isRenaming) {
+    return <RenameRow entry={entry} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />;
+  }
 
   return (
     <ContextMenu.Root>
@@ -361,11 +431,7 @@ function FileRow({
               }
             }}
           >
-            {entry.isDirectory ? (
-              <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
-            ) : (
-              <File size={16} className="file-browser__icon" />
-            )}
+            <FileEntryIcon entry={entry} />
             <span className="file-browser__name">{entry.name}</span>
             {entry.modified && (
               <span className="file-browser__modified">{formatRelativeTime(entry.modified)}</span>
@@ -773,6 +839,7 @@ export function FileBrowser() {
   const setSidebarView = useAppStore((s) => s.setSidebarView);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState<string | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{
@@ -915,12 +982,8 @@ export function FileBrowser() {
           writeClipboard(entry.path);
           break;
         case "rename": {
-          const newName = window.prompt("New name:", entry.name);
-          if (newName && newName !== entry.name) {
-            renameEntry(entry.path, newName).catch((err: unknown) =>
-              console.error("Rename failed:", err)
-            );
-          }
+          // Inline rename: the row renders an editable input (see FileRow).
+          setRenamingPath(entry.path);
           break;
         }
         case "delete": {
@@ -936,8 +999,25 @@ export function FileBrowser() {
         }
       }
     },
-    [mode, sftpSessionId, downloadFile, openInVscode, copyEntry, cutEntry, renameEntry, deleteEntry]
+    [mode, sftpSessionId, downloadFile, openInVscode, copyEntry, cutEntry, deleteEntry]
   );
+
+  const handleRenameSubmit = useCallback(
+    (entry: FileEntry, rawName: string) => {
+      setRenamingPath(null);
+      const newName = rawName.trim();
+      if (!newName || newName === entry.name) return;
+      renameEntry(entry.path, newName)
+        .then(() => toast.success(`Renamed to "${newName}"`))
+        .catch((err: unknown) => {
+          frontendLog("file_browser", `Rename failed: ${err}`);
+          toast.error(`Rename failed: ${err}`);
+        });
+    },
+    [renameEntry]
+  );
+
+  const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
 
   const handleShareVia = useCallback(
     (path: string, protocol: "http" | "ftp" | "tftp") => {
@@ -1050,6 +1130,12 @@ export function FileBrowser() {
         if (!entry) return;
         if (entry.isDirectory) handleNavigate(entry);
         else handleContextAction(entry, "edit");
+        return;
+      }
+      if (key === "F2") {
+        e.preventDefault();
+        const entry = entries[activeIndex];
+        if (entry) setRenamingPath(entry.path);
         return;
       }
       // Type-ahead: a printable character with no command modifiers.
@@ -1492,6 +1578,9 @@ export function FileBrowser() {
                     onShareVia={mode === "local" ? handleShareVia : undefined}
                     tabIndex={index === activeIndex ? 0 : -1}
                     rowRef={getRowRef(index)}
+                    isRenaming={renamingPath === entry.path}
+                    onRenameSubmit={handleRenameSubmit}
+                    onRenameCancel={handleRenameCancel}
                   />
                 ))
               )}

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tauri::State;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::connection::config::AgentSettings;
 use crate::connection::manager::ConnectionManager;
@@ -468,7 +468,25 @@ pub async fn update_agent(
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
     cancellation: State<'_, AgentDeployCancellation>,
 ) -> Result<AgentDeployResult, String> {
-    info!(agent_id, host = %config.host, "Updating agent on remote host");
+    // Route to the update path for the configured strategy. Only the immediate
+    // path (hard shutdown + redeploy) exists today; coordinated/deferred fall
+    // back to it until SI-5/SI-6 land (see #1354 and its follow-ups).
+    let requested = config.update_strategy;
+    let effective = config.effective_update_strategy();
+    if requested != effective {
+        warn!(
+            agent_id,
+            ?requested,
+            ?effective,
+            "Update strategy not yet implemented; falling back to immediate update"
+        );
+    }
+    info!(
+        agent_id,
+        host = %config.host,
+        strategy = ?effective,
+        "Updating agent on remote host"
+    );
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let token = cancellation.register(&agent_id);

@@ -22,7 +22,7 @@ import {
   Power,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Modal, Button, Tooltip, Progress, toast } from "@/components/ui";
+import { Modal, Button, Tooltip, Progress, ConfirmDialog, toast } from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
 import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
@@ -646,18 +646,19 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                         Disconnect
                       </Button>
                     </Tooltip>
-                    <Tooltip content="Stop remote sessions and disconnect" side="top">
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        icon={<Power size={14} />}
-                        onClick={() => handleShutdownAgent(a.id)}
-                        aria-label={`Shutdown (stop remote) ${a.name}`}
-                        data-testid={`oc-agent-shutdown-${a.id}`}
-                      >
-                        Shutdown
-                      </Button>
-                    </Tooltip>
+                    <ConfirmButton
+                      icon={<Power size={14} />}
+                      ariaLabel={`Shutdown (stop remote) ${a.name}`}
+                      tooltip="Stop remote sessions and disconnect"
+                      data-testid={`oc-agent-shutdown-${a.id}`}
+                      confirmTitle={`Shut down ${a.name}?`}
+                      confirmMessage={`This stops all remote sessions on “${a.name}” and disconnects. This cannot be undone.`}
+                      confirmLabel="Shutdown"
+                      confirmTestId={`oc-agent-shutdown-${a.id}-confirm`}
+                      onConfirm={() => handleShutdownAgent(a.id)}
+                    >
+                      Shutdown
+                    </ConfirmButton>
                   </div>
                 }
               />
@@ -904,6 +905,77 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
 // ── Internal sub-components ───────────────────────────────────────────────
 
+interface ConfirmButtonProps {
+  children: React.ReactNode;
+  /** Accessible label for the trigger button. */
+  ariaLabel: string;
+  /** Tooltip content for the trigger. */
+  tooltip: string;
+  /** Optional leading icon. */
+  icon?: React.ReactNode;
+  /** Extra class on the trigger button. */
+  className?: string;
+  /** Test hook for the trigger button. */
+  "data-testid"?: string;
+  confirmTitle: string;
+  confirmMessage: string;
+  confirmLabel: string;
+  /** Test hook for the confirmation dialog. */
+  confirmTestId?: string;
+  onConfirm: () => void | Promise<void>;
+}
+
+/**
+ * A danger action button that confirms before running its irreversible teardown
+ * (#1343). Shared by the section "Kill All" controls and the agent "Shutdown"
+ * action so the confirm-then-run pattern lives in one place. Keeps the trigger
+ * tooltip and the async {@link Button} feedback on the confirmed path.
+ */
+function ConfirmButton({
+  children,
+  ariaLabel,
+  tooltip,
+  icon,
+  className,
+  "data-testid": testId,
+  confirmTitle,
+  confirmMessage,
+  confirmLabel,
+  confirmTestId,
+  onConfirm,
+}: ConfirmButtonProps) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  return (
+    <>
+      <Tooltip content={tooltip} side="top">
+        <Button
+          variant="danger"
+          size="sm"
+          icon={icon}
+          className={className}
+          onClick={() => setConfirmOpen(true)}
+          aria-label={ariaLabel}
+          data-testid={testId}
+        >
+          {children}
+        </Button>
+      </Tooltip>
+      <ConfirmDialog
+        open={confirmOpen}
+        title={confirmTitle}
+        message={confirmMessage}
+        confirmLabel={confirmLabel}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void onConfirm();
+        }}
+        onCancel={() => setConfirmOpen(false)}
+        data-testid={confirmTestId}
+      />
+    </>
+  );
+}
+
 interface SectionProps {
   title: string;
   icon: React.ReactNode;
@@ -924,23 +996,26 @@ function Section({
   "data-testid": testId,
   children,
 }: SectionProps) {
+  // Bulk teardown is irreversible — confirm before running it (#1343).
+  const noun = count === 1 ? "item" : "items";
   return (
     <div data-testid={testId}>
       <div className="oc-section__header">
         <span className="oc-section__title">{title}</span>
         {count > 0 && <span className="oc-section__count">{count}</span>}
         {onKillAll && (
-          <Tooltip content={`${killAllLabel} ${title}`} side="top">
-            <Button
-              variant="danger"
-              size="sm"
-              className="oc-section__kill-all"
-              onClick={() => onKillAll()}
-              aria-label={`${killAllLabel} ${title}`}
-            >
-              {killAllLabel}
-            </Button>
-          </Tooltip>
+          <ConfirmButton
+            className="oc-section__kill-all"
+            ariaLabel={`${killAllLabel} ${title}`}
+            tooltip={`${killAllLabel} ${title}`}
+            confirmTitle={`${killAllLabel} — ${title}?`}
+            confirmMessage={`This will stop ${count} ${noun} in “${title}”. This cannot be undone.`}
+            confirmLabel={killAllLabel}
+            confirmTestId={testId ? `${testId}-confirm` : undefined}
+            onConfirm={onKillAll}
+          >
+            {killAllLabel}
+          </ConfirmButton>
         )}
       </div>
       {children}

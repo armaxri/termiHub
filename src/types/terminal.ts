@@ -139,6 +139,15 @@ export interface ExternalAgentFile {
   enabled: boolean;
 }
 
+/**
+ * How a shared remote agent binary is updated when a newer desktop deploys.
+ *
+ * Only `"immediate"` (hard shutdown + redeploy) is honored today; `"coordinated"`
+ * (SI-5) and `"deferred"` (SI-6) persist the preference until those subsystems
+ * land. See #1354.
+ */
+export type UpdateStrategy = "immediate" | "coordinated" | "deferred";
+
 /** SSH transport configuration for a remote agent (no session details). */
 export interface RemoteAgentConfig {
   host: string;
@@ -152,6 +161,14 @@ export interface RemoteAgentConfig {
   agentPath?: string;
   /** External connection files to load on the remote host (read-only). */
   externalConnectionFiles?: ExternalAgentFile[];
+  /**
+   * Whether the agent may check GitHub and update itself in the background.
+   * Opt-in; defaults to `false`. The self-update mechanism (SI-8) is not yet
+   * implemented — this persists the preference until it lands.
+   */
+  allowSelfUpdate?: boolean;
+  /** Update strategy for this agent's binary. Defaults to `"immediate"`. */
+  updateStrategy?: UpdateStrategy;
 }
 
 /** Key-value pair for Docker environment variables. */
@@ -203,6 +220,26 @@ export interface TerminalTab {
    */
   persistentConnectionId?: string;
 }
+
+/**
+ * The minimal data needed to reopen a just-closed terminal tab from an
+ * Undo/Reopen affordance — a fresh session is created, scrollback is not
+ * restored. `null` reopen means the tab had no reconnectable config.
+ */
+export interface ReopenTabPayload {
+  title: string;
+  connectionType: ConnectionType;
+  config: ConnectionConfig;
+}
+
+/**
+ * A pending confirmation before tearing down a live session by closing a tab
+ * (X / middle-click) or a split panel. The `tab` variant carries the optional
+ * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen.
+ */
+export type SessionCloseConfirmRequest =
+  | { kind: "tab"; tabId: string; panelId: string; label: string; reopen: ReopenTabPayload | null }
+  | { kind: "panel"; panelId: string; liveCount: number; tabCount: number };
 
 export interface LeafPanel {
   type: "leaf";

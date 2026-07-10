@@ -119,13 +119,29 @@ describe("ConnectionList — jump-host delete protection", () => {
     expect(deleteConnection).not.toHaveBeenCalled();
   });
 
-  it("deletes an unreferenced connection immediately with no warning", () => {
+  it("confirms before deleting an unreferenced connection (no silent delete)", () => {
     renderWith([
       sshConnection("lonely"),
       sshConnection("app-server", { proxyJump: [ref("bastion")] }),
     ]);
     clickDelete("lonely");
-    expect(q("confirm-delete-dialog")).toBeNull();
+
+    const dialog = q("confirm-delete-dialog");
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("lonely");
+    expect(dialog.textContent).not.toContain("used as a jump host");
+    // Not deleted until confirmed.
+    expect(deleteConnection).not.toHaveBeenCalled();
+
+    act(() => q("confirm-delete-confirm").click());
     expect(deleteConnection).toHaveBeenCalledWith("lonely");
+  });
+
+  it("cancelling an ordinary delete leaves the connection in place", () => {
+    renderWith([sshConnection("lonely")]);
+    clickDelete("lonely");
+    act(() => q("confirm-delete-cancel").click());
+    expect(q("confirm-delete-dialog")).toBeNull();
+    expect(deleteConnection).not.toHaveBeenCalled();
   });
 });

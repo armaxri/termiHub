@@ -261,6 +261,94 @@ export interface SerialPortScanPrefix {
   builtIn: boolean;
 }
 
+/** Windows context-menu visibility for a shell-integration entry. */
+export type ShellEntryVisibility = "always" | "extended";
+
+/** Fallback behaviour when no shell-integration entry resolves a spawn request. */
+export type ShellIntegrationFallback = "picker" | "systemDefaultShell";
+
+/** Which right-click targets a shell-integration entry is offered for. */
+export interface ShowForTargets {
+  /** Right-click on a folder. */
+  folders: boolean;
+  /** Right-click on a file (opens a terminal in the parent directory). */
+  files: boolean;
+  /** Right-click on the folder background (empty space). */
+  folderBackground: boolean;
+}
+
+/** A single configurable "Open in termiHub" quick-access entry. */
+export interface ShellEntry {
+  /** Stable identifier embedded in the registered command (`--entry-id`). */
+  id: string;
+  /** Display name shown in the file-manager context menu. */
+  name: string;
+  /** Saved connection this entry opens. Omitted → the entry shows the session picker. */
+  connectionId?: string;
+  /** Windows context-menu visibility (Always / Extended-only). */
+  visibility: ShellEntryVisibility;
+  /** Which right-click targets this entry is registered for. */
+  showFor: ShowForTargets;
+}
+
+/** Linux per-file-manager install toggles (Linux-only in effect). */
+export interface LinuxFileManagerToggles {
+  /** Install Nautilus (GNOME) scripts. */
+  nautilus: boolean;
+  /** Install the KDE (Dolphin) service menu. */
+  kde: boolean;
+  /** Install the Thunar (XFCE) custom action. */
+  thunar: boolean;
+}
+
+/** Persisted shell context-menu / CLI-spawn integration settings (epic #1363). */
+export interface ShellIntegrationSettings {
+  /** Configured quick-access entries, in display / priority order. */
+  entries: ShellEntry[];
+  /** What to do when no entry resolves a request. */
+  fallback: ShellIntegrationFallback;
+  /** Open spawned sessions in a new window instead of the running instance. */
+  openInNewWindow: boolean;
+  /** Whether the OS context-menu integration is currently registered. */
+  registered: boolean;
+  /** Absolute executable path recorded at registration time (staleness check). */
+  registeredExePath?: string;
+  /** Linux per-file-manager install toggles. */
+  linuxFileManagers: LinuxFileManagerToggles;
+  /** Whether the user dismissed the first-launch install banner. */
+  firstLaunchBannerDismissed: boolean;
+}
+
+/** A file manager detected on the host, reported by the status command. */
+export interface DetectedFileManager {
+  /** Stable id (`"nautilus"`, `"kde"`, `"thunar"`, …). */
+  id: string;
+  /** Human-readable display name. */
+  name: string;
+  /** Whether the manager was found on this host. */
+  detected: boolean;
+  /** Detected version string, when known. */
+  version?: string;
+}
+
+/** Registration + staleness status reported to the shell-integration settings UI. */
+export interface ShellIntegrationStatus {
+  /** Whether the OS context-menu integration is currently registered. */
+  registered: boolean;
+  /** Executable path recorded at registration time, if any. */
+  registeredExePath?: string;
+  /** The current executable path, if resolvable. */
+  currentExePath?: string;
+  /** Whether the registered path matches the current executable. */
+  exePathMatches: boolean;
+  /** True when registered but the executable moved — re-registration needed. */
+  stale: boolean;
+  /** Whether the app runs in portable mode (where staleness is expected). */
+  portable: boolean;
+  /** File managers detected on the host (empty until detection lands). */
+  detectedFileManagers: DetectedFileManager[];
+}
+
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
@@ -280,9 +368,15 @@ export interface AppSettings {
   /**
    * Show a confirmation dialog when the user closes a tab via the
    * close-tab or close-tab-group keyboard shortcut. Defaults to true.
-   * The X-button on tabs always closes immediately and is unaffected by this setting.
    */
   confirmCloseTabOnShortcut?: boolean;
+  /**
+   * Show a confirmation dialog before closing a tab or split panel that holds a
+   * live session (SSH/serial/local shell/telnet) via the tab X, middle-click, or
+   * the panel close button. Defaults to true. The dialog's "Don't ask again"
+   * opt-out flips this off; it can be re-enabled from General settings.
+   */
+  confirmCloseLiveSession?: boolean;
   /**
    * When true (default), saving terminal content to a file shows a dialog
    * offering to open the saved file in a Monaco editor tab. When false, the
@@ -350,6 +444,8 @@ export interface AppSettings {
   updates?: UpdateSettings;
   /** Linux `/dev` prefixes used when scanning for serial ports. Always present after `get_settings` (expanded from built-in defaults if never saved). */
   serialPortScanPrefixes?: SerialPortScanPrefix[];
+  /** Shell context-menu / CLI-spawn integration configuration (epic #1363). */
+  shellIntegration?: ShellIntegrationSettings;
 }
 
 /**
