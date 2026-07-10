@@ -50,33 +50,6 @@
   text-align: left;
 }
 
-.file-editor__save-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  padding: 3px 10px;
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  background: transparent;
-  cursor: pointer;
-  transition:
-    color var(--transition-fast),
-    background-color var(--transition-fast);
-}
-
-.file-editor__save-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  background-color: var(--bg-hover);
-}
-
-.file-editor__save-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .file-editor__editor-container {
   flex: 1;
   min-height: 0;
@@ -113,21 +86,6 @@
 .file-editor__save-error-text {
   flex: 1;
   min-width: 0;
-}
-
-.file-editor__save-error-dismiss {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 4px;
-}
-
-.file-editor__save-error-dismiss:hover {
-  color: var(--text-primary);
 }
 
 @keyframes file-editor-spin {
