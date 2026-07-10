@@ -810,6 +810,45 @@ that the desktop rejects a tampered binary before install. See PR #1350.
 4. Delete the tampered cache entry; the next deploy re-downloads, re-verifies,
    and succeeds.
 
+### Native-dialog → Modal migration (#1348)
+
+Verifies the three flows that previously used native `window.prompt` /
+`window.confirm` now use the shared Modal / inline-edit affordances. See PR
+for #1348.
+
+**File rename (inline).**
+
+1. Open the file browser on a local or SFTP directory containing a file with an
+   extension (e.g. `report.pdf`).
+2. Select the file and press **F2** (or right-click → **Rename**). The row turns
+   into an inline text input — no native prompt appears.
+3. Confirm the base name (`report`) is pre-selected while the extension
+   (`.pdf`) is preserved. Type a new base name and press **Enter** → the file is
+   renamed and a success toast appears. On error a recoverable error toast is
+   shown.
+4. Start another rename and press **Escape** (or click away with no change) →
+   the edit is abandoned and no rename occurs.
+
+**Wake-on-LAN "Save Current".**
+
+1. Open **Network Tools → Wake-on-LAN**, enter a valid MAC address, then click
+   **Save Current**. A themed modal opens (no native prompt).
+2. Confirm the modal shows a **Device name** field and the MAC address; an
+   invalid MAC shows an inline error and the **Save** button is disabled until a
+   name is present and the MAC is valid.
+3. Enter a name and confirm → the device is saved, the modal closes, and a
+   success toast appears; the saved-devices list refreshes.
+
+**Port Scanner large-scan warning.**
+
+1. Open **Network Tools → Port Scanner**. Enter a single host and a small port
+   list and click **Run** → the scan starts immediately (no modal).
+2. Enter a large port range (e.g. `1-2000`) or a CIDR block (e.g. `10.0.0.0/24`)
+   with a few ports and click **Run** → a themed confirm modal appears (no
+   native confirm) stating the approximate probe count.
+3. **Cancel** → the scan does not start. Re-run and **Start scan** → the scan
+   proceeds.
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
