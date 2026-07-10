@@ -810,6 +810,24 @@ that the desktop rejects a tampered binary before install. See PR #1350.
 4. Delete the tampered cache entry; the next deploy re-downloads, re-verifies,
    and succeeds.
 
+### Remote-agent update-strategy settings persist (#1354)
+
+Verifies the per-agent update settings appear in the editor and round-trip
+through save/load. See PR #1388.
+
+1. In the **Remote Agents** sidebar, edit an existing agent (or create one) to
+   open the connection editor, then open the **Agent** tab.
+2. In the **Updates** section confirm two controls appear: an **Update Strategy**
+   select (Immediate / Coordinated / Deferred, defaulting to **Immediate**) and an
+   **Allow agent self-update** toggle (defaulting to **off**).
+3. Set Update Strategy to **Deferred** and turn **Allow agent self-update** on,
+   then save.
+4. Reopen the same agent's editor → the Agent → Updates section still shows
+   **Deferred** and the toggle **on** (values persisted to disk).
+5. Trigger an agent update (redeploy) with a non-Immediate strategy selected →
+   the update still succeeds via the immediate path, and the app log records a
+   warning that the coordinated/deferred strategy is not yet honored (#1351/#1352).
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
