@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, type FormEvent } from "react";
 import { Shield } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
@@ -202,6 +202,24 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     }
   }, [currentPasswordInput, changeNewPassword, changeConfirmPassword, resetChangePasswordDialog]);
 
+  // Enter from any field in the setup / change dialogs submits (their <form>
+  // wrappers); the validation lives in the confirm handlers.
+  const handleMasterPasswordSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      void handleConfirmSwitch();
+    },
+    [handleConfirmSwitch]
+  );
+
+  const handleChangePasswordSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      void handleChangePassword();
+    },
+    [handleChangePassword]
+  );
+
   /**
    * Opens the change-master-password dialog. changeMasterPassword requires an unlocked
    * store, so when the store is locked this routes through the shared unlock flow first
@@ -257,7 +275,11 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           </div>
 
           {masterPasswordSetup && confirmSwitch === "master_password" && (
-            <div className="settings-panel__inline-dialog" data-testid="master-password-setup">
+            <form
+              className="settings-panel__inline-dialog"
+              data-testid="master-password-setup"
+              onSubmit={handleMasterPasswordSubmit}
+            >
               <h4 className="settings-panel__inline-dialog-title">Set Master Password</h4>
               <p className="settings-panel__inline-dialog-text">
                 Choose a strong password to encrypt your credentials.
@@ -275,9 +297,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 placeholder="Confirm password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleConfirmSwitch();
-                }}
                 data-testid="master-password-confirm-input"
               />
               {passwordError && (
@@ -285,9 +304,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               )}
               <div className="settings-panel__inline-dialog-actions">
                 <Button
+                  type="submit"
                   variant="primary"
                   size="sm"
-                  onClick={handleConfirmSwitch}
                   disabled={switching}
                   data-testid="master-password-confirm-btn"
                 >
@@ -297,7 +316,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   Cancel
                 </Button>
               </div>
-            </div>
+            </form>
           )}
 
           {confirmSwitch && confirmSwitch !== "master_password" && (
@@ -385,7 +404,11 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               </div>
 
               {changingPassword && (
-                <div className="settings-panel__inline-dialog" data-testid="change-password-dialog">
+                <form
+                  className="settings-panel__inline-dialog"
+                  data-testid="change-password-dialog"
+                  onSubmit={handleChangePasswordSubmit}
+                >
                   <h4 className="settings-panel__inline-dialog-title">Change Master Password</h4>
                   <PasswordInput
                     className="settings-panel__inline-dialog-input"
@@ -407,9 +430,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     placeholder="Confirm new password"
                     value={changeConfirmPassword}
                     onChange={(e) => setChangeConfirmPassword(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleChangePassword();
-                    }}
                     data-testid="change-master-password-confirm"
                   />
                   {changePasswordError && (
@@ -417,9 +437,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   )}
                   <div className="settings-panel__inline-dialog-actions">
                     <Button
+                      type="submit"
                       variant="primary"
                       size="sm"
-                      onClick={handleChangePassword}
                       data-testid="change-master-password-confirm-btn"
                     >
                       Change
@@ -428,7 +448,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                       Cancel
                     </Button>
                   </div>
-                </div>
+                </form>
               )}
             </div>
           )}
