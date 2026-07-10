@@ -1639,6 +1639,13 @@ describe("FileBrowser – navigation UX (#1361)", () => {
     vi.clearAllMocks();
   });
 
+  /** Set a controlled input's value the way React expects (native setter + input event). */
+  function setInputValue(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
   async function renderLocalAt(path: string) {
     const localTab = makeTab({ connectionType: "local", config: { type: "local", config: {} } });
     setActiveTab(localTab);
@@ -1699,8 +1706,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       '[data-testid="file-browser-path-input"]'
     ) as HTMLInputElement;
     await act(async () => {
-      input.value = "/var/log";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      setInputValue(input, "/var/log");
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     await flushAsync();
@@ -1719,8 +1725,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       '[data-testid="file-browser-path-input"]'
     ) as HTMLInputElement;
     await act(async () => {
-      input.value = "/should/not/apply";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      setInputValue(input, "/should/not/apply");
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     await flushAsync();
@@ -1734,8 +1739,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       '[data-testid="file-browser-filter"]'
     ) as HTMLInputElement;
     await act(async () => {
-      filter.value = "dir";
-      filter.dispatchEvent(new Event("input", { bubbles: true }));
+      setInputValue(filter, "dir");
     });
     await flushAsync();
     expect(container.querySelector('[data-testid="file-row-adir"]')).toBeTruthy();
@@ -1816,9 +1820,9 @@ describe("FileBrowser – navigation UX (#1361)", () => {
     await act(async () => {
       sizeHeader.click();
     });
-    const rows = Array.from(container.querySelectorAll('[data-testid^="file-row-"]')).map((r) =>
-      r.getAttribute("data-testid")
-    );
+    const rows = Array.from(
+      container.querySelectorAll('[data-testid^="file-row-"]:not([data-testid^="file-row-menu-"])')
+    ).map((r) => r.getAttribute("data-testid"));
     // Directories always first; files sorted by size ascending: small.txt (5) before big.log (900).
     expect(rows).toEqual([
       "file-row-adir",
