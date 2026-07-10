@@ -13,6 +13,7 @@ import {
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
 import { NetworkNumberField } from "./NetworkNumberField";
+import { NetworkTextField } from "./NetworkTextField";
 import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -269,18 +270,14 @@ export function HttpMonitorPanel() {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>URL</span>
-          <input
-            className={`network-panel__input${urlError ? " network-panel__input--error" : ""}`}
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            aria-invalid={urlError ? true : undefined}
-            data-testid="http-monitor-url"
-          />
-          {urlError && <span className="network-panel__field-error">{urlError}</span>}
-        </label>
+        <NetworkTextField
+          label="URL"
+          value={url}
+          onChange={setUrl}
+          error={urlError}
+          placeholder="https://example.com"
+          data-testid="http-monitor-url"
+        />
         <label className="network-panel__field network-panel__field--small">
           <span>Method</span>
           <select

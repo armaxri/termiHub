@@ -9,6 +9,7 @@ import {
 } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
 import { NetworkNumberField } from "./NetworkNumberField";
+import { NetworkTextField } from "./NetworkTextField";
 import { validatePort, validateHost } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -45,7 +46,7 @@ export function WolPanel() {
   }, [loadDevices]);
 
   const handleSend = useCallback(async () => {
-    if (!mac.trim() || portError || broadcastError) return;
+    if (!canSend) return;
     setError(null);
     setStatus(null);
     try {
@@ -56,7 +57,7 @@ export function WolPanel() {
       setError(String(err));
       frontendLog("wol_panel", `WoL send failed: ${err}`);
     }
-  }, [mac, broadcast, port, portError, broadcastError]);
+  }, [mac, broadcast, port, canSend]);
 
   const handleWakeDevice = useCallback(async (device: WolDevice) => {
     try {
@@ -74,7 +75,7 @@ export function WolPanel() {
   }, []);
 
   const handleSaveDevice = useCallback(async () => {
-    if (!mac.trim() || portError || broadcastError) return;
+    if (!canSend) return;
     const name = window.prompt("Device name:");
     if (!name) return;
     try {
@@ -92,7 +93,7 @@ export function WolPanel() {
       frontendLog("wol_panel", `WoL device save failed: ${err}`);
       toast.error(`Save failed: ${err}`);
     }
-  }, [mac, broadcast, port, portError, broadcastError, loadDevices]);
+  }, [mac, broadcast, port, canSend, loadDevices]);
 
   const handleDeleteDevice = useCallback(
     async (id: string) => {
@@ -137,16 +138,13 @@ export function WolPanel() {
             data-testid="wol-mac"
           />
         </label>
-        <label className="network-panel__field">
-          <span>Broadcast</span>
-          <input
-            className={`network-panel__input${broadcastError ? " network-panel__input--error" : ""}`}
-            value={broadcast}
-            onChange={(e) => setBroadcast(e.target.value)}
-            aria-invalid={broadcastError ? true : undefined}
-          />
-          {broadcastError && <span className="network-panel__field-error">{broadcastError}</span>}
-        </label>
+        <NetworkTextField
+          label="Broadcast"
+          value={broadcast}
+          onChange={setBroadcast}
+          error={broadcastError}
+          data-testid="wol-broadcast"
+        />
         <NetworkNumberField
           label="Port"
           value={port}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import {
   TunnelConfig,
@@ -119,8 +119,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   );
 
   // Inline validation of the forwarding host/port fields. Blocks Save while any
-  // visible field is invalid.
-  const { errors, valid } = useMemo(() => validateTunnelType(tunnelType), [tunnelType]);
+  // visible field is invalid. `tunnelType` is a fresh object on every edit, so
+  // memoizing the check would never hit; it iterates only a few fields.
+  const { errors, valid } = validateTunnelType(tunnelType);
   const canSave = !!sshConnectionId && valid;
 
   const handleSave = useCallback(

@@ -472,6 +472,7 @@ Fixed strings — match exactly.
 | `update-notification-whats-new` | `src/components/UpdateNotification/UpdateNotification.tsx` |
 | `update-open-downloads` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-settings` | `src/components/Settings/UpdateSettings.tsx` |
+| `wol-broadcast` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-mac` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-panel` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-port` | `src/components/NetworkTools/WolPanel.tsx` |
@@ -672,7 +673,7 @@ where the component is used, not at the `data-testid` site.
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
-| `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |

@@ -76,7 +76,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const canStart = !!host.trim() && !intervalError && !countError;
 
   const handleStart = useCallback(async () => {
-    if (!host.trim() || intervalError || countError) return;
+    if (!canStart) return;
 
     setStatus("running");
     setResults([]);
@@ -130,7 +130,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       endSession();
       frontendLog("ping_panel", `Ping failed: ${err}`);
     }
-  }, [host, intervalMs, count, intervalError, countError, endSession]);
+  }, [host, intervalMs, count, canStart, endSession]);
 
   const handleStop = useCallback(async () => {
     if (!taskIdRef.current) return;

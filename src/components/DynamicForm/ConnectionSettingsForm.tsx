@@ -134,7 +134,14 @@ export function ConnectionSettingsForm({
     return { valid: Object.keys(visibleErrors).length === 0, errors: visibleErrors };
   }, [zodSchema, watchedValues, schema]);
 
+  // Only propagate when the reported validity actually changes, so typing more
+  // characters into an already-valid (or already-invalid, same-errors) field
+  // doesn't churn a fresh error object into the parent every keystroke.
+  const lastReportedRef = useRef<string>("");
   useEffect(() => {
+    const signal = `${validity.valid}|${JSON.stringify(validity.errors)}`;
+    if (signal === lastReportedRef.current) return;
+    lastReportedRef.current = signal;
     onValidityChange?.(validity.valid, validity.errors);
   }, [validity, onValidityChange]);
 
