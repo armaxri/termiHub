@@ -1,7 +1,8 @@
-import { useState, useCallback, useMemo, type FormEvent } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button, Modal } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
   networkPortScan,
   networkPortScanCancel,
@@ -108,16 +109,9 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     await run();
   }, [run]);
 
-  // Enter submits the form; ignore while running or when the form is invalid
-  // (handleRun re-checks and may open the large-scan confirmation instead).
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      if (status === "running" || !canRun) return;
-      void handleRun();
-    },
-    [status, canRun, handleRun]
-  );
+  // Enter submits the form (handleRun re-checks and may open the large-scan
+  // confirmation instead).
+  const handleSubmit = useFormSubmit(status !== "running" && canRun, handleRun);
 
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results

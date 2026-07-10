@@ -48,6 +48,7 @@ import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
 
@@ -983,6 +984,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     exemptSelector: '[data-testid="jump-host-section"]',
   });
 
+  // Autofocus (and select any prefilled name when editing) the primary field.
+  const nameRef = useAutofocusSelect<HTMLInputElement>();
+
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
 
   // Filter Docker runtime options based on what's actually installed
@@ -1028,11 +1032,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <label className="settings-form__field">
           <span className="settings-form__label">Name</span>
           <Input
+            ref={nameRef}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Connection name"
-            autoFocus
             error={!!nameError}
             data-testid="connection-editor-name-input"
           />

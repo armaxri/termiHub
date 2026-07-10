@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect, useRef, type FormEvent } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
@@ -220,14 +221,7 @@ export function HttpMonitorPanel() {
 
   // Enter submits the form → start a monitor. A monitor is either running
   // (activeMonitorId set → Stop is shown) or invalid, in which case do nothing.
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      if (activeMonitorId || !canStart) return;
-      void handleStart();
-    },
-    [activeMonitorId, canStart, handleStart]
-  );
+  const handleSubmit = useFormSubmit(!activeMonitorId && canStart, handleStart);
 
   // Tear the listener down on unmount.
   useEffect(() => stopListening, [stopListening]);

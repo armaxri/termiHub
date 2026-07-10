@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect, useMemo, type FormEvent } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
 import { Button, Tooltip, toast, Modal, Field, Input } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
   networkWolSend,
   networkWolDevicesList,
@@ -89,14 +90,7 @@ export function WolPanel() {
   }, [canSend]);
 
   // Enter submits the form → send the magic packet (respects the disabled state).
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      if (!canSend) return;
-      void handleSend();
-    },
-    [canSend, handleSend]
-  );
+  const handleSubmit = useFormSubmit(canSend, handleSend);
 
   const handleConfirmSave = useCallback(async () => {
     const name = saveName.trim();

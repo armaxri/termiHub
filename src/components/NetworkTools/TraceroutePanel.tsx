@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent } from "react";
+import { useState, useCallback } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui";
 import {
@@ -13,6 +13,7 @@ import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { NetworkNumberField } from "./NetworkNumberField";
 import { validateIntRange } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
 interface TraceroutePanelProps {
@@ -59,15 +60,8 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
     subscribe,
   });
 
-  // Enter submits the form; ignore while running or when the form is invalid.
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      if (status === "running" || !canRun) return;
-      void run();
-    },
-    [status, canRun, run]
-  );
+  // Enter submits the form (respects the Run button's disabled state).
+  const handleSubmit = useFormSubmit(status !== "running" && canRun, run);
 
   const columns = [
     { key: "hop", label: "Hop" },

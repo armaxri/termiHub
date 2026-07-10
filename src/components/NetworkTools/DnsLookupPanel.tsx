@@ -1,10 +1,11 @@
-import { useState, useCallback, type FormEvent } from "react";
+import { useState, useCallback } from "react";
 import { Play } from "lucide-react";
 import { Button } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType, DiagnosticStatus } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import { frontendLog } from "@/utils/frontendLog";
 
 const RECORD_TYPES: DnsRecordType[] = [
@@ -55,15 +56,8 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
     }
   }, [hostname, recordType, server]);
 
-  // Enter submits the form; ignore while running or when the hostname is empty.
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      if (status === "running" || !hostname.trim()) return;
-      void handleRun();
-    },
-    [status, hostname, handleRun]
-  );
+  // Enter submits the form (respects the Run button's disabled state).
+  const handleSubmit = useFormSubmit(status !== "running" && !!hostname.trim(), handleRun);
 
   const columns = [
     { key: "recordType", label: "Type" },

@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
   networkPingStart,
   networkPingStop,
@@ -145,16 +146,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     taskIdRef.current = null;
   }, []);
 
-  // Enter submits the form; ignore while running or when the form is invalid
-  // (mirrors the Start button's disabled state).
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      if (status === "running" || !canStart) return;
-      void handleStart();
-    },
-    [status, canStart, handleStart]
-  );
+  // Enter submits the form (respects the Start button's disabled state).
+  const handleSubmit = useFormSubmit(status !== "running" && canStart, handleStart);
 
   // Cleanup on unmount.
   useEffect(() => {

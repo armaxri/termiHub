@@ -10,6 +10,7 @@ import {
 import { TunnelEditorMeta } from "@/types/terminal";
 import { Button, Input, Select, Field, Toggle, toast } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { frontendLog } from "@/utils/frontendLog";
 import { TunnelDiagram } from "./TunnelDiagram";
 import { validateTunnelType } from "./tunnelValidation";
@@ -180,6 +181,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
   const sshOptions = sshConnections.map((c) => ({ value: c.id, label: c.name }));
 
+  const nameRef = useAutofocusSelect<HTMLInputElement>();
+
   // Enter (from a single-line field) saves; Escape cancels.
   const handleKeyDown = useEditorKeyboard({
     onSubmit: () => void handleSave(false),
@@ -202,12 +205,12 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       <div className="tunnel-editor__form" data-testid="tunnel-editor-form">
         <Field label="Name" htmlFor={`tunnel-name-${tabId}`}>
           <Input
+            ref={nameRef}
             id={`tunnel-name-${tabId}`}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Dev Database"
-            autoFocus
             data-testid="tunnel-editor-name"
           />
         </Field>
