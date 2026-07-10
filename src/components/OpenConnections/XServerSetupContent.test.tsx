@@ -225,6 +225,32 @@ describe("XServerSetupContent", () => {
     expect(query("x-server-setup-install-dep")?.textContent).toContain("Install Homebrew");
   });
 
+  it("offers external links for an installMode:guidedExternal error (Windows winget-absent)", () => {
+    // No terminal command and no backend install: the winget-absent case opens
+    // the Store for App Installer plus a manual VcXsrv download (#1318). The
+    // generic "Install <dep>" backend action must NOT be shown (it would loop).
+    const onInstallDependency = vi.fn(() => Promise.resolve());
+    renderContent({
+      phase: "error",
+      error: {
+        kind: "dependencyMissing",
+        message: "VcXsrv can't be installed because winget is missing",
+        dependency: "winget",
+        installMode: "guidedExternal",
+        installHint: "Install App Installer, or download VcXsrv manually",
+      },
+      onInstallDependency,
+    });
+    expect(query("x-server-setup-install-dep")).toBeNull();
+    const appInstaller = query("x-server-setup-install-app-installer");
+    expect(appInstaller).not.toBeNull();
+    expect(appInstaller?.textContent).toContain("Install App Installer");
+    expect(query("x-server-setup-open-vcxsrv")).not.toBeNull();
+    // Retry (re-detect winget) is always present on the error screen.
+    expect(query("x-server-setup-retry")).not.toBeNull();
+    expect(onInstallDependency).not.toHaveBeenCalled();
+  });
+
   it("falls back to the raw error message when no typed error is present", () => {
     renderContent({ phase: "error", error: null, rawError: "boom on connect" });
     expect(query("x-server-setup-error")?.textContent).toContain("boom on connect");

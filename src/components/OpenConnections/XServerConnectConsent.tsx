@@ -216,8 +216,8 @@ export function XServerConnectConsent() {
           open as native windows.
         </p>
         <p className="x-server-setup__body-text">
-          termiHub can set one up now. On Windows it downloads and manages <strong>VcXsrv</strong>{" "}
-          (~7&nbsp;MB, a one-time download). Nothing is downloaded until you choose{" "}
+          termiHub can set one up now. On Windows it installs and manages <strong>VcXsrv</strong>{" "}
+          via winget (a one-time install). Nothing is installed until you choose{" "}
           <strong>Enable</strong>.
         </p>
       </div>

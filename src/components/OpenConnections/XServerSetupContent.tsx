@@ -10,6 +10,12 @@ export type XServerSetupPhase = "consent" | "provisioning" | "error";
 /** Manual XQuartz download page — the fallback when the user declines Homebrew. */
 const XQUARTZ_DOWNLOAD_URL = "https://www.xquartz.org";
 
+/** Microsoft Store page for App Installer (winget) — the Windows guided prerequisite. */
+const APP_INSTALLER_URL = "https://apps.microsoft.com/detail/9NBLGGH4NNS1";
+
+/** Manual VcXsrv download page — the fallback when the user declines App Installer. */
+const VCXSRV_DOWNLOAD_URL = "https://sourceforge.net/projects/vcxsrv/";
+
 /**
  * Whether the recovery is a guided-terminal install (#1309): the user runs
  * `installCommand` in a terminal termiHub opens, rather than the generic
@@ -25,6 +31,16 @@ function isGuidedTerminalInstall(error: XServerError | null): error is XServerEr
     error.installMode === "guidedTerminal" &&
     typeof error.installCommand === "string"
   );
+}
+
+/**
+ * Whether the recovery is a guided-external install (#1318): a prerequisite
+ * package manager is missing and isn't a terminal command, so the UI opens an
+ * external page/store (Windows winget-absent → App Installer + a manual VcXsrv
+ * download). Keyed on the typed `installMode`, not the dependency name.
+ */
+function isGuidedExternalInstall(error: XServerError | null): boolean {
+  return error?.kind === "dependencyMissing" && error.installMode === "guidedExternal";
 }
 
 interface XServerSetupContentProps {
@@ -192,10 +208,11 @@ export function XServerSetupContent({
   }
 
   /**
-   * The dependency-recovery action(s) on the error screen. A `guidedTerminal`
-   * install (#1309, today the macOS brew-absent case) opens a terminal running
-   * the installer plus a manual xquartz.org fallback for a user who declines; a
-   * `backend` install is the plain install-and-retry against the backend.
+   * The dependency-recovery action(s) on the error screen, keyed on the typed
+   * `installMode`: `guidedTerminal` (macOS brew-absent) opens a terminal running
+   * the installer + a manual xquartz.org fallback; `guidedExternal` (Windows
+   * winget-absent, #1318) opens the Store for App Installer + a manual VcXsrv
+   * download; `backend` is the plain install-and-retry against the backend.
    */
   function renderInstallAction() {
     if (isGuidedTerminalInstall(error)) {
@@ -215,6 +232,29 @@ export function XServerSetupContent({
             data-testid={`${testIdPrefix}-install-homebrew`}
           >
             Install {error.dependency ?? "dependency"}
+          </Button>
+        </>
+      );
+    }
+    if (isGuidedExternalInstall(error)) {
+      // Windows winget-absent: open the Store for App Installer, then Retry
+      // re-detects winget and installs VcXsrv; a manual VcXsrv download is the
+      // fallback for a user who declines (#1318).
+      return (
+        <>
+          <Button
+            variant="ghost"
+            onClick={() => openUrl(VCXSRV_DOWNLOAD_URL)}
+            data-testid={`${testIdPrefix}-open-vcxsrv`}
+          >
+            Open VcXsrv download
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => openUrl(APP_INSTALLER_URL)}
+            data-testid={`${testIdPrefix}-install-app-installer`}
+          >
+            Install App Installer
           </Button>
         </>
       );

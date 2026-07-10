@@ -120,9 +120,9 @@ export function XServerSetupDialog({ open, onOpenChange, onProvisioned }: XServe
           Remote GUI apps forwarded over SSH (X11) need a local X server to open as native windows.
         </p>
         <p className="x-server-setup__body-text">
-          On Windows, termiHub downloads and manages <strong>VcXsrv</strong> (~7&nbsp;MB, a one-time
-          download). On macOS and Linux it uses your detected X server, guiding you through setup
-          when one is not yet available.
+          On Windows, termiHub installs and manages <strong>VcXsrv</strong> via winget. On macOS and
+          Linux it uses your detected X server, guiding you through setup when one is not yet
+          available.
         </p>
       </div>
     );
