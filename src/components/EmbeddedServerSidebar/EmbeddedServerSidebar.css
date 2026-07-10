@@ -31,7 +31,7 @@
   gap: 8px;
 }
 
-/* Server rows compose the shared SidebarListItem shell (issue #1358). */
+/* Server rows compose the shared SidebarListItem shell (issue 1358). */
 
 /* ─── Dialog body text (LAN warning; shell/buttons via ui primitives) ─────── */
 

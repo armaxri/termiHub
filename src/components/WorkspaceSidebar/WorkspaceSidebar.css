@@ -31,7 +31,7 @@
   gap: 8px;
 }
 
-/* Workspace rows compose the shared SidebarListItem shell (issue #1358). */
+/* Workspace rows compose the shared SidebarListItem shell (issue 1358). */
 
 /* Launch-in-flight indicator (GAP G6, issue 1146). */
 .workspace-item__spinner {

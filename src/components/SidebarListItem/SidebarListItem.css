@@ -1,4 +1,4 @@
-/* Shared sidebar list-item shell (issue #1358). Mirrors the former per-sidebar
+/* Shared sidebar list-item shell (issue 1358). Mirrors the former per-sidebar
    *-item blocks so services, workspaces, and tunnels render one structure. */
 
 .sidebar-list-item {
