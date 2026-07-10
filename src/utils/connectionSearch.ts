@@ -15,8 +15,6 @@ export interface ConnectionTreeFilter {
   matchingConnectionIds: Set<string>;
   /** Folders that contain a match (transitively) and should be rendered + expanded. */
   visibleFolderIds: Set<string>;
-  /** First matching connection in visual (tree) order — the "top hit". */
-  topHitId: string | null;
 }
 
 /** Extract the connection's host, if its config declares one. */
@@ -44,9 +42,9 @@ export function connectionMatchesQuery(
  * query is empty (meaning: no filtering, render the full tree with stored
  * expansion state).
  *
- * Visual order mirrors the tree render order (child folders before sibling
- * connections at each level; root folders before root connections), so the
- * `topHitId` is the first match a user sees top-to-bottom.
+ * The "top hit" (first match in visual order) is not computed here — callers
+ * derive it from the flattened, filter-aware visible-node list
+ * ({@link computeVisibleTreeNodes}), which already encodes render order.
  */
 export function filterConnectionTree(
   query: string,
@@ -77,28 +75,5 @@ export function filterConnectionTree(
   }
   childFolders(null).forEach(markVisible);
 
-  // Pre-order pass over the visible tree to find the first match (top hit).
-  let topHitId: string | null = null;
-  function findTopHit(folder: ConnectionFolder): void {
-    if (topHitId !== null || !visibleFolderIds.has(folder.id)) return;
-    for (const child of childFolders(folder.id)) findTopHit(child);
-    if (topHitId !== null) return;
-    for (const c of folderConnections(folder.id)) {
-      if (matchingConnectionIds.has(c.id)) {
-        topHitId = c.id;
-        return;
-      }
-    }
-  }
-  childFolders(null).forEach(findTopHit);
-  if (topHitId === null) {
-    for (const c of folderConnections(null)) {
-      if (matchingConnectionIds.has(c.id)) {
-        topHitId = c.id;
-        break;
-      }
-    }
-  }
-
-  return { query: normalizedQuery, matchingConnectionIds, visibleFolderIds, topHitId };
+  return { query: normalizedQuery, matchingConnectionIds, visibleFolderIds };
 }

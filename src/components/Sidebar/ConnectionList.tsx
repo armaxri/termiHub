@@ -49,7 +49,6 @@ import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlo
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { useTreeKeyboardNav } from "@/hooks/useTreeKeyboardNav";
-import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
 import { computeVisibleTreeNodes } from "@/utils/computeVisibleTreeNodes";
 import { filterConnectionTree, type ConnectionTreeFilter } from "@/utils/connectionSearch";
 import {
@@ -488,9 +487,23 @@ export function ConnectionList() {
     [connections]
   );
 
+  // Live search filter over the connection tree (name/host). `null` when empty.
+  const filter = useMemo(
+    () => filterConnectionTree(filterQuery, folders, connections),
+    [filterQuery, folders, connections]
+  );
+
+  // Flattened, in-order list of the rows actually rendered — drives both
+  // roving-tabindex keyboard navigation and Shift+Click range selection, so
+  // both stay in sync with the active filter.
+  const treeNodes = useMemo(
+    () => computeVisibleTreeNodes(folders, connections, filter),
+    [folders, connections, filter]
+  );
+
   const flatVisibleConnectionIds = useMemo(
-    () => computeFlatVisibleIds(rootFolders, rootConnections, folders, connections),
-    [rootFolders, rootConnections, folders, connections]
+    () => treeNodes.filter((n) => n.kind === "connection").map((n) => n.id),
+    [treeNodes]
   );
 
   const {
@@ -651,19 +664,6 @@ export function ConnectionList() {
     [addTab, requestPassword]
   );
 
-  // Live search filter over the connection tree (name/host). `null` when empty.
-  const filter = useMemo(
-    () => filterConnectionTree(filterQuery, folders, connections),
-    [filterQuery, folders, connections]
-  );
-
-  // Flattened, in-order list of the rows actually rendered — drives roving
-  // tabindex keyboard navigation.
-  const treeNodes = useMemo(
-    () => computeVisibleTreeNodes(folders, connections, filter),
-    [folders, connections, filter]
-  );
-
   const { containerRef, focusedId, setFocusedId, handleKeyDown } = useTreeKeyboardNav(treeNodes, {
     onConnect: handleConnect,
     onToggleFolder: toggleFolder,
@@ -678,7 +678,8 @@ export function ConnectionList() {
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        const topHitId = filter?.topHitId;
+        // Top hit = first connection row in filter-aware visual order.
+        const topHitId = flatVisibleConnectionIds[0];
         if (topHitId) {
           const target = connections.find((c) => c.id === topHitId);
           if (target) handleConnect(target);
@@ -688,7 +689,7 @@ export function ConnectionList() {
         setFilterQuery("");
       }
     },
-    [filter, connections, handleConnect]
+    [flatVisibleConnectionIds, connections, handleConnect]
   );
 
   const handleEdit = useCallback(

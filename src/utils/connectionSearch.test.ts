@@ -64,20 +64,9 @@ describe("filterConnectionTree", () => {
     expect(filter?.visibleFolderIds.has("f2")).toBe(false);
   });
 
-  it("reports the first match in visual order as the top hit", () => {
-    const folders = [folder("f1", "Servers")];
-    const conns = [
-      conn("c-root", "web-root", { folderId: null }),
-      conn("c-nested", "web-nested", { folderId: "f1" }),
-    ];
-    // Folder contents render before root connections, so the nested match wins.
-    const filter = filterConnectionTree("web", folders, conns);
-    expect(filter?.topHitId).toBe("c-nested");
-  });
-
-  it("top hit is null when nothing matches", () => {
+  it("matches nothing for a non-matching query", () => {
     const filter = filterConnectionTree("zzz", [], [conn("c1", "web")]);
-    expect(filter?.topHitId).toBeNull();
     expect(filter?.matchingConnectionIds.size).toBe(0);
+    expect(filter?.visibleFolderIds.size).toBe(0);
   });
 });
