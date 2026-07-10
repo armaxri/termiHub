@@ -49,7 +49,7 @@ self-contained HTML file** — `docs/concepts/<status>/<name>.html` — instead 
 file holds everything: prose (the standard concept sections), Mermaid diagrams, the mockups, and
 the sync ledger. This is a **design-first loop**: the file is both the human discussion medium
 (opened in a browser) and Claude Code's implementation target. Full design:
-[`docs/concepts/ai-driven-concept-workflow.md`](../docs/concepts/backlog/ai-driven-concept-workflow.md).
+[`docs/concepts/ai-driven-concept-workflow.md`](../docs/concepts/implemented/ai-driven-concept-workflow.md).
 (Concepts with **no** visual surface stay a single `.md` — see the Concept Issues section above.)
 
 **Three fixed rules:**
@@ -107,7 +107,7 @@ source), so review and iterate by opening the file, not in the PR diff.
 
 The standard Concept-issue rules (sections, Mermaid, issue header, commit message) still apply —
 they just all live in the one HTML file. The worked example is
-[`backlog/x-server-provisioning.html`](../docs/concepts/backlog/x-server-provisioning.html).
+[`implemented/x-server-provisioning.html`](../docs/concepts/implemented/x-server-provisioning.html).
 Older concepts may still use the retired **folder form** (`concept.md` + `behavior.md` +
 `mockups/*.html` + `sync.md`); migrate them to the single-file form on next substantial edit.
 
@@ -216,7 +216,7 @@ Bundle/dep-size concerns belong in the "secondary" bucket — raise them in PR d
 
 ### UI / Design System
 
-termiHub has a shared design system (concept — the source of truth: [`docs/concepts/backlog/ui-modernization/concept.html`](../docs/concepts/backlog/ui-modernization/concept.html)). **For any non-trivial UI work — building or restyling components/dialogs/forms, adding user-facing feedback, reviewing a UI diff, or making a visual/interaction decision — delegate to the `ui-design` subagent** (`.claude/agents/ui-design.md`), which owns the full system. The concept is authoritative: when it and the code disagree, fix the code by default.
+termiHub has a shared design system (concept — the source of truth: [`docs/concepts/partial/ui-modernization.html`](../docs/concepts/partial/ui-modernization.html)). **For any non-trivial UI work — building or restyling components/dialogs/forms, adding user-facing feedback, reviewing a UI diff, or making a visual/interaction decision — delegate to the `ui-design` subagent** (`.claude/agents/ui-design.md`), which owns the full system. The concept is authoritative: when it and the code disagree, fix the code by default.
 
 These rules hold in every session (the `ui-design` agent enforces them in depth):
 

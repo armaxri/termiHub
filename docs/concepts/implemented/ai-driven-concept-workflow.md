@@ -11,7 +11,7 @@
 > only the packaging changed (four files → one). Where the text says "the folder / `concept.md` /
 > `behavior.md` / `sync.md`," read "the corresponding part of the one HTML file." Authoritative,
 > current instructions live in `.claude/CLAUDE.md` (§ AI-Driven Concept Workflow) and the
-> `/sync-concept` skill. Worked example: [`backlog/x-server-provisioning.html`](x-server-provisioning.html).
+> `/sync-concept` skill. Worked example: [`implemented/x-server-provisioning.html`](x-server-provisioning.html).
 
 ---
 

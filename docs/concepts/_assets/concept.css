@@ -2,7 +2,7 @@
  * termiHub single-file concept stylesheet.
  *
  * Document-level styling for the one-HTML-per-concept form (see
- * docs/concepts/backlog/ai-driven-concept-workflow.md). Loaded ALONGSIDE
+ * docs/concepts/implemented/ai-driven-concept-workflow.md). Loaded ALONGSIDE
  * mockup.css: mockup.css provides the app-chrome kit + design tokens (:root
  * vars) reused here; concept.css provides the surrounding document layout
  * (prose, headings, tables, diagram cards, table of contents).
