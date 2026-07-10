@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useAppStore } from "@/store/appStore";
 import {
   TunnelConfig,
@@ -11,6 +11,7 @@ import { TunnelEditorMeta } from "@/types/terminal";
 import { Button, Input, Select, Field, Toggle, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { TunnelDiagram } from "./TunnelDiagram";
+import { validateTunnelType } from "./tunnelValidation";
 import "./TunnelEditor.css";
 
 interface TunnelEditorProps {
@@ -105,6 +106,22 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       }
     });
   }, []);
+
+  // Store the raw numeric value (0 for blank) so out-of-range/blank ports are
+  // caught by validation instead of the previous `parseInt(...) || 0` which
+  // silently coerced them to 0 and let an invalid tunnel save.
+  const updatePort = useCallback(
+    (field: string, raw: string) => {
+      const n = parseInt(raw, 10);
+      updateConfig(field, Number.isNaN(n) ? 0 : n);
+    },
+    [updateConfig]
+  );
+
+  // Inline validation of the forwarding host/port fields. Blocks Save while any
+  // visible field is invalid.
+  const { errors, valid } = useMemo(() => validateTunnelType(tunnelType), [tunnelType]);
+  const canSave = !!sshConnectionId && valid;
 
   const handleSave = useCallback(
     async (andStart: boolean) => {
@@ -231,36 +248,48 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <>
             <span className="tunnel-editor__section-title">Local Bind</span>
             <div className="tunnel-editor__row">
-              <Field label="Local Host" htmlFor={`tunnel-local-host-${tabId}`}>
+              <Field
+                label="Local Host"
+                htmlFor={`tunnel-local-host-${tabId}`}
+                error={errors.localHost}
+              >
                 <Input
                   id={`tunnel-local-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.localHost}
                   onChange={(e) => updateConfig("localHost", e.target.value)}
+                  error={!!errors.localHost}
                 />
               </Field>
               <Field
                 label="Local Port"
                 htmlFor={`tunnel-local-port-${tabId}`}
                 className="tunnel-editor__port-field"
+                error={errors.localPort}
               >
                 <Input
                   id={`tunnel-local-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.localPort}
-                  onChange={(e) => updateConfig("localPort", parseInt(e.target.value) || 0)}
+                  onChange={(e) => updatePort("localPort", e.target.value)}
+                  error={!!errors.localPort}
                   data-testid="tunnel-editor-local-port"
                 />
               </Field>
             </div>
             <span className="tunnel-editor__section-title">Remote Target</span>
             <div className="tunnel-editor__row">
-              <Field label="Remote Host" htmlFor={`tunnel-remote-host-${tabId}`}>
+              <Field
+                label="Remote Host"
+                htmlFor={`tunnel-remote-host-${tabId}`}
+                error={errors.remoteHost}
+              >
                 <Input
                   id={`tunnel-remote-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.remoteHost}
                   onChange={(e) => updateConfig("remoteHost", e.target.value)}
+                  error={!!errors.remoteHost}
                   data-testid="tunnel-editor-remote-host"
                 />
               </Field>
@@ -268,12 +297,14 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 label="Remote Port"
                 htmlFor={`tunnel-remote-port-${tabId}`}
                 className="tunnel-editor__port-field"
+                error={errors.remotePort}
               >
                 <Input
                   id={`tunnel-remote-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.remotePort}
-                  onChange={(e) => updateConfig("remotePort", parseInt(e.target.value) || 0)}
+                  onChange={(e) => updatePort("remotePort", e.target.value)}
+                  error={!!errors.remotePort}
                   data-testid="tunnel-editor-remote-port"
                 />
               </Field>
@@ -285,47 +316,64 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <>
             <span className="tunnel-editor__section-title">Remote Bind (on SSH Server)</span>
             <div className="tunnel-editor__row">
-              <Field label="Remote Host" htmlFor={`tunnel-r-remote-host-${tabId}`}>
+              <Field
+                label="Remote Host"
+                htmlFor={`tunnel-r-remote-host-${tabId}`}
+                error={errors.remoteHost}
+              >
                 <Input
                   id={`tunnel-r-remote-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.remoteHost}
                   onChange={(e) => updateConfig("remoteHost", e.target.value)}
+                  error={!!errors.remoteHost}
+                  data-testid="tunnel-editor-remote-host"
                 />
               </Field>
               <Field
                 label="Remote Port"
                 htmlFor={`tunnel-r-remote-port-${tabId}`}
                 className="tunnel-editor__port-field"
+                error={errors.remotePort}
               >
                 <Input
                   id={`tunnel-r-remote-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.remotePort}
-                  onChange={(e) => updateConfig("remotePort", parseInt(e.target.value) || 0)}
+                  onChange={(e) => updatePort("remotePort", e.target.value)}
+                  error={!!errors.remotePort}
+                  data-testid="tunnel-editor-remote-port"
                 />
               </Field>
             </div>
             <span className="tunnel-editor__section-title">Local Target</span>
             <div className="tunnel-editor__row">
-              <Field label="Local Host" htmlFor={`tunnel-r-local-host-${tabId}`}>
+              <Field
+                label="Local Host"
+                htmlFor={`tunnel-r-local-host-${tabId}`}
+                error={errors.localHost}
+              >
                 <Input
                   id={`tunnel-r-local-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.localHost}
                   onChange={(e) => updateConfig("localHost", e.target.value)}
+                  error={!!errors.localHost}
                 />
               </Field>
               <Field
                 label="Local Port"
                 htmlFor={`tunnel-r-local-port-${tabId}`}
                 className="tunnel-editor__port-field"
+                error={errors.localPort}
               >
                 <Input
                   id={`tunnel-r-local-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.localPort}
-                  onChange={(e) => updateConfig("localPort", parseInt(e.target.value) || 0)}
+                  onChange={(e) => updatePort("localPort", e.target.value)}
+                  error={!!errors.localPort}
+                  data-testid="tunnel-editor-local-port"
                 />
               </Field>
             </div>
@@ -336,24 +384,32 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <>
             <span className="tunnel-editor__section-title">SOCKS5 Proxy Bind</span>
             <div className="tunnel-editor__row">
-              <Field label="Local Host" htmlFor={`tunnel-d-local-host-${tabId}`}>
+              <Field
+                label="Local Host"
+                htmlFor={`tunnel-d-local-host-${tabId}`}
+                error={errors.localHost}
+              >
                 <Input
                   id={`tunnel-d-local-host-${tabId}`}
                   type="text"
                   value={tunnelType.config.localHost}
                   onChange={(e) => updateConfig("localHost", e.target.value)}
+                  error={!!errors.localHost}
                 />
               </Field>
               <Field
                 label="Local Port"
                 htmlFor={`tunnel-d-local-port-${tabId}`}
                 className="tunnel-editor__port-field"
+                error={errors.localPort}
               >
                 <Input
                   id={`tunnel-d-local-port-${tabId}`}
                   type="number"
                   value={tunnelType.config.localPort}
-                  onChange={(e) => updateConfig("localPort", parseInt(e.target.value) || 0)}
+                  onChange={(e) => updatePort("localPort", e.target.value)}
+                  error={!!errors.localPort}
+                  data-testid="tunnel-editor-local-port"
                 />
               </Field>
             </div>
@@ -378,7 +434,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <Button
             variant="primary"
             onClick={() => handleSave(false)}
-            disabled={!sshConnectionId}
+            disabled={!canSave}
             data-testid="tunnel-editor-save"
           >
             Save
@@ -386,7 +442,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           <Button
             variant="primary"
             onClick={() => handleSave(true)}
-            disabled={!sshConnectionId}
+            disabled={!canSave}
             data-testid="tunnel-editor-save-start"
           >
             Save &amp; Start
