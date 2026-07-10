@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { Play, Square, Pencil, Copy, Trash2, ExternalLink, Clipboard } from "lucide-react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -75,31 +75,29 @@ export function EmbeddedServerItem({
   const status = state?.status;
   const active = isActive(status);
   const url = serverUrl(config);
-  const [busy, setBusy] = useState(false);
 
+  // Start/Stop drive the shared Button's async lifecycle: returning the promise
+  // makes the pressed control show the spinner + disable itself while in flight
+  // (no hand-rolled `busy` flag). We keep the server-scoped error toast and set
+  // `errorToast={false}` on the Button, then re-throw so the Button lands in its
+  // error path (idle, no false success flash) — see #1344.
   const handleStart = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
     try {
       await onStart(config.id);
     } catch (err) {
       toast.error(`Failed to start ${config.name}`, { description: errorMessage(err) });
-    } finally {
-      setBusy(false);
+      throw err;
     }
-  }, [busy, onStart, config.id, config.name]);
+  }, [onStart, config.id, config.name]);
 
   const handleStop = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
     try {
       await onStop(config.id);
     } catch (err) {
       toast.error(`Failed to stop ${config.name}`, { description: errorMessage(err) });
-    } finally {
-      setBusy(false);
+      throw err;
     }
-  }, [busy, onStop, config.id, config.name]);
+  }, [onStop, config.id, config.name]);
 
   const handleCopyUrl = () => {
     writeClipboard(url)
@@ -142,11 +140,11 @@ export function EmbeddedServerItem({
                     iconOnly
                     aria-label="Stop"
                     data-testid={`server-stop-${config.id}`}
-                    disabled={busy}
+                    errorToast={false}
                     icon={<Square size={12} />}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void handleStop();
+                      return handleStop();
                     }}
                   />
                 </Tooltip>
@@ -158,11 +156,11 @@ export function EmbeddedServerItem({
                     iconOnly
                     aria-label="Start"
                     data-testid={`server-start-${config.id}`}
-                    disabled={busy}
+                    errorToast={false}
                     icon={<Play size={12} />}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void handleStart();
+                      return handleStart();
                     }}
                   />
                 </Tooltip>
@@ -230,7 +228,7 @@ export function EmbeddedServerItem({
           {active ? (
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => void handleStop()}
+              onSelect={() => void handleStop().catch(() => {})}
               data-testid={`ctx-stop-${config.id}`}
             >
               <Square size={14} /> Stop
@@ -238,7 +236,7 @@ export function EmbeddedServerItem({
           ) : (
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => void handleStart()}
+              onSelect={() => void handleStart().catch(() => {})}
               data-testid={`ctx-start-${config.id}`}
             >
               <Play size={14} /> Start
