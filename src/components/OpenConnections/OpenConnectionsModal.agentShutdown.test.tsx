@@ -69,6 +69,13 @@ async function flush(): Promise<void> {
   });
 }
 
+/** Click the confirm button of the currently-open confirmation dialog. */
+async function confirmDialog(): Promise<void> {
+  const btn = document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement;
+  if (!btn) throw new Error("no confirmation dialog is open");
+  await act(async () => btn.click());
+}
+
 describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -129,6 +136,21 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
     expect(shutdownRemoteAgent).not.toHaveBeenCalled();
   });
 
+  it("Shutdown opens a confirmation and only runs after the user confirms", async () => {
+    renderWithAgent(agent("a1", "build-box"));
+    const btn = agentRow()?.querySelector(
+      '[data-testid="oc-agent-shutdown-a1"]'
+    ) as HTMLButtonElement;
+    await act(async () => btn.click());
+    // Nothing happens until the confirm dialog is accepted.
+    expect(shutdownRemoteAgent).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="oc-agent-shutdown-a1-confirm"]')).toBeTruthy();
+
+    await confirmDialog();
+    await flush();
+    expect(shutdownRemoteAgent).toHaveBeenCalledWith("a1");
+  });
+
   it("Shutdown invokes shutdownRemoteAgent and toasts the stopped-session count", async () => {
     shutdownRemoteAgent.mockResolvedValueOnce(3);
     renderWithAgent(agent("a1", "build-box"));
@@ -136,6 +158,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
       '[data-testid="oc-agent-shutdown-a1"]'
     ) as HTMLButtonElement;
     await act(async () => btn.click());
+    await confirmDialog();
     await flush();
     expect(shutdownRemoteAgent).toHaveBeenCalledWith("a1");
     expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("3 sessions"));
@@ -149,6 +172,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
       '[data-testid="oc-agent-shutdown-a1"]'
     ) as HTMLButtonElement;
     await act(async () => btn.click());
+    await confirmDialog();
     await flush();
     expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("1 session"));
     expect(toastSuccess).not.toHaveBeenCalledWith(expect.stringContaining("1 sessions"));
@@ -161,6 +185,7 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
       '[data-testid="oc-agent-shutdown-a1"]'
     ) as HTMLButtonElement;
     await act(async () => btn.click());
+    await confirmDialog();
     await flush();
     expect(toastSuccess).toHaveBeenCalled();
   });
