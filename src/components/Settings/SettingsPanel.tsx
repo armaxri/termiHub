@@ -4,6 +4,7 @@ import {
   Settings2,
   Palette,
   TerminalSquare,
+  SquareMenu,
   Keyboard,
   Shield,
   FileJson,
@@ -29,6 +30,7 @@ import { FileTypeSettings } from "./FileTypeSettings";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { SerialPortSettings } from "./SerialPortSettings";
+import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { getAppInfo, type AppInfo } from "@/services/api";
 import "./SettingsPanel.css";
@@ -37,6 +39,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
   appearance: Palette,
   terminal: TerminalSquare,
+  "shell-integration": SquareMenu,
   keyboard: Keyboard,
   security: Shield,
   "external-files": FileJson,
@@ -248,6 +251,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           />
         );
       }
+      if (highlightedCategories?.has("shell-integration")) {
+        sections.push(<ShellIntegrationSettings key="shell-integration" />);
+      }
       if (highlightedCategories?.has("keyboard")) {
         sections.push(<KeyboardSettings key="keyboard" visibleFields={visibleFields} />);
       }
@@ -284,6 +290,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
       case "terminal":
         return <TerminalSettings settings={settings} onChange={handleSettingsChange} />;
+      case "shell-integration":
+        return <ShellIntegrationSettings />;
       case "keyboard":
         return <KeyboardSettings />;
       case "security":

@@ -1,0 +1,173 @@
+/* Shell Integration settings section (issue 1371). Composed on tokens only. */
+
+.shell-integration__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+}
+
+.shell-integration__status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+
+.shell-integration__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-xl);
+  background: var(--text-disabled);
+  flex-shrink: 0;
+}
+
+.shell-integration__dot--on {
+  background: var(--color-success);
+}
+
+.shell-integration__stale {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-warning);
+}
+
+.shell-integration__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+/* Quick-access entry list */
+.shell-integration__entry-list {
+  list-style: none;
+  margin: 0 0 var(--spacing-sm);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.shell-integration__entry-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+}
+
+.shell-integration__grip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: grab;
+}
+
+.shell-integration__grip:active {
+  cursor: grabbing;
+}
+
+.shell-integration__entry-idx {
+  min-width: 1.2em;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.shell-integration__entry-name {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.shell-integration__entry-conn {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.shell-integration__badge {
+  margin-left: auto;
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.shell-integration__badge--always {
+  color: var(--text-on-accent);
+  background: var(--accent-color);
+}
+
+.shell-integration__badge--extended {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.shell-integration__entry-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+/* Fallback / new-window / Linux toggles */
+.shell-integration__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-sm) 0;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.shell-integration__linux {
+  margin-top: var(--spacing-lg);
+}
+
+.shell-integration__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* Entry editor dialog */
+.shell-integration-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.shell-integration-editor__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.shell-integration-editor__group-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  letter-spacing: var(--letter-spacing-label);
+}
+
+.shell-integration-editor__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.shell-integration-editor__meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}

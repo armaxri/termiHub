@@ -1,0 +1,1 @@
+export { ShellIntegrationBanner } from "./ShellIntegrationBanner";
