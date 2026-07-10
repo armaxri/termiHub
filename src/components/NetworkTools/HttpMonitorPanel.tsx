@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, type FormEvent } from "react";
 import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
@@ -40,6 +41,8 @@ export function HttpMonitorPanel() {
   const [history, setHistory] = useState<HttpCheckResult[]>([]);
   const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const urlRef = useAutofocusSelect<HTMLInputElement>();
 
   // The check listener filters by the active monitor id; a ref mirrors the state
   // so the callback (registered before start) always reads the current id without
@@ -215,6 +218,17 @@ export function HttpMonitorPanel() {
     [loadMonitors, clearActiveMonitor]
   );
 
+  // Enter submits the form → start a monitor. A monitor is either running
+  // (activeMonitorId set → Stop is shown) or invalid, in which case do nothing.
+  const handleSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      if (activeMonitorId || !canStart) return;
+      void handleStart();
+    },
+    [activeMonitorId, canStart, handleStart]
+  );
+
   // Tear the listener down on unmount.
   useEffect(() => stopListening, [stopListening]);
 
@@ -231,7 +245,7 @@ export function HttpMonitorPanel() {
       : null;
 
   return (
-    <div className="network-panel" data-testid="http-monitor-panel">
+    <form className="network-panel" data-testid="http-monitor-panel" onSubmit={handleSubmit}>
       <div className="network-panel__header">
         <span className="network-panel__title">HTTP Monitor</span>
         <div className="network-panel__actions">
@@ -256,10 +270,10 @@ export function HttpMonitorPanel() {
             </Button>
           ) : (
             <Button
+              type="submit"
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
-              onClick={handleStart}
               disabled={!canStart}
               data-testid="http-monitor-start"
             >
@@ -276,6 +290,7 @@ export function HttpMonitorPanel() {
           onChange={setUrl}
           error={urlError}
           placeholder="https://example.com"
+          inputRef={urlRef}
           data-testid="http-monitor-url"
         />
         <label className="network-panel__field network-panel__field--small">
@@ -450,6 +465,6 @@ export function HttpMonitorPanel() {
           No running monitors. Enter a URL and click Start.
         </div>
       )}
-    </div>
+    </form>
   );
 }

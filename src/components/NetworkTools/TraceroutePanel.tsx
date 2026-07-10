@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, type FormEvent } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui";
 import {
@@ -12,6 +12,7 @@ import type { TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { NetworkNumberField } from "./NetworkNumberField";
 import { validateIntRange } from "@/utils/fieldValidation";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
 interface TraceroutePanelProps {
@@ -23,6 +24,8 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
   const [maxHops, setMaxHops] = useState<number | "">(30);
   const [hops, setHops] = useState<TracerouteHop[]>([]);
+
+  const hostRef = useAutofocusSelect<HTMLInputElement>();
 
   const maxHopsError = validateIntRange(maxHops, { min: 1, max: 255, label: "Max hops" });
   const canRun = !!host.trim() && !maxHopsError;
@@ -56,6 +59,16 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
     subscribe,
   });
 
+  // Enter submits the form; ignore while running or when the form is invalid.
+  const handleSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      if (status === "running" || !canRun) return;
+      void run();
+    },
+    [status, canRun, run]
+  );
+
   const columns = [
     { key: "hop", label: "Hop" },
     { key: "ip", label: "Host" },
@@ -78,7 +91,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
     (lastHop?.rttMs.filter((r): r is number => r != null).length || 1);
 
   return (
-    <div className="network-panel" data-testid="traceroute-panel">
+    <form className="network-panel" data-testid="traceroute-panel" onSubmit={handleSubmit}>
       <div className="network-panel__header">
         <span className="network-panel__title">Traceroute</span>
         <div className="network-panel__actions">
@@ -88,10 +101,10 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
             </Button>
           ) : (
             <Button
+              type="submit"
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
-              onClick={run}
               disabled={!canRun}
               data-testid="traceroute-run"
             >
@@ -105,6 +118,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
         <label className="network-panel__field">
           <span>Host</span>
           <input
+            ref={hostRef}
             className="network-panel__input"
             value={host}
             onChange={(e) => setHost(e.target.value)}
@@ -135,6 +149,6 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
               : null
         }
       />
-    </div>
+    </form>
   );
 }

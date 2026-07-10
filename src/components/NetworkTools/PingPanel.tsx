@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type FormEvent } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkPingStart,
   networkPingStop,
@@ -40,6 +41,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const [stats, setStats] = useState<PingStats | null>(null);
   const [tcpFallback, setTcpFallback] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const hostRef = useAutofocusSelect<HTMLInputElement>();
 
   const taskIdRef = useRef<string | null>(null);
   const unlistenResultRef = useRef<(() => void) | null>(null);
@@ -142,6 +145,17 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     taskIdRef.current = null;
   }, []);
 
+  // Enter submits the form; ignore while running or when the form is invalid
+  // (mirrors the Start button's disabled state).
+  const handleSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      if (status === "running" || !canStart) return;
+      void handleStart();
+    },
+    [status, canStart, handleStart]
+  );
+
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
@@ -155,7 +169,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const latencyPoints = results.map((r) => r.latencyMs ?? null);
 
   return (
-    <div className="network-panel" data-testid="ping-panel">
+    <form className="network-panel" data-testid="ping-panel" onSubmit={handleSubmit}>
       <div className="network-panel__header">
         <span className="network-panel__title">Ping</span>
         <div className="network-panel__actions">
@@ -171,10 +185,10 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
             </Button>
           ) : (
             <Button
+              type="submit"
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
-              onClick={handleStart}
               disabled={!canStart}
               data-testid="ping-start"
             >
@@ -188,6 +202,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         <label className="network-panel__field">
           <span>Host</span>
           <input
+            ref={hostRef}
             className="network-panel__input"
             value={host}
             onChange={(e) => setHost(e.target.value)}
@@ -248,6 +263,6 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
           {status === "running" && <span>{results.length} replies received…</span>}
         </div>
       )}
-    </div>
+    </form>
   );
 }

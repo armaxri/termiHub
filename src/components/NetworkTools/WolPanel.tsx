@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, type FormEvent } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
 import { Button, Tooltip, toast, Modal, Field, Input } from "@/components/ui";
+import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkWolSend,
   networkWolDevicesList,
@@ -23,6 +24,8 @@ export function WolPanel() {
   const [mac, setMac] = useState("");
   const [broadcast, setBroadcast] = useState("255.255.255.255");
   const [port, setPort] = useState<number | "">(9);
+
+  const macRef = useAutofocusSelect<HTMLInputElement>();
 
   const portError = validatePort(port);
   const broadcastError = validateHost(broadcast, "Broadcast address");
@@ -85,6 +88,16 @@ export function WolPanel() {
     setSaveModalOpen(true);
   }, [canSend]);
 
+  // Enter submits the form → send the magic packet (respects the disabled state).
+  const handleSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      if (!canSend) return;
+      void handleSend();
+    },
+    [canSend, handleSend]
+  );
+
   const handleConfirmSave = useCallback(async () => {
     const name = saveName.trim();
     if (!name || macError) return;
@@ -122,15 +135,15 @@ export function WolPanel() {
   );
 
   return (
-    <div className="network-panel" data-testid="wol-panel">
+    <form className="network-panel" data-testid="wol-panel" onSubmit={handleSubmit}>
       <div className="network-panel__header">
         <span className="network-panel__title">Wake-on-LAN</span>
         <div className="network-panel__actions">
           <Button
+            type="submit"
             variant="primary"
             size="sm"
             icon={<Power size={14} />}
-            onClick={handleSend}
             disabled={!canSend}
             data-testid="wol-send"
           >
@@ -143,6 +156,7 @@ export function WolPanel() {
         <label className="network-panel__field">
           <span>MAC Address</span>
           <input
+            ref={macRef}
             className="network-panel__input"
             value={mac}
             onChange={(e) => setMac(e.target.value)}
@@ -272,6 +286,6 @@ export function WolPanel() {
           ))}
         </>
       )}
-    </div>
+    </form>
   );
 }
