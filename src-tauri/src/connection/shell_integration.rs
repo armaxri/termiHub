@@ -161,9 +161,38 @@ pub fn resolve_connection(
     connection_override: Option<&str>,
     entry_id: Option<&str>,
 ) -> ResolvedConnection {
-    // NOTE: stubbed for the TDD red phase — implemented in a follow-up commit.
-    let _ = (settings, connection_override, entry_id);
-    todo!("resolve_connection not yet implemented")
+    // Tier 1: explicit --connection override.
+    if let Some(id) = connection_override {
+        return ResolvedConnection::Connection(id.to_string());
+    }
+    // Tier 2: the entry addressed by --entry-id, if it exists.
+    if let Some(id) = entry_id {
+        if let Some(entry) = settings.entries.iter().find(|e| e.id == id) {
+            return resolve_entry(entry);
+        }
+    }
+    // Tier 3: the first Always-visibility entry (the configured default).
+    if let Some(entry) = settings
+        .entries
+        .iter()
+        .find(|e| e.visibility == ShellEntryVisibility::Always)
+    {
+        return resolve_entry(entry);
+    }
+    // Tier 4: the fallback setting.
+    match settings.fallback {
+        ShellIntegrationFallback::Picker => ResolvedConnection::Picker,
+        ShellIntegrationFallback::SystemDefaultShell => ResolvedConnection::SystemDefaultShell,
+    }
+}
+
+/// Resolve a single entry to its selector: a fixed connection, or the picker
+/// when the entry carries no `connection_id`.
+fn resolve_entry(entry: &ShellEntry) -> ResolvedConnection {
+    match &entry.connection_id {
+        Some(id) => ResolvedConnection::Connection(id.clone()),
+        None => ResolvedConnection::Picker,
+    }
 }
 
 /// Compare the executable path recorded at registration against the current
@@ -173,9 +202,26 @@ pub fn resolve_connection(
 /// This is the primitive behind the status command's staleness flag. Pure so it
 /// is unit-testable without touching the filesystem.
 pub fn exe_path_matches(registered_exe_path: Option<&str>, current_exe_path: Option<&str>) -> bool {
-    // NOTE: stubbed for the TDD red phase — implemented in a follow-up commit.
-    let _ = (registered_exe_path, current_exe_path);
-    todo!("exe_path_matches not yet implemented")
+    match (registered_exe_path, current_exe_path) {
+        (Some(registered), Some(current)) => {
+            normalize_exe_path(registered) == normalize_exe_path(current)
+        }
+        _ => false,
+    }
+}
+
+/// Normalize an executable path for comparison. Trims surrounding whitespace and
+/// lower-cases on Windows, whose filesystem paths are case-insensitive.
+fn normalize_exe_path(path: &str) -> String {
+    let trimmed = path.trim();
+    #[cfg(windows)]
+    {
+        trimmed.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        trimmed.to_string()
+    }
 }
 
 #[cfg(test)]
