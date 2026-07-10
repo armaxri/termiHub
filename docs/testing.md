@@ -828,6 +828,40 @@ through save/load. See PR #1388.
    the update still succeeds via the immediate path, and the app log records a
    warning that the coordinated/deferred strategy is not yet honored (#1351/#1352).
 
+### Agent GitHub self-update (opt-in, #1355)
+
+Verifies the optional agent-side self-update check is gated behind
+`allow_self_update`, notifies on a newer release, verifies checksums, and skips
+cleanly offline. Requires a Linux remote host (agent binaries are Linux-only).
+See PR #1389.
+
+1. **Off by default (no network).** Deploy an agent to a Linux host with **Allow
+   agent self-update** left **off**. Confirm the SSH exec command is
+   `…/termihub-agent --stdio` (no `--allow-self-update`) — e.g. inspect the app
+   log or run `agent_exec_command`. On the host, confirm the agent makes no
+   outbound request to `api.github.com` (e.g. `ss -tnp | grep termihub-agent`
+   shows no GitHub connection).
+2. **Opt in.** Edit the agent, turn **Allow agent self-update** on in **Agent →
+   Updates**, save, and reconnect. Confirm the exec command now ends with
+   `--stdio --allow-self-update` and the agent log records
+   `Agent self-update enabled — checking GitHub … every 24h`.
+3. **Newer release notifies.** With self-update on and the host's agent an older
+   version than the latest published release, wait for (or force) a check. Confirm
+   the desktop receives an `agent.update_available` notification (self-update
+   toast) naming the available version.
+4. **Verified staging when idle.** With no active sessions on that agent, confirm
+   the agent downloads the new binary, verifies its `.sha256`, and records a
+   `pending_update` in the host's `state.json`
+   (`~/.config/termihub-agent/state.json`). A binary whose checksum does not
+   match must be rejected and removed (not staged).
+5. **Offline is graceful.** Block the host's outbound access to `api.github.com`
+   (firewall) with self-update on. Confirm the agent logs a warning
+   (`could not reach GitHub, skipping this cycle`) and keeps serving sessions —
+   it must not crash. `last_check_time` in `state.json` still updates.
+
+> Note: automatic apply-on-idle of a staged update is deferred to #1352; this PR
+> stops after staging and notifying.
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
