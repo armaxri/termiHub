@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { SerialPortScanPrefix } from "@/types/connection";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Toggle, Tooltip } from "@/components/ui";
 
 interface SerialPortSettingsProps {
   visibleFields?: Set<string>;
@@ -89,14 +89,11 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
         <ul className="settings-panel__file-list">
           {builtIn.map((p) => (
             <li key={p.prefix} className="settings-panel__file-item">
-              <label className="settings-panel__toggle">
-                <input
-                  type="checkbox"
-                  checked={p.enabled}
-                  onChange={() => handleToggle(p.prefix)}
-                />
-                <span className="settings-panel__toggle-slider" />
-              </label>
+              <Toggle
+                aria-label={`Toggle serial port prefix ${p.prefix}`}
+                checked={p.enabled}
+                onCheckedChange={() => handleToggle(p.prefix)}
+              />
               <code
                 className={`settings-panel__file-path${!p.enabled ? " settings-panel__file-path--disabled" : ""}`}
               >
@@ -113,27 +110,25 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
           <ul className="settings-panel__file-list">
             {custom.map((p) => (
               <li key={p.prefix} className="settings-panel__file-item">
-                <label className="settings-panel__toggle">
-                  <input
-                    type="checkbox"
-                    checked={p.enabled}
-                    onChange={() => handleToggle(p.prefix)}
-                  />
-                  <span className="settings-panel__toggle-slider" />
-                </label>
+                <Toggle
+                  aria-label={`Toggle serial port prefix ${p.prefix}`}
+                  checked={p.enabled}
+                  onCheckedChange={() => handleToggle(p.prefix)}
+                />
                 <code
                   className={`settings-panel__file-path${!p.enabled ? " settings-panel__file-path--disabled" : ""}`}
                 >
                   {p.prefix}
                 </code>
                 <Tooltip content="Remove custom prefix">
-                  <button
-                    className="settings-panel__file-remove"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<Trash2 size={14} />}
                     onClick={() => handleDelete(p.prefix)}
                     aria-label="Remove custom prefix"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  />
                 </Tooltip>
               </li>
             ))}

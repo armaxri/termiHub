@@ -4,7 +4,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ExternalFileConfig } from "@/types/connection";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Toggle, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 
 /**
@@ -173,14 +173,11 @@ export function ExternalFilesSettings() {
           <ul className="settings-panel__file-list">
             {settings.externalConnectionFiles.map((file) => (
               <li key={file.path} className="settings-panel__file-item">
-                <label className="settings-panel__toggle">
-                  <input
-                    type="checkbox"
-                    checked={file.enabled}
-                    onChange={() => handleToggleFile(file.path)}
-                  />
-                  <span className="settings-panel__toggle-slider" />
-                </label>
+                <Toggle
+                  aria-label={`Toggle external file ${file.path}`}
+                  checked={file.enabled}
+                  onCheckedChange={() => handleToggleFile(file.path)}
+                />
                 <span
                   className={`settings-panel__file-path settings-panel__file-path--rtl${!file.enabled ? " settings-panel__file-path--disabled" : ""}`}
                   title={file.path}
@@ -188,13 +185,14 @@ export function ExternalFilesSettings() {
                   {file.path}
                 </span>
                 <Tooltip content="Remove file">
-                  <button
-                    className="settings-panel__file-remove"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<Trash2 size={14} />}
                     onClick={() => handleRemoveFile(file.path)}
                     aria-label="Remove file"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  />
                 </Tooltip>
               </li>
             ))}
@@ -212,20 +210,17 @@ export function ExternalFilesSettings() {
         </p>
         <div className="settings-form__field">
           <span className="settings-form__label">Power Monitoring</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.powerMonitoringEnabled}
-              onChange={() =>
-                updateSettings({
-                  ...settings,
-                  powerMonitoringEnabled: !settings.powerMonitoringEnabled,
-                })
-              }
-              data-testid="toggle-power-monitoring"
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            aria-label="Power Monitoring"
+            checked={settings.powerMonitoringEnabled}
+            onCheckedChange={() =>
+              updateSettings({
+                ...settings,
+                powerMonitoringEnabled: !settings.powerMonitoringEnabled,
+              })
+            }
+            data-testid="toggle-power-monitoring"
+          />
           <span className="settings-form__hint">
             Monitor CPU, memory, and power events via SSH agent connections.
           </span>
@@ -233,20 +228,17 @@ export function ExternalFilesSettings() {
 
         <div className="settings-form__field">
           <span className="settings-form__label">File Browser</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.fileBrowserEnabled}
-              onChange={() =>
-                updateSettings({
-                  ...settings,
-                  fileBrowserEnabled: !settings.fileBrowserEnabled,
-                })
-              }
-              data-testid="toggle-file-browser"
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            aria-label="File Browser"
+            checked={settings.fileBrowserEnabled}
+            onCheckedChange={() =>
+              updateSettings({
+                ...settings,
+                fileBrowserEnabled: !settings.fileBrowserEnabled,
+              })
+            }
+            data-testid="toggle-file-browser"
+          />
           <span className="settings-form__hint">
             Enable the SFTP file browser for SSH agent sessions.
           </span>

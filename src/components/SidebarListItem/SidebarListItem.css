@@ -1,0 +1,94 @@
+/* Shared sidebar list-item shell (issue 1358). Mirrors the former per-sidebar
+   *-item blocks so services and workspaces render one structure (tunnels to
+   follow). */
+
+.sidebar-list-item {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sidebar-list-item:hover {
+  background: var(--bg-hover);
+}
+
+/* Errored rows keep their recovery actions visible without a hover so the user
+   always has a way out (mirrors the tunnel row, issue 1240). */
+.sidebar-list-item--error .sidebar-list-item__actions {
+  opacity: 1;
+}
+
+.sidebar-list-item__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-list-item__status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sidebar-list-item__status--neutral {
+  background-color: var(--text-secondary);
+}
+
+.sidebar-list-item__status--success {
+  background-color: var(--color-success);
+}
+
+.sidebar-list-item__status--warning {
+  background-color: var(--color-warning);
+}
+
+.sidebar-list-item__status--error {
+  background-color: var(--color-error);
+}
+
+.sidebar-list-item__badge {
+  font-size: var(--font-size-xs);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.sidebar-list-item__name {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-list-item__actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.sidebar-list-item:hover .sidebar-list-item__actions,
+.sidebar-list-item:focus-within .sidebar-list-item__actions {
+  opacity: 1;
+}
+
+.sidebar-list-item__details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 0 14px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.sidebar-list-item__error {
+  color: var(--color-error);
+}

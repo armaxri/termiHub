@@ -3,7 +3,9 @@ import { Play, Square, Pencil, Copy, Trash2, ExternalLink, Clipboard } from "luc
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { toast, Tooltip } from "@/components/ui";
+import { Button, toast, Tooltip } from "@/components/ui";
+import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
+import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import {
   EmbeddedServerConfig,
   ServerState,
@@ -40,17 +42,17 @@ function serverUrl(config: EmbeddedServerConfig): string {
   return `${scheme}://${config.bindHost}:${config.port}`;
 }
 
-function statusClass(status: ServerStatus | undefined): string {
+function statusTone(status: ServerStatus | undefined): SidebarStatusTone {
   switch (status) {
     case "running":
-      return "server-item__status--running";
+      return "success";
     case "starting":
     case "stopping":
-      return "server-item__status--pending";
+      return "warning";
     case "error":
-      return "server-item__status--error";
+      return "error";
     default:
-      return "server-item__status--stopped";
+      return "neutral";
   }
 }
 
@@ -115,105 +117,108 @@ export function EmbeddedServerItem({
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
-        <div
-          className="server-item"
-          data-testid={`server-item-${config.id}`}
+        <SidebarListItem
+          testId={`server-item-${config.id}`}
+          nameTestId={`server-name-${config.id}`}
+          name={config.name}
+          error={status === "error"}
           onDoubleClick={() => onEdit(config.id)}
-        >
-          <div className="server-item__header">
-            <span
-              className={`server-item__status ${statusClass(status)}`}
-              data-testid={`server-status-${config.id}`}
-            />
-            <span className="server-item__badge" data-testid={`server-type-${config.id}`}>
-              {PROTOCOL_LABELS[config.serverType]}
-            </span>
-            <span className="server-item__name" data-testid={`server-name-${config.id}`}>
-              {config.name}
-            </span>
-            <div className="server-item__actions">
+          status={
+            <SidebarStatusDot tone={statusTone(status)} testId={`server-status-${config.id}`} />
+          }
+          badge={PROTOCOL_LABELS[config.serverType]}
+          badgeTestId={`server-type-${config.id}`}
+          actions={
+            <>
               {active ? (
                 <Tooltip content="Stop" side="top">
-                  <button
-                    className="server-item__action"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
                     aria-label="Stop"
                     data-testid={`server-stop-${config.id}`}
                     disabled={busy}
+                    icon={<Square size={12} />}
                     onClick={(e) => {
                       e.stopPropagation();
                       void handleStop();
                     }}
-                  >
-                    <Square size={12} />
-                  </button>
+                  />
                 </Tooltip>
               ) : (
                 <Tooltip content="Start" side="top">
-                  <button
-                    className="server-item__action"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
                     aria-label="Start"
                     data-testid={`server-start-${config.id}`}
                     disabled={busy}
+                    icon={<Play size={12} />}
                     onClick={(e) => {
                       e.stopPropagation();
                       void handleStart();
                     }}
-                  >
-                    <Play size={12} />
-                  </button>
+                  />
                 </Tooltip>
               )}
               <Tooltip content="Edit" side="top">
-                <button
-                  className="server-item__action"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   aria-label="Edit"
                   data-testid={`server-edit-${config.id}`}
+                  icon={<Pencil size={12} />}
                   onClick={(e) => {
                     e.stopPropagation();
                     onEdit(config.id);
                   }}
-                >
-                  <Pencil size={12} />
-                </button>
+                />
               </Tooltip>
               <Tooltip content="Duplicate" side="top">
-                <button
-                  className="server-item__action"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   aria-label="Duplicate"
                   data-testid={`server-duplicate-${config.id}`}
+                  icon={<Copy size={12} />}
                   onClick={(e) => {
                     e.stopPropagation();
                     onDuplicate(config.id);
                   }}
-                >
-                  <Copy size={12} />
-                </button>
+                />
               </Tooltip>
               <Tooltip content="Delete" side="top">
-                <button
-                  className="server-item__action server-item__action--danger"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   aria-label="Delete"
                   data-testid={`server-delete-${config.id}`}
+                  icon={<Trash2 size={12} />}
                   onClick={(e) => {
                     e.stopPropagation();
                     onDelete(config.id);
                   }}
-                >
-                  <Trash2 size={12} />
-                </button>
+                />
               </Tooltip>
-            </div>
-          </div>
-          <div className="server-item__details">
-            <span>
-              :{config.port} → {config.rootDirectory}
-            </span>
-            {active && state?.stats && <span>{statsLine(state.stats)}</span>}
-            {status === "error" && state?.error && (
-              <span className="server-item__error">{state.error}</span>
-            )}
-          </div>
-        </div>
+            </>
+          }
+          details={
+            <>
+              <span>
+                :{config.port} → {config.rootDirectory}
+              </span>
+              {active && state?.stats && <span>{statsLine(state.stats)}</span>}
+              {status === "error" && state?.error && (
+                <span className="sidebar-list-item__error">{state.error}</span>
+              )}
+            </>
+          }
+        />
       </ContextMenu.Trigger>
 
       <ContextMenu.Portal>

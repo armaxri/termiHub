@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Save, Loader2, AlertCircle, Globe, FileEdit } from "lucide-react";
+import { Save, Loader2, AlertCircle, Globe, FileEdit, X } from "lucide-react";
+import { Button } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
@@ -414,30 +415,34 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             {effectivePath}
           </span>
         </div>
-        <button
-          className="file-editor__save-btn"
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Save size={14} />}
           onClick={handleSave}
-          disabled={!isDirty || saving}
+          disabled={!isDirty}
+          pendingLabel="Saving..."
+          errorToast={false}
           title={isUnsavedScratch ? "Save As... (Ctrl+S)" : "Save (Ctrl+S)"}
           data-testid="file-editor-save"
         >
-          <Save size={14} />
-          {saving ? "Saving..." : isUnsavedScratch ? "Save As..." : "Save"}
-        </button>
+          {isUnsavedScratch ? "Save As..." : "Save"}
+        </Button>
       </div>
       {saveError && (
         <div className="file-editor__save-error" role="alert" data-testid="file-editor-save-error">
           <AlertCircle size={14} />
           <span className="file-editor__save-error-text">{saveError}</span>
-          <button
-            className="file-editor__save-error-dismiss"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<X size={14} />}
             onClick={() => setSaveError(null)}
             title="Dismiss"
             aria-label="Dismiss save error"
             data-testid="file-editor-save-error-dismiss"
-          >
-            ×
-          </button>
+          />
         </div>
       )}
       <div className="file-editor__editor-container">
