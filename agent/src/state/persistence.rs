@@ -13,6 +13,40 @@ use tracing::{debug, warn};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
     pub sessions: HashMap<String, PersistedSession>,
+    /// Self-update bookkeeping (last GitHub poll time, staged pending update).
+    ///
+    /// `#[serde(default)]` so a `state.json` written by an agent that predates
+    /// the self-update feature still loads (the field defaults to empty).
+    #[serde(default)]
+    pub update: UpdateState,
+}
+
+/// Self-update state persisted across agent restarts (#1355).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct UpdateState {
+    /// RFC 3339 timestamp of the last GitHub `releases/latest` poll, or `None`
+    /// if the agent has never polled.
+    #[serde(default)]
+    pub last_check_time: Option<String>,
+    /// A downloaded-and-verified binary awaiting application, or `None`.
+    #[serde(default)]
+    pub pending_update: Option<PendingUpdate>,
+}
+
+/// A self-update binary that has been downloaded and SHA-256-verified but not
+/// yet applied.
+///
+/// Applying it on idle (deferred apply) depends on SI-6 (#1352) and is
+/// intentionally not wired up yet — until then the agent only stages the binary
+/// and records it here so a later change can pick it up.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingUpdate {
+    /// Target version (release tag semver, e.g. `"0.3.0"`).
+    pub version: String,
+    /// Absolute path to the staged, verified binary.
+    pub binary_path: String,
+    /// RFC 3339 timestamp when the binary was staged.
+    pub staged_at: String,
 }
 
 /// Minimal session info stored for recovery.
@@ -41,7 +75,7 @@ impl AgentState {
     ///
     /// Returns an empty state if the file is missing or corrupt.
     pub fn load() -> Self {
-        let path = Self::state_path();
+        let path = Self::default_path();
         Self::load_from(&path)
     }
 
@@ -71,7 +105,7 @@ impl AgentState {
 
     /// Save state to the default state file.
     pub fn save(&self) {
-        let path = Self::state_path();
+        let path = Self::default_path();
         self.save_to(&path);
     }
 
@@ -111,13 +145,18 @@ impl AgentState {
         self.save();
     }
 
-    /// Get the default state file path under the platform config dir.
+    /// The default `state.json` path under the platform config dir.
     ///
     /// Resolves to `$XDG_CONFIG_HOME/termihub-agent/state.json` on Linux,
     /// `~/Library/Application Support/termihub-agent/state.json` on macOS,
     /// and `%APPDATA%\termihub-agent\state.json` on Windows.
-    fn state_path() -> PathBuf {
-        config_dir().join("state.json")
+    pub fn default_path() -> PathBuf {
+        Self::config_dir().join("state.json")
+    }
+
+    /// The platform config directory the agent stores its state under.
+    pub fn config_dir() -> PathBuf {
+        config_dir()
     }
 }
 
@@ -302,7 +341,7 @@ mod tests {
 
     #[test]
     fn state_path_lives_inside_config_dir() {
-        let path = AgentState::state_path();
+        let path = AgentState::default_path();
         assert_eq!(
             path.file_name().and_then(|s| s.to_str()),
             Some("state.json")
@@ -312,6 +351,54 @@ mod tests {
             "state_path must be absolute, got {}",
             path.display()
         );
+    }
+
+    #[test]
+    fn update_state_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state.update.last_check_time = Some("2026-07-10T12:00:00Z".to_string());
+        state.update.pending_update = Some(PendingUpdate {
+            version: "0.3.0".to_string(),
+            binary_path: "/tmp/updates/termihub-agent-linux-x64".to_string(),
+            staged_at: "2026-07-10T12:00:01Z".to_string(),
+        });
+        state.save_to(&path);
+
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(
+            loaded.update.last_check_time.as_deref(),
+            Some("2026-07-10T12:00:00Z")
+        );
+        let pending = loaded
+            .update
+            .pending_update
+            .expect("pending update present");
+        assert_eq!(pending.version, "0.3.0");
+        assert_eq!(pending.binary_path, "/tmp/updates/termihub-agent-linux-x64");
+    }
+
+    #[test]
+    fn legacy_state_without_update_field_loads() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        // Pre-existing state.json from an agent version that predates #1355 —
+        // must still load, defaulting `update` to an empty UpdateState.
+        std::fs::write(
+            &path,
+            r#"{
+              "sessions": {}
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = AgentState::load_from(&path);
+        assert!(loaded.sessions.is_empty());
+        assert_eq!(loaded.update, UpdateState::default());
+        assert!(loaded.update.last_check_time.is_none());
+        assert!(loaded.update.pending_update.is_none());
     }
 
     #[test]

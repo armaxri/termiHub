@@ -142,15 +142,22 @@ impl RemoteAgentConfig {
     /// [`windows_agent_command`]).
     pub fn agent_exec_command(&self) -> String {
         let path = self.agent_path();
+        // Opt the agent into its background GitHub self-update check only when
+        // the connection enables it (#1355); off by default.
+        let args = if self.allow_self_update {
+            "--stdio --allow-self-update"
+        } else {
+            "--stdio"
+        };
         if crate::terminal::agent_install::is_windows_path(path) {
-            return windows_agent_command(path, "--stdio");
+            return windows_agent_command(path, args);
         }
         let resolved = if let Some(rest) = path.strip_prefix("~/") {
             format!("$HOME/{rest}")
         } else {
             path.to_string()
         };
-        format!("{resolved} --stdio")
+        format!("{resolved} {args}")
     }
 
     /// Build the shell command to check the agent version on a remote host.
@@ -491,6 +498,31 @@ mod tests {
             config.agent_exec_command(),
             "$HOME/.local/bin/termihub-agent --stdio"
         );
+    }
+
+    #[test]
+    fn agent_exec_command_appends_self_update_flag_when_enabled() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            username: "pi".to_string(),
+            allow_self_update: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            config.agent_exec_command(),
+            "$HOME/.local/bin/termihub-agent --stdio --allow-self-update"
+        );
+    }
+
+    #[test]
+    fn agent_exec_command_omits_self_update_flag_by_default() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            username: "pi".to_string(),
+            ..Default::default()
+        };
+        // Default is off — no self-update flag on the command line.
+        assert!(!config.agent_exec_command().contains("--allow-self-update"));
     }
 
     #[test]
