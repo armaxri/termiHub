@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use super::recovery::{RecoveryResult, RecoveryWarning};
+use super::shell_integration::ShellIntegrationSettings;
 
 const FILE_NAME: &str = "settings.json";
 
@@ -217,6 +218,10 @@ pub struct AppSettings {
     /// `serialport` crate. `None` means use all built-in defaults (all enabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub serial_port_scan_prefixes: Option<Vec<SerialPortScanPrefix>>,
+    /// Shell context-menu / CLI-spawn integration configuration (epic #1363).
+    /// `#[serde(default)]` keeps older settings files forward-compatible.
+    #[serde(default)]
+    pub shell_integration: ShellIntegrationSettings,
 }
 
 impl Default for AppSettings {
@@ -257,6 +262,7 @@ impl Default for AppSettings {
             experimental_features_enabled: None,
             updates: UpdateSettings::default(),
             serial_port_scan_prefixes: None,
+            shell_integration: ShellIntegrationSettings::default(),
         }
     }
 }
@@ -892,6 +898,49 @@ mod tests {
         let json = r#"{"version":"1","externalConnectionFiles":[],"updates":{"autoCheck":false}}"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(!settings.updates.auto_check);
+    }
+
+    #[test]
+    fn shell_integration_absent_deserializes_to_default() {
+        // Forward-compat: legacy settings files without the shellIntegration
+        // key deserialize into the default (empty, unregistered) shape.
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            settings.shell_integration,
+            super::super::shell_integration::ShellIntegrationSettings::default()
+        );
+        assert!(settings.shell_integration.entries.is_empty());
+        assert!(!settings.shell_integration.registered);
+    }
+
+    #[test]
+    fn shell_integration_round_trips_within_app_settings() {
+        use super::super::shell_integration::{
+            ShellEntry, ShellEntryVisibility, ShellIntegrationFallback, ShellIntegrationSettings,
+            ShowForTargets,
+        };
+        let settings = AppSettings {
+            shell_integration: ShellIntegrationSettings {
+                entries: vec![ShellEntry {
+                    id: "open".to_string(),
+                    name: "Open in termiHub".to_string(),
+                    connection_id: Some("saved-a".to_string()),
+                    visibility: ShellEntryVisibility::Always,
+                    show_for: ShowForTargets::default(),
+                }],
+                fallback: ShellIntegrationFallback::SystemDefaultShell,
+                open_in_new_window: true,
+                registered: true,
+                registered_exe_path: Some("/opt/termihub/termiHub".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("shellIntegration"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.shell_integration, settings.shell_integration);
     }
 
     #[test]
