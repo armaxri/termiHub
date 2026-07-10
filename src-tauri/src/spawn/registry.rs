@@ -14,13 +14,46 @@
 //! "unsupported on this platform" error, so the calling Tauri commands and CLI
 //! subcommands behave predictably everywhere.
 
-use crate::connection::shell_integration::ShellEntry;
+use crate::connection::shell_integration::{ShellEntry, ShellIntegrationSettings};
+use anyhow::Context;
 
 /// Message returned by the install / uninstall entry points on non-Windows
 /// platforms, where Explorer registry registration does not apply.
 #[cfg(not(windows))]
 const UNSUPPORTED_MESSAGE: &str =
     "Windows Explorer context-menu registration is only supported on Windows";
+
+/// Register the integration for `settings.entries`, recording the registration
+/// facts (`registered` flag + executable path) back into `settings`.
+///
+/// Cross-platform entry point shared by the Tauri command and the pre-init CLI
+/// subcommand. On success the caller persists the mutated `settings`. On an
+/// unsupported platform the underlying [`install`] fails before any field is
+/// touched, so `settings` is left unchanged.
+pub fn register(settings: &mut ShellIntegrationSettings) -> anyhow::Result<()> {
+    let exe = current_exe_path()?;
+    install(&settings.entries, &exe)?;
+    settings.registered = true;
+    settings.registered_exe_path = Some(exe);
+    Ok(())
+}
+
+/// Remove the integration and clear the recorded registration facts from
+/// `settings`. Cross-platform counterpart to [`register`].
+pub fn unregister(settings: &mut ShellIntegrationSettings) -> anyhow::Result<()> {
+    uninstall()?;
+    settings.registered = false;
+    settings.registered_exe_path = None;
+    Ok(())
+}
+
+/// Resolve the current executable's absolute path as a string.
+fn current_exe_path() -> anyhow::Result<String> {
+    Ok(std::env::current_exe()
+        .context("resolve current executable path")?
+        .to_string_lossy()
+        .into_owned())
+}
 
 /// Register the given shell-integration entries as Explorer context-menu items.
 ///

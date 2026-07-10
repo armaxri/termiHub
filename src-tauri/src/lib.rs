@@ -91,6 +91,36 @@ fn handle_spawn_command(request: spawn::SpawnRequest) -> Option<spawn::SpawnRequ
     }
 }
 
+/// Handle the pre-init `install-shell-integration` / `uninstall-shell-integration`
+/// subcommands (#1368). Loads the persisted shell-integration settings without a
+/// Tauri `AppHandle`, applies the OS context-menu (un)registration, persists the
+/// updated registration facts, and exits. Never returns — the process terminates
+/// with a status code reflecting success or failure.
+fn handle_shell_integration_command(install: bool) -> ! {
+    let result = (|| -> anyhow::Result<()> {
+        let storage = connection::settings::SettingsStorage::new_standalone()?;
+        let mut settings = storage.load_with_recovery()?.data;
+        if install {
+            spawn::registry::register(&mut settings.shell_integration)?;
+        } else {
+            spawn::registry::unregister(&mut settings.shell_integration)?;
+        }
+        storage.save(&settings)
+    })();
+
+    match result {
+        Ok(()) => {
+            let action = if install { "installed" } else { "removed" };
+            println!("Shell integration {action}.");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Shell integration command failed: {e:#}");
+            std::process::exit(1);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Pre-init CLI routing: `spawn` / `(un)install-shell-integration` must be
@@ -101,11 +131,8 @@ pub fn run() {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     let pending_spawn = match spawn::classify_command(&raw_args) {
         spawn::Command::Spawn(request) => handle_spawn_command(request),
-        spawn::Command::InstallShellIntegration | spawn::Command::UninstallShellIntegration => {
-            // Registration lands in a later epic issue (SI-5/6/7).
-            eprintln!("Shell integration registration is not yet implemented.");
-            std::process::exit(0);
-        }
+        spawn::Command::InstallShellIntegration => handle_shell_integration_command(true),
+        spawn::Command::UninstallShellIntegration => handle_shell_integration_command(false),
         spawn::Command::None => None,
     };
 
@@ -590,6 +617,8 @@ pub fn run() {
             commands::connection::get_settings,
             commands::connection::save_settings,
             commands::shell_integration::get_shell_integration_status,
+            commands::shell_integration::install_shell_integration,
+            commands::shell_integration::uninstall_shell_integration,
             commands::connection::move_connection_to_file,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,
