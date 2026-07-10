@@ -1,3 +1,5 @@
+import type { Ref } from "react";
+
 interface NetworkTextFieldProps {
   /** Field label text. */
   label: string;
@@ -11,6 +13,8 @@ interface NetworkTextFieldProps {
   small?: boolean;
   /** Placeholder shown when empty. */
   placeholder?: string;
+  /** Ref forwarded to the underlying input (e.g. to autofocus the primary field). */
+  inputRef?: Ref<HTMLInputElement>;
   /** Test hook forwarded to the input. */
   "data-testid"?: string;
 }
@@ -27,12 +31,14 @@ export function NetworkTextField({
   error,
   small,
   placeholder,
+  inputRef,
   "data-testid": testId,
 }: NetworkTextFieldProps) {
   return (
     <label className={`network-panel__field${small ? " network-panel__field--small" : ""}`}>
       <span>{label}</span>
       <input
+        ref={inputRef}
         className={`network-panel__input${error ? " network-panel__input--error" : ""}`}
         value={value}
         onChange={(e) => onChange(e.target.value)}

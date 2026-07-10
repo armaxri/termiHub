@@ -1,5 +1,8 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, type FormEvent } from "react";
 import { Modal, Button, Input } from "@/components/ui";
+
+/** id linking the footer submit Button to the body <form> (they render in separate Modal regions). */
+const FORM_ID = "save-workspace-form";
 
 export type SaveWorkspaceScope = "all" | "active";
 
@@ -29,6 +32,16 @@ export function SaveWorkspaceDialog({
     onSave(name.trim(), showScopeSelector ? scope : "all", description.trim() || undefined);
   }, [name, description, scope, showScopeSelector, onSave]);
 
+  // Enter from any field submits the form (the footer Save button is associated
+  // via the form= attribute); the empty-name guard lives in handleSave.
+  const handleSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      handleSave();
+    },
+    [handleSave]
+  );
+
   return (
     <Modal
       open
@@ -41,8 +54,9 @@ export function SaveWorkspaceDialog({
             Cancel
           </Button>
           <Button
+            type="submit"
+            form={FORM_ID}
             variant="primary"
-            onClick={handleSave}
             disabled={!name.trim()}
             data-testid="save-workspace-confirm"
           >
@@ -51,7 +65,12 @@ export function SaveWorkspaceDialog({
         </>
       }
     >
-      <div className="save-workspace-dialog__form">
+      <form
+        id={FORM_ID}
+        className="save-workspace-dialog__form"
+        onSubmit={handleSubmit}
+        data-testid="save-workspace-form"
+      >
         <div className="save-workspace-dialog__field">
           <label htmlFor="ws-save-name">Name</label>
           <Input
@@ -102,7 +121,7 @@ export function SaveWorkspaceDialog({
             </div>
           </div>
         )}
-      </div>
+      </form>
     </Modal>
   );
 }
