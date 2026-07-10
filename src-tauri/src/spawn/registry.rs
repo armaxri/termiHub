@@ -125,7 +125,7 @@ mod macos {
 
     /// Custom `Info.plist` key stamped into every generated bundle so uninstall
     /// can distinguish termiHub bundles from unrelated Quick Actions.
-    pub(super) const MARKER_KEY: &str = "TermiHubShellIntegration";
+    const MARKER_KEY: &str = "TermiHubShellIntegration";
 
     /// Writes and removes the per-entry Quick Action bundles under a
     /// `Library/Services` directory.
@@ -253,7 +253,7 @@ mod macos {
     /// `show_for` targets. Folders (and folder-background) map to `public.folder`;
     /// files map to `public.data`. An entry with neither falls back to the
     /// catch-all `public.item` so it still surfaces somewhere.
-    pub(super) fn send_file_types(show_for: &ShowForTargets) -> Vec<&'static str> {
+    fn send_file_types(show_for: &ShowForTargets) -> Vec<&'static str> {
         let mut types = Vec::new();
         if show_for.folders || show_for.folder_background {
             types.push("public.folder");
@@ -449,247 +449,244 @@ mod macos {
 "#
         )
     }
-}
 
-#[cfg(all(test, target_os = "macos"))]
-mod macos_tests {
-    use super::macos::{self, Registrar};
-    use crate::connection::shell_integration::{ShellEntry, ShellEntryVisibility, ShowForTargets};
-    use std::path::PathBuf;
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::connection::shell_integration::{ShellEntryVisibility, ShowForTargets};
+        use std::path::PathBuf;
 
-    const EXE: &str = "/Applications/termiHub.app/Contents/MacOS/termiHub";
+        const EXE: &str = "/Applications/termiHub.app/Contents/MacOS/termiHub";
 
-    /// A throwaway `Library/Services` directory that is deleted on drop, so a
-    /// test never touches the user's real `~/Library/Services`.
-    struct TempServices {
-        dir: PathBuf,
-    }
-
-    impl TempServices {
-        fn new(tag: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "termihub-services-test-{}-{tag}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("create temp services dir");
-            Self { dir }
+        /// A throwaway `Library/Services` directory that is deleted on drop, so a
+        /// test never touches the user's real `~/Library/Services`.
+        struct TempServices {
+            dir: PathBuf,
         }
 
-        fn registrar(&self) -> Registrar {
-            Registrar::for_test(self.dir.clone())
+        impl TempServices {
+            fn new(tag: &str) -> Self {
+                let dir = std::env::temp_dir().join(format!(
+                    "termihub-services-test-{}-{tag}",
+                    std::process::id()
+                ));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).expect("create temp services dir");
+                Self { dir }
+            }
+
+            fn registrar(&self) -> Registrar {
+                Registrar::for_test(self.dir.clone())
+            }
+
+            fn bundle(&self, dir_name: &str) -> PathBuf {
+                self.dir.join(dir_name)
+            }
+
+            fn read(&self, relative: &str) -> String {
+                std::fs::read_to_string(self.dir.join(relative))
+                    .unwrap_or_else(|e| panic!("read {relative}: {e}"))
+            }
         }
 
-        fn bundle(&self, dir_name: &str) -> PathBuf {
-            self.dir.join(dir_name)
+        impl Drop for TempServices {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
         }
 
-        fn read(&self, relative: &str) -> String {
-            std::fs::read_to_string(self.dir.join(relative))
-                .unwrap_or_else(|e| panic!("read {relative}: {e}"))
-        }
-    }
-
-    impl Drop for TempServices {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
-    }
-
-    fn all_targets() -> ShowForTargets {
-        ShowForTargets {
-            folders: true,
-            files: true,
-            folder_background: true,
-        }
-    }
-
-    fn folders_only() -> ShowForTargets {
-        ShowForTargets {
-            folders: true,
-            files: false,
-            folder_background: false,
-        }
-    }
-
-    fn entry(id: &str, name: &str, show_for: ShowForTargets) -> ShellEntry {
-        ShellEntry {
-            id: id.to_string(),
-            name: name.to_string(),
-            connection_id: None,
-            visibility: ShellEntryVisibility::Always,
-            show_for,
-        }
-    }
-
-    #[test]
-    fn install_creates_one_workflow_bundle_per_entry() {
-        let services = TempServices::new("per-entry");
-        let entries = vec![
-            entry("open", "Open in termiHub", all_targets()),
-            entry("pick", "Pick session", folders_only()),
-        ];
-        services.registrar().install(&entries, EXE).unwrap();
-
-        for name in ["Open in termiHub", "Pick session"] {
-            let bundle = services.bundle(&format!("{name}.workflow"));
-            assert!(
-                bundle.join("Contents/document.wflow").is_file(),
-                "missing document.wflow for {name}"
-            );
-            assert!(
-                bundle.join("Contents/Info.plist").is_file(),
-                "missing Info.plist for {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn document_wflow_carries_the_spawn_command_and_service_metadata() {
-        let services = TempServices::new("wflow-command");
-        let entries = vec![entry("open", "Open in termiHub", all_targets())];
-        services.registrar().install(&entries, EXE).unwrap();
-
-        let wflow = services.read("Open in termiHub.workflow/Contents/document.wflow");
-        // The Run Shell Script action invokes the spawn subcommand with the
-        // selected paths passed as arguments (&quot; is the XML-escaped quote).
-        assert!(
-            wflow.contains("spawn --entry-id open --location &quot;$@&quot;"),
-            "wflow missing spawn command: {wflow}"
-        );
-        assert!(wflow.contains(EXE), "wflow missing exe path");
-        // It must be a Finder services-menu workflow.
-        assert!(wflow.contains("com.apple.Automator.servicesMenu"));
-        assert!(wflow.contains("Run Shell Script"));
-        assert!(wflow.starts_with("<?xml"));
-    }
-
-    #[test]
-    fn info_plist_declares_nsservices_menu_item_and_owner_marker() {
-        let services = TempServices::new("info-plist");
-        let entries = vec![entry("open", "Open in termiHub", folders_only())];
-        services.registrar().install(&entries, EXE).unwrap();
-
-        let plist = services.read("Open in termiHub.workflow/Contents/Info.plist");
-        assert!(plist.contains("<key>NSServices</key>"));
-        assert!(plist.contains("<string>runWorkflowAsService</string>"));
-        assert!(plist.contains("<string>Open in termiHub</string>"));
-        assert!(plist.contains("<string>public.folder</string>"));
-        // Owner marker lets uninstall recognise our bundles.
-        assert!(plist.contains(macos::MARKER_KEY));
-    }
-
-    #[test]
-    fn send_file_types_map_show_for_targets() {
-        assert_eq!(
-            macos::send_file_types(&all_targets()),
-            vec!["public.folder", "public.data"]
-        );
-        assert_eq!(
-            macos::send_file_types(&folders_only()),
-            vec!["public.folder"]
-        );
-        assert_eq!(
-            macos::send_file_types(&ShowForTargets {
-                folders: false,
+        fn all_targets() -> ShowForTargets {
+            ShowForTargets {
+                folders: true,
                 files: true,
+                folder_background: true,
+            }
+        }
+
+        fn folders_only() -> ShowForTargets {
+            ShowForTargets {
+                folders: true,
+                files: false,
                 folder_background: false,
-            }),
-            vec!["public.data"]
-        );
-    }
+            }
+        }
 
-    #[test]
-    fn xml_special_characters_in_name_are_escaped() {
-        let services = TempServices::new("escaping");
-        let entries = vec![entry("amp", "Open & Run", folders_only())];
-        services.registrar().install(&entries, EXE).unwrap();
+        fn entry(id: &str, name: &str, show_for: ShowForTargets) -> ShellEntry {
+            ShellEntry {
+                id: id.to_string(),
+                name: name.to_string(),
+                connection_id: None,
+                visibility: ShellEntryVisibility::Always,
+                show_for,
+            }
+        }
 
-        let plist = services.read("Open & Run.workflow/Contents/Info.plist");
-        assert!(plist.contains("<string>Open &amp; Run</string>"));
-    }
+        #[test]
+        fn install_creates_one_workflow_bundle_per_entry() {
+            let services = TempServices::new("per-entry");
+            let entries = vec![
+                entry("open", "Open in termiHub", all_targets()),
+                entry("pick", "Pick session", folders_only()),
+            ];
+            services.registrar().install(&entries, EXE).unwrap();
 
-    #[test]
-    fn bundle_name_sanitizes_path_separators() {
-        let services = TempServices::new("sanitize");
-        let entries = vec![entry("slash", "Open / Here", folders_only())];
-        services.registrar().install(&entries, EXE).unwrap();
+            for name in ["Open in termiHub", "Pick session"] {
+                let bundle = services.bundle(&format!("{name}.workflow"));
+                assert!(
+                    bundle.join("Contents/document.wflow").is_file(),
+                    "missing document.wflow for {name}"
+                );
+                assert!(
+                    bundle.join("Contents/Info.plist").is_file(),
+                    "missing Info.plist for {name}"
+                );
+            }
+        }
 
-        // The `/` is illegal in a filename and is replaced with `-`.
-        assert!(services.bundle("Open - Here.workflow").is_dir());
-    }
+        #[test]
+        fn document_wflow_carries_the_spawn_command_and_service_metadata() {
+            let services = TempServices::new("wflow-command");
+            let entries = vec![entry("open", "Open in termiHub", all_targets())];
+            services.registrar().install(&entries, EXE).unwrap();
 
-    #[test]
-    fn install_is_idempotent() {
-        let services = TempServices::new("idempotent");
-        let entries = vec![entry("open", "Open in termiHub", folders_only())];
-        services.registrar().install(&entries, EXE).unwrap();
-        services.registrar().install(&entries, EXE).unwrap();
+            let wflow = services.read("Open in termiHub.workflow/Contents/document.wflow");
+            // The Run Shell Script action invokes the spawn subcommand with the
+            // selected paths passed as arguments (&quot; is the XML-escaped quote).
+            assert!(
+                wflow.contains("spawn --entry-id open --location &quot;$@&quot;"),
+                "wflow missing spawn command: {wflow}"
+            );
+            assert!(wflow.contains(EXE), "wflow missing exe path");
+            // It must be a Finder services-menu workflow.
+            assert!(wflow.contains("com.apple.Automator.servicesMenu"));
+            assert!(wflow.contains("Run Shell Script"));
+            assert!(wflow.starts_with("<?xml"));
+        }
 
-        let count = std::fs::read_dir(&services.dir)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("workflow"))
-            .count();
-        assert_eq!(count, 1);
-    }
+        #[test]
+        fn info_plist_declares_nsservices_menu_item_and_owner_marker() {
+            let services = TempServices::new("info-plist");
+            let entries = vec![entry("open", "Open in termiHub", folders_only())];
+            services.registrar().install(&entries, EXE).unwrap();
 
-    #[test]
-    fn reinstall_drops_removed_entries() {
-        let services = TempServices::new("drop-removed");
-        let first = vec![
-            entry("a", "Entry A", folders_only()),
-            entry("b", "Entry B", folders_only()),
-        ];
-        services.registrar().install(&first, EXE).unwrap();
+            let plist = services.read("Open in termiHub.workflow/Contents/Info.plist");
+            assert!(plist.contains("<key>NSServices</key>"));
+            assert!(plist.contains("<string>runWorkflowAsService</string>"));
+            assert!(plist.contains("<string>Open in termiHub</string>"));
+            assert!(plist.contains("<string>public.folder</string>"));
+            // Owner marker lets uninstall recognise our bundles.
+            assert!(plist.contains(MARKER_KEY));
+        }
 
-        let second = vec![entry("a", "Entry A", folders_only())];
-        services.registrar().install(&second, EXE).unwrap();
+        #[test]
+        fn send_file_types_map_show_for_targets() {
+            assert_eq!(
+                send_file_types(&all_targets()),
+                vec!["public.folder", "public.data"]
+            );
+            assert_eq!(send_file_types(&folders_only()), vec!["public.folder"]);
+            assert_eq!(
+                send_file_types(&ShowForTargets {
+                    folders: false,
+                    files: true,
+                    folder_background: false,
+                }),
+                vec!["public.data"]
+            );
+        }
 
-        assert!(services.bundle("Entry A.workflow").is_dir());
-        assert!(!services.bundle("Entry B.workflow").exists());
-    }
+        #[test]
+        fn xml_special_characters_in_name_are_escaped() {
+            let services = TempServices::new("escaping");
+            let entries = vec![entry("amp", "Open & Run", folders_only())];
+            services.registrar().install(&entries, EXE).unwrap();
 
-    #[test]
-    fn uninstall_removes_our_bundles() {
-        let services = TempServices::new("uninstall");
-        let entries = vec![
-            entry("a", "Entry A", all_targets()),
-            entry("b", "Entry B", all_targets()),
-        ];
-        services.registrar().install(&entries, EXE).unwrap();
-        services.registrar().uninstall().unwrap();
+            let plist = services.read("Open & Run.workflow/Contents/Info.plist");
+            assert!(plist.contains("<string>Open &amp; Run</string>"));
+        }
 
-        assert!(!services.bundle("Entry A.workflow").exists());
-        assert!(!services.bundle("Entry B.workflow").exists());
-    }
+        #[test]
+        fn bundle_name_sanitizes_path_separators() {
+            let services = TempServices::new("sanitize");
+            let entries = vec![entry("slash", "Open / Here", folders_only())];
+            services.registrar().install(&entries, EXE).unwrap();
 
-    #[test]
-    fn uninstall_preserves_foreign_bundles() {
-        let services = TempServices::new("foreign");
-        // A pre-existing, non-termiHub Quick Action bundle.
-        let foreign = services.bundle("Someone Else.workflow");
-        std::fs::create_dir_all(foreign.join("Contents")).unwrap();
-        std::fs::write(
-            foreign.join("Contents/Info.plist"),
-            "<plist><dict/></plist>",
-        )
-        .unwrap();
+            // The `/` is illegal in a filename and is replaced with `-`.
+            assert!(services.bundle("Open - Here.workflow").is_dir());
+        }
 
-        let entries = vec![entry("a", "Entry A", folders_only())];
-        services.registrar().install(&entries, EXE).unwrap();
-        services.registrar().uninstall().unwrap();
+        #[test]
+        fn install_is_idempotent() {
+            let services = TempServices::new("idempotent");
+            let entries = vec![entry("open", "Open in termiHub", folders_only())];
+            services.registrar().install(&entries, EXE).unwrap();
+            services.registrar().install(&entries, EXE).unwrap();
 
-        assert!(!services.bundle("Entry A.workflow").exists());
-        assert!(foreign.is_dir(), "foreign bundle must survive uninstall");
-    }
+            let count = std::fs::read_dir(&services.dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("workflow"))
+                .count();
+            assert_eq!(count, 1);
+        }
 
-    #[test]
-    fn uninstall_without_prior_install_is_ok() {
-        let services = TempServices::new("uninstall-empty");
-        // Remove the dir entirely so uninstall must tolerate a missing dir.
-        std::fs::remove_dir_all(&services.dir).unwrap();
-        services.registrar().uninstall().unwrap();
+        #[test]
+        fn reinstall_drops_removed_entries() {
+            let services = TempServices::new("drop-removed");
+            let first = vec![
+                entry("a", "Entry A", folders_only()),
+                entry("b", "Entry B", folders_only()),
+            ];
+            services.registrar().install(&first, EXE).unwrap();
+
+            let second = vec![entry("a", "Entry A", folders_only())];
+            services.registrar().install(&second, EXE).unwrap();
+
+            assert!(services.bundle("Entry A.workflow").is_dir());
+            assert!(!services.bundle("Entry B.workflow").exists());
+        }
+
+        #[test]
+        fn uninstall_removes_our_bundles() {
+            let services = TempServices::new("uninstall");
+            let entries = vec![
+                entry("a", "Entry A", all_targets()),
+                entry("b", "Entry B", all_targets()),
+            ];
+            services.registrar().install(&entries, EXE).unwrap();
+            services.registrar().uninstall().unwrap();
+
+            assert!(!services.bundle("Entry A.workflow").exists());
+            assert!(!services.bundle("Entry B.workflow").exists());
+        }
+
+        #[test]
+        fn uninstall_preserves_foreign_bundles() {
+            let services = TempServices::new("foreign");
+            // A pre-existing, non-termiHub Quick Action bundle.
+            let foreign = services.bundle("Someone Else.workflow");
+            std::fs::create_dir_all(foreign.join("Contents")).unwrap();
+            std::fs::write(
+                foreign.join("Contents/Info.plist"),
+                "<plist><dict/></plist>",
+            )
+            .unwrap();
+
+            let entries = vec![entry("a", "Entry A", folders_only())];
+            services.registrar().install(&entries, EXE).unwrap();
+            services.registrar().uninstall().unwrap();
+
+            assert!(!services.bundle("Entry A.workflow").exists());
+            assert!(foreign.is_dir(), "foreign bundle must survive uninstall");
+        }
+
+        #[test]
+        fn uninstall_without_prior_install_is_ok() {
+            let services = TempServices::new("uninstall-empty");
+            // Remove the dir entirely so uninstall must tolerate a missing dir.
+            std::fs::remove_dir_all(&services.dir).unwrap();
+            services.registrar().uninstall().unwrap();
+        }
     }
 }
 
