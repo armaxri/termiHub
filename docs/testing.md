@@ -890,12 +890,12 @@ those steps are the deliverable, executed by a human for the release.
 
 #### What is automated vs. manual
 
-| Layer                                                                                                                                                                                              | Coverage                                                                                                        |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Per-platform decision, adopt/spawn lifecycle, session refcount (#1107), consent gate, Linux gap classifier, VcXsrv acquire/verify/extract, XQuartz detect + brew args, readiness-wait cancellation | **Rust unit tests** (`src-tauri/src/terminal/xserver/*`, `core/src/backends/ssh/x11.rs`) — run on every CI host |
-| Setup dialog, connect-time consent dialog, X Servers section rows/actions                                                                                                                          | **Vitest/RTL** component tests (`XServerSetupDialog`, `XServerConnectConsent`, `OpenConnectionsModal.xservers`) |
-| A GUI app renders to an X server **headlessly, in-container** (Xvfb)                                                                                                                               | **Docker fixture** `ssh-x11` → `render-check.sh` (automatable anywhere Docker runs)                             |
-| Forwarded GUI renders into the **operator's real X server** end to end; per-OS provisioning UX; clean shutdown / no orphan                                                                         | **Manual** (the release matrix below)                                                                           |
+| Layer                                                                                                                                                                                                        | Coverage                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Per-platform decision, adopt/spawn lifecycle, session refcount (#1107), consent gate, Linux gap classifier, VcXsrv detect + winget install decision, XQuartz detect + brew args, readiness-wait cancellation | **Rust unit tests** (`src-tauri/src/terminal/xserver/*`, `core/src/backends/ssh/x11.rs`) — run on every CI host |
+| Setup dialog, connect-time consent dialog, X Servers section rows/actions                                                                                                                                    | **Vitest/RTL** component tests (`XServerSetupDialog`, `XServerConnectConsent`, `OpenConnectionsModal.xservers`) |
+| A GUI app renders to an X server **headlessly, in-container** (Xvfb)                                                                                                                                         | **Docker fixture** `ssh-x11` → `render-check.sh` (automatable anywhere Docker runs)                             |
+| Forwarded GUI renders into the **operator's real X server** end to end; per-OS provisioning UX; clean shutdown / no orphan                                                                                   | **Manual** (the release matrix below)                                                                           |
 
 #### Docker fixture: `ssh-x11`
 
@@ -923,11 +923,11 @@ Execute once per release on a **clean box** of each OS. **This is a human releas
 step — it cannot be run by CI or an AI agent** (no real X server, and the per-OS
 install dialogs are native). Record the result against the release.
 
-| OS          | Strategy                                                                | Clean-box procedure                                                                                                                                                                                                                                                                                                                                                                                                          | Pass criteria                                                                                                                                                                              |
-| ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Windows** | Bundle / download VcXsrv                                                | Enable X11 on an SSH connection → first connect **pauses for consent** → **Enable** → VcXsrv auto-provisions (download → verify → extract, or reuse cache) → a forwarded `xeyes` / `xclock` renders as a native window.                                                                                                                                                                                                      | Window renders; choice remembered (2nd X11 connect does **not** prompt); on disconnect the managed server shuts down when idle — **no orphan `vcxsrv.exe`** in Task Manager.               |
-| **macOS**   | Detect / guide XQuartz (`brew --cask`; guide Homebrew if absent, #1117) | Without XQuartz → connect surfaces **XQuartz-missing** guidance; run **Install**. With Homebrew present → `brew install --cask xquartz` (admin prompt). Without Homebrew → **Install Homebrew** opens a terminal tab running the official installer, then **Retry** installs XQuartz; or **Open xquartz.org** for a manual install. With XQuartz → connect launches it (`open -a XQuartz`) and a forwarded `xclock` renders. | Guidance never auto-installs silently; the Homebrew installer runs in a visible terminal; window renders; aborting the connect **while XQuartz is still starting** stops promptly (#1260). |
-| **Linux**   | Native X, guide-only                                                    | On a normal X / Wayland-with-XWayland desktop → connect **adopts** the running server (no prompt), forwarded `xeyes` renders. On a gap env (Wayland-only, headless, sandboxed) → connect shows the **targeted hint**.                                                                                                                                                                                                        | Window renders on a normal desktop; each gap yields its specific actionable hint, never a silent failure or generic error (#1055).                                                         |
+| OS          | Strategy                                                                | Clean-box procedure                                                                                                                                                                                                                                                                                                                                                                                                                            | Pass criteria                                                                                                                                                                                            |
+| ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Windows** | Install VcXsrv via winget (#1318)                                       | Enable X11 on an SSH connection → first connect **pauses for consent** → **Enable** → termiHub runs `winget install -e --id marha.VcXsrv …` (or skips if already installed) → the managed server launches → a forwarded `xeyes` / `xclock` renders as a native window. **Without winget**: the error offers **Install App Installer** (opens the Store) + **Open VcXsrv download**; after installing App Installer, **Retry** installs VcXsrv. | Window renders; nothing installed silently; choice remembered (2nd X11 connect does **not** prompt); on disconnect the managed server shuts down when idle — **no orphan `vcxsrv.exe`** in Task Manager. |
+| **macOS**   | Detect / guide XQuartz (`brew --cask`; guide Homebrew if absent, #1117) | Without XQuartz → connect surfaces **XQuartz-missing** guidance; run **Install**. With Homebrew present → `brew install --cask xquartz` (admin prompt). Without Homebrew → **Install Homebrew** opens a terminal tab running the official installer, then **Retry** installs XQuartz; or **Open xquartz.org** for a manual install. With XQuartz → connect launches it (`open -a XQuartz`) and a forwarded `xclock` renders.                   | Guidance never auto-installs silently; the Homebrew installer runs in a visible terminal; window renders; aborting the connect **while XQuartz is still starting** stops promptly (#1260).               |
+| **Linux**   | Native X, guide-only                                                    | On a normal X / Wayland-with-XWayland desktop → connect **adopts** the running server (no prompt), forwarded `xeyes` renders. On a gap env (Wayland-only, headless, sandboxed) → connect shows the **targeted hint**.                                                                                                                                                                                                                          | Window renders on a normal desktop; each gap yields its specific actionable hint, never a silent failure or generic error (#1055).                                                                       |
 
 Detailed per-OS procedures follow.
 
@@ -999,41 +999,34 @@ connect on a box where XQuartz is **not yet running**, then **Stop** the connect
 while it is still coming up. Confirm the abort takes effect **promptly** — it must
 not block for the full readiness budget before the Stop is honored.
 
-#### VcXsrv provisioning: first-run download + offline re-run (Windows, #1076)
+#### VcXsrv install via winget (Windows, #1318)
 
-termiHub downloads a pinned, minimal VcXsrv `.zip` from its GitHub releases on
-first use of SSH X11 forwarding, SHA-256-verifies it, and extracts a runnable
-`vcxsrv.exe` (`src-tauri/src/terminal/xserver/acquire.rs`). Building and
-publishing that artifact is a release step; the acquisition path is then
-verified on a **clean Windows box** (no VcXsrv installed).
+termiHub installs VcXsrv via **winget** on first use of SSH X11 forwarding —
+symmetric to the macOS Homebrew path — and launches the installed `vcxsrv.exe`
+(`src-tauri/src/terminal/xserver/windows.rs`). Detection and the install decision
+are unit-tested (mock FS); the install + forwarded rendering are Windows-only and
+manual. **No install may ever run silently** — only on the explicit consent /
+install action.
 
-Build & publish the artifact (once per pinned version):
+Verify on a **clean Windows box with winget** (App Installer present), no VcXsrv
+installed:
 
-1. Install the pinned VcXsrv (currently **21.1.13**) from
-   <https://github.com/marchaesen/vcxsrv/releases> on a build machine.
-2. Run `scripts/internal/package-vcxsrv.ps1 -UpdateAcquire`. It stages a minimal
-   tree, writes `target/vcxsrv-package/vcxsrv-<version>-minimal.zip`, prints the
-   SHA-256, and patches `PINNED_VCXSRV.sha256` in `acquire.rs`.
-3. Publish the printed artifact: `gh release create vcxsrv-<version> <zip>
---title "VcXsrv <version> (minimal, for termiHub X11)"
---notes "GPL-3.0. See THIRD_PARTY_LICENSES.md and licenses/GPL-3.0.txt."`.
-4. Confirm the automated check passes against the live asset:
-   `cargo test -p termihub -- --ignored pinned_artifact_downloads_verifies_and_contains_exe`.
+1. Trigger X server provisioning (open an SSH connection with X11 forwarding, or
+   use the Open Connections **X Servers** control). Confirm termiHub runs
+   `winget install -e --id marha.VcXsrv …` (winget's own UAC prompt appears),
+   reports progress, and installs VcXsrv to `C:\Program Files\VcXsrv\vcxsrv.exe`.
+2. Confirm the managed server then launches and a forwarded `xeyes` / `xclock`
+   displays as a native window.
+3. Already-installed re-run: with VcXsrv present, confirm provisioning **skips**
+   the winget install and launches the server directly.
 
-Verify acquisition end-to-end on a **clean Windows box** (no VcXsrv installed):
+Verify on a **clean Windows box without winget** (App Installer absent):
 
-1. First run — download + verify + extract: trigger X server provisioning (open
-   an SSH connection with X11 forwarding, or use the Settings/Open Connections X
-   server control once #1053 lands). Confirm the pinned `.zip` downloads,
-   verifies, and yields a runnable `vcxsrv.exe` under the app data dir
-   (`<data>/xserver/vcxsrv-<version>/vcxsrv.exe`; portable mode uses the
-   `data/` folder). An X client from the forwarded session should display.
-2. Offline re-run — cache reuse: disconnect the network and repeat. Provisioning
-   must **not** attempt a download; it reuses the already-extracted tree and the
-   X client displays again.
-3. Tamper check (optional): corrupt the cached `vcxsrv.exe` to zero bytes and
-   confirm the next provisioning re-resolves (download when online, or a clear
-   error offline) rather than launching a broken server.
+1. Trigger the install action. Confirm the error screen offers **Install App
+   Installer** (opens the Microsoft Store to the App Installer page) and **Open
+   VcXsrv download** (sourceforge) — never a silent install or an opaque failure.
+2. After installing App Installer, click **Retry** and confirm termiHub now
+   re-detects winget and installs VcXsrv.
 
 #### Connect-triggered X server consent + live progress (Windows, #1116)
 
