@@ -10,6 +10,7 @@
 //! files / Quick Actions) and file-manager detection land in later epic issues.
 
 use serde::{Deserialize, Serialize};
+use termihub_core::files::utils::normalize_platform_path;
 
 /// Windows context-menu visibility for a shell-integration entry.
 ///
@@ -98,7 +99,7 @@ pub struct LinuxFileManagerToggles {
 /// Modelled on the existing `external_connection_files` pattern: a plain,
 /// `#[serde(default)]`-driven struct so older `settings.json` files that predate
 /// this feature deserialize cleanly (forward-compat).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ShellIntegrationSettings {
     /// Configured quick-access entries, in display / priority order.
@@ -118,20 +119,6 @@ pub struct ShellIntegrationSettings {
     pub linux_file_managers: LinuxFileManagerToggles,
     /// Whether the user dismissed the first-launch install banner.
     pub first_launch_banner_dismissed: bool,
-}
-
-impl Default for ShellIntegrationSettings {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            fallback: ShellIntegrationFallback::default(),
-            open_in_new_window: false,
-            registered: false,
-            registered_exe_path: None,
-            linux_file_managers: LinuxFileManagerToggles::default(),
-            first_launch_banner_dismissed: false,
-        }
-    }
 }
 
 /// The resolved connection selector for a spawn request.
@@ -204,7 +191,20 @@ fn resolve_entry(entry: &ShellEntry) -> ResolvedConnection {
 pub fn exe_path_matches(registered_exe_path: Option<&str>, current_exe_path: Option<&str>) -> bool {
     match (registered_exe_path, current_exe_path) {
         (Some(registered), Some(current)) => {
-            normalize_exe_path(registered) == normalize_exe_path(current)
+            // Normalize separators (and MSYS drive paths on Windows) via the
+            // shared helper so two spellings of the same path don't read as a
+            // stale registration.
+            let registered = normalize_platform_path(registered.trim());
+            let current = normalize_platform_path(current.trim());
+            #[cfg(windows)]
+            {
+                // Windows filesystem paths are case-insensitive.
+                registered.eq_ignore_ascii_case(&current)
+            }
+            #[cfg(not(windows))]
+            {
+                registered == current
+            }
         }
         _ => false,
     }
@@ -284,20 +284,6 @@ pub fn build_status(
 /// epic issue.
 pub fn detect_file_managers() -> Vec<DetectedFileManager> {
     Vec::new()
-}
-
-/// Normalize an executable path for comparison. Trims surrounding whitespace and
-/// lower-cases on Windows, whose filesystem paths are case-insensitive.
-fn normalize_exe_path(path: &str) -> String {
-    let trimmed = path.trim();
-    #[cfg(windows)]
-    {
-        trimmed.to_lowercase()
-    }
-    #[cfg(not(windows))]
-    {
-        trimmed.to_string()
-    }
 }
 
 #[cfg(test)]
@@ -443,6 +429,24 @@ mod tests {
     #[test]
     fn exe_path_no_match_when_current_path_missing() {
         assert!(!exe_path_matches(Some("/opt/termihub/termiHub"), None));
+    }
+
+    #[test]
+    fn exe_path_matches_ignoring_separator_style() {
+        // Backslashes are normalized to forward slashes on every platform, so a
+        // registration recorded with Windows separators still matches.
+        assert!(exe_path_matches(
+            Some(r"C:\opt\termiHub.exe"),
+            Some("C:/opt/termiHub.exe")
+        ));
+    }
+
+    #[test]
+    fn exe_path_matches_ignoring_surrounding_whitespace() {
+        assert!(exe_path_matches(
+            Some("  /opt/termihub/termiHub  "),
+            Some("/opt/termihub/termiHub")
+        ));
     }
 
     // ── Status building ──────────────────────────────────────────────────
