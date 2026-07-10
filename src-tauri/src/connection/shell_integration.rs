@@ -122,6 +122,11 @@ pub struct ShellIntegrationSettings {
 }
 
 /// The resolved connection selector for a spawn request.
+//
+// `allow(dead_code)`: this resolution API is the config-model foundation for
+// #1367; its runtime consumer (the CLI-spawn handler) lands in a later epic
+// #1363 issue. It is fully exercised by the unit tests below.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedConnection {
     /// Open the saved connection with this id.
@@ -143,6 +148,10 @@ pub enum ResolvedConnection {
 /// An entry with no `connection_id` is a picker entry and resolves to
 /// [`ResolvedConnection::Picker`]. Pure and platform-independent so it is
 /// exhaustively unit-testable.
+///
+/// `allow(dead_code)`: consumer (the CLI-spawn handler) lands in a later
+/// epic #1363 issue; exercised by the unit tests below.
+#[allow(dead_code)]
 pub fn resolve_connection(
     settings: &ShellIntegrationSettings,
     connection_override: Option<&str>,
@@ -175,6 +184,7 @@ pub fn resolve_connection(
 
 /// Resolve a single entry to its selector: a fixed connection, or the picker
 /// when the entry carries no `connection_id`.
+#[allow(dead_code)]
 fn resolve_entry(entry: &ShellEntry) -> ResolvedConnection {
     match &entry.connection_id {
         Some(id) => ResolvedConnection::Connection(id.clone()),
