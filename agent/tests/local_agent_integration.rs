@@ -24,6 +24,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 
 use tempfile::{NamedTempFile, TempDir};
+use termihub_core::monitoring::BackoffSchedule;
 
 // ── Binary path ───────────────────────────────────────────────────────────────
 
@@ -43,35 +44,20 @@ const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ── Readiness retry backoff ───────────────────────────────────────────────────
 
-/// Exponential-backoff schedule for the agent-readiness retry loop.
+/// Cap on the readiness retry backoff (see [`readiness_backoff`]).
+const READINESS_BACKOFF_CAP: Duration = Duration::from_millis(500);
+
+/// Exponential-backoff schedule for the agent-readiness retry loops.
 ///
-/// Starts small so a fast local start returns almost immediately, then doubles
-/// the delay after each attempt up to a cap. This keeps the happy path snappy
-/// (the first probe fires after only [`INITIAL`](Backoff::new) ms) while making
-/// the loop gentle on a **starved CI runner**: instead of hammering `connect()`
-/// hundreds of times a second for the whole timeout — the pattern that let #1398
-/// flake with `connect: Connection refused` — retries space out as the agent
-/// takes longer to come up.
-struct Backoff {
-    current: Duration,
-    max: Duration,
-}
-
-impl Backoff {
-    /// Create a schedule starting at `initial`, doubling up to `max`.
-    fn new(initial: Duration, max: Duration) -> Self {
-        Backoff {
-            current: initial.min(max),
-            max,
-        }
-    }
-
-    /// Return the current delay, then advance the schedule (double, capped).
-    fn next_delay(&mut self) -> Duration {
-        let delay = self.current;
-        self.current = (self.current * 2).min(self.max);
-        delay
-    }
+/// Reuses the production [`BackoffSchedule`] helper instead of a bespoke copy.
+/// Starts at 20ms and doubles to [`READINESS_BACKOFF_CAP`], so a fast local
+/// start returns almost immediately while a **starved CI runner** is not
+/// hammered with hundreds of `connect()` attempts a second — the pattern that
+/// let #1398 flake with `connect: Connection refused`. The attempt budget is
+/// effectively unbounded (`u32::MAX`); these loops stop on their own wall-clock
+/// deadline (or a dead child), never on an attempt count.
+fn readiness_backoff() -> BackoffSchedule {
+    BackoffSchedule::new(Duration::from_millis(20), READINESS_BACKOFF_CAP, u32::MAX)
 }
 
 // ── LocalAgent: process lifecycle manager ────────────────────────────────────
@@ -239,7 +225,7 @@ fn read_stderr(path: &Path) -> String {
 ///   just "connection refused".
 fn wait_for_agent_ready(child: &mut Child, addr: &str, stderr_path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
-    let mut backoff = Backoff::new(Duration::from_millis(20), Duration::from_millis(500));
+    let mut backoff = readiness_backoff();
 
     // One probe at a time: connect, half-close (send FIN), and wait for the
     // agent to serve it to completion and close its end (EOF). Reaching EOF
@@ -278,7 +264,7 @@ fn wait_for_agent_ready(child: &mut Child, addr: &str, stderr_path: &Path, timeo
                 }
             }
         }
-        std::thread::sleep(backoff.next_delay());
+        std::thread::sleep(backoff.next_delay().unwrap_or(READINESS_BACKOFF_CAP));
     }
 }
 
@@ -318,46 +304,6 @@ fn rpc(stream: &mut TcpStream, msg: &str) -> String {
     response.trim().to_string()
 }
 
-// ── Backoff unit tests ────────────────────────────────────────────────────────
-
-#[test]
-fn backoff_starts_at_initial_and_doubles() {
-    let mut b = Backoff::new(Duration::from_millis(20), Duration::from_millis(500));
-    assert_eq!(b.next_delay(), Duration::from_millis(20));
-    assert_eq!(b.next_delay(), Duration::from_millis(40));
-    assert_eq!(b.next_delay(), Duration::from_millis(80));
-    assert_eq!(b.next_delay(), Duration::from_millis(160));
-    assert_eq!(b.next_delay(), Duration::from_millis(320));
-}
-
-#[test]
-fn backoff_saturates_at_max_and_stays_there() {
-    let mut b = Backoff::new(Duration::from_millis(20), Duration::from_millis(500));
-    // 20 → 40 → 80 → 160 → 320 → 500 (capped, since 640 > 500) → 500 …
-    let delays: Vec<Duration> = (0..8).map(|_| b.next_delay()).collect();
-    assert_eq!(
-        delays,
-        vec![
-            Duration::from_millis(20),
-            Duration::from_millis(40),
-            Duration::from_millis(80),
-            Duration::from_millis(160),
-            Duration::from_millis(320),
-            Duration::from_millis(500),
-            Duration::from_millis(500),
-            Duration::from_millis(500),
-        ]
-    );
-}
-
-#[test]
-fn backoff_clamps_initial_above_max() {
-    // An initial larger than the cap must never exceed the cap.
-    let mut b = Backoff::new(Duration::from_secs(10), Duration::from_millis(500));
-    assert_eq!(b.next_delay(), Duration::from_millis(500));
-    assert_eq!(b.next_delay(), Duration::from_millis(500));
-}
-
 /// A dead agent process must be reported immediately, not waited out.
 ///
 /// Regression guard for #1398's diagnostics: if the child exits before the port
@@ -389,11 +335,10 @@ fn wait_for_agent_ready_fails_fast_when_process_dies() {
     child.wait().ok();
 
     let panic = result.expect_err("readiness wait must panic on a dead child");
+    // A formatted `panic!(…)` always carries a `String` payload.
     let msg = panic
         .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-        .unwrap_or_default();
+        .expect("panic payload should be a formatted String");
     assert!(
         msg.contains("exited before becoming ready"),
         "panic must identify the dead child — got: {msg}"
