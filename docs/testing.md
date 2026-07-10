@@ -774,6 +774,42 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### Agent binary SHA-256 checksums (release dry-run, #1350)
+
+Verifies that every published agent binary has a matching `*.sha256` asset and
+that the desktop rejects a tampered binary before install. See PR #1350.
+
+**Release-asset presence (release dry-run).**
+
+1. Trigger a release (or inspect the most recent tagged release) so the
+   `agent-binaries-linux`, `agent-binaries-macos`, and `agent-binaries-windows`
+   jobs in [`release.yml`](../.github/workflows/release.yml) run.
+2. On the GitHub Release page, confirm **each** agent artifact has a sibling
+   `.sha256` asset: `termihub-agent-linux-x64`, `-linux-arm64`, `-linux-armv7`,
+   `-macos-arm64`, `-macos-x64`, and `termihub-agent-windows-x64.exe` each with a
+   matching `<name>.sha256`.
+3. Download one binary and its sidecar and verify locally:
+   `sha256sum -c termihub-agent-linux-x64.sha256` (macOS: `shasum -a 256 -c …`)
+   → prints `OK`.
+
+**Local build sidecars.**
+
+1. Run `./scripts/build-agents.sh --native --dev` (or a cross build).
+2. Confirm a `<binary>.sha256` sidecar sits next to each built agent binary under
+   `target/<triple>/<profile>/` and that `sha256sum -c` on it passes.
+
+**Tampered-binary rejection (desktop).**
+
+1. Let the desktop resolve/deploy an agent once so `~/.cache/termihub/agent-binaries/<version>/termihub-agent-<arch>`
+   and its `.sha256` sidecar are populated.
+2. Corrupt the cached binary without updating the sidecar
+   (e.g. `printf 'x' >> …/termihub-agent-<arch>`).
+3. Deploy/redeploy the agent again → the deploy must **fail** with a checksum
+   verification error naming the expected vs. computed digest, and the corrupted
+   binary must **not** be uploaded/executed on the remote host.
+4. Delete the tampered cache entry; the next deploy re-downloads, re-verifies,
+   and succeeds.
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
