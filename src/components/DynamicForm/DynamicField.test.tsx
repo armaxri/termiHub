@@ -540,4 +540,20 @@ describe("DynamicField", () => {
       expect(query("field-host-error")).toBeNull();
     });
   });
+
+  describe("required-field markers", () => {
+    it("renders a required marker and aria-required for a required field", () => {
+      renderField(textField("host", { required: true }), "", vi.fn());
+      const input = query("field-host") as HTMLInputElement;
+      expect(input.getAttribute("aria-required")).toBe("true");
+      expect(container.querySelector(".settings-form__required")).toBeTruthy();
+    });
+
+    it("omits the marker and aria-required for an optional field", () => {
+      renderField(textField("host", { required: false }), "", vi.fn());
+      const input = query("field-host") as HTMLInputElement;
+      expect(input.getAttribute("aria-required")).toBeNull();
+      expect(container.querySelector(".settings-form__required")).toBeNull();
+    });
+  });
 });

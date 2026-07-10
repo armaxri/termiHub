@@ -455,6 +455,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     folderId,
   ]);
 
+  // Client-side validity of the schema-driven connection form (reported upward
+  // by ConnectionSettingsForm). Gates Save/Save & Connect while a visible
+  // required field is empty or a value is out of range, instead of deferring to
+  // a connect-time backend error.
+  const [schemaValid, setSchemaValid] = useState(true);
+  const [schemaErrors, setSchemaErrors] = useState<Record<string, string>>({});
+  const handleFormValidityChange = useCallback((valid: boolean, errors: Record<string, string>) => {
+    setSchemaValid(valid);
+    setSchemaErrors(errors);
+  }, []);
+
+  /** Whether the connection can be saved: named, unique, valid form + jump hosts. */
+  const canSave =
+    !!name.trim() && !nameError && schemaValid && jumpHostValidation.errors.length === 0;
+
   // Category navigation
   const [activeCategory, setActiveCategory] = useState<EditorCategory>("connection");
   const [isCompact, setIsCompact] = useState(false);
@@ -535,6 +550,33 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleCategoryChange = useCallback((category: EditorCategory) => {
     setActiveCategory(category);
   }, []);
+
+  /**
+   * Direct the user to the first blocking validation error: flag the owning
+   * category (all blocking validation — name, schema fields, jump hosts — lives
+   * in the Connection tab), then scroll it into view and focus it. Called when
+   * Save/Save & Connect is attempted while the form is invalid.
+   */
+  const focusFirstInvalidField = useCallback(() => {
+    setActiveCategory("connection");
+    // Defer until the Connection tab content is mounted/visible.
+    requestAnimationFrame(() => {
+      const root = containerRef.current;
+      if (!root) return;
+      let selector: string;
+      if (!name.trim() || nameError) {
+        selector = '[data-testid="connection-editor-name-input"]';
+      } else {
+        const firstKey = Object.keys(schemaErrors)[0];
+        selector = firstKey ? `[data-testid="field-${firstKey}"]` : "";
+      }
+      const target = selector ? root.querySelector<HTMLElement>(selector) : null;
+      if (target) {
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        target.focus();
+      }
+    });
+  }, [name, nameError, schemaErrors]);
 
   const handleTypeChange = useCallback(
     (typeId: string) => {
@@ -720,11 +762,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   /** Save without closing. Returns true on success. */
   const handleSaveOnly = useCallback(async (): Promise<boolean> => {
+    if (!canSave) {
+      focusFirstInvalidField();
+      return false;
+    }
     if (isAgentDefinitionMode) {
       return saveAgentDefinition();
     }
     return saveConnection() !== null;
-  }, [isAgentDefinitionMode, saveAgentDefinition, saveConnection]);
+  }, [canSave, focusFirstInvalidField, isAgentDefinitionMode, saveAgentDefinition, saveConnection]);
 
   const handleSave = useCallback(async () => {
     if (await handleSaveOnly()) {
@@ -749,6 +795,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }, [handleSaveOnly, setPendingCloseRequest, closeThisTab]);
 
   const handleSaveAndConnect = useCallback(async () => {
+    if (!canSave) {
+      focusFirstInvalidField();
+      return;
+    }
     if (isAgentDefinitionMode && existingAgent) {
       if (!(await saveAgentDefinition())) return;
       addTab(
@@ -882,6 +932,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     selectedType,
     persistent,
     terminalOptions,
+    canSave,
+    focusFirstInvalidField,
   ]);
 
   const handleCancel = useCallback(() => {
@@ -991,6 +1043,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           schema={currentSchema}
           settings={connSettings}
           onChange={handleSchemaSettingsChange}
+          onValidityChange={handleFormValidityChange}
           credentialSavedHint={credentialSavedHint}
           availablePorts={
             isAgentDefinitionMode
@@ -1133,12 +1186,20 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <Button
             variant="primary"
             onClick={handleSaveAndConnect}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
             data-testid="connection-editor-save-connect"
           >
             Save &amp; Connect
           </Button>
         )}
-        <Button variant="primary" onClick={handleSave} data-testid="connection-editor-save">
+        <Button
+          variant="primary"
+          onClick={handleSave}
+          aria-disabled={!canSave}
+          data-invalid={!canSave || undefined}
+          data-testid="connection-editor-save"
+        >
           Save
         </Button>
       </div>

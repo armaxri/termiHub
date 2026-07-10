@@ -120,16 +120,35 @@ interface FieldProps {
   onChange: (v: unknown) => void;
 }
 
+/**
+ * Field label with a required marker for required fields. The asterisk is
+ * `aria-hidden` (decorative); inputs carry `aria-required` for assistive tech.
+ */
+function FieldLabel({ field }: { field: SettingsField }) {
+  return (
+    <span className="settings-form__label">
+      {field.label}
+      {field.required && (
+        <span className="settings-form__required" aria-hidden="true">
+          {" "}
+          *
+        </span>
+      )}
+    </span>
+  );
+}
+
 function TextField({ field, value, onChange, onBlur }: FieldProps & { onBlur?: () => void }) {
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       <Input
         type="text"
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
         onBlur={onBlur}
         placeholder={field.placeholder}
+        aria-required={field.required || undefined}
         data-testid={`field-${field.key}`}
       />
     </>
@@ -139,7 +158,7 @@ function TextField({ field, value, onChange, onBlur }: FieldProps & { onBlur?: (
 function PasswordField({ field, value, onChange }: FieldProps) {
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       <PasswordInput
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
@@ -158,7 +177,7 @@ function NumberField({
 }: FieldProps & { fieldType: { type: "number"; min?: number; max?: number } }) {
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       <Input
         type="number"
         value={value != null ? Number(value) : ""}
@@ -169,6 +188,7 @@ function NumberField({
         min={fieldType.min}
         max={fieldType.max}
         placeholder={field.placeholder}
+        aria-required={field.required || undefined}
         data-testid={`field-${field.key}`}
       />
     </>
@@ -255,7 +275,7 @@ function SelectField({
   const isLocked = fieldType.options.length <= 1;
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       <Select
         value={(value as string) || undefined}
         onChange={(v) => onChange(v)}
@@ -272,7 +292,7 @@ function SelectField({
 function PortField({ field, value, onChange }: FieldProps) {
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       <Input
         type="number"
         value={value != null ? Number(value) : ""}
@@ -283,6 +303,7 @@ function PortField({ field, value, onChange }: FieldProps) {
         min={1}
         max={65535}
         placeholder={field.placeholder}
+        aria-required={field.required || undefined}
         data-testid={`field-${field.key}`}
       />
     </>
@@ -315,7 +336,7 @@ function SerialPortField({
 
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       <Input
         type="text"
         value={currentValue}
@@ -324,6 +345,7 @@ function SerialPortField({
         list={listId}
         autoComplete="off"
         spellCheck={false}
+        aria-required={field.required || undefined}
         data-testid={`field-${field.key}`}
       />
       <datalist id={listId}>
@@ -349,7 +371,7 @@ function FilePathField({
   if (field.key === "keyPath") {
     return (
       <>
-        <span className="settings-form__label">{field.label}</span>
+        <FieldLabel field={field} />
         <KeyPathInput
           value={(value as string) ?? ""}
           onChange={(v) => onChange(v || undefined)}
@@ -373,13 +395,14 @@ function FilePathField({
 
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       <div className="settings-form__file-row">
         <Input
           type="text"
           value={(value as string) ?? ""}
           onChange={(e) => onChange(e.target.value || undefined)}
           placeholder={field.placeholder}
+          aria-required={field.required || undefined}
           data-testid={`field-${field.key}`}
         />
         <Button
@@ -420,7 +443,7 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
 
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       {items.map((item, index) => (
         <div key={index} className="settings-form__list-row">
           <Input
@@ -506,7 +529,7 @@ function ObjectListField({
 
   return (
     <>
-      <span className="settings-form__label">{field.label}</span>
+      <FieldLabel field={field} />
       {items.map((item, index) => (
         <div key={index} className="settings-form__list-row">
           {fieldType.fields.map((subField) => {
