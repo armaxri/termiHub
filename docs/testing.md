@@ -898,6 +898,7 @@ settings UI lands; until then, seed `shellIntegration.entries` in `settings.json
    from every right-click surface, and no `termihub_*` / `termiHubMenu` keys
    remain under `HKCU\Software\Classes\Directory\shell`,
    `…\Directory\Background\shell`, or `…\*\shell` (verify with `regedit`).
+
 ### Agent GitHub self-update (opt-in, #1355)
 
 Verifies the optional agent-side self-update check is gated behind
