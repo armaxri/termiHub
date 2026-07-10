@@ -39,7 +39,7 @@ function render() {
   act(() => {
     root.render(
       <TooltipProvider>
-        <TunnelEditor tabId={TAB_ID} meta={{}} isVisible={true} />
+        <TunnelEditor tabId={TAB_ID} meta={{ tunnelId: null }} isVisible={true} />
       </TooltipProvider>
     );
   });
