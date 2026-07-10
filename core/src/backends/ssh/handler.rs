@@ -43,6 +43,16 @@ impl LivenessWatch {
     pub async fn dead(&mut self) {
         let _ = self.rx.wait_for(|&dead| dead).await;
     }
+
+    /// Synchronously report whether the session is already dead.
+    ///
+    /// `true` when the handler flipped the flag on disconnect, **or** when the
+    /// watch channel is closed (the sender dropped with the handler at session
+    /// task end) — both mean the session is gone. Lets the endpoint pool skip a
+    /// dead cached session instead of handing it out (#1315).
+    pub fn is_dead(&self) -> bool {
+        *self.rx.borrow() || self.rx.has_changed().is_err()
+    }
 }
 
 /// An incoming forwarded channel from the SSH server (remote-port-forward / X11).
