@@ -92,8 +92,8 @@ export function WolPanel() {
 
   // Enter submits the form → send the magic packet (respects the disabled state).
   // A mouse click goes through the Button's onClick so its async lifecycle drives
-  // the pending affordance; the Enter path ignores the throw.
-  const handleSubmit = useFormSubmit(canSend, () => void handleSend().catch(() => {}));
+  // the pending affordance; useFormSubmit swallows the Enter-path rejection.
+  const handleSubmit = useFormSubmit(canSend, handleSend);
 
   const handleConfirmSave = useCallback(async () => {
     const name = saveName.trim();

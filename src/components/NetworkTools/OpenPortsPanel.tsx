@@ -99,7 +99,7 @@ export function OpenPortsPanel() {
 
       {error && <div className="network-panel__error">{error}</div>}
 
-      {!loaded && ports.length === 0 && (
+      {!loaded && (
         <div className="network-panel__placeholder">Click Refresh to list listening ports</div>
       )}
 

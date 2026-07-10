@@ -54,8 +54,9 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   }, [hostname, recordType, server]);
 
   // Enter submits the form; a mouse click goes through the Button's onClick so its
-  // async lifecycle drives the pending affordance (Enter path ignores the throw).
-  const handleSubmit = useFormSubmit(!!hostname.trim(), () => void handleRun().catch(() => {}));
+  // async lifecycle drives the pending affordance (useFormSubmit swallows the
+  // Enter-path rejection that the click path uses to drive the Button error state).
+  const handleSubmit = useFormSubmit(!!hostname.trim(), handleRun);
 
   const columns = [
     { key: "recordType", label: "Type" },
