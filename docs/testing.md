@@ -1376,3 +1376,38 @@ array-`PROMPT_COMMAND` shape is covered by Rust unit tests
 (`osc7_bash_handles_array_prompt_command`, `osc7_wsl_handles_array_prompt_command`
 in `core/src/session/shell.rs`) and was manually verified end-to-end on
 FedoraLinux-44 (bash 5.3): `cd /mnt/c` emits `file:///mnt/c` → `C:/`.
+
+#### macOS Finder Quick Actions / Services registration (#1369)
+
+termiHub registers each configured shell-integration entry as an Automator
+Quick Action bundle under `~/Library/Services/<name>.workflow`
+(`src-tauri/src/spawn/registry.rs`, macOS arm). The generated bundle layout,
+`document.wflow` command line, `Info.plist` NSServices declaration, XML escaping,
+idempotent install, and owner-aware uninstall are covered by macOS-gated unit
+tests (`spawn::registry::macos_tests`). Confirming that Finder actually surfaces
+and runs the entries is macOS-only and manual (per ADR-5).
+
+On macOS:
+
+1. Configure at least one shell-integration entry, then run the install action
+   (the `install_shell_integration` command, or `termiHub install-shell-integration`).
+2. Confirm a `<entry-name>.workflow` bundle appears under `~/Library/Services/`
+   for each entry (`ls ~/Library/Services`), each containing
+   `Contents/document.wflow` and `Contents/Info.plist`.
+3. In **System Settings → Keyboard → Keyboard Shortcuts → Services** (or
+   right-click a folder/file in Finder → **Quick Actions** / **Services**),
+   confirm the entry is listed. If a new entry does not appear, log out/in or run
+   `/System/Library/CoreServices/pbs -flush` to refresh the Services cache.
+4. Right-click a folder in Finder → choose the entry → confirm termiHub opens a
+   session at that path (the workflow runs
+   `termiHub spawn --entry-id <id> --location "$@"`). Repeat on a file for an
+   entry whose **Show for → Files** is enabled.
+5. Run the uninstall action (`uninstall_shell_integration` /
+   `termiHub uninstall-shell-integration`) and confirm the termiHub `.workflow`
+   bundles are removed from `~/Library/Services/` while any unrelated
+   third-party Quick Actions there are left untouched.
+
+> Note: the app-level `NSServices` entry declared in `src-tauri/Info.plist` is a
+> discovery aid; the fully functional path is the per-entry Quick Action bundles
+> above. Wiring a native Services provider so the **app** entry also runs is
+> tracked as a follow-up.
