@@ -31,13 +31,66 @@
   gap: 2px;
 }
 
-.file-browser__path {
-  font-size: 11px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Editable breadcrumb path bar */
+.file-browser__path-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
   width: 100%;
+  min-width: 0;
+}
+
+.file-browser__breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.file-browser__breadcrumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.file-browser__crumb-group {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.file-browser__crumb-sep {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.file-browser__crumb {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.file-browser__crumb:hover:not(:disabled) {
+  color: var(--text-accent);
+}
+
+.file-browser__crumb:disabled {
+  color: var(--text-primary);
+  cursor: default;
+}
+
+.file-browser__path-edit {
+  flex-shrink: 0;
+}
+
+.file-browser__path-input {
+  width: 100%;
+  font-size: var(--font-size-xs);
 }
 
 .file-browser__actions {
@@ -116,6 +169,20 @@
   flex-shrink: 0;
   font-size: 10px;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.file-browser__modified {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keyboard focus ring for roving-tabindex list navigation. */
+.file-browser__row:focus-visible {
+  outline: 1px solid var(--text-accent);
+  outline-offset: -1px;
 }
 
 .file-browser__permissions {
@@ -313,4 +380,108 @@
 
 .file-browser__transfer-cancel {
   flex-shrink: 0;
+}
+
+/* Filter + sort sub-bar (issue 1361) */
+.file-browser__subbar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.file-browser__filter {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 0 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.file-browser__filter:focus-within {
+  border-color: var(--text-accent);
+}
+
+.file-browser__filter-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.file-browser__filter-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+}
+
+/* Sortable column headers */
+.file-browser__columns {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-xs);
+}
+
+.file-browser__col {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.file-browser__col--name {
+  flex: 1;
+}
+
+.file-browser__col:hover {
+  color: var(--text-primary);
+}
+
+.file-browser__col--active {
+  color: var(--text-accent);
+}
+
+.file-browser__col-caret {
+  flex-shrink: 0;
+}
+
+/* Empty / no-match placeholder inside the list */
+.file-browser__empty {
+  padding: var(--spacing-md) var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-style: italic;
+  text-align: center;
+}
+
+/* Bottom status bar: drop hint (local) + N-selected indicator */
+.file-browser__statusbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-top: 1px solid var(--border-secondary);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.file-browser__drop-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.file-browser__selected-count {
+  margin-left: auto;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
