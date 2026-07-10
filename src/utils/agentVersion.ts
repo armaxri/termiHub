@@ -46,7 +46,8 @@ export function parseAgentSemver(version: string | undefined | null): SemVer | n
  * Resolve an agent's update state from its reported version and the desktop's
  * expected version.
  *
- * - no/empty agent version -> `"unknown"` (nothing to show)
+ * - no/empty agent version, or desktop version not yet known -> `"unknown"`
+ *   (nothing to show; the desktop version loads asynchronously)
  * - unparseable (but present) agent version, or major mismatch -> `"incompatible"`
  * - agent minor older than desktop -> `"update-available"`
  * - otherwise -> `"up-to-date"`
@@ -56,6 +57,9 @@ export function resolveAgentUpdateState(
   desktopVersion: string | undefined | null
 ): ResolvedAgentUpdateState {
   if (!agentVersion || !agentVersion.trim()) return "unknown";
+  // Desktop version not loaded yet -> hide the badge rather than flashing
+  // "incompatible" while the app-info fetch is in flight.
+  if (!desktopVersion || !desktopVersion.trim()) return "unknown";
 
   const agent = parseAgentSemver(agentVersion);
   const desktop = parseAgentSemver(desktopVersion);
@@ -90,12 +94,11 @@ export function summarizeAgentUpdates(
   desktopVersion: string | undefined | null
 ): AgentUpdateSummary {
   const connected = agents.filter((a) => a.connectionState === "connected");
-  const updatesAvailable = desktopVersion
-    ? connected.filter(
-        (a) =>
-          resolveAgentUpdateState(a.capabilities?.agentVersion, desktopVersion) ===
-          "update-available"
-      ).length
-    : 0;
+  // resolveAgentUpdateState already yields "unknown" (never "update-available")
+  // when the desktop version is not yet known, so no separate guard is needed.
+  const updatesAvailable = connected.filter(
+    (a) =>
+      resolveAgentUpdateState(a.capabilities?.agentVersion, desktopVersion) === "update-available"
+  ).length;
   return { connectedCount: connected.length, updatesAvailable };
 }

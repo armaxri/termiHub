@@ -61,6 +61,13 @@ describe("resolveAgentUpdateState", () => {
     expect(resolveAgentUpdateState("", "0.1.0")).toBe("unknown");
     expect(resolveAgentUpdateState(undefined, "0.1.0")).toBe("unknown");
   });
+
+  it("returns unknown while the desktop version is not yet loaded", () => {
+    // Avoids flashing "incompatible" during the async app-info fetch.
+    expect(resolveAgentUpdateState("0.1.0", "")).toBe("unknown");
+    expect(resolveAgentUpdateState("0.1.0", undefined)).toBe("unknown");
+    expect(resolveAgentUpdateState("0.1.0", null)).toBe("unknown");
+  });
 });
 
 describe("summarizeAgentUpdates", () => {

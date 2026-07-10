@@ -631,11 +631,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 meta={
                   <AgentVersionBadge
                     version={a.capabilities?.agentVersion}
-                    state={
-                      desktopVersion
-                        ? resolveAgentUpdateState(a.capabilities?.agentVersion, desktopVersion)
-                        : "unknown"
-                    }
+                    state={resolveAgentUpdateState(a.capabilities?.agentVersion, desktopVersion)}
                     showLabel
                     data-testid={`oc-agent-version-${a.id}`}
                   />

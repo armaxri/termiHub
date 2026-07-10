@@ -582,10 +582,9 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   // loading, the badge stays hidden ("unknown") rather than flashing incompatible.
   const desktopVersion = useDesktopVersion();
   const agentVersion = agent.capabilities?.agentVersion;
-  const agentUpdateState =
-    isConnected && desktopVersion
-      ? resolveAgentUpdateState(agentVersion, desktopVersion)
-      : "unknown";
+  const agentUpdateState = isConnected
+    ? resolveAgentUpdateState(agentVersion, desktopVersion)
+    : "unknown";
 
   // Derived: root-level folders and definitions (no parent/folder)
   const rootFolders = useMemo(
