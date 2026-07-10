@@ -13,6 +13,7 @@ import type {
   ShellIntegrationStatus,
 } from "@/types/connection";
 import { Button, Field, Select, Toggle, Tooltip, toast } from "@/components/ui";
+import type { ToastPromiseMessages } from "@/components/ui";
 import {
   getShellIntegrationStatus,
   installShellIntegration,
@@ -27,16 +28,15 @@ import {
   reorderEntries,
   updateEntry,
 } from "./shellIntegrationEntries";
+import {
+  INSTALL_TOAST,
+  UNINSTALL_TOAST,
+  currentShellIntegration,
+  syncRegistrationFacts,
+  writeShellIntegration,
+} from "./shellIntegrationStore";
 import { ShellIntegrationEntryEditor } from "./ShellIntegrationEntryEditor";
 import "./ShellIntegrationSettings.css";
-
-/** The searchable setting ids owned by this section (see settingsRegistry). */
-const OWNED_FIELD_IDS = [
-  "shellIntegrationRegistration",
-  "shellIntegrationEntries",
-  "shellIntegrationFallback",
-  "shellIntegrationLinux",
-];
 
 /** The Linux file managers rendered as install toggles, with their detection id. */
 const LINUX_MANAGERS: {
@@ -49,30 +49,24 @@ const LINUX_MANAGERS: {
   { key: "thunar", id: "thunar", label: "Install Thunar custom action" },
 ];
 
-interface ShellIntegrationSettingsProps {
-  /** When search is active, only render if one of the owned fields matches. */
-  visibleFields?: Set<string>;
-}
-
 /**
  * Settings section for the shell context-menu integration: registration status
  * with Reinstall / Uninstall actions, a draggable Quick-Access entry list, the
  * no-match fallback, the new-window behaviour, and Linux per-file-manager
  * install toggles.
  */
-export function ShellIntegrationSettings({ visibleFields }: ShellIntegrationSettingsProps) {
-  const settings = useAppStore((s) => s.settings);
+export function ShellIntegrationSettings() {
+  const storedSi = useAppStore((s) => s.settings.shellIntegration);
   const connections = useAppStore((s) => s.connections);
 
   const si = useMemo<ShellIntegrationSettingsType>(
-    () => settings.shellIntegration ?? defaultShellIntegrationSettings(),
-    [settings.shellIntegration]
+    () => storedSi ?? defaultShellIntegrationSettings(),
+    [storedSi]
   );
 
   const [status, setStatus] = useState<ShellIntegrationStatus | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<ShellEntry | null>(null);
-  const [editingIsNew, setEditingIsNew] = useState(false);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const platform = getPlatform();
@@ -83,89 +77,62 @@ export function ShellIntegrationSettings({ visibleFields }: ShellIntegrationSett
       .catch((e) => frontendLog("shell_integration", `status load failed: ${String(e)}`));
   }, []);
 
-  /** Push refreshed registration facts from a status into the store. */
-  const applyStatusToStore = useCallback((st: ShellIntegrationStatus) => {
-    useAppStore.setState((s) => {
-      const prev = s.settings.shellIntegration ?? defaultShellIntegrationSettings();
-      const merged: ShellIntegrationSettingsType = {
-        ...prev,
-        registered: st.registered,
-        registeredExePath: st.registeredExePath,
-      };
-      const next = { ...s.settings, shellIntegration: merged };
-      return { settings: next, savedSettings: next };
-    });
-  }, []);
-
   /** Persist an edited shell-integration settings value + refresh status. */
   const persist = useCallback(async (nextSi: ShellIntegrationSettingsType) => {
-    const current = useAppStore.getState().settings;
-    const next = { ...current, shellIntegration: nextSi };
-    useAppStore.setState({ settings: next, savedSettings: next });
+    const prevSi = currentShellIntegration();
+    writeShellIntegration(nextSi);
     try {
-      const st = await saveShellIntegrationSettings(nextSi);
-      setStatus(st);
+      setStatus(await saveShellIntegrationSettings(nextSi));
     } catch (e) {
       frontendLog("shell_integration", `save failed: ${String(e)}`);
       toast.error("Failed to save shell integration settings", { description: String(e) });
-      getShellIntegrationStatus()
-        .then(setStatus)
-        .catch(() => {});
+      // Roll the optimistic store write back to the last persisted value.
+      writeShellIntegration(prevSi);
     }
   }, []);
 
-  const handleReinstall = useCallback(
-    () =>
+  /** Run a register/unregister action with toast feedback + store status sync. */
+  const runRegistration = useCallback(
+    (action: () => Promise<ShellIntegrationStatus>, messages: ToastPromiseMessages<unknown>) =>
       toast.promise(
-        installShellIntegration().then((st) => {
+        action().then((st) => {
           setStatus(st);
-          applyStatusToStore(st);
+          syncRegistrationFacts(st);
         }),
-        {
-          loading: "Registering shell integration…",
-          success: "Shell integration registered",
-          error: (e) => `Registration failed: ${String(e)}`,
-        }
+        messages
       ),
-    [applyStatusToStore]
+    []
+  );
+
+  const handleReinstall = useCallback(
+    () => runRegistration(installShellIntegration, INSTALL_TOAST),
+    [runRegistration]
   );
 
   const handleUninstall = useCallback(
-    () =>
-      toast.promise(
-        uninstallShellIntegration().then((st) => {
-          setStatus(st);
-          applyStatusToStore(st);
-        }),
-        {
-          loading: "Removing shell integration…",
-          success: "Shell integration removed",
-          error: (e) => `Removal failed: ${String(e)}`,
-        }
-      ),
-    [applyStatusToStore]
+    () => runRegistration(uninstallShellIntegration, UNINSTALL_TOAST),
+    [runRegistration]
   );
 
   const openAddEntry = useCallback(() => {
     setEditingEntry(createEntry());
-    setEditingIsNew(true);
     setEditorOpen(true);
   }, []);
 
   const openEditEntry = useCallback((entry: ShellEntry) => {
     setEditingEntry(entry);
-    setEditingIsNew(false);
     setEditorOpen(true);
   }, []);
 
   const handleSaveEntry = useCallback(
     (entry: ShellEntry) => {
-      const entries = editingIsNew ? addEntry(si.entries, entry) : updateEntry(si.entries, entry);
+      const exists = si.entries.some((e) => e.id === entry.id);
+      const entries = exists ? updateEntry(si.entries, entry) : addEntry(si.entries, entry);
       setEditorOpen(false);
       void persist({ ...si, entries });
-      toast.success(editingIsNew ? "Entry added" : "Entry updated");
+      toast.success(exists ? "Entry updated" : "Entry added");
     },
-    [editingIsNew, si, persist]
+    [si, persist]
   );
 
   const handleDeleteEntry = useCallback(
@@ -192,10 +159,6 @@ export function ShellIntegrationSettings({ visibleFields }: ShellIntegrationSett
     for (const m of status?.detectedFileManagers ?? []) map.set(m.id, m);
     return map;
   }, [status]);
-
-  if (visibleFields && !OWNED_FIELD_IDS.some((id) => visibleFields.has(id))) {
-    return null;
-  }
 
   const connectionName = (id?: string) =>
     id ? (connections.find((c) => c.id === id)?.name ?? "(missing)") : "(picker)";
@@ -358,7 +321,7 @@ export function ShellIntegrationSettings({ visibleFields }: ShellIntegrationSett
           open={editorOpen}
           onOpenChange={setEditorOpen}
           entry={editingEntry}
-          isNew={editingIsNew}
+          isNew={!si.entries.some((e) => e.id === editingEntry.id)}
           connections={connections}
           onSave={handleSaveEntry}
         />

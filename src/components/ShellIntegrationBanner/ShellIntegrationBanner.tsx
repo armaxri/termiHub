@@ -10,6 +10,12 @@ import {
   saveShellIntegrationSettings,
 } from "@/services/api";
 import { defaultShellIntegrationSettings } from "@/components/Settings/shellIntegrationEntries";
+import {
+  INSTALL_TOAST,
+  currentShellIntegration,
+  syncRegistrationFacts,
+  writeShellIntegration,
+} from "@/components/Settings/shellIntegrationStore";
 import "./ShellIntegrationBanner.css";
 
 /**
@@ -20,44 +26,49 @@ import "./ShellIntegrationBanner.css";
  * Modelled on {@link TerminalViewModeBanner}.
  */
 export function ShellIntegrationBanner() {
-  const settings = useAppStore((s) => s.settings);
-  const si = settings.shellIntegration ?? defaultShellIntegrationSettings();
+  const storedSi = useAppStore((s) => s.settings.shellIntegration);
+  const si = storedSi ?? defaultShellIntegrationSettings();
+  // The banner can never show once dismissed or registered, so it need not even
+  // resolve the runtime status in the steady-state case.
+  const eligible = !si.firstLaunchBannerDismissed && !si.registered;
 
   const [status, setStatus] = useState<ShellIntegrationStatus | null>(null);
   const [dismissedThisSession, setDismissedThisSession] = useState(false);
 
   useEffect(() => {
+    if (!eligible) return;
     getShellIntegrationStatus()
       .then(setStatus)
       .catch((e) => frontendLog("shell_integration", `banner status load failed: ${String(e)}`));
-  }, []);
+  }, [eligible]);
 
   const persistDismissed = useCallback(async () => {
-    const current = useAppStore.getState().settings;
-    const currentSi = current.shellIntegration ?? defaultShellIntegrationSettings();
-    const nextSi = { ...currentSi, firstLaunchBannerDismissed: true };
-    const next = { ...current, shellIntegration: nextSi };
-    useAppStore.setState({ settings: next, savedSettings: next });
+    const prevSi = currentShellIntegration();
+    const nextSi = { ...prevSi, firstLaunchBannerDismissed: true };
+    writeShellIntegration(nextSi);
     try {
       await saveShellIntegrationSettings(nextSi);
     } catch (e) {
       frontendLog("shell_integration", `banner dismiss persist failed: ${String(e)}`);
+      writeShellIntegration(prevSi);
     }
   }, []);
 
   const handleInstall = useCallback(
     () =>
-      toast.promise(installShellIntegration().then(setStatus), {
-        loading: "Registering shell integration…",
-        success: "Shell integration registered",
-        error: (e) => `Registration failed: ${String(e)}`,
-      }),
+      toast.promise(
+        installShellIntegration().then((st) => {
+          setStatus(st);
+          syncRegistrationFacts(st);
+        }),
+        INSTALL_TOAST
+      ),
     []
   );
 
   // Hide until status is known, once registered, after a session dismiss, or
   // when the user opted out permanently.
-  if (!status || status.registered || si.firstLaunchBannerDismissed || dismissedThisSession) {
+  if (!eligible || !status || status.registered || dismissedThisSession) {
     return null;
   }
 

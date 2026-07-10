@@ -252,9 +252,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         );
       }
       if (highlightedCategories?.has("shell-integration")) {
-        sections.push(
-          <ShellIntegrationSettings key="shell-integration" visibleFields={visibleFields} />
-        );
+        sections.push(<ShellIntegrationSettings key="shell-integration" />);
       }
       if (highlightedCategories?.has("keyboard")) {
         sections.push(<KeyboardSettings key="keyboard" visibleFields={visibleFields} />);
