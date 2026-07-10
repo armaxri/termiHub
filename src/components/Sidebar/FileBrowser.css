@@ -311,6 +311,13 @@
   border-color: var(--text-accent);
 }
 
+/* Inline rename reuses the New File/New Folder input style (.file-browser__new-dir-input);
+   only the row height needs to relax so the input isn't clipped. */
+.file-browser__row--renaming {
+  height: auto;
+  padding: 2px var(--spacing-sm);
+}
+
 /* Placeholder for unsupported connection types */
 .file-browser__placeholder {
   display: flex;

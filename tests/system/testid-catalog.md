@@ -193,6 +193,7 @@ Fixed strings — match exactly.
 | `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-scratch-badge` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-row-rename-input` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-type-add-btn` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-add-error` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-language-input` | `src/components/Settings/FileTypeSettings.tsx` |
@@ -309,6 +310,9 @@ Fixed strings — match exactly.
 | `ping-start` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stats` | `src/components/NetworkTools/PingPanel.tsx` |
 | `ping-stop` | `src/components/NetworkTools/PingPanel.tsx` |
+| `port-scan-warn-cancel` | `src/components/NetworkTools/PortScannerPanel.tsx` |
+| `port-scan-warn-confirm` | `src/components/NetworkTools/PortScannerPanel.tsx` |
+| `port-scan-warn-modal` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-concurrency` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-host` | `src/components/NetworkTools/PortScannerPanel.tsx` |
 | `port-scanner-panel` | `src/components/NetworkTools/PortScannerPanel.tsx` |
@@ -489,7 +493,12 @@ Fixed strings — match exactly.
 | `wol-mac` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-panel` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-port` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-cancel` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-confirm` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-save-device` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-mac` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-modal` | `src/components/NetworkTools/WolPanel.tsx` |
+| `wol-save-name` | `src/components/NetworkTools/WolPanel.tsx` |
 | `wol-send` | `src/components/NetworkTools/WolPanel.tsx` |
 | `workspace-cancel-btn` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-description-input` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
