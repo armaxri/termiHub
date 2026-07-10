@@ -342,12 +342,15 @@ Fixed strings — match exactly.
 | `services-indicator` | `src/components/StatusBar/StatusBar.tsx` |
 | `settings-ask-open-saved-file-in-tab` | `src/components/Settings/TerminalSettings.tsx` |
 | `settings-confirm-close-tab-on-shortcut` | `src/components/Settings/GeneralSettings.tsx` |
+| `settings-cursor-style` | `src/components/Settings/TerminalSettings.tsx` |
+| `settings-default-shell` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-default-shell-integration` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-default-user` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-default-x11-forwarding` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-editor` | `src/components/Settings/FileTypeSettings.tsx` |
 | `settings-experimental-features` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-external-files` | `src/components/Settings/ExternalFilesSettings.tsx` |
+| `settings-line-ending` | `src/components/Settings/TerminalSettings.tsx` |
 | `settings-menu-about` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-customize-layout` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-export` | `src/components/ActivityBar/ActivityBar.tsx` |
@@ -357,6 +360,7 @@ Fixed strings — match exactly.
 | `settings-menu-updates` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-provide-x-server` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-restore-last-session` | `src/components/Settings/GeneralSettings.tsx` |
+| `settings-right-click-behavior` | `src/components/Settings/TerminalSettings.tsx` |
 | `settings-serial-port-prefixes` | `src/components/Settings/SerialPortSettings.tsx` |
 | `settings-stop-x-server-idle` | `src/components/Settings/GeneralSettings.tsx` |
 | `shortcuts-overlay` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
@@ -611,10 +615,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `server-dialog-proto-*` | `server-dialog-proto-${type}` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
 | `server-duplicate-*` | `server-duplicate-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-edit-*` | `server-edit-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-item-*` | `server-item-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-name-*` | `server-name-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-start-*` | `server-start-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-status-*` | `server-status-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-stop-*` | `server-stop-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-type-*` | `server-type-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `settings-nav-*` | `settings-nav-${cat.id}` | `src/components/Settings/SettingsNav.tsx` |
@@ -643,9 +644,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `workspace-group-chip-*` | `workspace-group-chip-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-group-close-*` | `workspace-group-close-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-group-rename-input-*` | `workspace-group-rename-input-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
-| `workspace-item-*` | `workspace-item-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-launch-*` | `workspace-launch-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
-| `workspace-name-*` | `workspace-name-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 
 ## Indirect test IDs
 
@@ -658,12 +657,13 @@ where the component is used, not at the `data-testid` site.
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{killTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `{nameTestId}` | `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{option.testId}` | `src/components/Settings/SecuritySettings.tsx` |
 | `{paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}` | `src/components/StatusBar/StatusBar.tsx` |
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
-| `{testId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `{testId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
