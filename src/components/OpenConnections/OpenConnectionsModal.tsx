@@ -22,7 +22,7 @@ import {
   Power,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Modal, Button, Tooltip, Progress, toast } from "@/components/ui";
+import { Modal, Button, Tooltip, Progress, ConfirmDialog, toast } from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
 import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
@@ -646,18 +646,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                         Disconnect
                       </Button>
                     </Tooltip>
-                    <Tooltip content="Stop remote sessions and disconnect" side="top">
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        icon={<Power size={14} />}
-                        onClick={() => handleShutdownAgent(a.id)}
-                        aria-label={`Shutdown (stop remote) ${a.name}`}
-                        data-testid={`oc-agent-shutdown-${a.id}`}
-                      >
-                        Shutdown
-                      </Button>
-                    </Tooltip>
+                    <ShutdownAgentButton
+                      agentName={a.name}
+                      onConfirm={() => handleShutdownAgent(a.id)}
+                      testId={`oc-agent-shutdown-${a.id}`}
+                    />
                   </div>
                 }
               />
@@ -904,6 +897,49 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
 // ── Internal sub-components ───────────────────────────────────────────────
 
+interface ShutdownAgentButtonProps {
+  agentName: string;
+  onConfirm: () => void | Promise<void>;
+  testId: string;
+}
+
+/**
+ * The agent "Shutdown" action — stopping remote sessions and disconnecting is
+ * irreversible, so it confirms first (#1343). Keeps the async {@link Button}
+ * feedback on the confirm path and the existing tooltip on the trigger.
+ */
+function ShutdownAgentButton({ agentName, onConfirm, testId }: ShutdownAgentButtonProps) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  return (
+    <>
+      <Tooltip content="Stop remote sessions and disconnect" side="top">
+        <Button
+          variant="danger"
+          size="sm"
+          icon={<Power size={14} />}
+          onClick={() => setConfirmOpen(true)}
+          aria-label={`Shutdown (stop remote) ${agentName}`}
+          data-testid={testId}
+        >
+          Shutdown
+        </Button>
+      </Tooltip>
+      <ConfirmDialog
+        open={confirmOpen}
+        title={`Shut down ${agentName}?`}
+        message={`This stops all remote sessions on “${agentName}” and disconnects. This cannot be undone.`}
+        confirmLabel="Shutdown"
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void onConfirm();
+        }}
+        onCancel={() => setConfirmOpen(false)}
+        data-testid={`${testId}-confirm`}
+      />
+    </>
+  );
+}
+
 interface SectionProps {
   title: string;
   icon: React.ReactNode;
@@ -924,6 +960,9 @@ function Section({
   "data-testid": testId,
   children,
 }: SectionProps) {
+  // Bulk teardown is irreversible — confirm before running it (#1343).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const noun = count === 1 ? "item" : "items";
   return (
     <div data-testid={testId}>
       <div className="oc-section__header">
@@ -935,7 +974,7 @@ function Section({
               variant="danger"
               size="sm"
               className="oc-section__kill-all"
-              onClick={() => onKillAll()}
+              onClick={() => setConfirmOpen(true)}
               aria-label={`${killAllLabel} ${title}`}
             >
               {killAllLabel}
@@ -944,6 +983,20 @@ function Section({
         )}
       </div>
       {children}
+      {onKillAll && (
+        <ConfirmDialog
+          open={confirmOpen}
+          title={`${killAllLabel} — ${title}?`}
+          message={`This will stop ${count} ${noun} in “${title}”. This cannot be undone.`}
+          confirmLabel={killAllLabel}
+          onConfirm={() => {
+            setConfirmOpen(false);
+            void onKillAll();
+          }}
+          onCancel={() => setConfirmOpen(false)}
+          data-testid={testId ? `${testId}-confirm` : undefined}
+        />
+      )}
     </div>
   );
 }
