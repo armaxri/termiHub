@@ -11,9 +11,19 @@
 //!   bundles under `~/Library/Services/<name>.workflow`, each carrying its own
 //!   `NSServices` declaration so the entry surfaces under Finder's Quick Actions
 //!   and the Services menu. User-level only.
+//! * **Linux** (#1370): writes a universal XDG `.desktop` launcher under
+//!   `~/.local/share/applications/` (registered for the `inode/directory` MIME
+//!   type, refreshed via `update-desktop-database`) plus per-file-manager
+//!   surfaces that are installed only when the manager is detected *and* enabled
+//!   in [`LinuxFileManagerToggles`]: Nautilus scripts
+//!   (`~/.local/share/nautilus/scripts/`, mode `0o755`), KDE service menus
+//!   (`kservices5/ServiceMenus` for KDE 5, `kio/servicemenus` for KDE 6), and a
+//!   Thunar custom action appended into the shared `~/.config/Thunar/uca.xml`.
+//!   All user-level; no root required.
 //!
-//! Registration is idempotent on both platforms: install first clears any prior
-//! termiHub registration, then rewrites it from the current entry list.
+//! Registration is idempotent on every platform: install first clears any prior
+//! termiHub registration, then rewrites it from the current entry list. The
+//! Thunar de-append preserves foreign actions already present in `uca.xml`.
 //!
 //! Callers use the cross-platform [`register`] / [`unregister`] seam, which
 //! records the registration facts into [`ShellIntegrationSettings`]. On
@@ -21,12 +31,14 @@
 //! "unsupported on this platform" error before any state changes, so the calling
 //! Tauri commands and CLI subcommands behave predictably everywhere.
 
-use crate::connection::shell_integration::{ShellEntry, ShellIntegrationSettings};
+use crate::connection::shell_integration::{
+    DetectedFileManager, ShellEntry, ShellIntegrationSettings,
+};
 use anyhow::Context;
 
 /// Message returned by the install / uninstall entry points on platforms that
 /// have no context-menu / Quick Action registration implementation.
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 const UNSUPPORTED_MESSAGE: &str =
     "file-manager context-menu registration is not supported on this platform";
 
@@ -39,10 +51,28 @@ const UNSUPPORTED_MESSAGE: &str =
 /// touched, so `settings` is left unchanged.
 pub fn register(settings: &mut ShellIntegrationSettings) -> anyhow::Result<()> {
     let exe = current_exe_path()?;
-    install(&settings.entries, &exe)?;
+    install(settings, &exe)?;
     settings.registered = true;
     settings.registered_exe_path = Some(exe);
     Ok(())
+}
+
+/// Detect the file managers installed on the host, for the status command.
+///
+/// On Linux this probes the per-user file-manager directories and `$PATH`
+/// binaries for Nautilus, KDE (Dolphin) and Thunar. On other platforms it
+/// returns an empty list (their context-menu surfaces are not per-manager).
+pub fn detect_file_managers() -> Vec<DetectedFileManager> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::Registrar::user()
+            .map(|r| r.detect())
+            .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Vec::new()
+    }
 }
 
 /// Remove the integration and clear the recorded registration facts from
@@ -62,14 +92,14 @@ fn current_exe_path() -> anyhow::Result<String> {
         .into_owned())
 }
 
-/// Register the given shell-integration entries as Explorer context-menu items.
+/// Register `settings.entries` as Explorer context-menu items.
 ///
 /// Windows-only. Idempotent — an existing registration is replaced. `exe_path`
 /// is the absolute path to the termiHub executable that the menu commands invoke.
 /// Private: callers go through the cross-platform [`register`] seam.
 #[cfg(windows)]
-fn install(entries: &[ShellEntry], exe_path: &str) -> anyhow::Result<()> {
-    imp::Registrar::system().install(entries, exe_path)
+fn install(settings: &ShellIntegrationSettings, exe_path: &str) -> anyhow::Result<()> {
+    imp::Registrar::system().install(&settings.entries, exe_path)
 }
 
 /// Remove every termiHub Explorer context-menu registration (Windows-only).
@@ -79,12 +109,12 @@ fn uninstall() -> anyhow::Result<()> {
     imp::Registrar::system().uninstall()
 }
 
-/// Register the given entries as macOS Finder Quick Action bundles under
+/// Register `settings.entries` as macOS Finder Quick Action bundles under
 /// `~/Library/Services`. Idempotent — an existing registration is replaced.
 /// Private: callers go through the cross-platform [`register`] seam.
 #[cfg(target_os = "macos")]
-fn install(entries: &[ShellEntry], exe_path: &str) -> anyhow::Result<()> {
-    macos::Registrar::user()?.install(entries, exe_path)
+fn install(settings: &ShellIntegrationSettings, exe_path: &str) -> anyhow::Result<()> {
+    macos::Registrar::user()?.install(&settings.entries, exe_path)
 }
 
 /// Remove every termiHub Quick Action bundle from `~/Library/Services`
@@ -95,14 +125,31 @@ fn uninstall() -> anyhow::Result<()> {
     macos::Registrar::user()?.uninstall()
 }
 
+/// Register `settings.entries` across the detected Linux file-manager surfaces
+/// (XDG `.desktop`, plus Nautilus / KDE / Thunar when detected and enabled).
+/// Idempotent — an existing registration is replaced. Private: callers go
+/// through the cross-platform [`register`] seam.
+#[cfg(target_os = "linux")]
+fn install(settings: &ShellIntegrationSettings, exe_path: &str) -> anyhow::Result<()> {
+    linux::Registrar::user()?.install(settings, exe_path)
+}
+
+/// Remove every termiHub Linux file-manager artifact (all four surfaces),
+/// preserving foreign Thunar actions. Private: callers go through the
+/// cross-platform [`unregister`] seam.
+#[cfg(target_os = "linux")]
+fn uninstall() -> anyhow::Result<()> {
+    linux::Registrar::user()?.uninstall()
+}
+
 /// Stub for platforms without a context-menu registration implementation.
-#[cfg(not(any(windows, target_os = "macos")))]
-fn install(_entries: &[ShellEntry], _exe_path: &str) -> anyhow::Result<()> {
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+fn install(_settings: &ShellIntegrationSettings, _exe_path: &str) -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
 }
 
 /// Stub for platforms without a context-menu registration implementation.
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn uninstall() -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
 }
@@ -1243,6 +1290,545 @@ mod imp {
         fn uninstall_without_prior_install_is_ok() {
             let scope = TestScope::new("uninstall-empty");
             scope.registrar.uninstall().unwrap();
+        }
+    }
+}
+
+/// Linux file-manager registration (#1370).
+///
+/// Writes a universal XDG `.desktop` launcher plus per-file-manager surfaces
+/// (Nautilus scripts, KDE service menus, a Thunar custom action) that are only
+/// installed when the manager is both **detected** on the host and **enabled**
+/// in [`LinuxFileManagerToggles`]. Every artifact carries a termiHub owner
+/// marker so uninstall removes only our files and, for the shared Thunar
+/// `uca.xml`, preserves any foreign actions.
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::{DetectedFileManager, ShellIntegrationSettings};
+    use anyhow::{Context, Result};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    /// Best-effort callback that refreshes the desktop MIME database after the
+    /// XDG launchers change. Injected so tests can assert it ran without
+    /// spawning the real `update-desktop-database` binary.
+    type DesktopDbHook = Arc<dyn Fn(&Path) + Send + Sync>;
+
+    /// Spawn `update-desktop-database <apps_dir>`, ignoring any failure.
+    fn run_update_desktop_database(apps_dir: &Path) {
+        let _ = std::process::Command::new("update-desktop-database")
+            .arg(apps_dir)
+            .status();
+    }
+
+    /// Writes and removes the Linux file-manager artifacts under a set of XDG
+    /// base directories. Implementation lands in the following commit; this
+    /// scaffold exists so the behaviour tests below fail meaningfully first.
+    pub struct Registrar {
+        #[allow(dead_code)]
+        data_local: PathBuf,
+        #[allow(dead_code)]
+        config: PathBuf,
+        #[allow(dead_code)]
+        probe_path: bool,
+        #[allow(dead_code)]
+        on_desktop_db_update: DesktopDbHook,
+    }
+
+    impl Registrar {
+        /// Registrar targeting the real per-user XDG directories.
+        pub fn user() -> Result<Self> {
+            let data_local =
+                dirs::data_local_dir().context("resolve XDG data dir (~/.local/share)")?;
+            let config = dirs::config_dir().context("resolve XDG config dir (~/.config)")?;
+            Ok(Self {
+                data_local,
+                config,
+                probe_path: true,
+                on_desktop_db_update: Arc::new(run_update_desktop_database),
+            })
+        }
+
+        /// Registrar targeting throwaway directories so a test never touches the
+        /// user's real file-manager configuration.
+        #[cfg(test)]
+        pub fn for_test(data_local: PathBuf, config: PathBuf, hook: DesktopDbHook) -> Self {
+            Self {
+                data_local,
+                config,
+                probe_path: false,
+                on_desktop_db_update: hook,
+            }
+        }
+
+        /// Report the file managers detected on this host (not yet implemented).
+        pub fn detect(&self) -> Vec<DetectedFileManager> {
+            Vec::new()
+        }
+
+        /// Install the enabled + detected surfaces (not yet implemented).
+        pub fn install(&self, _settings: &ShellIntegrationSettings, _exe_path: &str) -> Result<()> {
+            anyhow::bail!("Linux file-manager registration not yet implemented (#1370)")
+        }
+
+        /// Remove every termiHub artifact (not yet implemented).
+        pub fn uninstall(&self) -> Result<()> {
+            anyhow::bail!("Linux file-manager registration not yet implemented (#1370)")
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::connection::shell_integration::{
+            LinuxFileManagerToggles, ShellEntry, ShellEntryVisibility, ShowForTargets,
+        };
+        use std::sync::Mutex;
+
+        const EXE: &str = "/opt/termihub/termiHub";
+
+        /// Throwaway XDG base dirs deleted on drop, plus a recorder for the
+        /// desktop-database refresh hook.
+        struct TempXdg {
+            data_local: PathBuf,
+            config: PathBuf,
+            db_calls: Arc<Mutex<Vec<PathBuf>>>,
+        }
+
+        impl TempXdg {
+            fn new(tag: &str) -> Self {
+                let base = std::env::temp_dir()
+                    .join(format!("termihub-linux-si-{}-{tag}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&base);
+                let data_local = base.join("data");
+                let config = base.join("config");
+                std::fs::create_dir_all(&data_local).expect("create temp data dir");
+                std::fs::create_dir_all(&config).expect("create temp config dir");
+                Self {
+                    data_local,
+                    config,
+                    db_calls: Arc::new(Mutex::new(Vec::new())),
+                }
+            }
+
+            fn registrar(&self) -> Registrar {
+                let calls = Arc::clone(&self.db_calls);
+                let hook: DesktopDbHook = Arc::new(move |p: &Path| {
+                    calls.lock().expect("db hook lock").push(p.to_path_buf());
+                });
+                Registrar::for_test(self.data_local.clone(), self.config.clone(), hook)
+            }
+
+            fn read(&self, path: &Path) -> String {
+                std::fs::read_to_string(path)
+                    .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+            }
+        }
+
+        impl Drop for TempXdg {
+            fn drop(&mut self) {
+                if let Some(base) = self.data_local.parent() {
+                    let _ = std::fs::remove_dir_all(base);
+                }
+            }
+        }
+
+        fn targets(folders: bool, files: bool, background: bool) -> ShowForTargets {
+            ShowForTargets {
+                folders,
+                files,
+                folder_background: background,
+            }
+        }
+
+        fn entry(id: &str, name: &str, show_for: ShowForTargets) -> ShellEntry {
+            ShellEntry {
+                id: id.to_string(),
+                name: name.to_string(),
+                connection_id: None,
+                visibility: ShellEntryVisibility::Always,
+                show_for,
+            }
+        }
+
+        fn settings(
+            entries: Vec<ShellEntry>,
+            toggles: LinuxFileManagerToggles,
+        ) -> ShellIntegrationSettings {
+            ShellIntegrationSettings {
+                entries,
+                linux_file_managers: toggles,
+                ..Default::default()
+            }
+        }
+
+        fn all_on() -> LinuxFileManagerToggles {
+            LinuxFileManagerToggles {
+                nautilus: true,
+                kde: true,
+                thunar: true,
+            }
+        }
+
+        // ── XDG .desktop ────────────────────────────────────────────────
+
+        #[test]
+        fn install_writes_xdg_desktop_and_refreshes_database() {
+            let xdg = TempXdg::new("xdg");
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                LinuxFileManagerToggles::default(),
+            );
+            reg.install(&s, EXE).unwrap();
+
+            let desktop = xdg.data_local.join("applications/termihub-open.desktop");
+            assert!(desktop.is_file(), "XDG desktop file missing");
+            let content = xdg.read(&desktop);
+            assert!(content.contains("MimeType=inode/directory;"));
+            assert!(content
+                .contains(r#"Exec="/opt/termihub/termiHub" spawn --entry-id open --location %f"#));
+            assert!(content.contains("X-TermiHub-Managed=true"));
+
+            // update-desktop-database was invoked with the applications dir.
+            let calls = xdg.db_calls.lock().unwrap();
+            assert_eq!(calls.as_slice(), &[xdg.data_local.join("applications")]);
+        }
+
+        #[test]
+        fn xdg_desktop_only_for_directory_entries() {
+            let xdg = TempXdg::new("xdg-files-only");
+            let reg = xdg.registrar();
+            // A files-only entry does not register a directory launcher.
+            let s = settings(
+                vec![entry("f", "Files", targets(false, true, false))],
+                LinuxFileManagerToggles::default(),
+            );
+            reg.install(&s, EXE).unwrap();
+            assert!(!xdg
+                .data_local
+                .join("applications/termihub-f.desktop")
+                .exists());
+        }
+
+        // ── Nautilus ────────────────────────────────────────────────────
+
+        #[test]
+        fn nautilus_installed_when_detected_and_enabled() {
+            let xdg = TempXdg::new("nautilus");
+            // Simulate a Nautilus install: the scripts dir exists.
+            std::fs::create_dir_all(xdg.data_local.join("nautilus/scripts")).unwrap();
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+
+            let script = xdg.data_local.join("nautilus/scripts/Open in termiHub");
+            assert!(script.is_file(), "nautilus script missing");
+            let content = xdg.read(&script);
+            assert!(content.starts_with("#!/bin/sh"));
+            assert!(content.contains(r#"spawn --entry-id open --location "$1""#));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o755, "nautilus script must be 0o755");
+            }
+        }
+
+        #[test]
+        fn nautilus_skipped_when_not_detected() {
+            let xdg = TempXdg::new("nautilus-absent");
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+            assert!(!xdg.data_local.join("nautilus/scripts").exists());
+        }
+
+        #[test]
+        fn nautilus_skipped_when_toggle_off_and_foreign_scripts_preserved() {
+            let xdg = TempXdg::new("nautilus-toggle-off");
+            let scripts = xdg.data_local.join("nautilus/scripts");
+            std::fs::create_dir_all(&scripts).unwrap();
+            std::fs::write(scripts.join("Foreign Script"), "#!/bin/sh\necho hi\n").unwrap();
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                LinuxFileManagerToggles {
+                    nautilus: false,
+                    kde: true,
+                    thunar: true,
+                },
+            );
+            reg.install(&s, EXE).unwrap();
+            assert!(!scripts.join("Open in termiHub").exists());
+            assert!(scripts.join("Foreign Script").is_file());
+        }
+
+        // ── KDE ─────────────────────────────────────────────────────────
+
+        #[test]
+        fn kde_service_menu_written_to_both_kde5_and_kde6_when_present() {
+            let xdg = TempXdg::new("kde-both");
+            let kde5 = xdg.data_local.join("kservices5/ServiceMenus");
+            let kde6 = xdg.data_local.join("kio/servicemenus");
+            std::fs::create_dir_all(&kde5).unwrap();
+            std::fs::create_dir_all(&kde6).unwrap();
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+
+            for dir in [&kde5, &kde6] {
+                let file = dir.join("termihub-open.desktop");
+                assert!(file.is_file(), "KDE menu missing in {}", dir.display());
+                let content = xdg.read(&file);
+                assert!(content.contains("Type=Service"));
+                assert!(content.contains("ServiceTypes=KonqPopupMenu/Plugin"));
+                assert!(content.contains("[Desktop Action termihubOpen]"));
+                assert!(content.contains(
+                    r#"Exec="/opt/termihub/termiHub" spawn --entry-id open --location %f"#
+                ));
+            }
+        }
+
+        #[test]
+        fn kde_skipped_when_not_detected() {
+            let xdg = TempXdg::new("kde-absent");
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+            assert!(!xdg.data_local.join("kio/servicemenus").exists());
+            assert!(!xdg.data_local.join("kservices5/ServiceMenus").exists());
+        }
+
+        // ── Thunar ──────────────────────────────────────────────────────
+
+        #[test]
+        fn thunar_appends_action_preserving_foreign() {
+            let xdg = TempXdg::new("thunar-append");
+            let thunar_dir = xdg.config.join("Thunar");
+            std::fs::create_dir_all(&thunar_dir).unwrap();
+            // Pre-existing foreign action written by the user.
+            let foreign = r#"<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+<action>
+	<icon>utilities-terminal</icon>
+	<name>Open Terminal Here</name>
+	<unique-id>1616000000000000-1</unique-id>
+	<command>exo-open --working-directory %f --launch TerminalEmulator</command>
+	<description>Foreign action</description>
+	<patterns>*</patterns>
+	<directories/>
+</action>
+</actions>
+"#;
+            let uca = thunar_dir.join("uca.xml");
+            std::fs::write(&uca, foreign).unwrap();
+
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+
+            let content = xdg.read(&uca);
+            // Foreign action preserved.
+            assert!(content.contains("Open Terminal Here"));
+            assert!(content.contains("1616000000000000-1"));
+            // Ours appended.
+            assert!(content.contains("<unique-id>termihub-open</unique-id>"));
+            assert!(content.contains("spawn --entry-id open --location %f"));
+            // Valid single <actions> root with both actions.
+            assert_eq!(content.matches("<actions>").count(), 1);
+            assert_eq!(content.matches("<action>").count(), 2);
+        }
+
+        #[test]
+        fn thunar_detected_via_config_dir_without_prior_uca() {
+            let xdg = TempXdg::new("thunar-fresh");
+            std::fs::create_dir_all(xdg.config.join("Thunar")).unwrap();
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+            let content = xdg.read(&xdg.config.join("Thunar/uca.xml"));
+            assert!(content.contains("<unique-id>termihub-open</unique-id>"));
+            assert_eq!(content.matches("<action>").count(), 1);
+        }
+
+        #[test]
+        fn thunar_reinstall_keeps_single_owned_action() {
+            let xdg = TempXdg::new("thunar-idempotent");
+            std::fs::create_dir_all(xdg.config.join("Thunar")).unwrap();
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+            reg.install(&s, EXE).unwrap();
+            let content = xdg.read(&xdg.config.join("Thunar/uca.xml"));
+            assert_eq!(
+                content
+                    .matches("<unique-id>termihub-open</unique-id>")
+                    .count(),
+                1
+            );
+        }
+
+        // ── Detection ───────────────────────────────────────────────────
+
+        #[test]
+        fn detect_reports_managers_by_directory_existence() {
+            let xdg = TempXdg::new("detect");
+            std::fs::create_dir_all(xdg.data_local.join("nautilus/scripts")).unwrap();
+            std::fs::create_dir_all(xdg.config.join("Thunar")).unwrap();
+            let reg = xdg.registrar();
+            let detected = reg.detect();
+
+            let by_id = |id: &str| detected.iter().find(|m| m.id == id).unwrap().detected;
+            assert!(by_id("nautilus"));
+            assert!(!by_id("kde"));
+            assert!(by_id("thunar"));
+        }
+
+        // ── Uninstall ───────────────────────────────────────────────────
+
+        #[test]
+        fn uninstall_removes_all_four_and_preserves_foreign_thunar_action() {
+            let xdg = TempXdg::new("uninstall-all");
+            // Detect all managers.
+            std::fs::create_dir_all(xdg.data_local.join("nautilus/scripts")).unwrap();
+            std::fs::create_dir_all(xdg.data_local.join("kio/servicemenus")).unwrap();
+            let thunar_dir = xdg.config.join("Thunar");
+            std::fs::create_dir_all(&thunar_dir).unwrap();
+            let foreign = r#"<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+<action>
+	<icon>utilities-terminal</icon>
+	<name>Open Terminal Here</name>
+	<unique-id>1616000000000000-1</unique-id>
+	<command>xterm</command>
+	<description>Foreign</description>
+	<patterns>*</patterns>
+	<directories/>
+</action>
+</actions>
+"#;
+            let uca = thunar_dir.join("uca.xml");
+            std::fs::write(&uca, foreign).unwrap();
+
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+            reg.install(&s, EXE).unwrap();
+            // Sanity: everything got installed.
+            assert!(xdg
+                .data_local
+                .join("applications/termihub-open.desktop")
+                .exists());
+            assert!(xdg
+                .data_local
+                .join("nautilus/scripts/Open in termiHub")
+                .exists());
+            assert!(xdg
+                .data_local
+                .join("kio/servicemenus/termihub-open.desktop")
+                .exists());
+
+            reg.uninstall().unwrap();
+
+            // All four termiHub artifacts gone.
+            assert!(!xdg
+                .data_local
+                .join("applications/termihub-open.desktop")
+                .exists());
+            assert!(!xdg
+                .data_local
+                .join("nautilus/scripts/Open in termiHub")
+                .exists());
+            assert!(!xdg
+                .data_local
+                .join("kio/servicemenus/termihub-open.desktop")
+                .exists());
+            let content = xdg.read(&uca);
+            assert!(
+                !content.contains("termihub-open"),
+                "termiHub Thunar action must be removed"
+            );
+            // Foreign action survives.
+            assert!(content.contains("Open Terminal Here"));
+            assert!(content.contains("1616000000000000-1"));
+        }
+
+        #[test]
+        fn uninstall_without_install_is_ok() {
+            let xdg = TempXdg::new("uninstall-empty");
+            xdg.registrar().uninstall().unwrap();
+        }
+
+        #[test]
+        fn install_empty_entries_is_noop() {
+            let xdg = TempXdg::new("empty");
+            let reg = xdg.registrar();
+            reg.install(&settings(Vec::new(), all_on()), EXE).unwrap();
+            assert!(!xdg.data_local.join("applications").exists());
         }
     }
 }
