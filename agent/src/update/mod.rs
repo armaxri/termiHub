@@ -469,7 +469,10 @@ mod tests {
         assert_eq!(notif.params["staged"], true);
 
         let state = AgentState::load_from(&state_path);
-        let pending = state.update.pending_update.expect("pending update recorded");
+        let pending = state
+            .update
+            .pending_update
+            .expect("pending update recorded");
         assert_eq!(pending.version, "0.3.0");
         assert_eq!(pending.binary_path, staged_path.to_string_lossy());
     }

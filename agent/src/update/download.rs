@@ -80,9 +80,7 @@ async fn verify_downloaded(
 ) -> Result<()> {
     download_to_file(client, checksum_url, sidecar)
         .await
-        .with_context(|| {
-            format!("failed to download published checksum from {checksum_url}")
-        })?;
+        .with_context(|| format!("failed to download published checksum from {checksum_url}"))?;
     let content = tokio::fs::read_to_string(sidecar)
         .await
         .with_context(|| format!("failed to read checksum sidecar {}", sidecar.display()))?;
@@ -132,7 +130,11 @@ mod tests {
     async fn stages_binary_when_checksum_matches() {
         let server = MockServer::start().await;
         mount_binary(&server, b"abc").await;
-        mount_checksum(&server, format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n")).await;
+        mount_checksum(
+            &server,
+            format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n"),
+        )
+        .await;
 
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("termihub-agent-linux-x64");
@@ -190,6 +192,9 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().to_ascii_lowercase().contains("checksum"));
-        assert!(!dest.exists(), "binary must not remain without verification");
+        assert!(
+            !dest.exists(),
+            "binary must not remain without verification"
+        );
     }
 }
