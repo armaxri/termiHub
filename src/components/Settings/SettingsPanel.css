@@ -131,6 +131,26 @@
   opacity: 0.6;
 }
 
+/* Transient "Saved" acknowledgment (auto-save feedback). */
+.settings-panel__saved-ack {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--color-success);
+  opacity: 0;
+  transition: opacity var(--transition-normal);
+}
+
+.settings-panel__saved-ack--visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel__saved-ack {
+    transition: none;
+  }
+}
+
 /* === Section (used by ExternalFilesSettings) === */
 .settings-panel__section {
   margin-bottom: var(--spacing-xl);

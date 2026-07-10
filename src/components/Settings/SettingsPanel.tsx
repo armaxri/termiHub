@@ -9,6 +9,7 @@ import {
   FileJson,
   FileCode2,
   HardDrive,
+  Check,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -30,7 +31,6 @@ import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { SerialPortSettings } from "./SerialPortSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { getAppInfo, type AppInfo } from "@/services/api";
-import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -45,6 +45,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
 };
 
 const SAVE_DEBOUNCE_MS = 300;
+const SAVED_ACK_MS = 1500;
 
 interface SettingsPanelProps {
   tabId: string;
@@ -66,9 +67,41 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [isCompact, setIsCompact] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [showSavedAck, setShowSavedAck] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<AppSettings | null>(null);
+  const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Briefly surface a transient "Saved" acknowledgment in the footer after a
+   * debounced auto-save has actually persisted, then fade it out.
+   */
+  const acknowledgeSaved = useCallback(() => {
+    setShowSavedAck(true);
+    if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+    ackTimerRef.current = setTimeout(() => {
+      ackTimerRef.current = null;
+      setShowSavedAck(false);
+    }, SAVED_ACK_MS);
+  }, []);
+
+  /**
+   * Cancel any pending debounced save and persist it immediately, so the last
+   * <=300ms of edits aren't lost when the tab closes or the panel unmounts.
+   */
+  const flushPendingSave = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const toSave = pendingSettingsRef.current;
+    if (toSave) {
+      pendingSettingsRef.current = null;
+      useAppStore.setState({ savedSettings: toSave });
+      updateSettings(toSave);
+    }
+  }, [updateSettings]);
 
   useEffect(() => {
     getAppInfo()
@@ -125,6 +158,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             useAppStore.setState({ savedSettings: toSave });
             updateSettings(toSave);
             setEditorDirty(tabId, false);
+            acknowledgeSaved();
           }
         }, SAVE_DEBOUNCE_MS);
       } else {
@@ -132,96 +166,40 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         setEditorDirty(tabId, false);
       }
     },
-    [updateSettings, settings.theme, tabId, setEditorDirty]
+    [updateSettings, settings.theme, tabId, setEditorDirty, acknowledgeSaved]
   );
 
-  // Before showing the unsaved-changes dialog, do a real-time equality check.
-  // The dirty flag may be stale (e.g. the user reverted all changes back to the
-  // saved state). If nothing actually changed, skip the dialog and close directly.
+  // Settings auto-save, so a close request never needs a confirmation dialog.
+  // Flush any pending debounced write (so the last <=300ms of edits aren't lost)
+  // and close the tab directly.
   useEffect(() => {
-    frontendLog(
-      "settings_panel",
-      `pendingCloseRequest=${JSON.stringify(pendingCloseRequest)} tabId=${tabId}`
-    );
     if (pendingCloseRequest?.tabId !== tabId) return;
+    frontendLog("settings_panel", `close request for tabId=${tabId} — flush and close`);
 
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-
-    const { settings: currentSettings, savedSettings } = useAppStore.getState();
-    const currentJson = JSON.stringify(currentSettings);
-    const savedJson = JSON.stringify(savedSettings);
-    frontendLog("settings_panel", `close check — equal=${currentJson === savedJson}`);
-    if (currentJson === savedJson) {
-      pendingSettingsRef.current = null;
-      setEditorDirty(tabId, false);
-      const req = pendingCloseRequest;
-      setPendingCloseRequest(null);
-      closeTab(req.tabId, req.panelId);
-    }
-  }, [pendingCloseRequest, tabId, setEditorDirty, setPendingCloseRequest, closeTab]);
-
-  // Cleanup debounce timer on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        // Flush pending save
-        const toSave = pendingSettingsRef.current;
-        if (toSave) {
-          pendingSettingsRef.current = null;
-          useAppStore.setState({ savedSettings: toSave });
-          updateSettings(toSave);
-        }
-      }
-    };
-  }, [updateSettings]);
-
-  const flushAndClose = useCallback(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    const toSave = pendingSettingsRef.current;
-    if (toSave) {
-      pendingSettingsRef.current = null;
-      useAppStore.setState({ savedSettings: toSave });
-      updateSettings(toSave);
-    }
+    flushPendingSave();
     setEditorDirty(tabId, false);
     const req = pendingCloseRequest;
     setPendingCloseRequest(null);
-    if (req) closeTab(req.tabId, req.panelId);
+    closeTab(req.tabId, req.panelId);
   }, [
-    updateSettings,
-    tabId,
-    setEditorDirty,
     pendingCloseRequest,
+    tabId,
+    flushPendingSave,
+    setEditorDirty,
     setPendingCloseRequest,
     closeTab,
   ]);
 
-  const discardAndClose = useCallback(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    pendingSettingsRef.current = null;
-    // Revert in-memory store to last persisted state
-    const revertTo = useAppStore.getState().savedSettings;
-    useAppStore.setState({ settings: revertTo });
-    applyTheme(revertTo.theme);
-    setEditorDirty(tabId, false);
-    const req = pendingCloseRequest;
-    setPendingCloseRequest(null);
-    if (req) closeTab(req.tabId, req.panelId);
-  }, [tabId, setEditorDirty, pendingCloseRequest, setPendingCloseRequest, closeTab]);
-
-  const cancelClose = useCallback(() => {
-    setPendingCloseRequest(null);
-  }, [setPendingCloseRequest]);
+  // Flush any pending debounced save and clear the ack timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (ackTimerRef.current) {
+        clearTimeout(ackTimerRef.current);
+        ackTimerRef.current = null;
+      }
+      flushPendingSave();
+    };
+  }, [flushPendingSave]);
 
   // Search filtering
   const isSearchActive = searchQuery.trim().length > 0;
@@ -349,13 +327,22 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             {appInfo.gitHash}
           </span>
         )}
+        <span
+          data-testid="settings-saved-ack"
+          className={`settings-panel__saved-ack ${
+            showSavedAck ? "settings-panel__saved-ack--visible" : ""
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          {showSavedAck && (
+            <>
+              <Check size={12} aria-hidden="true" />
+              Saved
+            </>
+          )}
+        </span>
       </div>
-      <UnsavedChangesDialog
-        open={pendingCloseRequest?.tabId === tabId}
-        onCancel={cancelClose}
-        onJustClose={discardAndClose}
-        onSaveAndClose={flushAndClose}
-      />
     </div>
   );
 }

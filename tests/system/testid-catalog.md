@@ -385,6 +385,7 @@ Fixed strings — match exactly.
 | `settings-provide-x-server` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-restore-last-session` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-right-click-behavior` | `src/components/Settings/TerminalSettings.tsx` |
+| `settings-saved-ack` | `src/components/Settings/SettingsPanel.tsx` |
 | `settings-serial-port-prefixes` | `src/components/Settings/SerialPortSettings.tsx` |
 | `settings-stop-x-server-idle` | `src/components/Settings/GeneralSettings.tsx` |
 | `shortcuts-overlay` | `src/components/KeyboardShortcuts/ShortcutsOverlay.tsx` |
