@@ -210,6 +210,82 @@ pub fn exe_path_matches(registered_exe_path: Option<&str>, current_exe_path: Opt
     }
 }
 
+/// A file manager detected on the host, reported by the status command.
+///
+/// Detection itself is a **stub** in this issue — real per-OS detection lands
+/// with the Linux registration work (SI-7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedFileManager {
+    /// Stable id (`"nautilus"`, `"kde"`, `"thunar"`, …).
+    pub id: String,
+    /// Human-readable display name.
+    pub name: String,
+    /// Whether the manager was found on this host.
+    pub detected: bool,
+    /// Detected version string, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// Registration + staleness status reported to the settings UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellIntegrationStatus {
+    /// Whether the OS context-menu integration is currently registered.
+    pub registered: bool,
+    /// Executable path recorded at registration time, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_exe_path: Option<String>,
+    /// The current executable path, if resolvable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_exe_path: Option<String>,
+    /// Whether the registered path matches the current executable.
+    pub exe_path_matches: bool,
+    /// True when registered but the executable moved — re-registration needed.
+    pub stale: bool,
+    /// Whether the app is running in portable mode. In portable mode the
+    /// executable travels with its `data/` directory, so a moved binary makes
+    /// the recorded path stale as a matter of course; the UI can present this as
+    /// expected rather than an error.
+    pub portable: bool,
+    /// File managers detected on the host (STUB — empty until detection lands).
+    pub detected_file_managers: Vec<DetectedFileManager>,
+}
+
+/// Build the shell-integration status from the persisted settings and the
+/// current runtime facts. Pure so it is unit-testable without Tauri.
+///
+/// `stale` is `true` only when the integration is registered *and* the recorded
+/// executable path no longer matches `current_exe_path`.
+pub fn build_status(
+    settings: &ShellIntegrationSettings,
+    current_exe_path: Option<&str>,
+    portable: bool,
+    detected_file_managers: Vec<DetectedFileManager>,
+) -> ShellIntegrationStatus {
+    let registered = settings.registered;
+    let matches = exe_path_matches(settings.registered_exe_path.as_deref(), current_exe_path);
+    ShellIntegrationStatus {
+        registered,
+        registered_exe_path: settings.registered_exe_path.clone(),
+        current_exe_path: current_exe_path.map(str::to_string),
+        exe_path_matches: matches,
+        stale: registered && !matches,
+        portable,
+        detected_file_managers,
+    }
+}
+
+/// Detect file managers installed on the host.
+///
+/// **Stub**: returns an empty list. Real per-OS detection (Nautilus / KDE /
+/// Thunar on Linux, etc.) is implemented with the registration work in a later
+/// epic issue.
+pub fn detect_file_managers() -> Vec<DetectedFileManager> {
+    Vec::new()
+}
+
 /// Normalize an executable path for comparison. Trims surrounding whitespace and
 /// lower-cases on Windows, whose filesystem paths are case-insensitive.
 fn normalize_exe_path(path: &str) -> String {
@@ -367,6 +443,67 @@ mod tests {
     #[test]
     fn exe_path_no_match_when_current_path_missing() {
         assert!(!exe_path_matches(Some("/opt/termihub/termiHub"), None));
+    }
+
+    // ── Status building ──────────────────────────────────────────────────
+
+    #[test]
+    fn status_not_registered_is_never_stale() {
+        let settings = ShellIntegrationSettings::default();
+        let status = build_status(&settings, Some("/opt/termihub/termiHub"), false, Vec::new());
+        assert!(!status.registered);
+        assert!(!status.exe_path_matches);
+        assert!(!status.stale);
+        assert_eq!(
+            status.current_exe_path.as_deref(),
+            Some("/opt/termihub/termiHub")
+        );
+        assert!(status.detected_file_managers.is_empty());
+    }
+
+    #[test]
+    fn status_registered_matching_exe_is_not_stale() {
+        let settings = ShellIntegrationSettings {
+            registered: true,
+            registered_exe_path: Some("/opt/termihub/termiHub".to_string()),
+            ..Default::default()
+        };
+        let status = build_status(&settings, Some("/opt/termihub/termiHub"), false, Vec::new());
+        assert!(status.registered);
+        assert!(status.exe_path_matches);
+        assert!(!status.stale);
+    }
+
+    #[test]
+    fn status_registered_moved_exe_is_stale() {
+        let settings = ShellIntegrationSettings {
+            registered: true,
+            registered_exe_path: Some("/opt/termihub/termiHub".to_string()),
+            ..Default::default()
+        };
+        let status = build_status(&settings, Some("/home/user/termiHub"), false, Vec::new());
+        assert!(status.registered);
+        assert!(!status.exe_path_matches);
+        assert!(status.stale);
+    }
+
+    #[test]
+    fn status_carries_portable_flag_and_detected_managers() {
+        let settings = ShellIntegrationSettings::default();
+        let managers = vec![DetectedFileManager {
+            id: "nautilus".to_string(),
+            name: "Nautilus".to_string(),
+            detected: true,
+            version: Some("45".to_string()),
+        }];
+        let status = build_status(&settings, None, true, managers.clone());
+        assert!(status.portable);
+        assert_eq!(status.detected_file_managers, managers);
+    }
+
+    #[test]
+    fn detect_file_managers_is_stubbed_empty() {
+        assert!(detect_file_managers().is_empty());
     }
 
     // ── Settings serde round-trip + forward-compat ───────────────────────
