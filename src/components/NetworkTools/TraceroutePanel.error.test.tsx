@@ -52,6 +52,16 @@ describe("TraceroutePanel — error handling", () => {
     vi.clearAllMocks();
   });
 
+  it("labels the idle primary action 'Start' (streaming tools share Start↔Stop)", async () => {
+    // #1344: streaming diagnostics share one Start↔Stop verb pair.
+    await act(async () => {
+      root.render(<TraceroutePanel prefillHost="example.com" />);
+    });
+    const btn = container.querySelector<HTMLButtonElement>('[data-testid="traceroute-run"]')!;
+    expect(btn.textContent).toContain("Start");
+    expect(btn.textContent).not.toContain("Run");
+  });
+
   it("registers all listeners before starting (no event race)", async () => {
     await act(async () => {
       root.render(<TraceroutePanel prefillHost="does-not-exist.invalid" />);

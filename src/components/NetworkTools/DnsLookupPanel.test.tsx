@@ -66,6 +66,40 @@ describe("DnsLookupPanel — Button migration", () => {
     expect(container.textContent).toContain("93.184.216.34");
   });
 
+  it("shows the pending affordance on the Button (not the gray footer) while in flight", async () => {
+    // #1344: pending must be driven by the shared Button lifecycle + pendingLabel,
+    // not the footer "Querying…" text.
+    let resolve!: (v: { records: []; queryMs: number }) => void;
+    vi.mocked(networkDnsLookup).mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        })
+    );
+    await act(async () => {
+      root.render(<DnsLookupPanel prefillHost="example.com" />);
+    });
+
+    const btn = container.querySelector<HTMLButtonElement>('[data-testid="dns-run"]')!;
+    await act(async () => {
+      btn.click();
+    });
+
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toContain("Looking up…");
+    // The old gray-footer pending indicator is gone.
+    expect(container.textContent).not.toContain("Querying…");
+
+    await act(async () => {
+      resolve({ records: [], queryMs: 5 });
+      await Promise.resolve();
+    });
+
+    const after = container.querySelector<HTMLButtonElement>('[data-testid="dns-run"]')!;
+    expect(after.getAttribute("aria-busy")).toBeNull();
+  });
+
   it("shows the error inline when the lookup fails", async () => {
     vi.mocked(networkDnsLookup).mockRejectedValueOnce(new Error("NXDOMAIN"));
     await act(async () => {
