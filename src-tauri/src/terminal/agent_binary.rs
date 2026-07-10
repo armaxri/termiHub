@@ -8,9 +8,10 @@
 //! 3. **GitHub Releases download** — fetched on demand and cached locally
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
+use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 
 use crate::utils::download::download_to_file;
@@ -18,6 +19,10 @@ use crate::utils::fs::is_nonempty_file;
 
 /// GitHub repository for release downloads.
 const GITHUB_REPO: &str = "armaxri/termiHub";
+
+/// File-name suffix for the SHA-256 checksum sidecar published next to every
+/// agent binary release asset (e.g. `termihub-agent-linux-x64.sha256`).
+const CHECKSUM_EXT: &str = "sha256";
 
 /// Map a remote OS string and architecture string to the artifact suffix we use.
 ///
@@ -149,7 +154,157 @@ pub fn compute_branch_build_url(branch: &str, arch_suffix: &str) -> String {
     format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-{arch_suffix}")
 }
 
+/// Compute the lowercase-hex SHA-256 digest of a file's contents.
+///
+/// The file is streamed through the hasher, so arbitrarily large binaries are
+/// never fully buffered in memory.
+pub fn sha256_hex_of_file(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("Failed to open {} for checksum", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .with_context(|| format!("Failed to read {} for checksum", path.display()))?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Parse the expected SHA-256 digest out of a checksum sidecar's contents.
+///
+/// Accepts both a bare 64-char hex digest and the standard `sha256sum` output
+/// format `"<hex>  <filename>"` (text mode) or `"<hex> *<filename>"` (binary
+/// mode) — only the first whitespace-delimited token is considered. The digest
+/// is normalized to lowercase. Returns `None` when the first token is not a
+/// valid 64-character hex string.
+pub fn parse_sha256_sidecar(content: &str) -> Option<String> {
+    let token = content.split_whitespace().next()?.to_ascii_lowercase();
+    if token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(token)
+    } else {
+        None
+    }
+}
+
+/// Verify that `path`'s SHA-256 digest equals `expected_hex`.
+///
+/// The comparison is case-insensitive. On mismatch this returns an error whose
+/// message names the file and both digests, so a tampered or corrupted binary
+/// is rejected with a clear, actionable message before it is ever installed or
+/// executed.
+pub fn verify_file_checksum(path: &Path, expected_hex: &str) -> Result<()> {
+    let actual = sha256_hex_of_file(path)?;
+    let expected = expected_hex.trim().to_ascii_lowercase();
+    if actual == expected {
+        Ok(())
+    } else {
+        bail!(
+            "Checksum verification failed for {}: expected SHA-256 {expected}, computed {actual}. \
+             Refusing to use an agent binary that does not match its published checksum.",
+            path.display()
+        );
+    }
+}
+
+/// Return the path of the `.sha256` checksum sidecar for a binary path.
+fn checksum_sidecar_path(binary_path: &Path) -> PathBuf {
+    let mut name = binary_path.as_os_str().to_owned();
+    name.push(".");
+    name.push(CHECKSUM_EXT);
+    PathBuf::from(name)
+}
+
+/// Verify a resolved binary against a `.sha256` sidecar sitting next to it.
+///
+/// - Sidecar present and matching → `Ok(())`.
+/// - Sidecar present but the binary does not match, or the sidecar is malformed
+///   → `Err` (the binary is rejected; it must never be installed or executed).
+/// - Sidecar absent → `Ok(())` with a warning: integrity cannot be verified
+///   (e.g. a legacy cache entry, a bundle without the sidecar, or an
+///   out-of-scope dev/branch build that does not yet publish checksums).
+fn verify_with_adjacent_sidecar(binary_path: &Path) -> Result<()> {
+    let sidecar = checksum_sidecar_path(binary_path);
+    match fs::read_to_string(&sidecar) {
+        Ok(content) => {
+            let expected = parse_sha256_sidecar(&content).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Malformed checksum sidecar {} — refusing to use an unverifiable agent binary",
+                    sidecar.display()
+                )
+            })?;
+            verify_file_checksum(binary_path, &expected)
+        }
+        Err(_) => {
+            warn!(
+                "No checksum sidecar for {} — skipping integrity verification",
+                binary_path.display()
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Download a binary and verify it against its published `.sha256` sidecar.
+///
+/// The binary is fetched to `dest`, then the sidecar at `<url>.sha256` is
+/// fetched next to it and the binary is verified against it — a mismatch or a
+/// malformed sidecar aborts with both files removed, so a tampered download is
+/// never left on disk to masquerade as a valid cache hit.
+///
+/// `require_checksum` controls the missing-sidecar case:
+/// - `true` (release `v{version}` downloads, where [`release.yml`] always
+///   publishes a sidecar) → a missing sidecar fails closed. This is the primary
+///   substitution defense: an attacker cannot bypass verification by simply
+///   omitting the `.sha256`.
+/// - `false` (out-of-scope dev/branch builds that do not publish checksums yet)
+///   → a missing sidecar is tolerated with a warning.
+fn download_binary_with_checksum<F>(
+    url: &str,
+    dest: &Path,
+    require_checksum: bool,
+    progress_cb: F,
+) -> Result<()>
+where
+    F: Fn(u64, u64),
+{
+    download_to_file(url, dest, progress_cb)?;
+
+    let checksum_url = format!("{url}.{CHECKSUM_EXT}");
+    let sidecar = checksum_sidecar_path(dest);
+    if let Err(e) = download_to_file(&checksum_url, &sidecar, |_, _| {}) {
+        if require_checksum {
+            // A release asset must have a published checksum; refusing to
+            // install an unverifiable binary is the whole point of the feature.
+            let _ = fs::remove_file(dest);
+            return Err(e).with_context(|| {
+                format!(
+                    "No published SHA-256 checksum at {checksum_url} — refusing to install an \
+                     unverifiable agent binary"
+                )
+            });
+        }
+        // Out-of-scope dev/branch build with no published checksum — keep the
+        // binary but warn that integrity could not be verified.
+        warn!(
+            "No checksum available at {checksum_url} ({e}) — installing agent binary \
+             without integrity verification"
+        );
+        return Ok(());
+    }
+
+    // The sidecar was just fetched next to `dest`; verify against it and clean
+    // up both files on any mismatch or malformed sidecar.
+    if let Err(e) = verify_with_adjacent_sidecar(dest) {
+        let _ = fs::remove_file(dest);
+        let _ = fs::remove_file(&sidecar);
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// Download the agent binary from an explicit URL and cache it under `cache_key/termihub-agent-{arch}`.
+///
+/// When a `.sha256` sidecar is published next to the URL the download is
+/// verified against it (see [`download_binary_with_checksum`]). This is used for
+/// branch builds, which do not publish checksums yet (out of scope for #1350),
+/// so a missing sidecar is tolerated with a warning rather than failing closed.
 pub fn download_agent_binary_from_url<F>(
     url: &str,
     cache_key: &str,
@@ -162,7 +317,7 @@ where
     let dest = cache_dir()
         .join(cache_key)
         .join(format!("termihub-agent-{arch_suffix}"));
-    download_to_file(url, &dest, progress_cb)?;
+    download_binary_with_checksum(url, &dest, /* require_checksum */ false, progress_cb)?;
     Ok(dest)
 }
 
@@ -185,11 +340,22 @@ where
 
     if is_nonempty_file(&cached) {
         debug!("Using cached branch build binary: {}", cached.display());
+        verify_with_adjacent_sidecar(&cached)?;
         return Ok(cached);
     }
 
     let url = compute_branch_build_url(branch, arch_suffix);
     download_agent_binary_from_url(&url, &cache_key, arch_suffix, progress_cb)
+}
+
+/// Return `true` when the current build downloads agents from a dev/branch tag
+/// (`dev-latest` / `dev-develop-latest`) rather than a release `v{version}` tag.
+///
+/// Dev builds are identified by debug mode, the CI dev-build flag, or a `-dev`
+/// version suffix. Release downloads are the negation, and only they are gated
+/// on a mandatory checksum (see [`download_binary_with_checksum`]).
+fn is_dev_build(version: &str) -> bool {
+    cfg!(debug_assertions) || env!("TERMIHUB_IS_DEV_BUILD") == "1" || version.ends_with("-dev")
 }
 
 /// Return the base download URL (without arch suffix) for the current build.
@@ -200,9 +366,7 @@ where
 ///
 /// Append an arch suffix (e.g. `"linux-arm64"`) to obtain the full URL.
 pub fn compute_download_base_url(version: &str) -> String {
-    let is_dev =
-        cfg!(debug_assertions) || env!("TERMIHUB_IS_DEV_BUILD") == "1" || version.ends_with("-dev");
-    let tag = if is_dev {
+    let tag = if is_dev_build(version) {
         if env!("TERMIHUB_BUILD_BRANCH") == "develop" {
             "dev-develop-latest".to_string()
         } else {
@@ -264,7 +428,9 @@ where
 {
     let url = compute_download_url(version, arch_suffix);
     let dest = cached_binary_path(version, arch_suffix);
-    download_to_file(&url, &dest, progress_cb)?;
+    // Release downloads (`v{version}`) must carry a published checksum; dev tags
+    // (`dev-latest` / `dev-develop-latest`) do not publish one yet (out of scope).
+    download_binary_with_checksum(&url, &dest, !is_dev_build(version), progress_cb)?;
     Ok(dest)
 }
 
@@ -283,19 +449,33 @@ where
     // 1. Check local cache
     if let Some(path) = find_cached_binary(version, arch_suffix) {
         info!("Using cached agent binary: {}", path.display());
+        // Reject a cache entry that has been tampered with since it was fetched.
+        verify_with_adjacent_sidecar(&path)?;
         return Ok(path);
     }
 
     // 2. Check bundled resources
     if let Some(path) = find_bundled_binary(app_handle, arch_suffix) {
         info!("Using bundled agent binary: {}", path.display());
-        // Copy to cache for future use
+        // Verify against a bundled `.sha256` sidecar when one ships next to the
+        // binary; a mismatch rejects the bundle rather than deploying it.
+        verify_with_adjacent_sidecar(&path)?;
+        // Copy to cache for future use, including the checksum sidecar so later
+        // cache hits stay verifiable.
         let cache_path = cached_binary_path(version, arch_suffix);
         if let Some(parent) = cache_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         if let Err(e) = fs::copy(&path, &cache_path) {
             warn!("Failed to cache bundled binary: {}", e);
+        } else {
+            let bundled_sidecar = checksum_sidecar_path(&path);
+            if bundled_sidecar.is_file() {
+                let cache_sidecar = checksum_sidecar_path(&cache_path);
+                if let Err(e) = fs::copy(&bundled_sidecar, &cache_sidecar) {
+                    warn!("Failed to cache bundled checksum sidecar: {}", e);
+                }
+            }
         }
         return Ok(path);
     }
@@ -612,5 +792,303 @@ mod tests {
         let url = compute_branch_build_url("main", "linux-x64");
         assert!(url.contains("agent-branch-main"));
         assert!(url.contains("linux-x64"));
+    }
+
+    // --- SHA-256 integrity verification -----------------------------------
+
+    /// Known SHA-256 of the ASCII string "abc" (NIST test vector), used to pin
+    /// the hashing implementation.
+    const SHA256_OF_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn sha256_hex_of_file_matches_known_vector() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        fs::write(&path, b"abc").unwrap();
+
+        let digest = sha256_hex_of_file(&path).unwrap();
+        assert_eq!(digest, SHA256_OF_ABC);
+    }
+
+    #[test]
+    fn sha256_hex_of_file_is_lowercase_hex() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        fs::write(&path, b"some binary content").unwrap();
+
+        let digest = sha256_hex_of_file(&path).unwrap();
+        assert_eq!(digest.len(), 64, "SHA-256 hex must be 64 chars");
+        assert!(
+            digest
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "digest must be lowercase hex, got: {digest}"
+        );
+    }
+
+    #[test]
+    fn sha256_hex_of_file_missing_file_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("does-not-exist.bin");
+        assert!(sha256_hex_of_file(&path).is_err());
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_plain_hex() {
+        assert_eq!(
+            parse_sha256_sidecar(SHA256_OF_ABC),
+            Some(SHA256_OF_ABC.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_sha256sum_text_format() {
+        // Standard `sha256sum` text-mode output: "<hex>  <filename>".
+        let line = format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n");
+        assert_eq!(parse_sha256_sidecar(&line), Some(SHA256_OF_ABC.to_string()));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_sha256sum_binary_format() {
+        // Binary-mode output prefixes the filename with '*'.
+        let line = format!("{SHA256_OF_ABC} *termihub-agent-windows-x64.exe\n");
+        assert_eq!(parse_sha256_sidecar(&line), Some(SHA256_OF_ABC.to_string()));
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_uppercase_is_normalized() {
+        let upper = SHA256_OF_ABC.to_ascii_uppercase();
+        assert_eq!(
+            parse_sha256_sidecar(&upper),
+            Some(SHA256_OF_ABC.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_sha256_sidecar_rejects_garbage() {
+        assert_eq!(parse_sha256_sidecar(""), None);
+        assert_eq!(parse_sha256_sidecar("   \n"), None);
+        assert_eq!(parse_sha256_sidecar("not-a-hash"), None);
+        // Too short.
+        assert_eq!(parse_sha256_sidecar("deadbeef"), None);
+        // 64 chars but contains a non-hex char ('g').
+        assert_eq!(parse_sha256_sidecar(&"g".repeat(64)), None);
+    }
+
+    #[test]
+    fn verify_file_checksum_ok_on_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        fs::write(&path, b"abc").unwrap();
+
+        assert!(verify_file_checksum(&path, SHA256_OF_ABC).is_ok());
+        // Case-insensitive on the expected side too.
+        assert!(verify_file_checksum(&path, &SHA256_OF_ABC.to_ascii_uppercase()).is_ok());
+    }
+
+    #[test]
+    fn verify_file_checksum_rejects_mismatch_with_clear_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("payload.bin");
+        // Content whose digest is NOT SHA256_OF_ABC.
+        fs::write(&path, b"tampered content").unwrap();
+
+        let err = verify_file_checksum(&path, SHA256_OF_ABC).unwrap_err();
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("checksum"),
+            "error should mention checksum, got: {err}"
+        );
+        assert!(
+            msg.contains(SHA256_OF_ABC),
+            "error should include the expected checksum, got: {err}"
+        );
+    }
+
+    #[test]
+    fn checksum_sidecar_path_appends_sha256() {
+        let binary = PathBuf::from("/cache/0.1.0/termihub-agent-linux-x64");
+        let sidecar = checksum_sidecar_path(&binary);
+        assert_eq!(
+            sidecar,
+            PathBuf::from("/cache/0.1.0/termihub-agent-linux-x64.sha256")
+        );
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_ok_when_matching() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"abc").unwrap();
+        fs::write(
+            checksum_sidecar_path(&binary),
+            format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n"),
+        )
+        .unwrap();
+
+        assert!(verify_with_adjacent_sidecar(&binary).is_ok());
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_rejects_tampered_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        // Sidecar claims the "abc" digest, but the binary has been tampered with.
+        fs::write(&binary, b"tampered").unwrap();
+        fs::write(checksum_sidecar_path(&binary), SHA256_OF_ABC).unwrap();
+
+        assert!(
+            verify_with_adjacent_sidecar(&binary).is_err(),
+            "a binary that does not match its sidecar must be rejected"
+        );
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_ok_when_sidecar_absent() {
+        // No sidecar present → cannot verify, but must not fail (legacy cache
+        // entries and out-of-scope dev builds have no published checksum yet).
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"abc").unwrap();
+
+        assert!(verify_with_adjacent_sidecar(&binary).is_ok());
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_errors_on_malformed_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"abc").unwrap();
+        fs::write(checksum_sidecar_path(&binary), "this-is-not-a-checksum").unwrap();
+
+        assert!(
+            verify_with_adjacent_sidecar(&binary).is_err(),
+            "a malformed sidecar must be treated as an integrity failure"
+        );
+    }
+
+    // --- download + verify integration ------------------------------------
+
+    /// Serve the agent binary and (optionally) its `.sha256` sidecar over an
+    /// ephemeral loopback HTTP server, so `download_binary_with_checksum` can be
+    /// exercised end-to-end. Handles exactly two sequential connections (the
+    /// binary GET then the sidecar GET); the response is chosen by whether the
+    /// requested path ends in `.sha256`. Returns the binary URL and the server
+    /// thread handle. When `sidecar` is `None` the sidecar request gets a 404.
+    fn serve_agent_download(
+        binary: &'static [u8],
+        sidecar: Option<String>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                let mut buf = [0u8; 1024];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let is_sidecar = req
+                    .lines()
+                    .next()
+                    .map(|l| l.contains(".sha256"))
+                    .unwrap_or(false);
+
+                let (status, body): (&str, Vec<u8>) = if is_sidecar {
+                    match &sidecar {
+                        Some(content) => ("200 OK", content.clone().into_bytes()),
+                        None => ("404 Not Found", Vec::new()),
+                    }
+                } else {
+                    ("200 OK", binary.to_vec())
+                };
+                let header = format!(
+                    "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(&body);
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://{addr}/termihub-agent-linux-x64"), handle)
+    }
+
+    #[test]
+    fn download_with_checksum_accepts_matching_sidecar() {
+        let (url, server) = serve_agent_download(b"abc", Some(format!("{SHA256_OF_ABC}  bin\n")));
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+
+        download_binary_with_checksum(&url, &dest, true, |_, _| {}).unwrap();
+        server.join().unwrap();
+
+        assert_eq!(fs::read(&dest).unwrap(), b"abc");
+        assert!(
+            checksum_sidecar_path(&dest).is_file(),
+            "the verified sidecar must be cached next to the binary"
+        );
+    }
+
+    #[test]
+    fn download_with_checksum_rejects_mismatched_sidecar_and_removes_binary() {
+        // Sidecar advertises a digest the body does not have.
+        let wrong = "0".repeat(64);
+        let (url, server) = serve_agent_download(b"abc", Some(wrong));
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+
+        let err = download_binary_with_checksum(&url, &dest, true, |_, _| {}).unwrap_err();
+        server.join().unwrap();
+
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("checksum"),
+            "error should mention checksum, got: {err}"
+        );
+        assert!(
+            !dest.exists(),
+            "a mismatched download must be removed, not left as a cache hit"
+        );
+        assert!(!checksum_sidecar_path(&dest).exists());
+    }
+
+    #[test]
+    fn download_with_checksum_fails_closed_when_release_sidecar_missing() {
+        let (url, server) = serve_agent_download(b"abc", None);
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+
+        // require_checksum = true (a release download) → a missing sidecar is a
+        // hard failure and the binary must not be left on disk.
+        let err = download_binary_with_checksum(&url, &dest, true, |_, _| {}).unwrap_err();
+        server.join().unwrap();
+
+        assert!(
+            err.to_string().contains("checksum"),
+            "error should explain the missing checksum, got: {err}"
+        );
+        assert!(
+            !dest.exists(),
+            "a release binary with no checksum must not be installed"
+        );
+    }
+
+    #[test]
+    fn download_with_checksum_tolerates_missing_sidecar_for_dev_builds() {
+        let (url, server) = serve_agent_download(b"abc", None);
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+
+        // require_checksum = false (dev/branch build) → a missing sidecar is
+        // tolerated and the binary is kept.
+        download_binary_with_checksum(&url, &dest, false, |_, _| {}).unwrap();
+        server.join().unwrap();
+
+        assert_eq!(fs::read(&dest).unwrap(), b"abc");
     }
 }

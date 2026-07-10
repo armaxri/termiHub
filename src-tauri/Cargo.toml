@@ -28,6 +28,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { workspace = true }
 hex = "0.4"
+# SHA-256 hashing: agent-binary integrity verification (all platforms) and
+# Windows VcXsrv checksum validation.
+sha2 = "0.10"
 serde_json = { workspace = true }
 portable-pty = "0.8"
 russh = { workspace = true }
@@ -76,11 +79,10 @@ windows = { version = "0.58", features = [
 ] }
 # Windows Credential Manager backend for the `keyring` crate.
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
-# VcXsrv acquisition (X server provisioning): download + checksum + extract.
-# Windows-only — the X server subsystem provisions VcXsrv, which does not exist
-# on other platforms.
+# VcXsrv acquisition (X server provisioning): download + extract. Windows-only —
+# the X server subsystem provisions VcXsrv, which does not exist on other
+# platforms. (SHA-256 hashing is a shared dependency; see `[dependencies]`.)
 zip = "2"
-sha2 = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Linux Secret Service backend. The `async-secret-service` backend talks to the
