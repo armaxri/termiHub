@@ -6,13 +6,14 @@
 //! Explorer's right-click menus — for folders, folder backgrounds, and files.
 //!
 //! All keys live under `HKEY_CURRENT_USER`, so **no administrator rights** are
-//! required. Registration is idempotent: [`install`] first clears any prior
-//! termiHub keys, then rewrites them from the current entry list.
+//! required. Registration is idempotent: install first clears any prior termiHub
+//! keys, then rewrites them from the current entry list.
 //!
-//! Everything here is Windows-specific. On other platforms the public
-//! [`install`] / [`uninstall`] functions compile but return a clear
-//! "unsupported on this platform" error, so the calling Tauri commands and CLI
-//! subcommands behave predictably everywhere.
+//! Callers use the cross-platform [`register`] / [`unregister`] seam, which
+//! records the registration facts into [`ShellIntegrationSettings`]. On
+//! non-Windows platforms the underlying registry work returns a clear
+//! "unsupported on this platform" error before any state changes, so the calling
+//! Tauri commands and CLI subcommands behave predictably everywhere.
 
 use crate::connection::shell_integration::{ShellEntry, ShellIntegrationSettings};
 use anyhow::Context;
@@ -28,7 +29,7 @@ const UNSUPPORTED_MESSAGE: &str =
 ///
 /// Cross-platform entry point shared by the Tauri command and the pre-init CLI
 /// subcommand. On success the caller persists the mutated `settings`. On an
-/// unsupported platform the underlying [`install`] fails before any field is
+/// unsupported platform the underlying `install` fails before any field is
 /// touched, so `settings` is left unchanged.
 pub fn register(settings: &mut ShellIntegrationSettings) -> anyhow::Result<()> {
     let exe = current_exe_path()?;
@@ -59,26 +60,28 @@ fn current_exe_path() -> anyhow::Result<String> {
 ///
 /// Windows-only. Idempotent — an existing registration is replaced. `exe_path`
 /// is the absolute path to the termiHub executable that the menu commands invoke.
+/// Private: callers go through the cross-platform [`register`] seam.
 #[cfg(windows)]
-pub fn install(entries: &[ShellEntry], exe_path: &str) -> anyhow::Result<()> {
+fn install(entries: &[ShellEntry], exe_path: &str) -> anyhow::Result<()> {
     imp::Registrar::system().install(entries, exe_path)
 }
 
 /// Remove every termiHub Explorer context-menu registration (Windows-only).
+/// Private: callers go through the cross-platform [`unregister`] seam.
 #[cfg(windows)]
-pub fn uninstall() -> anyhow::Result<()> {
+fn uninstall() -> anyhow::Result<()> {
     imp::Registrar::system().uninstall()
 }
 
 /// Non-Windows stub: Explorer registry registration does not apply here.
 #[cfg(not(windows))]
-pub fn install(_entries: &[ShellEntry], _exe_path: &str) -> anyhow::Result<()> {
+fn install(_entries: &[ShellEntry], _exe_path: &str) -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
 }
 
 /// Non-Windows stub: Explorer registry registration does not apply here.
 #[cfg(not(windows))]
-pub fn uninstall() -> anyhow::Result<()> {
+fn uninstall() -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
 }
 
