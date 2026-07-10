@@ -156,6 +156,13 @@ pub enum XServerError {
         /// A suggested one-line install command (e.g. `brew install --cask xquartz`).
         #[serde(skip_serializing_if = "Option::is_none")]
         install_command: Option<String>,
+        /// A manual-download page the user can use *instead of* the offered install
+        /// action (#1312), e.g. xquartz.org when the guided Homebrew install is
+        /// declined. Presentational URL the UI turns into an "Open <host>" button,
+        /// rendered only when present — so the fallback stays payload-driven rather
+        /// than hardcoded per dependency.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        install_fallback_url: Option<String>,
     },
 
     /// The dependency is installed but no server is reachable.
@@ -188,6 +195,9 @@ impl XServerError {
                     .to_string(),
             ),
             install_command: Some(WINGET_INSTALL_VCXSRV_COMMAND.to_string()),
+            // Backend install (winget) — no manual-fallback button, mirroring
+            // `xquartz_missing`; the download URL stays in the hint text.
+            install_fallback_url: None,
         }
     }
 
@@ -214,6 +224,9 @@ impl XServerError {
                     .to_string(),
             ),
             install_command: Some(WINGET_INSTALL_VCXSRV_COMMAND.to_string()),
+            // The manual VcXsrv download is the payload-driven fallback the UI
+            // turns into an "Open …" button when the user declines App Installer.
+            install_fallback_url: Some("https://sourceforge.net/projects/vcxsrv/".to_string()),
         }
     }
 
@@ -248,6 +261,7 @@ impl XServerError {
                     .to_string(),
             ),
             install_command: Some("brew install --cask xquartz".to_string()),
+            install_fallback_url: None,
         }
     }
 
@@ -276,6 +290,7 @@ impl XServerError {
                     .to_string(),
             ),
             install_command: Some(HOMEBREW_INSTALL_COMMAND.to_string()),
+            install_fallback_url: Some("https://www.xquartz.org".to_string()),
         }
     }
 
@@ -300,6 +315,7 @@ impl XServerError {
                     .to_string(),
             ),
             install_command: None,
+            install_fallback_url: None,
         }
     }
 
@@ -327,6 +343,7 @@ impl XServerError {
                     .to_string(),
             ),
             install_command: None,
+            install_fallback_url: None,
         }
     }
 
@@ -441,6 +458,7 @@ mod tests {
                 install_mode,
                 install_hint,
                 install_command,
+                install_fallback_url,
                 ..
             } => {
                 assert_eq!(install_mode, InstallMode::GuidedTerminal);
@@ -455,6 +473,12 @@ mod tests {
                     "installer command should fetch the official Homebrew installer: {cmd}"
                 );
                 assert!(install_hint.unwrap_or_default().contains("xquartz.org"));
+                // The manual fallback (#1312) is a typed payload field, not a
+                // frontend-hardcoded URL: xquartz.org for the declined-Homebrew case.
+                assert_eq!(
+                    install_fallback_url.as_deref(),
+                    Some("https://www.xquartz.org")
+                );
             }
             other => panic!("expected DependencyMissing, got {other:?}"),
         }
@@ -490,21 +514,39 @@ mod tests {
     #[test]
     fn winget_required_uses_guided_external_install_mode() {
         // winget-absent post-click response: the typed `install_mode` is
-        // `GuidedExternal` (open the Store / a URL, not a terminal), with a hint
-        // that still points at the manual VcXsrv download for a user who declines.
+        // `GuidedExternal` (open the Store / a URL, not a terminal), and the manual
+        // VcXsrv download is carried as the payload-driven fallback URL (#1312/#1318).
         match XServerError::winget_required() {
             XServerError::DependencyMissing {
                 dependency,
                 install_mode,
-                install_hint,
+                install_fallback_url,
                 ..
             } => {
                 assert_eq!(dependency, "winget");
                 assert_eq!(install_mode, InstallMode::GuidedExternal);
-                assert!(install_hint.unwrap_or_default().contains("VcXsrv"));
+                assert!(install_fallback_url.unwrap_or_default().contains("vcxsrv"));
             }
             other => panic!("expected DependencyMissing, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn backend_install_carries_no_manual_fallback_url() {
+        // The manual-fallback button is payload-driven (#1312): the backend-install
+        // XQuartz case offers no fallback URL, so the field is omitted from the wire.
+        match XServerError::xquartz_missing() {
+            XServerError::DependencyMissing {
+                install_fallback_url,
+                ..
+            } => assert_eq!(install_fallback_url, None),
+            other => panic!("expected DependencyMissing, got {other:?}"),
+        }
+        let json = serde_json::to_string(&XServerError::xquartz_missing()).unwrap();
+        assert!(!json.contains("installFallbackUrl"));
+
+        let guided = serde_json::to_string(&XServerError::homebrew_required()).unwrap();
+        assert!(guided.contains("\"installFallbackUrl\":\"https://www.xquartz.org\""));
     }
 
     #[test]

@@ -131,6 +131,12 @@ export interface XServerError {
   installHint?: string;
   /** A concrete shell command that installs the dependency, if available. */
   installCommand?: string;
+  /**
+   * A manual-download page to use instead of the offered install action (#1312),
+   * e.g. xquartz.org when a guided Homebrew install is declined. The dialog turns
+   * it into an "Open <host>" button, rendered only when the backend provides one.
+   */
+  installFallbackUrl?: string;
 }
 
 /**

@@ -7,14 +7,21 @@ import "./XServerSetupDialog.css";
 /** Which screen of the setup flow is showing. */
 export type XServerSetupPhase = "consent" | "provisioning" | "error";
 
-/** Manual XQuartz download page — the fallback when the user declines Homebrew. */
-const XQUARTZ_DOWNLOAD_URL = "https://www.xquartz.org";
+/**
+ * Label for the manual-download fallback button, derived from the backend-supplied
+ * URL's host (#1312) — e.g. `https://www.xquartz.org` → `Open xquartz.org`. Falls
+ * back to generic copy if the URL can't be parsed.
+ */
+function fallbackButtonLabel(url: string): string {
+  try {
+    return `Open ${new URL(url).hostname.replace(/^www\./, "")}`;
+  } catch {
+    return "Open download page";
+  }
+}
 
 /** Microsoft Store page for App Installer (winget) — the Windows guided prerequisite. */
 const APP_INSTALLER_URL = "https://apps.microsoft.com/detail/9NBLGGH4NNS1";
-
-/** Manual VcXsrv download page — the fallback when the user declines App Installer. */
-const VCXSRV_DOWNLOAD_URL = "https://sourceforge.net/projects/vcxsrv/";
 
 /**
  * Whether the recovery is a guided-terminal install (#1309): the user runs
@@ -80,11 +87,12 @@ interface XServerSetupContentProps {
   /** Install the missing dependency (dependencyMissing only). Async for feedback. */
   onInstallDependency: () => Promise<void>;
   /**
-   * Run a guided-terminal install (#1309): opens a local terminal tab pre-loaded
-   * with `command` (e.g. the official Homebrew installer) so the user can drive
-   * its interactive prompts. Used for a `guidedTerminal` install-mode error.
+   * Run a guided-terminal install (#1309): opens a local terminal tab titled
+   * `tabTitle` pre-loaded with `command` (e.g. the official Homebrew installer)
+   * so the user can drive its interactive prompts. Used for a `guidedTerminal`
+   * install-mode error.
    */
-  onGuideHomebrewInstall: (command: string) => void | Promise<void>;
+  onGuideTerminalInstall: (command: string, tabTitle: string) => void | Promise<void>;
   /** Close from the error screen. */
   onClose: () => void;
 }
@@ -110,7 +118,7 @@ export function XServerSetupContent({
   onNotNow,
   onRetry,
   onInstallDependency,
-  onGuideHomebrewInstall,
+  onGuideTerminalInstall,
   onClose,
 }: XServerSetupContentProps) {
   const title = phase === "error" ? "X server setup failed" : "Set up X server";
@@ -209,46 +217,54 @@ export function XServerSetupContent({
 
   /**
    * The dependency-recovery action(s) on the error screen, keyed on the typed
-   * `installMode`: `guidedTerminal` (macOS brew-absent) opens a terminal running
-   * the installer + a manual xquartz.org fallback; `guidedExternal` (Windows
-   * winget-absent, #1318) opens the Store for App Installer + a manual VcXsrv
-   * download; `backend` is the plain install-and-retry against the backend.
+   * `installMode`. `guidedTerminal` (#1309, macOS brew-absent) opens a terminal
+   * running the installer; `guidedExternal` (#1318, Windows winget-absent) opens
+   * the Store for App Installer; both add a manual-download fallback button when
+   * the error carries an `installFallbackUrl` (#1312). `backend` is the plain
+   * install-and-retry against the backend.
    */
   function renderInstallAction() {
     if (isGuidedTerminalInstall(error)) {
       const command = error.installCommand;
+      const dependency = error.dependency ?? "dependency";
+      const fallbackUrl = error.installFallbackUrl;
       return (
         <>
-          <Button
-            variant="ghost"
-            onClick={() => openUrl(XQUARTZ_DOWNLOAD_URL)}
-            data-testid={`${testIdPrefix}-open-xquartz`}
-          >
-            Open xquartz.org
-          </Button>
+          {fallbackUrl && (
+            <Button
+              variant="ghost"
+              onClick={() => openUrl(fallbackUrl)}
+              data-testid={`${testIdPrefix}-open-fallback`}
+            >
+              {fallbackButtonLabel(fallbackUrl)}
+            </Button>
+          )}
           <Button
             variant="secondary"
-            onClick={() => onGuideHomebrewInstall(command)}
-            data-testid={`${testIdPrefix}-install-homebrew`}
+            onClick={() => onGuideTerminalInstall(command, `Install ${dependency}`)}
+            data-testid={`${testIdPrefix}-guided-install`}
           >
-            Install {error.dependency ?? "dependency"}
+            Install {dependency}
           </Button>
         </>
       );
     }
     if (isGuidedExternalInstall(error)) {
       // Windows winget-absent: open the Store for App Installer, then Retry
-      // re-detects winget and installs VcXsrv; a manual VcXsrv download is the
-      // fallback for a user who declines (#1318).
+      // re-detects winget and installs VcXsrv; the payload-driven fallback URL
+      // (#1312) is the manual VcXsrv download for a user who declines (#1318).
+      const fallbackUrl = error?.installFallbackUrl;
       return (
         <>
-          <Button
-            variant="ghost"
-            onClick={() => openUrl(VCXSRV_DOWNLOAD_URL)}
-            data-testid={`${testIdPrefix}-open-vcxsrv`}
-          >
-            Open VcXsrv download
-          </Button>
+          {fallbackUrl && (
+            <Button
+              variant="ghost"
+              onClick={() => openUrl(fallbackUrl)}
+              data-testid={`${testIdPrefix}-open-fallback`}
+            >
+              {fallbackButtonLabel(fallbackUrl)}
+            </Button>
+          )}
           <Button
             variant="secondary"
             onClick={() => openUrl(APP_INSTALLER_URL)}

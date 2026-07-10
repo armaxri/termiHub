@@ -627,8 +627,13 @@ impl TunnelManager {
                 liveness,
             ))
         } else {
-            let endpoint =
-                block_on_runtime(self.endpoint_pool.get_or_create(conn_id, || async move {
+            let endpoint = block_on_runtime(self.endpoint_pool.get_or_create_live(
+                conn_id,
+                // Never adopt a pooled endpoint whose session has already died —
+                // its cloned watch is already `true`, which would drive the new
+                // tunnel straight to Error. Evict it and dial a fresh one (#1315).
+                |ep| !ep.liveness.is_dead(),
+                || async move {
                     core_connect_cancellable_with_liveness(ssh_config, Some(cancel))
                         .await
                         .map(|(session, _registry, liveness)| {
@@ -638,7 +643,8 @@ impl TunnelManager {
                             })
                         })
                         .map_err(|e| TerminalError::SshError(e.to_string()))
-                }))?;
+                },
+            ))?;
             // Each supervisor gets its own watch receiver clone, so one shared
             // pooled session's death fans out to every tunnel riding it (#1297).
             let session = endpoint.session.clone();

@@ -13,7 +13,7 @@ import {
 } from "@/types/xserver";
 import { XServerSetupContent, type XServerSetupPhase } from "./XServerSetupContent";
 import { driveXServerEnsure } from "./xServerProvisioning";
-import { guideHomebrewInstall } from "./guideHomebrewInstall";
+import { guideTerminalInstall } from "./guideTerminalInstall";
 
 /** Progress steps that end the backend-driven connect provisioning. */
 const TERMINAL_STEPS = new Set(["ready", "failed", "skipped"]);
@@ -184,7 +184,7 @@ export function XServerConnectConsent() {
       onNotNow={handleNotNow}
       onRetry={handleRetry}
       onInstallDependency={handleInstallDependency}
-      onGuideHomebrewInstall={guideHomebrewInstall}
+      onGuideTerminalInstall={guideTerminalInstall}
       onClose={close}
     />
   );

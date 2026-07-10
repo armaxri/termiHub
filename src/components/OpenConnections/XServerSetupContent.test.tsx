@@ -36,7 +36,7 @@ describe("XServerSetupContent", () => {
     onNotNow?: () => void;
     onRetry?: () => void;
     onInstallDependency?: () => Promise<void>;
-    onGuideHomebrewInstall?: (command: string) => void | Promise<void>;
+    onGuideTerminalInstall?: (command: string, tabTitle: string) => void | Promise<void>;
     onClose?: () => void;
   }
 
@@ -57,7 +57,7 @@ describe("XServerSetupContent", () => {
           onNotNow: o.onNotNow ?? (() => {}),
           onRetry: o.onRetry ?? (() => {}),
           onInstallDependency: o.onInstallDependency ?? (() => Promise.resolve()),
-          onGuideHomebrewInstall: o.onGuideHomebrewInstall ?? (() => Promise.resolve()),
+          onGuideTerminalInstall: o.onGuideTerminalInstall ?? (() => Promise.resolve()),
           onClose: o.onClose ?? (() => {}),
         })
       );
@@ -146,8 +146,8 @@ describe("XServerSetupContent", () => {
     expect(onInstallDependency).toHaveBeenCalledTimes(1);
   });
 
-  it("offers a guided terminal install for an installMode:guidedTerminal error", async () => {
-    const onGuideHomebrewInstall = vi.fn(() => Promise.resolve());
+  it("offers a guided terminal install with a payload-driven fallback link", async () => {
+    const onGuideTerminalInstall = vi.fn(() => Promise.resolve());
     const onInstallDependency = vi.fn(() => Promise.resolve());
     const cmd = '/bin/bash -c "$(curl -fsSL https://example.test/install.sh)"';
     renderContent({
@@ -159,31 +159,33 @@ describe("XServerSetupContent", () => {
         installMode: "guidedTerminal",
         installHint: "Install Homebrew, or install XQuartz manually from xquartz.org",
         installCommand: cmd,
+        installFallbackUrl: "https://www.xquartz.org",
       },
-      onGuideHomebrewInstall,
+      onGuideTerminalInstall,
       onInstallDependency,
     });
     // The generic "Install <dep>" action is replaced by a guided install action
-    // (which opens a terminal) plus a manual xquartz.org fallback link.
+    // (which opens a terminal) plus a manual fallback link derived from the URL.
     expect(query("x-server-setup-install-dep")).toBeNull();
-    const brew = query("x-server-setup-install-homebrew");
-    expect(brew).not.toBeNull();
-    expect(brew?.textContent).toContain("Install Homebrew");
-    expect(query("x-server-setup-open-xquartz")).not.toBeNull();
+    const guided = query("x-server-setup-guided-install");
+    expect(guided?.textContent).toContain("Install Homebrew");
+    expect(query("x-server-setup-open-fallback")?.textContent).toContain("Open xquartz.org");
     await act(async () => {
-      click("x-server-setup-install-homebrew");
+      click("x-server-setup-guided-install");
       await Promise.resolve();
     });
-    expect(onGuideHomebrewInstall).toHaveBeenCalledWith(cmd);
+    // The tab title is derived from the (presentational) dependency name.
+    expect(onGuideTerminalInstall).toHaveBeenCalledWith(cmd, "Install Homebrew");
     expect(onInstallDependency).not.toHaveBeenCalled();
   });
 
-  it("keys the guided path on installMode, not the dependency name", async () => {
-    const onGuideHomebrewInstall = vi.fn(() => Promise.resolve());
+  it("keys the guided path on installMode and omits the fallback when none is provided", async () => {
+    const onGuideTerminalInstall = vi.fn(() => Promise.resolve());
     const onInstallDependency = vi.fn(() => Promise.resolve());
     const cmd = "curl -fsSL https://example.test/install.sh | sh";
-    // A dependency named anything but "Homebrew": the retired magic-string branch
-    // would miss it, but the typed installMode drives the guided terminal (#1309).
+    // A dependency named anything but "Homebrew" and with no fallback URL: the
+    // typed installMode still drives the guided terminal (#1309) and the fallback
+    // button stays absent because the payload provides none (#1312).
     renderContent({
       phase: "error",
       error: {
@@ -193,18 +195,38 @@ describe("XServerSetupContent", () => {
         installMode: "guidedTerminal",
         installCommand: cmd,
       },
-      onGuideHomebrewInstall,
+      onGuideTerminalInstall,
       onInstallDependency,
     });
     expect(query("x-server-setup-install-dep")).toBeNull();
-    const guided = query("x-server-setup-install-homebrew");
+    expect(query("x-server-setup-open-fallback")).toBeNull();
+    const guided = query("x-server-setup-guided-install");
     expect(guided?.textContent).toContain("Install Toolchain");
     await act(async () => {
-      click("x-server-setup-install-homebrew");
+      click("x-server-setup-guided-install");
       await Promise.resolve();
     });
-    expect(onGuideHomebrewInstall).toHaveBeenCalledWith(cmd);
+    expect(onGuideTerminalInstall).toHaveBeenCalledWith(cmd, "Install Toolchain");
     expect(onInstallDependency).not.toHaveBeenCalled();
+  });
+
+  it("derives the fallback button label from a non-xquartz payload URL", () => {
+    // Proves the fallback link points correctly for a second guided dependency —
+    // no hardcoded xquartz.org (#1312).
+    renderContent({
+      phase: "error",
+      error: {
+        kind: "dependencyMissing",
+        message: "Toolchain is not installed",
+        dependency: "Toolchain",
+        installMode: "guidedTerminal",
+        installCommand: "install-toolchain",
+        installFallbackUrl: "https://downloads.toolchain.example/get",
+      },
+    });
+    expect(query("x-server-setup-open-fallback")?.textContent).toContain(
+      "Open downloads.toolchain.example"
+    );
   });
 
   it("uses the backend install action when dependency is Homebrew but installMode is backend", () => {
@@ -220,15 +242,16 @@ describe("XServerSetupContent", () => {
         installCommand: "brew install --cask xquartz",
       },
     });
-    expect(query("x-server-setup-install-homebrew")).toBeNull();
-    expect(query("x-server-setup-open-xquartz")).toBeNull();
+    expect(query("x-server-setup-guided-install")).toBeNull();
+    expect(query("x-server-setup-open-fallback")).toBeNull();
     expect(query("x-server-setup-install-dep")?.textContent).toContain("Install Homebrew");
   });
 
-  it("offers external links for an installMode:guidedExternal error (Windows winget-absent)", () => {
+  it("offers App Installer + a payload-driven fallback for an installMode:guidedExternal error", () => {
     // No terminal command and no backend install: the winget-absent case opens
-    // the Store for App Installer plus a manual VcXsrv download (#1318). The
-    // generic "Install <dep>" backend action must NOT be shown (it would loop).
+    // the Store for App Installer plus the payload-driven manual VcXsrv download
+    // (#1312/#1318). The generic "Install <dep>" backend action must NOT be shown
+    // (it would loop back to winget_required).
     const onInstallDependency = vi.fn(() => Promise.resolve());
     renderContent({
       phase: "error",
@@ -238,6 +261,7 @@ describe("XServerSetupContent", () => {
         dependency: "winget",
         installMode: "guidedExternal",
         installHint: "Install App Installer, or download VcXsrv manually",
+        installFallbackUrl: "https://sourceforge.net/projects/vcxsrv/",
       },
       onInstallDependency,
     });
@@ -245,7 +269,8 @@ describe("XServerSetupContent", () => {
     const appInstaller = query("x-server-setup-install-app-installer");
     expect(appInstaller).not.toBeNull();
     expect(appInstaller?.textContent).toContain("Install App Installer");
-    expect(query("x-server-setup-open-vcxsrv")).not.toBeNull();
+    // Manual fallback is payload-driven: label derived from the URL host.
+    expect(query("x-server-setup-open-fallback")?.textContent).toContain("Open sourceforge.net");
     // Retry (re-detect winget) is always present on the error screen.
     expect(query("x-server-setup-retry")).not.toBeNull();
     expect(onInstallDependency).not.toHaveBeenCalled();
