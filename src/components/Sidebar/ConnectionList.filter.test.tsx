@@ -55,7 +55,7 @@ const baseSettings = {
   experimentalFeaturesEnabled: false,
 };
 
-function render(container: HTMLElement, root: Root) {
+function render(_container: HTMLElement, root: Root) {
   act(() => {
     root.render(
       React.createElement(TooltipProvider, {
