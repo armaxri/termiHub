@@ -1406,3 +1406,105 @@ describe("ConnectionEditor — storage-file picker (#1105)", () => {
     expect(trigger?.getAttribute("data-value")).toBeTruthy();
   });
 });
+
+/** Local connection type with a required host field, to exercise Save gating. */
+const LOCAL_REQ_TYPE: ConnectionTypeInfo = {
+  typeId: "local",
+  displayName: "Local",
+  icon: "local",
+  schema: {
+    groups: [
+      {
+        key: "connection",
+        label: "Connection",
+        fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: true }],
+      },
+    ],
+  },
+  capabilities: { monitoring: false, fileBrowser: false, resize: true, persistent: false },
+};
+
+describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
+  function setValue(el: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  async function flush() {
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+
+  function renderNew() {
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <ConnectionEditor
+            tabId="tab-gate-1"
+            meta={{ connectionId: "new", folderId: null }}
+            isVisible={true}
+          />
+        </TooltipProvider>
+      );
+    });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [],
+      connectionTypes: [LOCAL_REQ_TYPE],
+      credentialStoreStatus: { mode: "none", status: "unlocked" },
+    });
+    mockedInvoke.mockImplementation(() => Promise.resolve(false));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("does not save a new connection while name and a required field are empty", async () => {
+    renderNew();
+    await flush();
+
+    const saveBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="connection-editor-save"]'
+    )!;
+    await act(async () => saveBtn.click());
+    await flush();
+
+    expect(useAppStore.getState().connections).toHaveLength(0);
+  });
+
+  it("saves once the name and required field are filled", async () => {
+    renderNew();
+    await flush();
+
+    const nameInput = container.querySelector<HTMLInputElement>(
+      '[data-testid="connection-editor-name-input"]'
+    )!;
+    await act(async () => setValue(nameInput, "My Host"));
+    const hostInput = container.querySelector<HTMLInputElement>('[data-testid="field-host"]')!;
+    await act(async () => setValue(hostInput, "example.com"));
+    await flush();
+
+    const saveBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="connection-editor-save"]'
+    )!;
+    await act(async () => saveBtn.click());
+    await flush();
+
+    const conns = useAppStore.getState().connections;
+    expect(conns).toHaveLength(1);
+    expect(conns[0].name).toBe("My Host");
+  });
+});
