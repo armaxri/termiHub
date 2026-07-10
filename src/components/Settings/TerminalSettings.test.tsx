@@ -40,83 +40,48 @@ describe("TerminalSettings", () => {
     container.remove();
   });
 
-  it("renders the right-click behavior dropdown", () => {
-    renderWith(defaultSettings);
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const rightClickLabel = labels.find((el) => el.textContent === "Right-Click Behavior");
-    expect(rightClickLabel).toBeDefined();
+  function rightClickTrigger(): HTMLButtonElement {
+    return container.querySelector(
+      '[data-testid="settings-right-click-behavior"]'
+    ) as HTMLButtonElement;
+  }
 
-    // Find the select within the same field
-    const field = rightClickLabel?.closest(".settings-form__field");
-    const dropdown = field?.querySelector("select") as HTMLSelectElement | null;
-    expect(dropdown).not.toBeNull();
-    expect(dropdown!.value).toBe("");
+  it("renders the right-click behavior dropdown as a shared Select primitive", () => {
+    renderWith(defaultSettings);
+    const trigger = rightClickTrigger();
+    expect(trigger).not.toBeNull();
+    expect(trigger.classList.contains("ui-select__trigger")).toBe(true);
   });
 
   it("shows Platform Default when rightClickBehavior is undefined", () => {
     renderWith(defaultSettings);
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const field = labels
-      .find((el) => el.textContent === "Right-Click Behavior")
-      ?.closest(".settings-form__field");
-    const dropdown = field?.querySelector("select") as HTMLSelectElement;
-    expect(dropdown.value).toBe("");
+    // Radix renders the selected option's label into the trigger.
+    expect(rightClickTrigger().textContent).toContain("Platform Default");
   });
 
   it("reflects contextMenu setting value", () => {
     renderWith({ ...defaultSettings, rightClickBehavior: "contextMenu" });
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const field = labels
-      .find((el) => el.textContent === "Right-Click Behavior")
-      ?.closest(".settings-form__field");
-    const dropdown = field?.querySelector("select") as HTMLSelectElement;
-    expect(dropdown.value).toBe("contextMenu");
+    expect(rightClickTrigger().textContent).toContain("Context Menu");
   });
 
   it("reflects quickAction setting value", () => {
     renderWith({ ...defaultSettings, rightClickBehavior: "quickAction" });
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const field = labels
-      .find((el) => el.textContent === "Right-Click Behavior")
-      ?.closest(".settings-form__field");
-    const dropdown = field?.querySelector("select") as HTMLSelectElement;
-    expect(dropdown.value).toBe("quickAction");
+    expect(rightClickTrigger().textContent).toContain("Quick Copy/Paste");
   });
 
-  it("calls onChange with quickAction when selecting Quick Copy/Paste", () => {
-    const onChange = renderWith(defaultSettings);
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const field = labels
-      .find((el) => el.textContent === "Right-Click Behavior")
-      ?.closest(".settings-form__field");
-    const dropdown = field?.querySelector("select") as HTMLSelectElement;
-
+  it("lists every right-click option when opened", () => {
+    renderWith(defaultSettings);
+    const trigger = rightClickTrigger();
     act(() => {
-      dropdown.value = "quickAction";
-      dropdown.dispatchEvent(new Event("change", { bubbles: true }));
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ rightClickBehavior: "quickAction" })
+    const labels = Array.from(document.querySelectorAll('[role="option"]')).map(
+      (o) => o.textContent
     );
-  });
-
-  it("calls onChange with undefined when selecting Platform Default", () => {
-    const onChange = renderWith({ ...defaultSettings, rightClickBehavior: "contextMenu" });
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const field = labels
-      .find((el) => el.textContent === "Right-Click Behavior")
-      ?.closest(".settings-form__field");
-    const dropdown = field?.querySelector("select") as HTMLSelectElement;
-
-    act(() => {
-      dropdown.value = "";
-      dropdown.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ rightClickBehavior: undefined })
-    );
+    expect(labels.join(" ")).toContain("Platform Default");
+    expect(labels.join(" ")).toContain("Context Menu");
+    expect(labels.join(" ")).toContain("Quick Copy/Paste");
   });
 
   it("hides right-click behavior when visibleFields excludes it", () => {
@@ -164,6 +129,30 @@ describe("TerminalSettings", () => {
       ?.closest(".settings-form__field");
     const input = field?.querySelector("input[type='number']") as HTMLInputElement;
     expect(input.value).toBe("25000");
+  });
+
+  it("renders the cursor style as a shared Select reflecting the value", () => {
+    renderWith({ ...defaultSettings, cursorStyle: "underline" });
+    const trigger = container.querySelector(
+      '[data-testid="settings-cursor-style"]'
+    ) as HTMLButtonElement;
+    expect(trigger).not.toBeNull();
+    expect(trigger.classList.contains("ui-select__trigger")).toBe(true);
+    expect(trigger.textContent).toContain("Underline");
+  });
+
+  it("renders the cursor blink control as a shared Toggle and flips onChange", () => {
+    const onChange = renderWith({ ...defaultSettings, cursorBlink: true });
+    const label = Array.from(container.querySelectorAll(".settings-form__label")).find(
+      (el) => el.textContent === "Cursor Blink"
+    );
+    const toggle = label?.closest(".settings-form__field")?.querySelector('[role="switch"]') as
+      | HTMLElement
+      | undefined;
+    expect(toggle).toBeTruthy();
+    expect(toggle!.getAttribute("aria-checked")).toBe("true");
+    act(() => toggle!.click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ cursorBlink: false }));
   });
 
   it("hint text mentions memory", () => {

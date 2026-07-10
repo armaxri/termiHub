@@ -84,5 +84,39 @@ export const AGENT_SCHEMA: SettingsSchema = {
         },
       ],
     },
+    {
+      key: "updates",
+      label: "Updates",
+      fields: [
+        {
+          key: "updateStrategy",
+          label: "Update Strategy",
+          fieldType: {
+            type: "select",
+            options: [
+              { value: "immediate", label: "Immediate (shut down & redeploy)" },
+              { value: "coordinated", label: "Coordinated (notify connected hosts)" },
+              { value: "deferred", label: "Deferred (apply on last disconnect)" },
+            ],
+          },
+          required: false,
+          default: "immediate",
+          description:
+            "How this agent's binary is updated when a newer desktop version deploys. " +
+            "Only Immediate is active today; Coordinated and Deferred are saved and take " +
+            "effect once those subsystems land.",
+        },
+        {
+          key: "allowSelfUpdate",
+          label: "Allow agent self-update",
+          fieldType: { type: "boolean" },
+          required: false,
+          default: false,
+          description:
+            "Let the agent check GitHub and update itself in the background. Opt-in; the " +
+            "self-update mechanism is not yet implemented, so this only persists the preference.",
+        },
+      ],
+    },
   ],
 };

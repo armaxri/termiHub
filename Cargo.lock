@@ -7125,6 +7125,7 @@ dependencies = [
  "hex",
  "if-addrs",
  "keyring",
+ "libc",
  "libunftp",
  "objc2-foundation",
  "portable-pty",

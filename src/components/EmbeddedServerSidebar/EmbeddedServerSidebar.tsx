@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
@@ -77,14 +78,15 @@ export function EmbeddedServerSidebar() {
   return (
     <div className="server-sidebar" data-testid="server-sidebar">
       <div className="server-sidebar__actions">
-        <button
-          className="server-sidebar__add-btn"
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Plus size={14} />}
           onClick={handleNew}
           data-testid="server-new-btn"
         >
-          <Plus size={14} />
           New Service
-        </button>
+        </Button>
       </div>
 
       {servers.length === 0 ? (

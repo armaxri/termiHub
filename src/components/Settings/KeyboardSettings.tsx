@@ -12,7 +12,7 @@ import {
   getOverrides,
 } from "@/services/keybindings";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
-import { Tooltip } from "@/components/ui";
+import { Button, Toggle, Tooltip } from "@/components/ui";
 import "./KeyboardSettings.css";
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
@@ -151,14 +151,14 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         />
       </div>
 
-      <label
+      <div
         className="keyboard-settings__passthrough"
         data-testid="keyboard-settings-passthrough-label"
       >
-        <input
-          type="checkbox"
+        <Toggle
+          aria-label="Pass through shell keys when terminal is focused"
           checked={passthroughEnabled}
-          onChange={handleTogglePassthrough}
+          onCheckedChange={handleTogglePassthrough}
           data-testid="keyboard-settings-passthrough"
         />
         <span>
@@ -168,16 +168,16 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
             terminal instead of triggering an app shortcut while a terminal pane has focus.
           </small>
         </span>
-      </label>
+      </div>
 
-      <label
+      <div
         className="keyboard-settings__passthrough"
         data-testid="keyboard-settings-editor-delegation-label"
       >
-        <input
-          type="checkbox"
+        <Toggle
+          aria-label="Let editor tabs handle their own editing shortcuts"
           checked={editorDelegationEnabled}
-          onChange={handleToggleEditorDelegation}
+          onCheckedChange={handleToggleEditorDelegation}
           data-testid="keyboard-settings-editor-delegation"
         />
         <span>
@@ -187,7 +187,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
             editor or input instead of the global app while an editor tab is active.
           </small>
         </span>
-      </label>
+      </div>
 
       {conflictWarning && (
         <div className="keyboard-settings__conflict" data-testid="keyboard-settings-conflict">
@@ -230,24 +230,26 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
       ))}
 
       <div className="keyboard-settings__actions">
-        <button
-          className="keyboard-settings__reset-all"
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<RotateCcw size={14} />}
           onClick={handleResetAll}
           data-testid="keyboard-settings-reset-all"
           title="Restore the built-in defaults, which are chosen to avoid common shell, tmux, vim, and SSH conflicts on Windows and Linux."
         >
-          <RotateCcw size={14} />
           Reset to Safer Defaults
-        </button>
-        <button
-          className="keyboard-settings__export-pdf"
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Download size={14} />}
           onClick={() => void exportCheatSheet()}
           data-testid="keyboard-settings-export-pdf"
           title="Save a one-page HTML cheat sheet of all shortcuts"
         >
-          <Download size={14} />
           Save HTML Cheat Sheet
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -321,14 +323,15 @@ function KeybindingRow({
       </td>
       <td className="keyboard-settings__reset-cell">
         <Tooltip content="Reset to default">
-          <button
-            className="keyboard-settings__reset-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<RotateCcw size={12} />}
             onClick={onReset}
             aria-label="Reset to default"
             data-testid={`keybinding-reset-${binding.action}`}
-          >
-            <RotateCcw size={12} />
-          </button>
+          />
         </Tooltip>
       </td>
     </tr>

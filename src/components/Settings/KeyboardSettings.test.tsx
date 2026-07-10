@@ -124,16 +124,17 @@ describe("KeyboardSettings", () => {
     renderComponent();
     const toggle = container.querySelector(
       '[data-testid="keyboard-settings-editor-delegation"]'
-    ) as HTMLInputElement;
+    ) as HTMLElement;
     expect(toggle).not.toBeNull();
-    expect(toggle.checked).toBe(true);
+    // The shared Toggle (Radix Switch) exposes aria-checked, not a native `checked`.
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
   it("persists the editor-delegation setting when toggled off", async () => {
     renderComponent();
     const toggle = container.querySelector(
       '[data-testid="keyboard-settings-editor-delegation"]'
-    ) as HTMLInputElement;
+    ) as HTMLElement;
 
     await act(async () => {
       toggle.click();
