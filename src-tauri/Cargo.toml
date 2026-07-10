@@ -67,6 +67,10 @@ unftp-sbe-fs = "0.2"
 # base crate always provides the `mock` backend used in unit tests.
 keyring = { version = "3", default-features = false }
 
+[target.'cfg(unix)'.dependencies]
+# Resolve the current uid for the per-user spawn socket path (#1364).
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString"] }
 # macOS Keychain backend for the `keyring` crate.

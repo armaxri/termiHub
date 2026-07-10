@@ -8,6 +8,7 @@ mod embedded_servers;
 pub mod files;
 mod network;
 mod session;
+mod spawn;
 mod terminal;
 mod tunnel;
 mod utils;
@@ -63,8 +64,51 @@ fn build_xserver_manager() -> terminal::xserver::XServerManager {
     )
 }
 
+/// Handle a `termiHub spawn ...` invocation detected from the raw process
+/// arguments before Tauri initialises (#1364).
+///
+/// A `--new-window` request always launches a fresh instance; otherwise the
+/// request is forwarded to an already-running instance over the per-user IPC
+/// rendezvous. On a successful forward the process exits. If no instance is
+/// reachable (or the endpoint cannot be resolved), the request is returned so
+/// the caller can launch as the running instance and handle it in `setup()`.
+fn handle_spawn_command(request: spawn::SpawnRequest) -> Option<spawn::SpawnRequest> {
+    if request.new_window {
+        return Some(request);
+    }
+
+    let endpoint = match spawn::SpawnEndpoint::for_current_user() {
+        Ok(endpoint) => endpoint,
+        Err(e) => {
+            eprintln!("Could not resolve spawn endpoint: {e}");
+            return Some(request);
+        }
+    };
+
+    match spawn::forward_to_running_instance(&endpoint, &request) {
+        Ok(_response) => std::process::exit(0),
+        Err(_) => Some(request),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Pre-init CLI routing: `spawn` / `(un)install-shell-integration` must be
+    // handled from the raw args before the Tauri window is created, since
+    // `cli().matches()` is only available inside `setup()` (#1364). A spawn
+    // request this instance must handle itself (no running instance accepted
+    // the forward) is threaded into `setup()` via `pending_spawn`.
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let pending_spawn = match spawn::classify_command(&raw_args) {
+        spawn::Command::Spawn(request) => handle_spawn_command(request),
+        spawn::Command::InstallShellIntegration | spawn::Command::UninstallShellIntegration => {
+            // Registration lands in a later epic issue (SI-5/6/7).
+            eprintln!("Shell integration registration is not yet implemented.");
+            std::process::exit(0);
+        }
+        spawn::Command::None => None,
+    };
+
     let log_buffer = create_log_buffer();
     let capture_layer = LogCaptureLayer::new(log_buffer.clone());
     let app_handle_slot = capture_layer.app_handle_slot();
@@ -419,6 +463,42 @@ pub fn run() {
                             std::process::exit(0);
                         }
                     }
+                }
+            }
+
+            // Start the spawn IPC rendezvous server (#1364). It accepts
+            // SpawnRequests from `termiHub spawn` invocations by other processes
+            // and re-emits them as a `spawn-request` event for the frontend to
+            // act on (session handling itself is out of scope here). Best-effort:
+            // if another instance already owns the endpoint, this instance simply
+            // isn't the rendezvous and continues normally (multi-instance).
+            match spawn::SpawnEndpoint::for_current_user() {
+                Ok(endpoint) => {
+                    let emit_handle = app.handle().clone();
+                    let handler: spawn::SpawnHandler =
+                        Arc::new(move |req: spawn::SpawnRequest| match emit_handle
+                            .emit("spawn-request", &req)
+                        {
+                            Ok(()) => spawn::SpawnResponse::accepted(),
+                            Err(e) => {
+                                tracing::warn!("failed to emit spawn-request event: {e}");
+                                spawn::SpawnResponse::error(format!("emit failed: {e}"))
+                            }
+                        });
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = spawn::ipc_server::serve(&endpoint, handler).await {
+                            tracing::warn!("spawn IPC server stopped: {e}");
+                        }
+                    });
+                }
+                Err(e) => tracing::warn!("could not start spawn IPC server: {e}"),
+            }
+
+            // Process a spawn request this instance launched to handle itself
+            // (no running instance accepted the pre-init forward).
+            if let Some(req) = &pending_spawn {
+                if let Err(e) = app.handle().emit("spawn-request", req) {
+                    tracing::warn!("failed to emit pending spawn-request: {e}");
                 }
             }
 
