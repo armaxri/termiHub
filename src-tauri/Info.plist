@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Partial Info.plist merged into the generated macOS app bundle by tauri-bundler
+  (it auto-discovers `src-tauri/Info.plist`; tauri.conf.json has no NSServices
+  field). Declares the app-level "Open in termiHub" Services-menu entry so the
+  integration is discoverable in file managers that surface app Services rather
+  than Automator Quick Actions. The per-entry Automator Quick Action bundles
+  written to ~/Library/Services by spawn/registry.rs (#1369) are the primary,
+  fully self-contained path.
+-->
+<plist version="1.0">
+  <dict>
+    <key>NSServices</key>
+    <array>
+      <dict>
+        <key>NSMenuItem</key>
+        <dict>
+          <key>default</key>
+          <string>Open in termiHub</string>
+        </dict>
+        <key>NSMessage</key>
+        <string>openInTermiHub</string>
+        <key>NSSendFileTypes</key>
+        <array>
+          <string>public.folder</string>
+          <string>public.item</string>
+        </array>
+      </dict>
+    </array>
+  </dict>
+</plist>
