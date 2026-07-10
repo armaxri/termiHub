@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { validateIntRange, validatePort, validateHost, isValidHttpUrl } from "./fieldValidation";
+import {
+  validateIntRange,
+  validatePort,
+  validateHost,
+  isValidHttpUrl,
+  validateMac,
+} from "./fieldValidation";
 
 describe("validateIntRange", () => {
   it("accepts an in-range integer", () => {
@@ -84,5 +90,32 @@ describe("isValidHttpUrl", () => {
     expect(isValidHttpUrl("ftp://example.com")).toBe(false);
     expect(isValidHttpUrl("not a url")).toBe(false);
     expect(isValidHttpUrl("example.com")).toBe(false);
+  });
+});
+
+describe("validateMac", () => {
+  it("accepts colon- and hyphen-separated MAC addresses", () => {
+    expect(validateMac("AA:BB:CC:DD:EE:FF")).toBeNull();
+    expect(validateMac("aa:bb:cc:dd:ee:ff")).toBeNull();
+    expect(validateMac("01-23-45-67-89-AB")).toBeNull();
+    expect(validateMac("  00:11:22:33:44:55  ")).toBeNull();
+  });
+
+  it("rejects an empty value", () => {
+    expect(validateMac("")).toBe("MAC address is required");
+    expect(validateMac("   ")).toBe("MAC address is required");
+    expect(validateMac(null)).toBe("MAC address is required");
+    expect(validateMac(undefined)).toBe("MAC address is required");
+  });
+
+  it("rejects malformed MAC addresses", () => {
+    // Wrong group count / length
+    expect(validateMac("AA:BB:CC:DD:EE")).not.toBeNull();
+    expect(validateMac("AA:BB:CC:DD:EE:FF:00")).not.toBeNull();
+    // Non-hex characters
+    expect(validateMac("GG:BB:CC:DD:EE:FF")).not.toBeNull();
+    // Mixed / missing separators
+    expect(validateMac("AABBCCDDEEFF")).not.toBeNull();
+    expect(validateMac("AA:BB-CC:DD:EE:FF")).not.toBeNull();
   });
 });
