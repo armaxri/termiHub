@@ -28,7 +28,7 @@ import {
   JumpHostConfig,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
-import { Button, Input, Select, Toggle } from "@/components/ui";
+import { Button, Input, Select, Toggle, toast } from "@/components/ui";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
   buildDefaults,
@@ -601,37 +601,36 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [rootPanel, tabId, closeTab]);
 
-  /** Save agent definition to the remote agent. Returns true on success. */
+  /**
+   * Save agent definition to the remote agent. Returns true on success.
+   * Rejections propagate so the calling async Button surfaces a recoverable
+   * error toast instead of the save failing silently.
+   */
   const saveAgentDefinition = useCallback(async (): Promise<boolean> => {
     if (!name.trim() || !existingAgent) return false;
-    try {
-      const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
-      if (existingAgentDef) {
-        await updateAgentDef(existingAgent.id, {
-          id: existingAgentDef.id,
-          name: name.trim(),
-          session_type: selectedType,
-          config: connSettings,
-          persistent,
-          terminal_options: opts ?? null,
-          icon: icon ?? null,
-        });
-      } else {
-        await saveAgentDef(existingAgent.id, {
-          name: name.trim(),
-          type: selectedType,
-          config: connSettings,
-          persistent,
-          folder_id: meta.agentFolderId ?? null,
-          terminal_options: opts,
-          icon,
-        });
-      }
-      return true;
-    } catch (err) {
-      console.error("Failed to save agent definition:", err);
-      return false;
+    const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
+    if (existingAgentDef) {
+      await updateAgentDef(existingAgent.id, {
+        id: existingAgentDef.id,
+        name: name.trim(),
+        session_type: selectedType,
+        config: connSettings,
+        persistent,
+        terminal_options: opts ?? null,
+        icon: icon ?? null,
+      });
+    } else {
+      await saveAgentDef(existingAgent.id, {
+        name: name.trim(),
+        type: selectedType,
+        config: connSettings,
+        persistent,
+        folder_id: meta.agentFolderId ?? null,
+        terminal_options: opts,
+        icon,
+      });
     }
+    return true;
   }, [
     name,
     selectedType,
@@ -760,17 +759,29 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     });
   }, [addTab]);
 
-  /** Save without closing. Returns true on success. */
+  /**
+   * Save without closing. Returns true on success. On failure the underlying
+   * save rejects, which propagates to the calling async Button so it surfaces a
+   * recoverable error toast (rather than the save failing silently).
+   */
   const handleSaveOnly = useCallback(async (): Promise<boolean> => {
     if (!canSave) {
       focusFirstInvalidField();
       return false;
     }
-    if (isAgentDefinitionMode) {
-      return saveAgentDefinition();
+    const ok = isAgentDefinitionMode ? await saveAgentDefinition() : saveConnection() !== null;
+    if (ok) {
+      toast.success(`Saved "${name.trim()}"`);
     }
-    return saveConnection() !== null;
-  }, [canSave, focusFirstInvalidField, isAgentDefinitionMode, saveAgentDefinition, saveConnection]);
+    return ok;
+  }, [
+    canSave,
+    focusFirstInvalidField,
+    isAgentDefinitionMode,
+    saveAgentDefinition,
+    saveConnection,
+    name,
+  ]);
 
   const handleSave = useCallback(async () => {
     if (await handleSaveOnly()) {

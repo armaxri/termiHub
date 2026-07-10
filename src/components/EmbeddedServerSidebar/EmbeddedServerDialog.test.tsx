@@ -67,8 +67,10 @@ describe("EmbeddedServerDialog", () => {
     expect(bind?.getAttribute("data-value")).toBe("127.0.0.1");
   });
 
-  it("Save is disabled until name + root are set, then fires onSave with the config", () => {
-    const onSave = vi.fn();
+  it("Save is disabled until name + root are set, then fires onSave with the config", async () => {
+    // onSave resolves true (saved) so the dialog closes; a false/rejected result
+    // keeps it open (covered by EmbeddedServerSidebar's feedback tests).
+    const onSave = vi.fn(() => Promise.resolve(true));
     const onOpenChange = vi.fn();
     render(<EmbeddedServerDialog {...baseProps} onSave={onSave} onOpenChange={onOpenChange} />);
 
@@ -87,7 +89,11 @@ describe("EmbeddedServerDialog", () => {
     );
 
     expect(saveBtn.disabled).toBe(false);
-    act(() => saveBtn.click());
+    await act(async () => {
+      saveBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave.mock.calls[0][0]).toMatchObject({
