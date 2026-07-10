@@ -523,7 +523,6 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | ------- | ---------------- | ------ |
 | `*-*` | `${rowTestIdPrefix}-${index}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `*-close` | `${testIdPrefix}-close` | `src/components/OpenConnections/XServerSetupContent.tsx` |
-| `*-confirm` | `${testId}-confirm` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `*-copy` | `${testIdPrefix}-copy` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-name` | `${testIdPrefix}-copy-name` | `src/components/Sidebar/FileBrowser.tsx` |
 | `*-copy-path` | `${testIdPrefix}-copy-path` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -629,6 +628,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `monitoring-interval-*` | `monitoring-interval-${opt}` | `src/components/StatusBar/StatusBar.tsx` |
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `oc-agent-disconnect-*` | `oc-agent-disconnect-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `oc-agent-shutdown-*` | `oc-agent-shutdown-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `persistent-attach-*` | `persistent-attach-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-start-*` | `persistent-start-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-stop-*` | `persistent-stop-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
@@ -679,7 +679,7 @@ where the component is used, not at the `data-testid` site.
 
 | expression | source |
 | ---------- | ------ |
-| `{confirmTestId}` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
+| `{confirmTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{dontAskAgain["data-testid"] ?? "confirm-dialog-dont-ask-again"}` | `src/components/ui/ConfirmDialog.tsx` |
 | `{footerTestId}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
@@ -690,7 +690,6 @@ where the component is used, not at the `data-testid` site.
 | `{rest["data-testid"]}` | `src/components/ui/ConfirmDialog.tsx`, `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
 | `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx` |
-| `{testId ? `${testId}-confirm` : undefined}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |

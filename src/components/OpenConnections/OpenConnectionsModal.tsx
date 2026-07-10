@@ -646,11 +646,19 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                         Disconnect
                       </Button>
                     </Tooltip>
-                    <ShutdownAgentButton
-                      agentName={a.name}
+                    <ConfirmButton
+                      icon={<Power size={14} />}
+                      ariaLabel={`Shutdown (stop remote) ${a.name}`}
+                      tooltip="Stop remote sessions and disconnect"
+                      data-testid={`oc-agent-shutdown-${a.id}`}
+                      confirmTitle={`Shut down ${a.name}?`}
+                      confirmMessage={`This stops all remote sessions on “${a.name}” and disconnects. This cannot be undone.`}
+                      confirmLabel="Shutdown"
+                      confirmTestId={`oc-agent-shutdown-${a.id}-confirm`}
                       onConfirm={() => handleShutdownAgent(a.id)}
-                      testId={`oc-agent-shutdown-${a.id}`}
-                    />
+                    >
+                      Shutdown
+                    </ConfirmButton>
                   </div>
                 }
               />
@@ -897,44 +905,72 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
 // ── Internal sub-components ───────────────────────────────────────────────
 
-interface ShutdownAgentButtonProps {
-  agentName: string;
+interface ConfirmButtonProps {
+  children: React.ReactNode;
+  /** Accessible label for the trigger button. */
+  ariaLabel: string;
+  /** Tooltip content for the trigger. */
+  tooltip: string;
+  /** Optional leading icon. */
+  icon?: React.ReactNode;
+  /** Extra class on the trigger button. */
+  className?: string;
+  /** Test hook for the trigger button. */
+  "data-testid"?: string;
+  confirmTitle: string;
+  confirmMessage: string;
+  confirmLabel: string;
+  /** Test hook for the confirmation dialog. */
+  confirmTestId?: string;
   onConfirm: () => void | Promise<void>;
-  testId: string;
 }
 
 /**
- * The agent "Shutdown" action — stopping remote sessions and disconnecting is
- * irreversible, so it confirms first (#1343). Keeps the async {@link Button}
- * feedback on the confirm path and the existing tooltip on the trigger.
+ * A danger action button that confirms before running its irreversible teardown
+ * (#1343). Shared by the section "Kill All" controls and the agent "Shutdown"
+ * action so the confirm-then-run pattern lives in one place. Keeps the trigger
+ * tooltip and the async {@link Button} feedback on the confirmed path.
  */
-function ShutdownAgentButton({ agentName, onConfirm, testId }: ShutdownAgentButtonProps) {
+function ConfirmButton({
+  children,
+  ariaLabel,
+  tooltip,
+  icon,
+  className,
+  "data-testid": testId,
+  confirmTitle,
+  confirmMessage,
+  confirmLabel,
+  confirmTestId,
+  onConfirm,
+}: ConfirmButtonProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   return (
     <>
-      <Tooltip content="Stop remote sessions and disconnect" side="top">
+      <Tooltip content={tooltip} side="top">
         <Button
           variant="danger"
           size="sm"
-          icon={<Power size={14} />}
+          icon={icon}
+          className={className}
           onClick={() => setConfirmOpen(true)}
-          aria-label={`Shutdown (stop remote) ${agentName}`}
+          aria-label={ariaLabel}
           data-testid={testId}
         >
-          Shutdown
+          {children}
         </Button>
       </Tooltip>
       <ConfirmDialog
         open={confirmOpen}
-        title={`Shut down ${agentName}?`}
-        message={`This stops all remote sessions on “${agentName}” and disconnects. This cannot be undone.`}
-        confirmLabel="Shutdown"
+        title={confirmTitle}
+        message={confirmMessage}
+        confirmLabel={confirmLabel}
         onConfirm={() => {
           setConfirmOpen(false);
           void onConfirm();
         }}
         onCancel={() => setConfirmOpen(false)}
-        data-testid={`${testId}-confirm`}
+        data-testid={confirmTestId}
       />
     </>
   );
@@ -961,7 +997,6 @@ function Section({
   children,
 }: SectionProps) {
   // Bulk teardown is irreversible — confirm before running it (#1343).
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const noun = count === 1 ? "item" : "items";
   return (
     <div data-testid={testId}>
@@ -969,34 +1004,21 @@ function Section({
         <span className="oc-section__title">{title}</span>
         {count > 0 && <span className="oc-section__count">{count}</span>}
         {onKillAll && (
-          <Tooltip content={`${killAllLabel} ${title}`} side="top">
-            <Button
-              variant="danger"
-              size="sm"
-              className="oc-section__kill-all"
-              onClick={() => setConfirmOpen(true)}
-              aria-label={`${killAllLabel} ${title}`}
-            >
-              {killAllLabel}
-            </Button>
-          </Tooltip>
+          <ConfirmButton
+            className="oc-section__kill-all"
+            ariaLabel={`${killAllLabel} ${title}`}
+            tooltip={`${killAllLabel} ${title}`}
+            confirmTitle={`${killAllLabel} — ${title}?`}
+            confirmMessage={`This will stop ${count} ${noun} in “${title}”. This cannot be undone.`}
+            confirmLabel={killAllLabel}
+            confirmTestId={testId ? `${testId}-confirm` : undefined}
+            onConfirm={onKillAll}
+          >
+            {killAllLabel}
+          </ConfirmButton>
         )}
       </div>
       {children}
-      {onKillAll && (
-        <ConfirmDialog
-          open={confirmOpen}
-          title={`${killAllLabel} — ${title}?`}
-          message={`This will stop ${count} ${noun} in “${title}”. This cannot be undone.`}
-          confirmLabel={killAllLabel}
-          onConfirm={() => {
-            setConfirmOpen(false);
-            void onKillAll();
-          }}
-          onCancel={() => setConfirmOpen(false)}
-          data-testid={testId ? `${testId}-confirm` : undefined}
-        />
-      )}
     </div>
   );
 }

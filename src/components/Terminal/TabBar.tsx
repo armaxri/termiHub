@@ -59,30 +59,31 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
       if (!window.confirm("This file has unsaved changes. Close anyway?")) return;
     }
 
+    if (!tab) {
+      closeTab(tabId, panelId);
+      return;
+    }
+
     // Warn before the X / middle-click tears down a live session — unless the
     // user opted out via "Don't ask again". The keyboard close path is gated
     // separately by `confirmCloseTabOnShortcut`.
-    if (tab) {
-      const isLive = tabHasLiveSession(tab, {
-        terminalExitedTabs: state.terminalExitedTabs,
-        terminalSpawnErrors: state.terminalSpawnErrors,
+    const isLive = tabHasLiveSession(tab, {
+      terminalExitedTabs: state.terminalExitedTabs,
+      terminalSpawnErrors: state.terminalSpawnErrors,
+    });
+    if (isLive && state.settings.confirmCloseLiveSession !== false) {
+      setPendingSessionCloseConfirm({
+        kind: "tab",
+        tabId,
+        panelId,
+        label: tab.title,
+        reopen: reopenPayloadForTab(tab),
       });
-      if (isLive && state.settings.confirmCloseLiveSession !== false) {
-        setPendingSessionCloseConfirm({
-          kind: "tab",
-          tabId,
-          panelId,
-          label: tab.title,
-          reopen: reopenPayloadForTab(tab),
-        });
-        return;
-      }
-      closeTab(tabId, panelId);
-      showReopenToast(reopenPayloadForTab(tab));
       return;
     }
 
     closeTab(tabId, panelId);
+    showReopenToast(reopenPayloadForTab(tab));
   };
 
   const renameTabData = renameTabId ? tabs.find((t) => t.id === renameTabId) : null;

@@ -18,7 +18,7 @@ import {
   NetworkTool,
   TabGroup,
   TerminalExitInfo,
-  ReopenTabPayload,
+  SessionCloseConfirmRequest,
 } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import {
@@ -427,28 +427,8 @@ interface AppState {
    * The `tab` variant carries an optional `reopen` payload so the follow-up
    * toast can offer an Undo/Reopen affordance when the connection is known.
    */
-  pendingSessionCloseConfirm:
-    | {
-        kind: "tab";
-        tabId: string;
-        panelId: string;
-        label: string;
-        reopen: ReopenTabPayload | null;
-      }
-    | { kind: "panel"; panelId: string; liveCount: number; tabCount: number }
-    | null;
-  setPendingSessionCloseConfirm: (
-    req:
-      | {
-          kind: "tab";
-          tabId: string;
-          panelId: string;
-          label: string;
-          reopen: ReopenTabPayload | null;
-        }
-      | { kind: "panel"; panelId: string; liveCount: number; tabCount: number }
-      | null
-  ) => void;
+  pendingSessionCloseConfirm: SessionCloseConfirmRequest | null;
+  setPendingSessionCloseConfirm: (req: SessionCloseConfirmRequest | null) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;

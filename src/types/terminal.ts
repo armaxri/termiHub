@@ -215,6 +215,15 @@ export interface ReopenTabPayload {
   config: ConnectionConfig;
 }
 
+/**
+ * A pending confirmation before tearing down a live session by closing a tab
+ * (X / middle-click) or a split panel. The `tab` variant carries the optional
+ * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen.
+ */
+export type SessionCloseConfirmRequest =
+  | { kind: "tab"; tabId: string; panelId: string; label: string; reopen: ReopenTabPayload | null }
+  | { kind: "panel"; panelId: string; liveCount: number; tabCount: number };
+
 export interface LeafPanel {
   type: "leaf";
   id: string;
