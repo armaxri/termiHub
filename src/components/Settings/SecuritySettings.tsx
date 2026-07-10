@@ -4,7 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button, toast } from "@/components/ui";
+import { Button, Select, toast } from "@/components/ui";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -348,23 +348,22 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             <div className="settings-panel__section">
               <h3 className="settings-panel__section-title">Master Password Options</h3>
 
-              <label className="settings-form__field">
+              <div className="settings-form__field">
                 <span className="settings-form__label">Auto-Lock Timeout</span>
-                <select
+                <Select
+                  aria-label="Auto-Lock Timeout"
                   data-testid="auto-lock-timeout"
-                  value={settings.credentialAutoLockMinutes ?? 15}
-                  onChange={(e) => handleAutoLockChange(Number(e.target.value))}
-                >
-                  {AUTO_LOCK_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+                  value={String(settings.credentialAutoLockMinutes ?? 15)}
+                  onChange={(value) => handleAutoLockChange(Number(value))}
+                  options={AUTO_LOCK_OPTIONS.map((opt) => ({
+                    value: String(opt.value),
+                    label: opt.label,
+                  }))}
+                />
                 <span className="settings-form__hint">
                   Lock the credential store after a period of inactivity.
                 </span>
-              </label>
+              </div>
 
               <div className="settings-panel__field">
                 <Button

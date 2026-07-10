@@ -5,7 +5,11 @@ import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
 import { isWindows } from "@/utils/platform";
+import { Select, SelectItem, Toggle } from "@/components/ui";
 import { KeyPathInput } from "./KeyPathInput";
+
+/** Sentinel value for the "platform default" shell option (Radix Select forbids empty-string item values). */
+const PLATFORM_DEFAULT_SHELL = "__platform_default__";
 
 const SHELL_LABELS: Record<string, string> = {
   bash: "Bash",
@@ -82,46 +86,50 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         )}
 
         {show("defaultShell") && (
-          <label className="settings-form__field">
+          <div className="settings-form__field">
             <span className="settings-form__label">Default Shell</span>
-            <select
-              value={settings.defaultShell ?? ""}
-              onChange={(e) => onChange({ ...settings, defaultShell: e.target.value || undefined })}
+            <Select
+              aria-label="Default Shell"
+              data-testid="settings-default-shell"
+              value={settings.defaultShell ?? PLATFORM_DEFAULT_SHELL}
+              onChange={(value) =>
+                onChange({
+                  ...settings,
+                  defaultShell: value === PLATFORM_DEFAULT_SHELL ? undefined : value,
+                })
+              }
             >
-              <option value="">
+              <SelectItem value={PLATFORM_DEFAULT_SHELL}>
                 Platform default (
                 {getShellLabel(platformDefaultShell, platformDefaultShell).replace(
                   " (platform default)",
                   ""
                 )}
                 )
-              </option>
+              </SelectItem>
               {availableShells.map((shell) => (
-                <option key={shell} value={shell}>
+                <SelectItem key={shell} value={shell}>
                   {getShellLabel(shell, platformDefaultShell)}
-                </option>
+                </SelectItem>
               ))}
-            </select>
+            </Select>
             <span className="settings-form__hint">
               Default shell for new local terminal sessions.
             </span>
-          </label>
+          </div>
         )}
 
         {show("confirmCloseTabOnShortcut") && (
           <div className="settings-form__field">
             <span className="settings-form__label">Confirm Close Tab on Shortcut</span>
-            <label className="settings-panel__toggle">
-              <input
-                type="checkbox"
-                checked={settings.confirmCloseTabOnShortcut ?? true}
-                onChange={(e) =>
-                  onChange({ ...settings, confirmCloseTabOnShortcut: e.target.checked })
-                }
-                data-testid="settings-confirm-close-tab-on-shortcut"
-              />
-              <span className="settings-panel__toggle-slider" />
-            </label>
+            <Toggle
+              aria-label="Confirm Close Tab on Shortcut"
+              checked={settings.confirmCloseTabOnShortcut ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, confirmCloseTabOnShortcut: checked })
+              }
+              data-testid="settings-confirm-close-tab-on-shortcut"
+            />
             <span className="settings-form__hint">
               Ask for confirmation when closing a tab or tab group via keyboard shortcut. The X
               button on tabs is unaffected.
@@ -132,17 +140,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         {show("experimentalFeaturesEnabled") && (
           <div className="settings-form__field">
             <span className="settings-form__label">Allow Experimental Features</span>
-            <label className="settings-panel__toggle">
-              <input
-                type="checkbox"
-                checked={settings.experimentalFeaturesEnabled ?? false}
-                onChange={(e) =>
-                  onChange({ ...settings, experimentalFeaturesEnabled: e.target.checked })
-                }
-                data-testid="settings-experimental-features"
-              />
-              <span className="settings-panel__toggle-slider" />
-            </label>
+            <Toggle
+              aria-label="Allow Experimental Features"
+              checked={settings.experimentalFeaturesEnabled ?? false}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, experimentalFeaturesEnabled: checked })
+              }
+              data-testid="settings-experimental-features"
+            />
             <span className="settings-form__hint settings-form__hint--warning">
               Enables hidden features under active development. Experimental features may change,
               break, or be removed at any time without notice.
@@ -153,17 +158,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         {show("restoreLastSessionOnStartup") && (
           <div className="settings-form__field">
             <span className="settings-form__label">Restore Last Session on Startup</span>
-            <label className="settings-panel__toggle">
-              <input
-                type="checkbox"
-                checked={settings.restoreLastSessionOnStartup ?? true}
-                onChange={(e) =>
-                  onChange({ ...settings, restoreLastSessionOnStartup: e.target.checked })
-                }
-                data-testid="settings-restore-last-session"
-              />
-              <span className="settings-panel__toggle-slider" />
-            </label>
+            <Toggle
+              aria-label="Restore Last Session on Startup"
+              checked={settings.restoreLastSessionOnStartup ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, restoreLastSessionOnStartup: checked })
+              }
+              data-testid="settings-restore-last-session"
+            />
             <span className="settings-form__hint">
               Reopen the tabs and panel layout from your previous session when the app starts.
               Sessions that can no longer reconnect are shown in a disconnected state.
@@ -179,17 +181,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("defaultShellIntegration") && (
             <div className="settings-form__field">
               <span className="settings-form__label">Shell Integration by Default</span>
-              <label className="settings-panel__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.defaultShellIntegration ?? true}
-                  onChange={(e) =>
-                    onChange({ ...settings, defaultShellIntegration: e.target.checked })
-                  }
-                  data-testid="settings-default-shell-integration"
-                />
-                <span className="settings-panel__toggle-slider" />
-              </label>
+              <Toggle
+                aria-label="Shell Integration by Default"
+                checked={settings.defaultShellIntegration ?? true}
+                onCheckedChange={(checked) =>
+                  onChange({ ...settings, defaultShellIntegration: checked })
+                }
+                data-testid="settings-default-shell-integration"
+              />
               <span className="settings-form__hint">
                 Pre-enable Shell Integration (OSC 7 CWD tracking) for new SSH connections.
               </span>
@@ -199,17 +198,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("defaultX11Forwarding") && (
             <div className="settings-form__field">
               <span className="settings-form__label">X11 Forwarding by Default</span>
-              <label className="settings-panel__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.defaultX11Forwarding ?? true}
-                  onChange={(e) =>
-                    onChange({ ...settings, defaultX11Forwarding: e.target.checked })
-                  }
-                  data-testid="settings-default-x11-forwarding"
-                />
-                <span className="settings-panel__toggle-slider" />
-              </label>
+              <Toggle
+                aria-label="X11 Forwarding by Default"
+                checked={settings.defaultX11Forwarding ?? true}
+                onCheckedChange={(checked) =>
+                  onChange({ ...settings, defaultX11Forwarding: checked })
+                }
+                data-testid="settings-default-x11-forwarding"
+              />
               <span className="settings-form__hint">
                 Pre-enable X11 Forwarding for new SSH connections.
               </span>
@@ -225,17 +221,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("provideXServerAutomatically") && (
             <div className="settings-form__field">
               <span className="settings-form__label">Provide X Server Automatically</span>
-              <label className="settings-panel__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.provideXServerAutomatically ?? isWindows()}
-                  onChange={(e) =>
-                    onChange({ ...settings, provideXServerAutomatically: e.target.checked })
-                  }
-                  data-testid="settings-provide-x-server"
-                />
-                <span className="settings-panel__toggle-slider" />
-              </label>
+              <Toggle
+                aria-label="Provide X Server Automatically"
+                checked={settings.provideXServerAutomatically ?? isWindows()}
+                onCheckedChange={(checked) =>
+                  onChange({ ...settings, provideXServerAutomatically: checked })
+                }
+                data-testid="settings-provide-x-server"
+              />
               <span className="settings-form__hint">
                 Windows: download &amp; run VcXsrv automatically. macOS/Linux: use the
                 detected/guided server.
@@ -246,15 +239,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("stopXServerWhenIdle") && (
             <div className="settings-form__field">
               <span className="settings-form__label">Stop X Server When Idle</span>
-              <label className="settings-panel__toggle">
-                <input
-                  type="checkbox"
-                  checked={settings.stopXServerWhenIdle ?? true}
-                  onChange={(e) => onChange({ ...settings, stopXServerWhenIdle: e.target.checked })}
-                  data-testid="settings-stop-x-server-idle"
-                />
-                <span className="settings-panel__toggle-slider" />
-              </label>
+              <Toggle
+                aria-label="Stop X Server When Idle"
+                checked={settings.stopXServerWhenIdle ?? true}
+                onCheckedChange={(checked) =>
+                  onChange({ ...settings, stopXServerWhenIdle: checked })
+                }
+                data-testid="settings-stop-x-server-idle"
+              />
               <span className="settings-form__hint">
                 Shut the managed X server down once no connection is using it.
               </span>

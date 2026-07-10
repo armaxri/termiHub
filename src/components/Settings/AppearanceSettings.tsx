@@ -1,4 +1,5 @@
 import { AppSettings } from "@/types/connection";
+import { Select } from "@/components/ui";
 
 const DEFAULT_FONT_FAMILY =
   "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
@@ -16,31 +17,28 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Appearance</h3>
       {show("theme") && (
-        <label className="settings-form__field">
+        <div className="settings-form__field">
           <span className="settings-form__label">Theme</span>
-          <select
+          <Select
+            aria-label="Theme"
             data-testid="appearance-theme-select"
             value={settings.theme ?? "dark"}
-            onChange={(e) =>
+            onChange={(value) =>
               onChange({
                 ...settings,
-                theme: e.target.value as
-                  | "dark"
-                  | "light"
-                  | "solarized-dark"
-                  | "solarized-light"
-                  | "system",
+                theme: value as "dark" | "light" | "solarized-dark" | "solarized-light" | "system",
               })
             }
-          >
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-            <option value="solarized-dark">Solarized Dark</option>
-            <option value="solarized-light">Solarized Light</option>
-            <option value="system">System</option>
-          </select>
+            options={[
+              { value: "dark", label: "Dark" },
+              { value: "light", label: "Light" },
+              { value: "solarized-dark", label: "Solarized Dark" },
+              { value: "solarized-light", label: "Solarized Light" },
+              { value: "system", label: "System" },
+            ]}
+          />
           <span className="settings-form__hint">Application color theme.</span>
-        </label>
+        </div>
       )}
       {show("fontFamily") && (
         <label className="settings-form__field">

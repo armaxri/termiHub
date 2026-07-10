@@ -1,6 +1,10 @@
 import { AppSettings } from "@/types/connection";
 import { LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
+import { Select, Toggle } from "@/components/ui";
+
+/** Sentinel for the "platform default" right-click option (Radix Select forbids empty-string item values). */
+const RIGHT_CLICK_PLATFORM_DEFAULT = "__platform_default__";
 
 interface TerminalSettingsProps {
   settings: AppSettings;
@@ -17,16 +21,13 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
       {show("defaultHorizontalScrolling") && (
         <div className="settings-form__field">
           <span className="settings-form__label">Default Horizontal Scrolling</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.defaultHorizontalScrolling ?? false}
-              onChange={(e) =>
-                onChange({ ...settings, defaultHorizontalScrolling: e.target.checked })
-              }
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            aria-label="Default Horizontal Scrolling"
+            checked={settings.defaultHorizontalScrolling ?? false}
+            onCheckedChange={(checked) =>
+              onChange({ ...settings, defaultHorizontalScrolling: checked })
+            }
+          />
           <span className="settings-form__hint">
             Enable horizontal scrolling for new terminals by default.
           </span>
@@ -54,54 +55,51 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
       {show("cursorStyle") && (
         <label className="settings-form__field">
           <span className="settings-form__label">Cursor Style</span>
-          <select
+          <Select
+            aria-label="Cursor Style"
+            data-testid="settings-cursor-style"
             value={settings.cursorStyle ?? "block"}
-            onChange={(e) =>
+            onChange={(value) =>
               onChange({
                 ...settings,
-                cursorStyle: e.target.value as "block" | "underline" | "bar",
+                cursorStyle: value as "block" | "underline" | "bar",
               })
             }
-          >
-            <option value="block">Block</option>
-            <option value="underline">Underline</option>
-            <option value="bar">Bar</option>
-          </select>
+            options={[
+              { value: "block", label: "Block" },
+              { value: "underline", label: "Underline" },
+              { value: "bar", label: "Bar" },
+            ]}
+          />
           <span className="settings-form__hint">Terminal cursor shape.</span>
         </label>
       )}
       {show("cursorBlink") && (
         <div className="settings-form__field">
           <span className="settings-form__label">Cursor Blink</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.cursorBlink ?? true}
-              onChange={(e) => onChange({ ...settings, cursorBlink: e.target.checked })}
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            aria-label="Cursor Blink"
+            checked={settings.cursorBlink ?? true}
+            onCheckedChange={(checked) => onChange({ ...settings, cursorBlink: checked })}
+          />
           <span className="settings-form__hint">Whether the terminal cursor blinks.</span>
         </div>
       )}
       {show("defaultLineEnding") && (
         <label className="settings-form__field">
           <span className="settings-form__label">Line Ending (Enter &amp; Paste)</span>
-          <select
+          <Select
+            aria-label="Line Ending (Enter & Paste)"
+            data-testid="settings-line-ending"
             value={settings.defaultLineEnding ?? DEFAULT_LINE_ENDING}
-            onChange={(e) =>
+            onChange={(value) =>
               onChange({
                 ...settings,
-                defaultLineEnding: e.target.value as LineEnding,
+                defaultLineEnding: value as LineEnding,
               })
             }
-          >
-            {LINE_ENDING_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            options={LINE_ENDING_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+          />
           <span className="settings-form__hint">
             Sequence sent when pressing Enter and used to normalize line endings in pasted text.
             Prevents Windows CRLF from inserting blank lines on Unix shells and serial devices. Can
@@ -112,22 +110,25 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
       {show("rightClickBehavior") && (
         <label className="settings-form__field">
           <span className="settings-form__label">Right-Click Behavior</span>
-          <select
-            value={settings.rightClickBehavior ?? ""}
-            onChange={(e) =>
+          <Select
+            aria-label="Right-Click Behavior"
+            data-testid="settings-right-click-behavior"
+            value={settings.rightClickBehavior ?? RIGHT_CLICK_PLATFORM_DEFAULT}
+            onChange={(value) =>
               onChange({
                 ...settings,
                 rightClickBehavior:
-                  e.target.value === ""
+                  value === RIGHT_CLICK_PLATFORM_DEFAULT
                     ? undefined
-                    : (e.target.value as "contextMenu" | "quickAction"),
+                    : (value as "contextMenu" | "quickAction"),
               })
             }
-          >
-            <option value="">Platform Default</option>
-            <option value="contextMenu">Context Menu</option>
-            <option value="quickAction">Quick Copy/Paste</option>
-          </select>
+            options={[
+              { value: RIGHT_CLICK_PLATFORM_DEFAULT, label: "Platform Default" },
+              { value: "contextMenu", label: "Context Menu" },
+              { value: "quickAction", label: "Quick Copy/Paste" },
+            ]}
+          />
           <span className="settings-form__hint">
             Context Menu shows the full right-click menu. Quick Copy/Paste copies selected text or
             pastes if nothing is selected. Default: Context Menu on macOS/Linux, Quick Copy/Paste on
@@ -138,15 +139,12 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
       {show("askOpenSavedFileInTab") && (
         <div className="settings-form__field">
           <span className="settings-form__label">Open Saved File in Tab</span>
-          <label className="settings-panel__toggle">
-            <input
-              type="checkbox"
-              checked={settings.askOpenSavedFileInTab ?? true}
-              onChange={(e) => onChange({ ...settings, askOpenSavedFileInTab: e.target.checked })}
-              data-testid="settings-ask-open-saved-file-in-tab"
-            />
-            <span className="settings-panel__toggle-slider" />
-          </label>
+          <Toggle
+            aria-label="Open Saved File in Tab"
+            checked={settings.askOpenSavedFileInTab ?? true}
+            onCheckedChange={(checked) => onChange({ ...settings, askOpenSavedFileInTab: checked })}
+            data-testid="settings-ask-open-saved-file-in-tab"
+          />
           <span className="settings-form__hint">
             After saving terminal content to a file, ask whether to open it in an editor tab. When
             off, files are saved without prompting and are not opened.
