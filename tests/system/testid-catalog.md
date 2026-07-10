@@ -158,9 +158,13 @@ Fixed strings — match exactly.
 | `external-files-add` | `src/components/Settings/ExternalFilesSettings.tsx` |
 | `field-error` | `src/components/ui/Field.tsx` |
 | `file-browser-cd-here` | `src/components/Sidebar/FileBrowser.tsx` |
-| `file-browser-current-path` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-crumb` | `src/components/Sidebar/FileBrowserPathBar.tsx` |
 | `file-browser-disconnect` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-drop-hint` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-filter` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-filter-clear` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-go-to-cwd` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-list` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-file` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-file-confirm` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-file-input` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -168,8 +172,11 @@ Fixed strings — match exactly.
 | `file-browser-new-folder-confirm` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-new-folder-input` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-paste` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-path-edit` | `src/components/Sidebar/FileBrowserPathBar.tsx` |
+| `file-browser-path-input` | `src/components/Sidebar/FileBrowserPathBar.tsx` |
 | `file-browser-placeholder` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-refresh` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-browser-selected-count` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-session-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-connecting` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-sftp-dismiss` | `src/components/Sidebar/FileBrowser.tsx` |
@@ -566,6 +573,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `field-*-key-*` | `field-${field.key}-key-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-remove-*` | `field-${field.key}-remove-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
 | `field-*-value-*` | `field-${field.key}-value-${index}` | `src/components/DynamicForm/DynamicField.tsx` |
+| `file-browser-sort-*` | `file-browser-sort-${col}` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-row-*` | `file-row-${entry.name}` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-row-menu-*` | `file-row-menu-${entry.name}` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-type-copy-*` | `file-type-copy-${pattern}` | `src/components/Settings/FileTypeSettings.tsx` |
