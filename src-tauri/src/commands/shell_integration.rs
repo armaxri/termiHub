@@ -19,7 +19,7 @@ fn current_status(manager: &ConnectionManager) -> ShellIntegrationStatus {
     let portable = detect_app_mode()
         .map(|mode| mode.is_portable())
         .unwrap_or(false);
-    let detected = shell_integration::detect_file_managers();
+    let detected = registry::detect_file_managers();
 
     shell_integration::build_status(
         &settings.shell_integration,

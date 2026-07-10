@@ -1305,16 +1305,34 @@ mod imp {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::{DetectedFileManager, ShellIntegrationSettings};
+    use crate::connection::shell_integration::ShellEntry;
     use anyhow::{Context, Result};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    /// Filename prefix for the `.desktop` files termiHub owns (XDG + KDE).
+    const DESKTOP_PREFIX: &str = "termihub-";
+    /// Marker line stamped into every `.desktop` file so uninstall removes only
+    /// termiHub-owned files and never foreign ones.
+    const DESKTOP_MARKER: &str = "X-TermiHub-Managed=true";
+    /// Marker comment stamped into every Nautilus script. Nautilus script files
+    /// are named after the display name (no prefix), so ownership is detected
+    /// from the file contents.
+    const NAUTILUS_MARKER: &str =
+        "# termiHub shell integration (managed) — safe to remove via termiHub";
+    /// `unique-id` prefix identifying termiHub's Thunar actions inside the shared
+    /// `uca.xml`; used to de-append ours while preserving foreign actions.
+    const THUNAR_ID_PREFIX: &str = "termihub-";
+    /// Icon name referenced by every generated launcher/action.
+    const ICON: &str = "termihub";
 
     /// Best-effort callback that refreshes the desktop MIME database after the
     /// XDG launchers change. Injected so tests can assert it ran without
     /// spawning the real `update-desktop-database` binary.
     type DesktopDbHook = Arc<dyn Fn(&Path) + Send + Sync>;
 
-    /// Spawn `update-desktop-database <apps_dir>`, ignoring any failure.
+    /// Spawn `update-desktop-database <apps_dir>`, ignoring any failure (the
+    /// tool is absent on minimal systems and the registration still works).
     fn run_update_desktop_database(apps_dir: &Path) {
         let _ = std::process::Command::new("update-desktop-database")
             .arg(apps_dir)
@@ -1322,16 +1340,16 @@ mod linux {
     }
 
     /// Writes and removes the Linux file-manager artifacts under a set of XDG
-    /// base directories. Implementation lands in the following commit; this
-    /// scaffold exists so the behaviour tests below fail meaningfully first.
+    /// base directories.
+    ///
+    /// `data_local` (`~/.local/share`) and `config` (`~/.config`) are injectable
+    /// so tests target throwaway directories instead of the user's real ones.
     pub struct Registrar {
-        #[allow(dead_code)]
         data_local: PathBuf,
-        #[allow(dead_code)]
         config: PathBuf,
-        #[allow(dead_code)]
+        /// Whether detection may consult `$PATH` for file-manager binaries.
+        /// Disabled in tests so detection depends only on the injected dirs.
         probe_path: bool,
-        #[allow(dead_code)]
         on_desktop_db_update: DesktopDbHook,
     }
 
@@ -1350,7 +1368,8 @@ mod linux {
         }
 
         /// Registrar targeting throwaway directories so a test never touches the
-        /// user's real file-manager configuration.
+        /// user's real file-manager configuration. Detection is limited to the
+        /// injected dirs (no `$PATH` probing) for determinism.
         #[cfg(test)]
         pub fn for_test(data_local: PathBuf, config: PathBuf, hook: DesktopDbHook) -> Self {
             Self {
@@ -1361,19 +1380,539 @@ mod linux {
             }
         }
 
-        /// Report the file managers detected on this host (not yet implemented).
+        // ── Directory layout ────────────────────────────────────────────
+
+        fn applications_dir(&self) -> PathBuf {
+            self.data_local.join("applications")
+        }
+        fn nautilus_scripts_dir(&self) -> PathBuf {
+            self.data_local.join("nautilus/scripts")
+        }
+        fn kde5_dir(&self) -> PathBuf {
+            self.data_local.join("kservices5/ServiceMenus")
+        }
+        fn kde6_dir(&self) -> PathBuf {
+            self.data_local.join("kio/servicemenus")
+        }
+        fn thunar_dir(&self) -> PathBuf {
+            self.config.join("Thunar")
+        }
+        fn thunar_uca(&self) -> PathBuf {
+            self.thunar_dir().join("uca.xml")
+        }
+
+        // ── Detection ───────────────────────────────────────────────────
+
+        fn has_binary(&self, name: &str) -> bool {
+            self.probe_path && which::which(name).is_ok()
+        }
+        fn nautilus_detected(&self) -> bool {
+            self.has_binary("nautilus")
+                || self.nautilus_scripts_dir().exists()
+                || self.data_local.join("nautilus").exists()
+        }
+        fn kde_detected(&self) -> bool {
+            self.has_binary("dolphin") || self.kde5_dir().exists() || self.kde6_dir().exists()
+        }
+        fn thunar_detected(&self) -> bool {
+            self.has_binary("thunar") || self.thunar_dir().exists()
+        }
+
+        /// Report the file managers detected on this host for the status command.
         pub fn detect(&self) -> Vec<DetectedFileManager> {
-            Vec::new()
+            let mk = |id: &str, name: &str, detected: bool| DetectedFileManager {
+                id: id.to_string(),
+                name: name.to_string(),
+                detected,
+                version: None,
+            };
+            vec![
+                mk("nautilus", "Nautilus", self.nautilus_detected()),
+                mk("kde", "Dolphin", self.kde_detected()),
+                mk("thunar", "Thunar", self.thunar_detected()),
+            ]
         }
 
-        /// Install the enabled + detected surfaces (not yet implemented).
-        pub fn install(&self, _settings: &ShellIntegrationSettings, _exe_path: &str) -> Result<()> {
-            anyhow::bail!("Linux file-manager registration not yet implemented (#1370)")
+        // ── Install / uninstall ─────────────────────────────────────────
+
+        /// Install the enabled + detected surfaces (idempotent — a prior
+        /// registration is cleared first).
+        pub fn install(&self, settings: &ShellIntegrationSettings, exe_path: &str) -> Result<()> {
+            self.uninstall()?;
+            let entries = &settings.entries;
+            if entries.is_empty() {
+                return Ok(());
+            }
+            self.install_xdg(entries, exe_path)?;
+            let toggles = settings.linux_file_managers;
+            if toggles.nautilus && self.nautilus_detected() {
+                self.install_nautilus(entries, exe_path)?;
+            }
+            if toggles.kde && self.kde_detected() {
+                self.install_kde(entries, exe_path)?;
+            }
+            if toggles.thunar && self.thunar_detected() {
+                self.install_thunar(entries, exe_path)?;
+            }
+            Ok(())
         }
 
-        /// Remove every termiHub artifact (not yet implemented).
+        /// Remove every termiHub artifact across all four surfaces. Foreign
+        /// files and foreign Thunar actions are left untouched. Never fails when
+        /// nothing is registered.
         pub fn uninstall(&self) -> Result<()> {
-            anyhow::bail!("Linux file-manager registration not yet implemented (#1370)")
+            self.remove_xdg()?;
+            self.remove_nautilus()?;
+            self.remove_kde()?;
+            self.remove_thunar()?;
+            Ok(())
+        }
+
+        // ── XDG .desktop (universal "Open With") ────────────────────────
+
+        fn install_xdg(&self, entries: &[ShellEntry], exe_path: &str) -> Result<()> {
+            let dir_entries: Vec<&ShellEntry> = entries
+                .iter()
+                .filter(|e| e.show_for.folders || e.show_for.folder_background)
+                .collect();
+            if dir_entries.is_empty() {
+                return Ok(());
+            }
+            let apps = self.applications_dir();
+            std::fs::create_dir_all(&apps)
+                .with_context(|| format!("create applications dir {}", apps.display()))?;
+            for entry in &dir_entries {
+                let path = apps.join(format!("{DESKTOP_PREFIX}{}.desktop", slug(entry)));
+                std::fs::write(&path, xdg_desktop_file(entry, exe_path))
+                    .with_context(|| format!("write XDG desktop file {}", path.display()))?;
+            }
+            (self.on_desktop_db_update)(&apps);
+            Ok(())
+        }
+
+        fn remove_xdg(&self) -> Result<()> {
+            let apps = self.applications_dir();
+            let removed = remove_managed_files(&apps, Some(DESKTOP_PREFIX), DESKTOP_MARKER)?;
+            if removed && apps.exists() {
+                (self.on_desktop_db_update)(&apps);
+            }
+            Ok(())
+        }
+
+        // ── Nautilus scripts (GNOME) ────────────────────────────────────
+
+        fn install_nautilus(&self, entries: &[ShellEntry], exe_path: &str) -> Result<()> {
+            let dir = self.nautilus_scripts_dir();
+            std::fs::create_dir_all(&dir)
+                .with_context(|| format!("create nautilus scripts dir {}", dir.display()))?;
+            for entry in entries {
+                let path = dir.join(nautilus_script_name(entry));
+                std::fs::write(&path, nautilus_script(entry, exe_path))
+                    .with_context(|| format!("write nautilus script {}", path.display()))?;
+                set_executable(&path)?;
+            }
+            Ok(())
+        }
+
+        fn remove_nautilus(&self) -> Result<()> {
+            remove_managed_files(&self.nautilus_scripts_dir(), None, NAUTILUS_MARKER)?;
+            Ok(())
+        }
+
+        // ── KDE service menus (Dolphin) ─────────────────────────────────
+
+        fn install_kde(&self, entries: &[ShellEntry], exe_path: &str) -> Result<()> {
+            // Write into whichever service-menu dirs already exist (KDE 5 and/or
+            // KDE 6). If detection succeeded via the binary but no dir exists
+            // yet, default to the modern KDE 6 location.
+            let mut targets: Vec<PathBuf> = Vec::new();
+            if self.kde5_dir().exists() {
+                targets.push(self.kde5_dir());
+            }
+            if self.kde6_dir().exists() {
+                targets.push(self.kde6_dir());
+            }
+            if targets.is_empty() {
+                targets.push(self.kde6_dir());
+            }
+            for dir in targets {
+                std::fs::create_dir_all(&dir)
+                    .with_context(|| format!("create KDE service-menu dir {}", dir.display()))?;
+                for entry in entries {
+                    let path = dir.join(format!("{DESKTOP_PREFIX}{}.desktop", slug(entry)));
+                    std::fs::write(&path, kde_service_menu(entry, exe_path))
+                        .with_context(|| format!("write KDE service menu {}", path.display()))?;
+                }
+            }
+            Ok(())
+        }
+
+        fn remove_kde(&self) -> Result<()> {
+            for dir in [self.kde5_dir(), self.kde6_dir()] {
+                remove_managed_files(&dir, Some(DESKTOP_PREFIX), DESKTOP_MARKER)?;
+            }
+            Ok(())
+        }
+
+        // ── Thunar custom action (XFCE) ─────────────────────────────────
+
+        fn install_thunar(&self, entries: &[ShellEntry], exe_path: &str) -> Result<()> {
+            let uca = self.thunar_uca();
+            std::fs::create_dir_all(self.thunar_dir()).with_context(|| {
+                format!("create Thunar config dir {}", self.thunar_dir().display())
+            })?;
+            let existing = std::fs::read_to_string(&uca).ok();
+            let ours: Vec<thunar::Action> = entries
+                .iter()
+                .map(|entry| thunar::Action {
+                    name: entry.name.clone(),
+                    unique_id: format!("{THUNAR_ID_PREFIX}{}", slug(entry)),
+                    command: spawn_command(exe_path, &entry.id, "%f"),
+                    directories: entry.show_for.folders || entry.show_for.folder_background,
+                    other_files: entry.show_for.files,
+                })
+                .collect();
+            let xml = thunar::rewrite(existing.as_deref(), &ours, THUNAR_ID_PREFIX)
+                .context("rebuild Thunar uca.xml")?;
+            std::fs::write(&uca, xml)
+                .with_context(|| format!("write Thunar uca.xml {}", uca.display()))?;
+            Ok(())
+        }
+
+        fn remove_thunar(&self) -> Result<()> {
+            let uca = self.thunar_uca();
+            let Some(existing) = std::fs::read_to_string(&uca).ok() else {
+                return Ok(());
+            };
+            let xml = thunar::rewrite(Some(&existing), &[], THUNAR_ID_PREFIX)
+                .context("strip termiHub actions from Thunar uca.xml")?;
+            std::fs::write(&uca, xml)
+                .with_context(|| format!("write Thunar uca.xml {}", uca.display()))?;
+            Ok(())
+        }
+    }
+
+    /// Remove files in `dir` that termiHub owns: matching `name_prefix` (when
+    /// given) and containing `content_marker`. Returns whether anything was
+    /// removed. Tolerates a missing directory.
+    fn remove_managed_files(
+        dir: &Path,
+        name_prefix: Option<&str>,
+        content_marker: &str,
+    ) -> Result<bool> {
+        if !dir.exists() {
+            return Ok(false);
+        }
+        let mut removed = false;
+        for dir_entry in
+            std::fs::read_dir(dir).with_context(|| format!("read dir {}", dir.display()))?
+        {
+            let path = dir_entry
+                .with_context(|| format!("enumerate dir {}", dir.display()))?
+                .path();
+            if !path.is_file() {
+                continue;
+            }
+            if let Some(prefix) = name_prefix {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !name.starts_with(prefix) {
+                    continue;
+                }
+            }
+            let is_ours = std::fs::read_to_string(&path)
+                .map(|c| c.contains(content_marker))
+                .unwrap_or(false);
+            if is_ours {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("remove {}", path.display()))?;
+                removed = true;
+            }
+        }
+        Ok(removed)
+    }
+
+    /// The spawn command line invoked by a surface, with the clicked path
+    /// substituted via `placeholder` (`%f` for desktop/Thunar, `"$1"` for
+    /// Nautilus scripts).
+    fn spawn_command(exe_path: &str, entry_id: &str, placeholder: &str) -> String {
+        format!(r#""{exe_path}" spawn --entry-id {entry_id} --location {placeholder}"#)
+    }
+
+    /// Filesystem-safe slug for an entry id: lowercase ASCII alphanumerics, all
+    /// other characters collapsed to `-`. Falls back to `entry` when empty.
+    fn slug(entry: &ShellEntry) -> String {
+        let mapped: String = entry
+            .id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let trimmed = mapped.trim_matches('-');
+        if trimmed.is_empty() {
+            "entry".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    /// Nautilus script filename — the display name shown in the Scripts submenu,
+    /// with path separators replaced. Falls back to the slug when empty.
+    fn nautilus_script_name(entry: &ShellEntry) -> String {
+        let sanitized: String = entry
+            .name
+            .chars()
+            .map(|c| match c {
+                '/' | '\\' => '-',
+                other => other,
+            })
+            .collect();
+        let trimmed = sanitized.trim();
+        if trimmed.is_empty() {
+            slug(entry)
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    /// Escape a value for a Desktop Entry key: strip the newlines that would
+    /// otherwise split the key/value line.
+    fn desktop_value(value: &str) -> String {
+        value.replace(['\n', '\r'], " ")
+    }
+
+    /// Render the universal XDG `.desktop` launcher registering termiHub for the
+    /// `inode/directory` MIME type. `NoDisplay=true` keeps it out of the app
+    /// menu — it only surfaces under "Open With" for folders.
+    fn xdg_desktop_file(entry: &ShellEntry, exe_path: &str) -> String {
+        format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name={name}\n\
+             Exec={exec}\n\
+             Icon={ICON}\n\
+             Terminal=false\n\
+             NoDisplay=true\n\
+             MimeType=inode/directory;\n\
+             {DESKTOP_MARKER}\n",
+            name = desktop_value(&entry.name),
+            exec = spawn_command(exe_path, &entry.id, "%f"),
+        )
+    }
+
+    /// Render a Nautilus script: a POSIX shell wrapper that spawns termiHub for
+    /// the first selected path. Carries the owner marker for uninstall.
+    fn nautilus_script(entry: &ShellEntry, exe_path: &str) -> String {
+        format!(
+            "#!/bin/sh\n\
+             {NAUTILUS_MARKER}\n\
+             {command}\n",
+            command = spawn_command(exe_path, &entry.id, "\"$1\""),
+        )
+    }
+
+    /// Render a KDE service-menu `.desktop` (KService plugin) exposing the entry
+    /// on the folder context menu. Carries the owner marker for uninstall.
+    fn kde_service_menu(entry: &ShellEntry, exe_path: &str) -> String {
+        format!(
+            "[Desktop Entry]\n\
+             Type=Service\n\
+             ServiceTypes=KonqPopupMenu/Plugin\n\
+             MimeType=inode/directory;\n\
+             Actions=termihubOpen;\n\
+             {DESKTOP_MARKER}\n\
+             \n\
+             [Desktop Action termihubOpen]\n\
+             Name={name}\n\
+             Icon={ICON}\n\
+             Exec={exec}\n",
+            name = desktop_value(&entry.name),
+            exec = spawn_command(exe_path, &entry.id, "%f"),
+        )
+    }
+
+    /// Set mode `0o755` on `path` (Unix only; a no-op on other targets).
+    #[cfg(unix)]
+    fn set_executable(path: &Path) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .with_context(|| format!("stat {}", path.display()))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms)
+            .with_context(|| format!("chmod 0o755 {}", path.display()))?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn set_executable(_path: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    /// Thunar `uca.xml` editing via a streaming XML reader/writer. termiHub's
+    /// actions are appended to the shared file and de-appended on uninstall,
+    /// preserving every foreign action already present.
+    mod thunar {
+        use anyhow::{Context, Result};
+        use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+        use quick_xml::{Reader, Writer};
+
+        /// One termiHub custom action to embed in `uca.xml`.
+        pub struct Action {
+            pub name: String,
+            pub unique_id: String,
+            pub command: String,
+            /// Show for directories.
+            pub directories: bool,
+            /// Show for regular files.
+            pub other_files: bool,
+        }
+
+        /// Produce the new `uca.xml` content: preserve every foreign `<action>`,
+        /// drop any prior termiHub action (unique-id starting `our_id_prefix`),
+        /// then append `ours`. A `None`/blank/invalid `existing` yields a fresh
+        /// document containing only `ours`.
+        pub fn rewrite(
+            existing: Option<&str>,
+            ours: &[Action],
+            our_id_prefix: &str,
+        ) -> Result<String> {
+            let mut writer = Writer::new(Vec::new());
+            writer
+                .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+                .context("write xml decl")?;
+            writer
+                .write_event(Event::Start(BytesStart::new("actions")))
+                .context("write <actions>")?;
+            if let Some(xml) = existing {
+                copy_foreign_actions(xml, our_id_prefix, &mut writer)?;
+            }
+            for action in ours {
+                write_action(&mut writer, action)?;
+            }
+            writer
+                .write_event(Event::End(BytesEnd::new("actions")))
+                .context("write </actions>")?;
+            let bytes = writer.into_inner();
+            let mut out = String::from_utf8(bytes).context("uca.xml is not valid UTF-8")?;
+            out.push('\n');
+            Ok(out)
+        }
+
+        /// Stream the existing document and replay each top-level `<action>`
+        /// subtree into `out`, except those termiHub owns (unique-id prefixed).
+        fn copy_foreign_actions(
+            xml: &str,
+            our_id_prefix: &str,
+            out: &mut Writer<Vec<u8>>,
+        ) -> Result<()> {
+            let mut reader = Reader::from_str(xml);
+            // Depth relative to the <actions> root: 0 = outside, 1 = inside
+            // <actions>, 2 = inside an <action> subtree we are buffering.
+            let mut depth = 0usize;
+            let mut buffered: Vec<Event<'_>> = Vec::new();
+            let mut is_ours = false;
+            let mut in_unique_id = false;
+
+            loop {
+                let event = reader.read_event().context("parse uca.xml")?;
+                match &event {
+                    Event::Eof => break,
+                    Event::Decl(_) => {}
+                    Event::Start(e) if e.name().as_ref() == b"actions" && depth == 0 => {
+                        depth = 1;
+                    }
+                    Event::End(e) if e.name().as_ref() == b"actions" && depth == 1 => {
+                        depth = 0;
+                    }
+                    Event::Start(e) if e.name().as_ref() == b"action" && depth == 1 => {
+                        depth = 2;
+                        buffered.clear();
+                        is_ours = false;
+                        in_unique_id = false;
+                        buffered.push(event.clone());
+                    }
+                    Event::End(e) if e.name().as_ref() == b"action" && depth == 2 => {
+                        buffered.push(event.clone());
+                        if !is_ours {
+                            for buffered_event in buffered.drain(..) {
+                                out.write_event(buffered_event)
+                                    .context("copy foreign action")?;
+                            }
+                        } else {
+                            buffered.clear();
+                        }
+                        depth = 1;
+                    }
+                    _ if depth == 2 => {
+                        match &event {
+                            Event::Start(e) if e.name().as_ref() == b"unique-id" => {
+                                in_unique_id = true;
+                            }
+                            Event::End(e) if e.name().as_ref() == b"unique-id" => {
+                                in_unique_id = false;
+                            }
+                            Event::Text(t) if in_unique_id => {
+                                if let Ok(text) = t.xml_content() {
+                                    if text.trim().starts_with(our_id_prefix) {
+                                        is_ours = true;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        buffered.push(event.clone());
+                    }
+                    // Insignificant whitespace / comments between actions: drop.
+                    _ => {}
+                }
+            }
+            Ok(())
+        }
+
+        /// Write one termiHub `<action>` element.
+        fn write_action(writer: &mut Writer<Vec<u8>>, action: &Action) -> Result<()> {
+            writer
+                .write_event(Event::Start(BytesStart::new("action")))
+                .context("write <action>")?;
+            text_element(writer, "icon", super::ICON)?;
+            text_element(writer, "name", &action.name)?;
+            text_element(writer, "unique-id", &action.unique_id)?;
+            text_element(writer, "command", &action.command)?;
+            text_element(writer, "description", "Open in termiHub")?;
+            text_element(writer, "patterns", "*")?;
+            if action.directories {
+                writer
+                    .write_event(Event::Empty(BytesStart::new("directories")))
+                    .context("write <directories/>")?;
+            }
+            if action.other_files {
+                writer
+                    .write_event(Event::Empty(BytesStart::new("other-files")))
+                    .context("write <other-files/>")?;
+            }
+            writer
+                .write_event(Event::End(BytesEnd::new("action")))
+                .context("write </action>")?;
+            Ok(())
+        }
+
+        /// Write `<name>value</name>`, escaping `value` via the writer.
+        fn text_element(writer: &mut Writer<Vec<u8>>, name: &str, value: &str) -> Result<()> {
+            writer
+                .write_event(Event::Start(BytesStart::new(name)))
+                .with_context(|| format!("write <{name}>"))?;
+            writer
+                .write_event(Event::Text(BytesText::new(value)))
+                .with_context(|| format!("write text for <{name}>"))?;
+            writer
+                .write_event(Event::End(BytesEnd::new(name)))
+                .with_context(|| format!("write </{name}>"))?;
+            Ok(())
         }
     }
 
