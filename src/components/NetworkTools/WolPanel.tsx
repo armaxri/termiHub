@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, toast, Modal, Field, Input } from "@/components/ui";
 import {
   networkWolSend,
   networkWolDevicesList,
@@ -10,7 +10,7 @@ import {
 import type { WolDevice } from "@/types/network";
 import { NetworkNumberField } from "./NetworkNumberField";
 import { NetworkTextField } from "./NetworkTextField";
-import { validatePort, validateHost } from "@/utils/fieldValidation";
+import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface WolHistoryEntry {
@@ -31,6 +31,10 @@ export function WolPanel() {
   const [history, setHistory] = useState<WolHistoryEntry[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+
+  const macError = validateMac(mac);
 
   const loadDevices = useCallback(async () => {
     try {
@@ -74,10 +78,15 @@ export function WolPanel() {
     }
   }, []);
 
-  const handleSaveDevice = useCallback(async () => {
+  const openSaveModal = useCallback(() => {
     if (!canSend) return;
-    const name = window.prompt("Device name:");
-    if (!name) return;
+    setSaveName("");
+    setSaveModalOpen(true);
+  }, [canSend]);
+
+  const handleConfirmSave = useCallback(async () => {
+    const name = saveName.trim();
+    if (!name || macError) return;
     try {
       await networkWolDeviceSave({
         id: crypto.randomUUID(),
@@ -87,13 +96,15 @@ export function WolPanel() {
         port: Number(port),
       });
       await loadDevices();
+      setSaveModalOpen(false);
       toast.success(`Saved device "${name}"`);
     } catch (err) {
       setError(String(err));
       frontendLog("wol_panel", `WoL device save failed: ${err}`);
       toast.error(`Save failed: ${err}`);
+      throw err; // keep the async Button in its error path (no success flash)
     }
-  }, [mac, broadcast, port, canSend, loadDevices]);
+  }, [saveName, macError, mac, broadcast, port, loadDevices]);
 
   const handleDeleteDevice = useCallback(
     async (id: string) => {
@@ -192,13 +203,61 @@ export function WolPanel() {
         variant="secondary"
         size="sm"
         icon={<Save size={13} />}
-        onClick={handleSaveDevice}
+        onClick={openSaveModal}
         disabled={!canSend}
         data-testid="wol-save-device"
         style={{ alignSelf: "flex-start" }}
       >
         Save Current
       </Button>
+
+      <Modal
+        open={saveModalOpen}
+        onOpenChange={(open) => !open && setSaveModalOpen(false)}
+        title="Save Wake-on-LAN Device"
+        description="Give this device a name to save its MAC address, broadcast, and port."
+        data-testid="wol-save-modal"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setSaveModalOpen(false)}
+              data-testid="wol-save-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleConfirmSave}
+              errorToast={false}
+              disabled={!saveName.trim() || !!macError}
+              data-testid="wol-save-confirm"
+            >
+              Save
+            </Button>
+          </>
+        }
+      >
+        <Field label="Device name" htmlFor="wol-save-name">
+          <Input
+            id="wol-save-name"
+            value={saveName}
+            onChange={(e) => setSaveName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && saveName.trim() && !macError) {
+                e.preventDefault();
+                void handleConfirmSave();
+              }
+            }}
+            placeholder="e.g. Office NAS"
+            autoFocus
+            data-testid="wol-save-name"
+          />
+        </Field>
+        <Field label="MAC address" htmlFor="wol-save-mac" error={macError ?? undefined}>
+          <Input id="wol-save-mac" value={mac} readOnly data-testid="wol-save-mac" />
+        </Field>
+      </Modal>
 
       {/* History */}
       {history.length > 0 && (

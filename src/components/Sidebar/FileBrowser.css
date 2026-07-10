@@ -311,6 +311,24 @@
   border-color: var(--text-accent);
 }
 
+/* Inline rename: an editable input rendered in place of a file row's name. */
+.file-browser__row--renaming {
+  height: auto;
+  padding: 2px var(--spacing-sm);
+}
+
+.file-browser__rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--text-accent);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
 /* Placeholder for unsupported connection types */
 .file-browser__placeholder {
   display: flex;

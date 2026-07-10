@@ -86,6 +86,19 @@ async function renderLocal() {
   await flushAsync();
 }
 
+/** Focus the report.pdf file row (setting it active) then press F2 on the list. */
+async function startRenameOnReport() {
+  const fileRow = container.querySelector('[data-testid="file-row-report.pdf"]') as HTMLElement;
+  await act(async () => {
+    fileRow.click();
+  });
+  const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+  await act(async () => {
+    list.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+  });
+  await flushAsync();
+}
+
 describe("FileBrowser — inline rename (#1348)", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -108,11 +121,7 @@ describe("FileBrowser — inline rename (#1348)", () => {
     const promptSpy = vi.spyOn(window, "prompt");
     await renderLocal();
 
-    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
-    await act(async () => {
-      list.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
-    });
-    await flushAsync();
+    await startRenameOnReport();
 
     const input = container.querySelector(
       '[data-testid="file-row-rename-input"]'
@@ -129,11 +138,7 @@ describe("FileBrowser — inline rename (#1348)", () => {
   it("commits the rename via the backend on Enter", async () => {
     await renderLocal();
 
-    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
-    await act(async () => {
-      list.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
-    });
-    await flushAsync();
+    await startRenameOnReport();
 
     const input = container.querySelector(
       '[data-testid="file-row-rename-input"]'
@@ -160,11 +165,7 @@ describe("FileBrowser — inline rename (#1348)", () => {
   it("cancels the rename on Escape without calling the backend", async () => {
     await renderLocal();
 
-    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
-    await act(async () => {
-      list.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
-    });
-    await flushAsync();
+    await startRenameOnReport();
 
     const input = container.querySelector(
       '[data-testid="file-row-rename-input"]'
@@ -187,11 +188,7 @@ describe("FileBrowser — inline rename (#1348)", () => {
   it("does not commit a rename when the name is unchanged", async () => {
     await renderLocal();
 
-    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
-    await act(async () => {
-      list.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
-    });
-    await flushAsync();
+    await startRenameOnReport();
 
     const input = container.querySelector(
       '[data-testid="file-row-rename-input"]'

@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Modal } from "@/components/ui";
 import {
   networkPortScan,
   networkPortScanCancel,
@@ -12,7 +12,11 @@ import type { PortScanSummary } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { NetworkNumberField } from "./NetworkNumberField";
 import { validateIntRange } from "@/utils/fieldValidation";
+import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
+
+/** Probe count above which the scanner warns before starting. */
+const LARGE_SCAN_THRESHOLD = 1000;
 
 interface PortScannerPanelProps {
   prefillHost?: string;
@@ -33,6 +37,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const [concurrency, setConcurrency] = useState<number | "">(100);
   const [results, setResults] = useState<ScanRow[]>([]);
   const [summary, setSummary] = useState<PortScanSummary | null>(null);
+  const [warnOpen, setWarnOpen] = useState(false);
 
   const timeoutError = validateIntRange(timeoutMs, { min: 1, max: 600_000, label: "Timeout" });
   const concurrencyError = validateIntRange(concurrency, {
@@ -42,15 +47,10 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   });
   const canRun = !!host.trim() && !timeoutError && !concurrencyError;
 
-  // Warn user before scanning a very large range.
-  const portCount = ports.split(",").reduce((acc, part) => {
-    const trimmed = part.trim();
-    if (trimmed.includes("-")) {
-      const [a, b] = trimmed.split("-").map(Number);
-      return acc + Math.max(0, (b ?? 0) - (a ?? 0) + 1);
-    }
-    return acc + 1;
-  }, 0);
+  // Warn before a very large scan. The estimate factors in the CIDR host-count
+  // as well as the port count, so a small port list over a wide block still
+  // trips the warning.
+  const probeEstimate = estimateScanProbes(host, ports);
 
   const subscribe = useCallback(async ({ matchesTask, register, finish }: NetworkTaskContext) => {
     register(
@@ -93,14 +93,17 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
 
   const handleRun = useCallback(async () => {
     if (!canRun) return;
-    if (portCount > 1000) {
-      const confirmed = window.confirm(
-        `Scanning ${portCount} ports may take several minutes. Continue?`
-      );
-      if (!confirmed) return;
+    if (probeEstimate > LARGE_SCAN_THRESHOLD) {
+      setWarnOpen(true);
+      return;
     }
     await run();
-  }, [canRun, portCount, run]);
+  }, [canRun, probeEstimate, run]);
+
+  const handleConfirmLargeScan = useCallback(async () => {
+    setWarnOpen(false);
+    await run();
+  }, [run]);
 
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results
@@ -205,6 +208,35 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
               : null
         }
       />
+
+      <Modal
+        open={warnOpen}
+        onOpenChange={(open) => !open && setWarnOpen(false)}
+        title="Large scan"
+        description="Confirm before starting a scan that may take a while."
+        data-testid="port-scan-warn-modal"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setWarnOpen(false)}
+              data-testid="port-scan-warn-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleConfirmLargeScan}
+              data-testid="port-scan-warn-confirm"
+            >
+              Start scan
+            </Button>
+          </>
+        }
+      >
+        This scan will probe about {probeEstimate.toLocaleString()} host/port combinations and may
+        take several minutes. Continue?
+      </Modal>
     </div>
   );
 }
