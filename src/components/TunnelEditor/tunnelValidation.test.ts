@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { TunnelType } from "@/types/tunnel";
+import type { TunnelType, LocalForwardConfig } from "@/types/tunnel";
 import { validateTunnelType } from "./tunnelValidation";
 
 const local = (over: Partial<Record<string, unknown>> = {}): TunnelType => ({
@@ -10,7 +10,7 @@ const local = (over: Partial<Record<string, unknown>> = {}): TunnelType => ({
     remoteHost: "localhost",
     remotePort: 80,
     ...over,
-  } as TunnelType["config"],
+  } as unknown as LocalForwardConfig,
 });
 
 describe("validateTunnelType", () => {

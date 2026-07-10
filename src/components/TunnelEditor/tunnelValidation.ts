@@ -32,7 +32,7 @@ const PORT_LABELS: Record<string, string> = {
  */
 export function validateTunnelType(tunnelType: TunnelType): TunnelValidation {
   const errors: TunnelFieldErrors = {};
-  const config = tunnelType.config as Record<string, string | number>;
+  const config = tunnelType.config as unknown as Record<string, string | number>;
 
   for (const [key, value] of Object.entries(config)) {
     if (key.endsWith("Host")) {
