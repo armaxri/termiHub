@@ -73,7 +73,7 @@ describe("SecuritySettings — keyboard (#1341)", () => {
     act(() => setInputValue(el<HTMLInputElement>("master-password-confirm-input"), "supersecret1"));
 
     // Submitting the form (what Enter from any field does) confirms the switch.
-    const form = el<HTMLFormElement>("master-password-form");
+    const form = el<HTMLFormElement>("master-password-setup");
     expect(form.tagName).toBe("FORM");
     act(() => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));

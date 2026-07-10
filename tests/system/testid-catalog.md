@@ -227,7 +227,7 @@ Fixed strings — match exactly.
 | `jump-host-enabled` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `jump-host-errors` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `jump-host-path` | `src/components/ConnectionEditor/JumpHostPathDisplay.tsx` |
-| `jump-host-section` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
+| `jump-host-section` | `src/components/ConnectionEditor/ConnectionEditor.tsx`, `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `jump-host-warning` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `keyboard-settings-conflict` | `src/components/Settings/KeyboardSettings.tsx` |
 | `keyboard-settings-editor-delegation` | `src/components/Settings/KeyboardSettings.tsx` |
@@ -341,6 +341,7 @@ Fixed strings — match exactly.
 | `save-workspace-confirm` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-description` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-dialog` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
+| `save-workspace-form` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-name` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-scope` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-scope-active` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
