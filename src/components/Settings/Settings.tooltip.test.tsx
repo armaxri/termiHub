@@ -128,7 +128,9 @@ describe("Settings icon controls tooltip adoption", () => {
     }
 
     function removeButton(): HTMLButtonElement | null {
-      return container.querySelector<HTMLButtonElement>(".settings-panel__file-remove");
+      // Migrated to the shared Button primitive (issue #1358); locate it by its
+      // accessible name rather than the retired bespoke class.
+      return container.querySelector<HTMLButtonElement>('[aria-label="Remove custom prefix"]');
     }
 
     it("gives the remove-prefix button an aria-label and no bare title", () => {
