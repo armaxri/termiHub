@@ -1317,7 +1317,7 @@ A first-time, download-backed Windows provision is gated on a connect-time conse
 - Consent + verified download + "adopt but never kill external servers" keeps the trust and resource-cleanup contracts explicit (no silent installs, no orphan processes).
 - The per-platform decision, lifecycle, and consent gate are pure/injectable, so they are covered by host-agnostic unit tests; only the irreducible "a real window renders" step stays manual (per [ADR-5](#adr-5-e2e-system-tests-run-in-docker-linux-only); see the X11 matrix in [testing.md](testing.md#x11--gui-forwarding)).
 
-**Trade-off:** Three code paths instead of one, and the Windows path carries a redistribution concern (VcXsrv is GPL-3.0, shipped as a pinned artifact with license notices). Full E2E rendering cannot be automated in CI, so the cross-platform release matrix is a documented human step. Windows managed auto-acquisition is being wired incrementally (#1048) and depends on publishing the pinned artifact (#1076); until then Windows adopts a user-run VcXsrv via the TCP probe.
+**Trade-off:** Three code paths instead of one. The Windows path installs VcXsrv via **winget** and the macOS path installs XQuartz via **Homebrew** (#1318) — termiHub runs each as a separate process but does not host/redistribute them, so neither carries a redistribution obligation (the earlier GPL-3.0 pinned-artifact concern, #1076, was dropped with that approach). Full E2E rendering cannot be automated in CI, so the cross-platform release matrix is a documented human step.
 
 ---
 

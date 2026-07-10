@@ -57,11 +57,11 @@ unaffected.
 
 ## Per-platform obligations
 
-| Platform | X server               | termiHub action                                                    | Obligation                                                          |
-| -------- | ---------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| Windows  | VcXsrv (GPL-3.0)       | **Hosts + downloads + runs** a pinned build                        | Ship GPL-3.0 text + source offer for the pinned version             |
-| macOS    | XQuartz (MIT/APSL-2.0) | **Detects + guides install** (brew / notarized `.pkg` / deep link) | Attribution + pointer to upstream license texts (no binary shipped) |
-| Linux    | system X / XWayland    | Detects only                                                       | None (nothing shipped)                                              |
+| Platform | X server               | termiHub action                                               | Obligation                                                                                   |
+| -------- | ---------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Windows  | VcXsrv (GPL-3.0)       | **Installs via winget + runs** (does not host/redistribute)   | None for redistribution — winget/the user fetches it; termiHub runs it as a separate process |
+| macOS    | XQuartz (MIT/APSL-2.0) | **Installs via Homebrew + runs** (does not host/redistribute) | Attribution + pointer to upstream license texts (no binary shipped)                          |
+| Linux    | system X / XWayland    | Detects only                                                  | None (nothing shipped)                                                                       |
 
 ## Compliance checklist (run before any release that ships/downloads an X server)
 
