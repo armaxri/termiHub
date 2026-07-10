@@ -40,6 +40,39 @@ fn agent_binary() -> &'static str {
 /// soon as the response arrives; it only widens the window before we give up.
 const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+// ── Readiness retry backoff ───────────────────────────────────────────────────
+
+/// Exponential-backoff schedule for the agent-readiness retry loop.
+///
+/// Starts small so a fast local start returns almost immediately, then doubles
+/// the delay after each attempt up to a cap. This keeps the happy path snappy
+/// (the first probe fires after only [`INITIAL`](Backoff::new) ms) while making
+/// the loop gentle on a **starved CI runner**: instead of hammering `connect()`
+/// hundreds of times a second for the whole timeout — the pattern that let #1398
+/// flake with `connect: Connection refused` — retries space out as the agent
+/// takes longer to come up.
+struct Backoff {
+    current: Duration,
+    max: Duration,
+}
+
+impl Backoff {
+    /// Create a schedule starting at `initial`, doubling up to `max`.
+    fn new(initial: Duration, max: Duration) -> Self {
+        Backoff {
+            current: initial.min(max),
+            max,
+        }
+    }
+
+    /// Return the current delay, then advance the schedule (double, capped).
+    fn next_delay(&mut self) -> Duration {
+        let delay = self.current;
+        self.current = (self.current * 2).min(self.max);
+        delay
+    }
+}
+
 // ── LocalAgent: process lifecycle manager ────────────────────────────────────
 
 /// Spawns a `termihub-agent --listen` process on a free port.
@@ -192,6 +225,46 @@ fn rpc(stream: &mut TcpStream, msg: &str) -> String {
     let mut response = String::new();
     reader.read_line(&mut response).expect("read_line failed");
     response.trim().to_string()
+}
+
+// ── Backoff unit tests ────────────────────────────────────────────────────────
+
+#[test]
+fn backoff_starts_at_initial_and_doubles() {
+    let mut b = Backoff::new(Duration::from_millis(20), Duration::from_millis(500));
+    assert_eq!(b.next_delay(), Duration::from_millis(20));
+    assert_eq!(b.next_delay(), Duration::from_millis(40));
+    assert_eq!(b.next_delay(), Duration::from_millis(80));
+    assert_eq!(b.next_delay(), Duration::from_millis(160));
+    assert_eq!(b.next_delay(), Duration::from_millis(320));
+}
+
+#[test]
+fn backoff_saturates_at_max_and_stays_there() {
+    let mut b = Backoff::new(Duration::from_millis(20), Duration::from_millis(500));
+    // 20 → 40 → 80 → 160 → 320 → 500 (capped, since 640 > 500) → 500 …
+    let delays: Vec<Duration> = (0..8).map(|_| b.next_delay()).collect();
+    assert_eq!(
+        delays,
+        vec![
+            Duration::from_millis(20),
+            Duration::from_millis(40),
+            Duration::from_millis(80),
+            Duration::from_millis(160),
+            Duration::from_millis(320),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+        ]
+    );
+}
+
+#[test]
+fn backoff_clamps_initial_above_max() {
+    // An initial larger than the cap must never exceed the cap.
+    let mut b = Backoff::new(Duration::from_secs(10), Duration::from_millis(500));
+    assert_eq!(b.next_delay(), Duration::from_millis(500));
+    assert_eq!(b.next_delay(), Duration::from_millis(500));
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
