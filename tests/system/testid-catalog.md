@@ -47,6 +47,8 @@ Fixed strings — match exactly.
 | `agent-setup-source-github` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-source-local` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-submit` | `src/components/Sidebar/AgentSetupDialog.tsx` |
+| `agent-updates-count` | `src/components/StatusBar/StatusBar.tsx` |
+| `agent-updates-indicator` | `src/components/StatusBar/StatusBar.tsx` |
 | `appearance-theme-select` | `src/components/Settings/AppearanceSettings.tsx` |
 | `auto-lock-timeout` | `src/components/Settings/SecuritySettings.tsx` |
 | `change-master-password-btn` | `src/components/Settings/SecuritySettings.tsx` |
@@ -575,6 +577,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `agent-reconnect-*` | `agent-reconnect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-shutdown-*` | `agent-shutdown-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-version-badge-*` | `agent-version-badge-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `connection-connect-*` | `connection-connect-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
@@ -643,6 +646,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `network-quick-action-*` | `network-quick-action-${tool}` | `src/components/NetworkTools/NetworkToolsSidebar.tsx` |
 | `oc-agent-disconnect-*` | `oc-agent-disconnect-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `oc-agent-shutdown-*` | `oc-agent-shutdown-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `oc-agent-version-*` | `oc-agent-version-${a.id}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `persistent-attach-*` | `persistent-attach-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-start-*` | `persistent-start-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `persistent-stop-*` | `persistent-stop-${definition.id}` | `src/components/Sidebar/AgentNode.tsx` |
@@ -699,7 +703,7 @@ where the component is used, not at the `data-testid` site.
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/ConfirmDialog.tsx`, `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
-| `{testId}` | `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/SidebarListItem/SidebarListItem.tsx` |
+| `{testId}` | `src/components/AgentVersionBadge/AgentVersionBadge.tsx`, `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |

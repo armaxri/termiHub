@@ -933,6 +933,35 @@ See PR #1389.
 > Note: automatic apply-on-idle of a staged update is deferred to #1352; this PR
 > stops after staging and notifying.
 
+### Agent version + update-state badge — light/dark colors (#1347)
+
+Verifies the agent version chip and update-state badge render with the correct,
+legible colors in both themes, across all four states. See PR for #1347. Badge
+colors: up-to-date = success/green, update available = notice/amber,
+incompatible = error/red, updating = accent/blue.
+
+1. Connect a remote agent whose version matches the desktop. In the Connections
+   sidebar, confirm the agent header shows a neutral monospace version chip
+   (e.g. `v0.1.0`) followed by a green check badge (**up to date**). Hover the
+   badge — the tooltip reads "Agent up to date (v…)".
+2. Toggle the app between light and dark themes (Settings → Appearance). In both
+   themes confirm the chip text stays legible against its neutral background and
+   the green badge is clearly readable (not washed out).
+3. Open **Open Connections** (Settings wheel → Open Connections). Confirm the
+   agent row shows the same version chip plus a **labelled** state badge
+   (e.g. "Up to date"). Verify legibility in both themes.
+4. Simulate the other states (e.g. point the agent at an older/newer/mismatched
+   binary, or temporarily adjust the compared versions): confirm an **amber**
+   up-arrow badge for _update available_, a **red** warning badge for
+   _incompatible_ (major mismatch or unparseable version), and — for the
+   transient _updating_ state — a **blue** spinner that respects
+   `prefers-reduced-motion` (no spin when reduced motion is enabled). Each must
+   remain legible in light and dark.
+5. In the status bar, with at least one agent connected, confirm the
+   `N agents` summary appears; when an agent has an update available, confirm the
+   amber `· M updates available` count shows and clicking the item opens the
+   Connections sidebar.
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
