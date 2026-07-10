@@ -389,7 +389,7 @@ pub const X_SERVER_PROGRESS_EVENT: &str = "x-server-progress";
 pub struct XServerConsentRequest {
     /// Opaque id correlating this prompt with the reply command that resolves it.
     pub id: String,
-    /// Host platform, so the UI can tailor the consent copy (download size, name).
+    /// Host platform, so the UI can tailor the consent copy (installer name, etc.).
     pub platform: XServerPlatform,
 }
 

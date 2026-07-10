@@ -5,7 +5,7 @@
 //! *connection flow* — best-effort XQuartz launch on macOS, cross-platform
 //! detection of a Unix-socket server the manager's TCP probe can't see, and
 //! typed, actionable per-platform errors — and reports a frontend-friendly
-//! status. The per-platform install internals (VcXsrv download #1047 remainder,
+//! status. The per-platform install internals (VcXsrv winget install #1318,
 //! XQuartz install #1054, Linux gap classification #1055) are their own issues.
 
 use std::sync::Arc;

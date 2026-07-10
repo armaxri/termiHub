@@ -1,10 +1,10 @@
-//! Connect-time X server download-consent handshake (#1116).
+//! Connect-time X server install-consent handshake (#1116).
 //!
 //! When an SSH connection with X11 forwarding is opened and provisioning would
-//! need to **download** a dependency (Windows VcXsrv) that the user has not yet
-//! consented to, the connect path pauses: the desktop app emits a
-//! "consent needed" event to the frontend and awaits the user's reply before any
-//! bytes are fetched. This module holds the Tauri-agnostic primitives for that
+//! need to **install** a dependency (Windows VcXsrv via winget) that the user has
+//! not yet consented to, the connect path pauses: the desktop app emits a
+//! "consent needed" event to the frontend and awaits the user's reply before
+//! anything is installed. This module holds the Tauri-agnostic primitives for that
 //! handshake so the pause/await logic is unit-testable without an `AppHandle`:
 //!
 //! - [`connect_consent_required`] — the pure decision of *whether* to pause.
@@ -33,7 +33,7 @@ use super::types::XServerPlatform;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConsentDecision {
-    /// Consent granted — download/provision and enable X forwarding. Persisted so
+    /// Consent granted — install/provision and enable X forwarding. Persisted so
     /// later connects do not re-prompt.
     Enable,
     /// Declined for now — skip X forwarding this connect (ask again next time).
@@ -43,7 +43,7 @@ pub enum ConsentDecision {
 /// What the paused connect should do once the consent await resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsentOutcome {
-    /// Consent granted: proceed with download/provisioning.
+    /// Consent granted: proceed with install/provisioning.
     Proceed,
     /// Declined: skip X forwarding gracefully (the SSH connect continues).
     Skip,
@@ -54,16 +54,16 @@ pub enum ConsentOutcome {
 
 /// Whether opening this X11-forwarding connect must pause for install consent.
 ///
-/// Pausing is required only when a **download** would actually happen and the
+/// Pausing is required only when an **install** would actually happen and the
 /// user has not decided yet:
-/// - Only Windows downloads a dependency (VcXsrv). macOS guides an XQuartz
-///   install through its own explicit consent (`x_server_install_dependency`),
-///   and Linux never downloads — so both return `false` here.
+/// - Only Windows installs a dependency (VcXsrv via winget). macOS guides an
+///   XQuartz install through its own explicit consent (`x_server_install_dependency`),
+///   and Linux never installs — so both return `false` here.
 /// - `provide_setting` is the persisted `provide_x_server_automatically` value:
 ///   `Some(_)` means the user already decided (enabled → provision silently,
 ///   disabled → won't provision anyway), so never prompt.
 /// - `None` (undecided) prompts **only** when no server is already reachable —
-///   if one is present it is adopted with no download, so no prompt is needed.
+///   if one is present it is adopted with no install, so no prompt is needed.
 pub fn connect_consent_required(
     platform: XServerPlatform,
     provide_setting: Option<bool>,

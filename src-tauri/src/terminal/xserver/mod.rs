@@ -71,6 +71,13 @@ pub(super) fn binary_on_path(name: &str) -> bool {
     which::which(name).is_ok()
 }
 
+/// Whether any of `paths` exists. Pure over injected paths so the per-platform
+/// dependency detectors ([`macos::xquartz_installed`], [`windows::vcxsrv_installed`])
+/// are unit-testable against temp directories (mock FS) without a real install.
+pub(super) fn any_path_exists<P: AsRef<std::path::Path>>(paths: &[P]) -> bool {
+    paths.iter().any(|p| p.as_ref().exists())
+}
+
 /// Resolve whether automatic X server provisioning is enabled.
 ///
 /// Reads the global `provideXServerAutomatically` setting; when unset it
@@ -130,7 +137,7 @@ impl XServerProvisionerImpl {
     /// Pause for first-time install consent when required (#1116).
     ///
     /// Returns [`ConsentGate::Proceed`] immediately when no prompt is needed
-    /// (already-decided, a server already reachable, or a non-download platform).
+    /// (already-decided, a server already reachable, or a non-install platform).
     /// Otherwise emits [`X_SERVER_CONSENT_NEEDED_EVENT`] and awaits the frontend
     /// reply — abortable via the connect's `cancel` token (#1260) — persisting
     /// the "enable" decision so later connects do not re-prompt.
@@ -144,7 +151,7 @@ impl XServerProvisionerImpl {
         // A prompt is only possible on a Windows, undecided connect — expressed
         // via the same authority function with `server_present = false`. Only
         // then is it worth probing for an already-running server (which would
-        // make it an adoption, not a download). The probe does a brief blocking
+        // make it an adoption, not an install). The probe does a brief blocking
         // TCP check, so run it off the async reactor.
         let server_present = if connect_consent_required(platform, provide_setting, false) {
             let manager = self.manager.clone();
@@ -318,4 +325,27 @@ pub fn init(
         consent_registry,
     ));
     termihub_core::backends::ssh::x11::set_x_server_provisioner(provisioner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::any_path_exists;
+
+    #[test]
+    fn detects_when_a_path_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let present = tmp.path().join("present");
+        std::fs::write(&present, b"x").unwrap();
+        let absent = tmp.path().join("absent");
+        assert!(any_path_exists(&[present.as_path(), absent.as_path()]));
+        assert!(any_path_exists(&[absent.as_path(), present.as_path()]));
+    }
+
+    #[test]
+    fn not_detected_when_no_path_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("nope-a");
+        let b = tmp.path().join("nope-b");
+        assert!(!any_path_exists(&[a.as_path(), b.as_path()]));
+    }
 }

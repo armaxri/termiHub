@@ -49,13 +49,7 @@ const BREW_INSTALL_ARGS: [&str; 3] = ["install", "--cask", "xquartz"];
 
 /// Whether XQuartz is installed at the canonical macOS locations.
 pub(super) fn xquartz_installed() -> bool {
-    any_path_exists(&XQUARTZ_PATHS.map(Path::new))
-}
-
-/// Whether any of `paths` exists. Pure over injected paths so detection is
-/// unit-testable against temp directories (mock FS).
-fn any_path_exists<P: AsRef<Path>>(paths: &[P]) -> bool {
-    paths.iter().any(|p| p.as_ref().exists())
+    super::any_path_exists(&XQUARTZ_PATHS.map(Path::new))
 }
 
 /// Best-effort launch of XQuartz when it is installed but idle. Errors are
@@ -429,24 +423,6 @@ mod tests {
         assert!(READINESS_POLL_INTERVAL > Duration::ZERO);
         // Bounded to a few seconds so a dead launch fails fast (issue #1088).
         assert!(READINESS_TOTAL_BUDGET <= Duration::from_secs(5));
-    }
-
-    #[test]
-    fn detects_when_a_canonical_path_exists() {
-        let tmp = tempfile::tempdir().unwrap();
-        let present = tmp.path().join("opt-x11");
-        std::fs::create_dir(&present).unwrap();
-        let absent = tmp.path().join("nope");
-        assert!(any_path_exists(&[present.as_path(), absent.as_path()]));
-        assert!(any_path_exists(&[absent.as_path(), present.as_path()]));
-    }
-
-    #[test]
-    fn not_detected_when_no_path_exists() {
-        let tmp = tempfile::tempdir().unwrap();
-        let a = tmp.path().join("nope-a");
-        let b = tmp.path().join("nope-b");
-        assert!(!any_path_exists(&[a.as_path(), b.as_path()]));
     }
 
     #[test]

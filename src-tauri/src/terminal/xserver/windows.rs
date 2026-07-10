@@ -11,19 +11,35 @@
 //! Detection is a pure check over injectable paths so it is unit-testable on any
 //! CI host; the install runs off the async reactor.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 
 use super::types::XServerError;
 
-/// Canonical VcXsrv install locations on Windows. winget's `marha.VcXsrv` package
-/// installs the 64-bit build to `C:\Program Files\VcXsrv`; the 32-bit / legacy
-/// installer uses the `(x86)` tree. Either present means VcXsrv is installed.
-const VCXSRV_PATHS: [&str; 2] = [
+/// Machine-scope VcXsrv install locations on Windows. winget's `marha.VcXsrv`
+/// package (an NSIS installer, machine scope by default) installs the 64-bit
+/// build to `C:\Program Files\VcXsrv`; the 32-bit / legacy tree uses `(x86)`.
+const VCXSRV_MACHINE_PATHS: [&str; 2] = [
     r"C:\Program Files\VcXsrv\vcxsrv.exe",
     r"C:\Program Files (x86)\VcXsrv\vcxsrv.exe",
 ];
+
+/// All candidate `vcxsrv.exe` locations, most-canonical first: the machine-scope
+/// installs, a user-scope install under `%LOCALAPPDATA%\Programs\VcXsrv` (where a
+/// winget user-scope install lands), and anything on `PATH`. Broadening beyond
+/// the two `Program Files` paths keeps detection correct even if winget installs
+/// to a non-default scope, so a just-succeeded install is never seen as missing.
+fn candidate_paths() -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = VCXSRV_MACHINE_PATHS.iter().map(PathBuf::from).collect();
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        paths.push(PathBuf::from(local).join(r"Programs\VcXsrv\vcxsrv.exe"));
+    }
+    if let Ok(on_path) = which::which("vcxsrv") {
+        paths.push(on_path);
+    }
+    paths
+}
 
 /// The winget arguments that install VcXsrv. `winget` handles the UAC elevation
 /// prompt itself, so the install stays consent-based. Mirrors
@@ -38,34 +54,24 @@ const WINGET_INSTALL_ARGS: [&str; 7] = [
     "-h",
 ];
 
-/// Whether VcXsrv is installed at the canonical Windows locations.
+/// Whether VcXsrv is installed at any candidate location.
 pub(super) fn vcxsrv_installed() -> bool {
-    any_path_exists(&VCXSRV_PATHS.map(Path::new))
-}
-
-/// Whether any of `paths` exists. Pure over injected paths so detection is
-/// unit-testable against temp directories (mock FS).
-fn any_path_exists<P: AsRef<Path>>(paths: &[P]) -> bool {
-    paths.iter().any(|p| p.as_ref().exists())
+    super::any_path_exists(&candidate_paths())
 }
 
 /// Resolve the installed `vcxsrv.exe` path for the managed-server launcher.
 ///
-/// Returns the first canonical location that exists; an `Err` (nothing installed)
+/// Returns the first candidate location that exists; an `Err` (nothing installed)
 /// makes the manager surface a launch failure rather than spawning a missing
 /// binary. This is the production `resolver` the [`XServerManager`](super::manager::XServerManager)
 /// uses, replacing the retired download-and-extract path.
 pub(crate) fn resolve_vcxsrv_path() -> Result<PathBuf> {
-    VCXSRV_PATHS
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "VcXsrv is not installed (looked in {}). Install it via the X Servers panel.",
-                VCXSRV_PATHS.join(", ")
-            )
-        })
+    candidate_paths().into_iter().find(|p| p.exists()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "VcXsrv is not installed (looked in {} and on PATH). Install it via the X Servers panel.",
+            VCXSRV_MACHINE_PATHS.join(", ")
+        )
+    })
 }
 
 /// Guided, consent-based VcXsrv install (#1318).
@@ -184,29 +190,24 @@ mod tests {
     }
 
     #[test]
-    fn detects_when_a_canonical_path_exists() {
-        let tmp = tempfile::tempdir().unwrap();
-        let present = tmp.path().join("vcxsrv.exe");
-        std::fs::write(&present, b"stub").unwrap();
-        let absent = tmp.path().join("nope.exe");
-        assert!(any_path_exists(&[present.as_path(), absent.as_path()]));
-        assert!(any_path_exists(&[absent.as_path(), present.as_path()]));
-    }
-
-    #[test]
-    fn not_detected_when_no_path_exists() {
-        let tmp = tempfile::tempdir().unwrap();
-        let a = tmp.path().join("nope-a.exe");
-        let b = tmp.path().join("nope-b.exe");
-        assert!(!any_path_exists(&[a.as_path(), b.as_path()]));
-    }
-
-    #[test]
-    fn vcxsrv_paths_are_the_documented_locations() {
-        assert!(VCXSRV_PATHS
+    fn machine_paths_are_the_documented_locations() {
+        assert!(VCXSRV_MACHINE_PATHS
             .iter()
             .any(|p| p.ends_with(r"VcXsrv\vcxsrv.exe")));
-        assert_eq!(VCXSRV_PATHS.len(), 2);
+        assert_eq!(VCXSRV_MACHINE_PATHS.len(), 2);
+    }
+
+    #[test]
+    fn candidate_paths_include_the_machine_locations() {
+        // The candidate list always contains the two machine-scope paths (plus,
+        // at runtime, a user-scope path and any PATH hit).
+        let candidates = candidate_paths();
+        for machine in VCXSRV_MACHINE_PATHS {
+            assert!(
+                candidates.iter().any(|p| p.as_os_str() == machine),
+                "candidate paths must include {machine}"
+            );
+        }
     }
 
     #[test]
