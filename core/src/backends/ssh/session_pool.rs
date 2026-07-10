@@ -95,6 +95,26 @@ impl<T: Clone> RefPool<T> {
         Ok(self.make_ref(key, value))
     }
 
+    /// Like [`get_or_create`](Self::get_or_create), but skip and evict a cached
+    /// entry that `is_alive` reports dead, dialing a fresh value instead (#1315).
+    ///
+    /// NOTE: eviction is not yet implemented — this currently delegates to
+    /// [`get_or_create`](Self::get_or_create), so a dead cached entry is still
+    /// handed out (the failing behavior the regression test below pins).
+    pub async fn get_or_create_live<P, F, Fut, E>(
+        self: &Arc<Self>,
+        key: &str,
+        _is_alive: P,
+        connect: F,
+    ) -> Result<PooledRef<T>, E>
+    where
+        P: Fn(&T) -> bool,
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+    {
+        self.get_or_create(key, connect).await
+    }
+
     /// Increment the ref count and clone the value if the key is present.
     fn try_acquire(&self, key: &str) -> Option<T> {
         let mut entries = self.entries.lock().expect("session pool mutex poisoned");
@@ -366,6 +386,81 @@ mod tests {
         );
         assert_eq!(pool.ref_count("k"), 8);
         assert!(refs.iter().all(|r| Arc::ptr_eq(r, &refs[0])));
+    }
+
+    /// A dead cached entry must not be handed to a new acquirer: the pool evicts
+    /// it and dials a fresh value, and the dead entry's stale reference releases
+    /// as a no-op instead of corrupting the replacement's refcount (#1315).
+    #[tokio::test]
+    async fn dead_cached_entry_is_evicted_and_replaced() {
+        use std::sync::atomic::AtomicBool;
+
+        // The pooled value carries its own liveness flag (`true` = alive).
+        let pool = RefPool::<Arc<AtomicBool>>::new();
+        let alive = |v: &Arc<AtomicBool>| v.load(Ordering::SeqCst);
+        let creates = Arc::new(AtomicUsize::new(0));
+        let make = || {
+            let creates = creates.clone();
+            || async move {
+                creates.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(Arc::new(AtomicBool::new(true)))
+            }
+        };
+
+        // First acquire dials E1 (alive).
+        let e1 = pool.get_or_create_live("k", alive, make()).await.unwrap();
+        assert_eq!(creates.load(Ordering::SeqCst), 1);
+        assert_eq!(pool.ref_count("k"), 1);
+
+        // E1's session dies.
+        e1.store(false, Ordering::SeqCst);
+
+        // A new acquire for the same key must dial a fresh E2, not adopt the corpse.
+        let e2 = pool.get_or_create_live("k", alive, make()).await.unwrap();
+        assert_eq!(creates.load(Ordering::SeqCst), 2, "must dial a fresh session");
+        assert!(!Arc::ptr_eq(&e1, &e2), "must not hand out the dead endpoint");
+        assert!(e2.load(Ordering::SeqCst), "the fresh endpoint is alive");
+        assert_eq!(pool.ref_count("k"), 1, "only the fresh entry is counted");
+
+        // Dropping the stale E1 reference must not disturb E2's entry.
+        drop(e1);
+        assert_eq!(pool.ref_count("k"), 1, "stale release is a no-op for the new gen");
+        assert!(!pool.is_empty());
+
+        drop(e2);
+        assert_eq!(pool.ref_count("k"), 0);
+        assert!(pool.is_empty());
+    }
+
+    /// A live cached entry is still reused (the liveness check does not force a
+    /// redial when the session is healthy).
+    #[tokio::test]
+    async fn live_cached_entry_is_reused() {
+        use std::sync::atomic::AtomicBool;
+        let pool = RefPool::<Arc<AtomicBool>>::new();
+        let alive = |v: &Arc<AtomicBool>| v.load(Ordering::SeqCst);
+        let creates = Arc::new(AtomicUsize::new(0));
+
+        let c1 = creates.clone();
+        let a = pool
+            .get_or_create_live("k", alive, || async move {
+                c1.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(Arc::new(AtomicBool::new(true)))
+            })
+            .await
+            .unwrap();
+        let c2 = creates.clone();
+        let b = pool
+            .get_or_create_live("k", alive, || async move {
+                c2.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, ()>(Arc::new(AtomicBool::new(true)))
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(creates.load(Ordering::SeqCst), 1, "healthy entry is reused");
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(pool.ref_count("k"), 2);
     }
 
     /// A connect failure must not poison the key: a later acquisition retries.
