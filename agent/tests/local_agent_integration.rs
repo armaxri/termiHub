@@ -458,9 +458,11 @@ struct AgentClient {
 impl AgentClient {
     fn connect(addr: &str) -> Self {
         let stream = TcpStream::connect(addr).expect("connect failed");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
+        // Match the simple `rpc()` helper's generous per-round-trip budget: a
+        // loaded CI runner can momentarily take several seconds to answer an
+        // RPC, and a 10s ceiling flaked under that load (#1398). The read still
+        // returns as soon as the response arrives.
+        stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
         let writer = stream.try_clone().expect("clone failed");
         AgentClient {
             writer,
@@ -597,7 +599,7 @@ impl AgentClient {
                                 .unwrap_or_default();
                             let text = String::from_utf8_lossy(&bytes);
                             if text.contains(needle) {
-                                self.set_read_timeout(Some(Duration::from_secs(10)));
+                                self.set_read_timeout(Some(RPC_READ_TIMEOUT));
                                 return true;
                             }
                         }
@@ -613,7 +615,7 @@ impl AgentClient {
             }
         }
 
-        self.set_read_timeout(Some(Duration::from_secs(10)));
+        self.set_read_timeout(Some(RPC_READ_TIMEOUT));
         false
     }
 }
@@ -813,21 +815,42 @@ fn shell_session_reattach_after_reconnect() {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-/// Poll until `path` exists or `timeout` expires.
+/// Poll until the daemon's `path` socket appears, or panic on timeout.
+///
+/// Hardened the same way as [`wait_for_agent_ready`] (#1398): the previous
+/// version used a fixed non-overridable 5s budget, a flat 20ms spin, and threw
+/// the daemon's stderr away — so a slow/loaded CI runner flaked and the panic
+/// said nothing. Now it fails fast if the daemon process has already died
+/// (with its exit status + captured stderr), uses the shared exponential
+/// [`readiness_backoff`], and appends stderr on genuine timeout.
 #[cfg(unix)]
-fn wait_for_socket(path: &std::path::Path, timeout: Duration) {
+fn wait_for_socket(child: &mut Child, path: &Path, stderr_path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
+    let mut backoff = readiness_backoff();
     loop {
         if path.exists() {
             return;
         }
-        if Instant::now() >= deadline {
+        // A dead daemon will never create the socket — surface the crash now
+        // instead of spinning until the deadline.
+        if let Ok(Some(status)) = child.try_wait() {
             panic!(
-                "daemon socket did not appear within {timeout:?}: {}",
-                path.display()
+                "daemon process exited before creating its socket — exit: {status}, \
+                 socket: {}\n--- daemon stderr ---\n{}",
+                path.display(),
+                read_stderr(stderr_path)
             );
         }
-        std::thread::sleep(Duration::from_millis(20));
+        if Instant::now() >= deadline {
+            let still_running = matches!(child.try_wait(), Ok(None));
+            panic!(
+                "daemon socket did not appear within {timeout:?} — socket: {}, \
+                 process still running: {still_running}\n--- daemon stderr ---\n{}",
+                path.display(),
+                read_stderr(stderr_path)
+            );
+        }
+        std::thread::sleep(backoff.next_delay().unwrap_or(READINESS_BACKOFF_CAP));
     }
 }
 
@@ -845,10 +868,16 @@ fn test_session_id() -> String {
 /// Spawn `termihub-agent --daemon <session_id>` for a local shell.
 ///
 /// The daemon writes its Unix socket to `socket_path` when it is ready.
-/// Caller must call `wait_for_socket` before using it.
+/// Caller must call [`wait_for_socket`] before using it. Returns the child plus
+/// the [`NamedTempFile`] capturing its stderr, so a startup failure can be
+/// diagnosed from the daemon's own error output.
 #[cfg(unix)]
-fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &std::path::Path) -> Child {
-    Command::new(agent_binary())
+fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child, NamedTempFile) {
+    let stderr_file = NamedTempFile::new().expect("failed to create daemon stderr capture file");
+    let stderr_handle = stderr_file
+        .reopen()
+        .expect("failed to reopen daemon stderr capture file");
+    let child = Command::new(agent_binary())
         .arg("--daemon")
         .arg(session_id)
         .env("TERMIHUB_TYPE_ID", "local")
@@ -857,9 +886,10 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &std::path::Path)
         .env("TERMIHUB_BUFFER_SIZE", "65536")
         .env("RUST_LOG", "warn")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(stderr_handle))
         .spawn()
-        .expect("failed to spawn daemon")
+        .expect("failed to spawn daemon");
+    (child, stderr_file)
 }
 
 /// A TCP listener agent isolated from the developer's real config by setting
@@ -912,6 +942,8 @@ impl Drop for IsolatedAgent {
 struct PersistentShellSetup {
     agent: IsolatedAgent,
     daemon: Child,
+    /// Captured daemon stderr, kept alive for startup-failure diagnostics.
+    _daemon_stderr: NamedTempFile,
     _tmp: TempDir,
     pub session_id: String,
 }
@@ -924,9 +956,15 @@ impl PersistentShellSetup {
         let session_id = test_session_id();
         let socket_path = tmp_path.join(format!("session-{session_id}.sock"));
 
-        // Start daemon, wait for its socket to appear.
-        let daemon = spawn_daemon_for_local_shell(&session_id, &socket_path);
-        wait_for_socket(&socket_path, Duration::from_secs(5));
+        // Start daemon, wait for its socket to appear. Uses the shared
+        // adaptive readiness budget so a loaded CI runner has headroom.
+        let (mut daemon, daemon_stderr) = spawn_daemon_for_local_shell(&session_id, &socket_path);
+        wait_for_socket(
+            &mut daemon,
+            &socket_path,
+            daemon_stderr.path(),
+            ready_timeout(),
+        );
 
         // Write AgentState so the TCP listener's recover_sessions() finds this
         // daemon when it starts.
@@ -953,6 +991,7 @@ impl PersistentShellSetup {
         PersistentShellSetup {
             agent,
             daemon,
+            _daemon_stderr: daemon_stderr,
             _tmp: tmp,
             session_id,
         }
