@@ -33,7 +33,7 @@ export function WolPanel() {
   const canSend = !!mac.trim() && !portError && !broadcastError;
   const [savedDevices, setSavedDevices] = useState<WolDevice[]>([]);
   const [history, setHistory] = useState<WolHistoryEntry[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
+  const [sentMessage, setSentMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -57,14 +57,15 @@ export function WolPanel() {
   const handleSend = useCallback(async () => {
     if (!canSend) return;
     setError(null);
-    setStatus(null);
+    setSentMessage(null);
     try {
       await networkWolSend(mac, broadcast, Number(port));
-      setStatus(`Magic packet sent to ${mac}`);
+      setSentMessage(`Magic packet sent to ${mac}`);
       setHistory((prev) => [{ mac, sentAt: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)]);
     } catch (err) {
       setError(String(err));
       frontendLog("wol_panel", `WoL send failed: ${err}`);
+      throw err; // keep the async Button in its error path (no false success flash)
     }
   }, [mac, broadcast, port, canSend]);
 
@@ -90,7 +91,9 @@ export function WolPanel() {
   }, [canSend]);
 
   // Enter submits the form → send the magic packet (respects the disabled state).
-  const handleSubmit = useFormSubmit(canSend, handleSend);
+  // A mouse click goes through the Button's onClick so its async lifecycle drives
+  // the pending affordance; the Enter path ignores the throw.
+  const handleSubmit = useFormSubmit(canSend, () => void handleSend().catch(() => {}));
 
   const handleConfirmSave = useCallback(async () => {
     const name = saveName.trim();
@@ -138,7 +141,13 @@ export function WolPanel() {
             variant="primary"
             size="sm"
             icon={<Power size={14} />}
+            pendingLabel="Sending…"
+            errorToast={false}
             disabled={!canSend}
+            onClick={(e) => {
+              e.preventDefault();
+              return handleSend();
+            }}
             data-testid="wol-send"
           >
             Send
@@ -175,7 +184,7 @@ export function WolPanel() {
         />
       </div>
 
-      {status && <div className="network-panel__info">{status}</div>}
+      {sentMessage && <div className="network-panel__info">{sentMessage}</div>}
       {error && <div className="network-panel__error">{error}</div>}
 
       {/* Saved Devices */}

@@ -2,29 +2,28 @@ import { useState, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui";
 import { networkOpenPorts } from "@/services/networkApi";
-import type { OpenPort, PortProtocol, DiagnosticStatus } from "@/types/network";
+import type { OpenPort, PortProtocol } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { frontendLog } from "@/utils/frontendLog";
 
 /** Open Ports Viewer diagnostic tab content. */
 export function OpenPortsPanel() {
-  const [status, setStatus] = useState<DiagnosticStatus>("idle");
+  const [loaded, setLoaded] = useState(false);
   const [ports, setPorts] = useState<OpenPort[]>([]);
   const [filter, setFilter] = useState("");
   const [protocolFilter, setProtocolFilter] = useState<PortProtocol | "All">("All");
   const [error, setError] = useState<string | null>(null);
 
   const handleRefresh = useCallback(async () => {
-    setStatus("running");
     setError(null);
     try {
       const result = await networkOpenPorts();
       setPorts(result);
-      setStatus("completed");
+      setLoaded(true);
     } catch (err) {
       setError(String(err));
-      setStatus("error");
       frontendLog("open_ports", `Failed to list open ports: ${err}`);
+      throw err; // keep the async Button in its error path (no false success flash)
     }
   }, []);
 
@@ -64,8 +63,9 @@ export function OpenPortsPanel() {
             variant="primary"
             size="sm"
             icon={<RefreshCw size={14} />}
+            pendingLabel="Refreshing…"
+            errorToast={false}
             onClick={handleRefresh}
-            disabled={status === "running"}
             data-testid="open-ports-refresh"
           >
             Refresh
@@ -99,7 +99,7 @@ export function OpenPortsPanel() {
 
       {error && <div className="network-panel__error">{error}</div>}
 
-      {status === "idle" && ports.length === 0 && (
+      {!loaded && ports.length === 0 && (
         <div className="network-panel__placeholder">Click Refresh to list listening ports</div>
       )}
 
@@ -107,11 +107,9 @@ export function OpenPortsPanel() {
         columns={columns}
         rows={formattedRows}
         footer={
-          status === "completed"
+          loaded
             ? `${filtered.length} listening port(s)${filter ? ` (filtered from ${ports.length})` : ""}`
-            : status === "running"
-              ? "Loading…"
-              : null
+            : null
         }
       />
     </div>

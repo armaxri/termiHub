@@ -90,7 +90,14 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
         <span className="network-panel__title">Traceroute</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <Button variant="danger" size="sm" icon={<StopCircle size={14} />} onClick={stop}>
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<StopCircle size={14} />}
+              pendingLabel="Stopping…"
+              errorToast={false}
+              onClick={stop}
+            >
               Stop
             </Button>
           ) : (
@@ -99,10 +106,16 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
+              pendingLabel="Starting…"
+              errorToast={false}
               disabled={!canRun}
+              onClick={(e) => {
+                e.preventDefault();
+                return run();
+              }}
               data-testid="traceroute-run"
             >
-              Run
+              Start
             </Button>
           )}
         </div>
