@@ -10,9 +10,7 @@ import {
   networkWolDeviceDelete,
 } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
-import { NetworkNumberField } from "./NetworkNumberField";
-import { NetworkTextField } from "./NetworkTextField";
-import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
+import { validatePort, validateHost, validateMac, parseNumberInput } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface WolHistoryEntry {
@@ -156,32 +154,45 @@ export function WolPanel() {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>MAC Address</span>
-          <input
+        <Field className="network-panel__field" label="MAC Address" htmlFor="wol-mac">
+          <Input
             ref={macRef}
-            className="network-panel__input"
+            id="wol-mac"
             value={mac}
             onChange={(e) => setMac(e.target.value)}
             placeholder="AA:BB:CC:DD:EE:FF"
             data-testid="wol-mac"
           />
-        </label>
-        <NetworkTextField
+        </Field>
+        <Field
+          className="network-panel__field"
           label="Broadcast"
-          value={broadcast}
-          onChange={setBroadcast}
-          error={broadcastError}
-          data-testid="wol-broadcast"
-        />
-        <NetworkNumberField
+          htmlFor="wol-broadcast"
+          error={broadcastError ?? undefined}
+        >
+          <Input
+            id="wol-broadcast"
+            value={broadcast}
+            onChange={(e) => setBroadcast(e.target.value)}
+            error={!!broadcastError}
+            data-testid="wol-broadcast"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Port"
-          value={port}
-          onChange={setPort}
-          error={portError}
-          small
-          data-testid="wol-port"
-        />
+          htmlFor="wol-port"
+          error={portError ?? undefined}
+        >
+          <Input
+            id="wol-port"
+            type="number"
+            value={port}
+            onChange={(e) => setPort(parseNumberInput(e.target.value))}
+            error={!!portError}
+            data-testid="wol-port"
+          />
+        </Field>
       </div>
 
       {sentMessage && <div className="network-panel__info">{sentMessage}</div>}

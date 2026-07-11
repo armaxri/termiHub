@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Play } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Field, Input, Select } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
@@ -97,41 +97,41 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>Hostname</span>
-          <input
+        <Field className="network-panel__field" label="Hostname" htmlFor="dns-hostname">
+          <Input
             ref={hostnameRef}
-            className="network-panel__input"
+            id="dns-hostname"
             value={hostname}
             onChange={(e) => setHostname(e.target.value)}
             placeholder="example.com"
             data-testid="dns-hostname"
           />
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Type</span>
-          <select
-            className="network-panel__select"
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Type"
+          htmlFor="dns-record-type"
+        >
+          <Select
             value={recordType}
-            onChange={(e) => setRecordType(e.target.value as DnsRecordType)}
+            onChange={(value) => setRecordType(value as DnsRecordType)}
+            options={RECORD_TYPES.map((t) => ({ value: t, label: t }))}
+            aria-label="Record type"
             data-testid="dns-record-type"
-          >
-            {RECORD_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Server (auto)</span>
-          <input
-            className="network-panel__input"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Server (auto)"
+          htmlFor="dns-server"
+        >
+          <Input
+            id="dns-server"
             value={server}
             onChange={(e) => setServer(e.target.value)}
             placeholder="8.8.8.8"
           />
-        </label>
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

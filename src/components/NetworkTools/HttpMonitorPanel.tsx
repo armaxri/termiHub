@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, toast, Field, Input, Select } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -14,9 +14,7 @@ import {
 } from "@/services/networkApi";
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
-import { NetworkNumberField } from "./NetworkNumberField";
-import { NetworkTextField } from "./NetworkTextField";
-import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
+import { isValidHttpUrl, validateIntRange, parseNumberInput } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 const MAX_HISTORY = 120;
@@ -286,54 +284,87 @@ export function HttpMonitorPanel() {
       </div>
 
       <div className="network-panel__form">
-        <NetworkTextField
+        <Field
+          className="network-panel__field"
           label="URL"
-          value={url}
-          onChange={setUrl}
-          error={urlError}
-          placeholder="https://example.com"
-          inputRef={urlRef}
-          data-testid="http-monitor-url"
-        />
-        <label className="network-panel__field network-panel__field--small">
-          <span>Method</span>
-          <select
-            className="network-panel__select"
+          htmlFor="http-monitor-url"
+          error={urlError ?? undefined}
+        >
+          <Input
+            ref={urlRef}
+            id="http-monitor-url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            error={!!urlError}
+            placeholder="https://example.com"
+            data-testid="http-monitor-url"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Method"
+          htmlFor="http-monitor-method"
+        >
+          <Select
             value={method}
-            onChange={(e) => setMethod(e.target.value)}
-          >
-            <option>GET</option>
-            <option>HEAD</option>
-            <option>POST</option>
-          </select>
-        </label>
-        <NetworkNumberField
+            onChange={setMethod}
+            options={[
+              { value: "GET", label: "GET" },
+              { value: "HEAD", label: "HEAD" },
+              { value: "POST", label: "POST" },
+            ]}
+            aria-label="HTTP method"
+            data-testid="http-monitor-method"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Interval (s)"
-          value={intervalSecs}
-          onChange={setIntervalSecs}
-          error={intervalError}
-          small
-          min={1}
-          data-testid="http-monitor-interval"
-        />
-        <NetworkNumberField
+          htmlFor="http-monitor-interval"
+          error={intervalError ?? undefined}
+        >
+          <Input
+            id="http-monitor-interval"
+            type="number"
+            min={1}
+            value={intervalSecs}
+            onChange={(e) => setIntervalSecs(parseNumberInput(e.target.value))}
+            error={!!intervalError}
+            data-testid="http-monitor-interval"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Expected status"
-          value={expectedStatus}
-          onChange={setExpectedStatus}
-          error={statusError}
-          small
-          placeholder="200"
-          data-testid="http-monitor-expected-status"
-        />
-        <NetworkNumberField
+          htmlFor="http-monitor-expected-status"
+          error={statusError ?? undefined}
+        >
+          <Input
+            id="http-monitor-expected-status"
+            type="number"
+            value={expectedStatus}
+            onChange={(e) => setExpectedStatus(parseNumberInput(e.target.value))}
+            error={!!statusError}
+            placeholder="200"
+            data-testid="http-monitor-expected-status"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Timeout (s)"
-          value={timeoutSecs}
-          onChange={setTimeoutSecs}
-          error={timeoutError}
-          small
-          min={1}
-          data-testid="http-monitor-timeout"
-        />
+          htmlFor="http-monitor-timeout"
+          error={timeoutError ?? undefined}
+        >
+          <Input
+            id="http-monitor-timeout"
+            type="number"
+            min={1}
+            value={timeoutSecs}
+            onChange={(e) => setTimeoutSecs(parseNumberInput(e.target.value))}
+            error={!!timeoutError}
+            data-testid="http-monitor-timeout"
+          />
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

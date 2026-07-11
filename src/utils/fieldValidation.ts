@@ -41,6 +41,16 @@ export function validateIntRange(
 }
 
 /**
+ * Parse the raw string from a numeric `<input type="number">` change into the
+ * `number | ""` shape the network-tools numeric fields hold: an empty box stays
+ * `""` (so a cleared field reads blank and can be flagged "required") instead of
+ * being coerced to `0`.
+ */
+export function parseNumberInput(value: string): number | "" {
+  return value === "" ? "" : Number(value);
+}
+
+/**
  * Validate a TCP/UDP port number (1–65535).
  *
  * @returns an error message when invalid, or `null` when acceptable.

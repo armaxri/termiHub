@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button, Modal } from "@/components/ui";
+import { Button, Modal, Field, Input } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -12,8 +12,7 @@ import {
 } from "@/services/networkApi";
 import type { PortScanSummary } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { NetworkNumberField } from "./NetworkNumberField";
-import { validateIntRange } from "@/utils/fieldValidation";
+import { validateIntRange, parseNumberInput } from "@/utils/fieldValidation";
 import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
@@ -176,43 +175,55 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>Host / CIDR</span>
-          <input
+        <Field className="network-panel__field" label="Host / CIDR" htmlFor="port-scanner-host">
+          <Input
             ref={hostRef}
-            className="network-panel__input"
+            id="port-scanner-host"
             value={host}
             onChange={(e) => setHost(e.target.value)}
             placeholder="192.168.1.1, 10.0.0.0/24, example.com"
             data-testid="port-scanner-host"
           />
-        </label>
-        <label className="network-panel__field">
-          <span>Ports</span>
-          <input
-            className="network-panel__input"
+        </Field>
+        <Field className="network-panel__field" label="Ports" htmlFor="port-scanner-ports">
+          <Input
+            id="port-scanner-ports"
             value={ports}
             onChange={(e) => setPorts(e.target.value)}
             placeholder="22,80,443,8080-8090"
             data-testid="port-scanner-ports"
           />
-        </label>
-        <NetworkNumberField
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Timeout (ms)"
-          value={timeoutMs}
-          onChange={setTimeoutMs}
-          error={timeoutError}
-          small
-          data-testid="port-scanner-timeout"
-        />
-        <NetworkNumberField
+          htmlFor="port-scanner-timeout"
+          error={timeoutError ?? undefined}
+        >
+          <Input
+            id="port-scanner-timeout"
+            type="number"
+            value={timeoutMs}
+            onChange={(e) => setTimeoutMs(parseNumberInput(e.target.value))}
+            error={!!timeoutError}
+            data-testid="port-scanner-timeout"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Concurrency"
-          value={concurrency}
-          onChange={setConcurrency}
-          error={concurrencyError}
-          small
-          data-testid="port-scanner-concurrency"
-        />
+          htmlFor="port-scanner-concurrency"
+          error={concurrencyError ?? undefined}
+        >
+          <Input
+            id="port-scanner-concurrency"
+            type="number"
+            value={concurrency}
+            onChange={(e) => setConcurrency(parseNumberInput(e.target.value))}
+            error={!!concurrencyError}
+            data-testid="port-scanner-concurrency"
+          />
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

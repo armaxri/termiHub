@@ -44,10 +44,12 @@
   border-bottom: 1px solid var(--border-secondary);
 }
 
+/* Field sizing: layout-only classes composed onto the shared `ui/Field`
+   primitive (the same pattern as `.network-sidebar__list-btn` over the ghost
+   `Button`). The label + control + inline-error structure and all its styling
+   come from `.ui-field` / `.ui-input` / `.ui-select__trigger`; these classes
+   only control how a field flexes within the wrap-row `.network-panel__form`. */
 .network-panel__field {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
   flex: 1;
   min-width: 120px;
 }
@@ -56,40 +58,6 @@
   flex: 0 0 auto;
   min-width: 80px;
   max-width: 140px;
-}
-
-.network-panel__field > span {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.network-panel__input,
-.network-panel__select {
-  padding: 4px 6px;
-  background-color: var(--bg-input);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-family);
-}
-
-.network-panel__input:focus,
-.network-panel__select:focus {
-  outline: none;
-  border-color: var(--focus-border);
-}
-
-.network-panel__input--error,
-.network-panel__input--error:focus {
-  border-color: var(--color-error);
-}
-
-/* Inline per-field validation message shown beneath a form control. */
-.network-panel__field-error {
-  color: var(--color-error);
-  font-size: var(--font-size-sm);
 }
 
 /* Status / info / error messages */

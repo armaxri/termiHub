@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Field, Input, Select } from "@/components/ui";
 import { networkOpenPorts } from "@/services/networkApi";
 import type { OpenPort, PortProtocol } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
@@ -74,27 +74,32 @@ export function OpenPortsPanel() {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>Filter</span>
-          <input
-            className="network-panel__input"
+        <Field className="network-panel__field" label="Filter" htmlFor="open-ports-filter">
+          <Input
+            id="open-ports-filter"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder="address, process, pid…"
+            data-testid="open-ports-filter"
           />
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Protocol</span>
-          <select
-            className="network-panel__select"
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Protocol"
+          htmlFor="open-ports-protocol"
+        >
+          <Select
             value={protocolFilter}
-            onChange={(e) => setProtocolFilter(e.target.value as PortProtocol | "All")}
-          >
-            <option value="All">All</option>
-            <option value="TCP">TCP</option>
-            <option value="UDP">UDP</option>
-          </select>
-        </label>
+            onChange={(value) => setProtocolFilter(value as PortProtocol | "All")}
+            options={[
+              { value: "All", label: "All" },
+              { value: "TCP", label: "TCP" },
+              { value: "UDP", label: "UDP" },
+            ]}
+            aria-label="Protocol filter"
+            data-testid="open-ports-protocol"
+          />
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}
