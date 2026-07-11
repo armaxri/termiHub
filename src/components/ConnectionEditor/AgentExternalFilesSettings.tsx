@@ -74,7 +74,7 @@ export function AgentExternalFilesSettings({ files, onChange }: AgentExternalFil
               <Button
                 variant="ghost"
                 size="sm"
-                className="settings-panel__file-remove"
+                iconOnly
                 icon={<Trash2 size={14} />}
                 onClick={() => handleRemove(file.path)}
                 title="Remove file"

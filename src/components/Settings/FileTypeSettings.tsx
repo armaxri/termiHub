@@ -211,14 +211,15 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                       → {language}
                     </span>
                     <Tooltip content={`Remove mapping for ${pattern}`}>
-                      <button
-                        className="settings-panel__file-remove"
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        icon={<Trash2 size={14} />}
                         onClick={() => handleRemove(pattern)}
                         aria-label={`Remove mapping for ${pattern}`}
                         data-testid={`file-type-remove-${pattern}`}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      />
                     </Tooltip>
                   </li>
                 ))}
@@ -262,14 +263,15 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                       </span>
                     )}
                     <Tooltip content={`Copy "${pattern}" into the add form`}>
-                      <button
-                        className="settings-panel__file-remove"
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        icon={<Copy size={14} />}
                         onClick={() => handlePrefillOverride(pattern, language)}
                         aria-label={`Copy "${pattern}" into the add form`}
                         data-testid={`file-type-copy-${pattern}`}
-                      >
-                        <Copy size={14} />
-                      </button>
+                      />
                     </Tooltip>
                   </li>
                 );

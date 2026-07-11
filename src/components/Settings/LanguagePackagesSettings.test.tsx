@@ -107,6 +107,28 @@ describe("LanguagePackagesSettings", () => {
     expect(query("lang-pkg-install-astro")).toBeNull();
   });
 
+  it("renders install and uninstall buttons as shared ghost Button primitives (not the bespoke shell)", () => {
+    act(() => {
+      useAppStore.setState({
+        settings: {
+          ...useAppStore.getState().settings,
+          installedLanguagePackages: ["astro"],
+        },
+      });
+    });
+    render();
+
+    const uninstall = query("lang-pkg-uninstall-astro") as HTMLButtonElement;
+    expect(uninstall.classList.contains("ui-btn")).toBe(true);
+    expect(uninstall.classList.contains("ui-btn--ghost")).toBe(true);
+    expect(uninstall.classList.contains("settings-panel__file-remove")).toBe(false);
+
+    const install = query("lang-pkg-install-svelte") as HTMLButtonElement;
+    expect(install.classList.contains("ui-btn")).toBe(true);
+    expect(install.classList.contains("ui-btn--ghost")).toBe(true);
+    expect(install.classList.contains("settings-panel__file-remove")).toBe(false);
+  });
+
   it("installs a package and calls registerAdditionalLanguagePackages", async () => {
     const { registerAdditionalLanguagePackages } = await import("@/utils/monacoCustomLanguages");
     render();
