@@ -23,8 +23,6 @@
 //! (e.g. the agent session daemon) layer that policy on top rather than baking
 //! it in here.
 
-use std::io;
-
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Boxed reader half of a local-IPC connection (Unix socket or named pipe).
@@ -32,29 +30,119 @@ pub type BoxedReader = Box<dyn AsyncRead + Send + Unpin>;
 /// Boxed writer half of a local-IPC connection (Unix socket or named pipe).
 pub type BoxedWriter = Box<dyn AsyncWrite + Send + Unpin>;
 
-/// A listening local-IPC endpoint (Unix domain socket or Windows named pipe).
-pub struct LocalSocketListener {
-    _private: (),
+#[cfg(unix)]
+pub use unix_impl::{connect, LocalSocketListener};
+#[cfg(windows)]
+pub use windows_impl::{connect, LocalSocketListener};
+
+// ── Unix domain socket transport ────────────────────────────────────
+
+#[cfg(unix)]
+mod unix_impl {
+    use super::{BoxedReader, BoxedWriter};
+    use std::io;
+    use std::path::PathBuf;
+    use tokio::net::{UnixListener, UnixStream};
+
+    /// A listening Unix domain socket.
+    pub struct LocalSocketListener {
+        listener: UnixListener,
+    }
+
+    impl LocalSocketListener {
+        /// Bind a listener at the socket path `address`, reclaiming a stale
+        /// socket file if present.
+        ///
+        /// "Stale" means the file exists on disk but nothing is listening: a
+        /// connect probe fails, so the file is safe to remove (a crashed
+        /// instance left it behind). If a *live* instance owns the path, the
+        /// probe succeeds, the file is left untouched, and the subsequent
+        /// `bind` fails with `AddrInUse` — the caller's "not the rendezvous"
+        /// signal.
+        pub async fn bind(address: &str) -> io::Result<Self> {
+            let path = PathBuf::from(address);
+            if path.exists() && UnixStream::connect(&path).await.is_err() {
+                let _ = std::fs::remove_file(&path);
+            }
+            let listener = UnixListener::bind(&path)?;
+            Ok(Self { listener })
+        }
+
+        /// Accept the next client connection, returning erased read/write halves.
+        pub async fn accept(&mut self) -> io::Result<(BoxedReader, BoxedWriter)> {
+            let (stream, _addr) = self.listener.accept().await?;
+            let (reader, writer) = stream.into_split();
+            Ok((Box::new(reader), Box::new(writer)))
+        }
+    }
+
+    /// Connect once to a socket path, failing fast if nothing is listening.
+    pub async fn connect(address: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
+        let (reader, writer) = UnixStream::connect(address).await?.into_split();
+        Ok((Box::new(reader), Box::new(writer)))
+    }
 }
 
-impl LocalSocketListener {
-    /// Bind a listener at `address`, reclaiming a stale endpoint if present.
+// ── Windows named-pipe transport ────────────────────────────────────
+
+#[cfg(windows)]
+mod windows_impl {
+    use super::{BoxedReader, BoxedWriter};
+    use std::io;
+    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
+
+    /// A listening Windows named pipe.
     ///
-    /// `address` is a filesystem path on unix and a `\\.\pipe\…` name on
-    /// windows. Fails if a live instance already owns the endpoint.
-    pub async fn bind(_address: &str) -> io::Result<Self> {
-        todo!("implemented in the following commit")
+    /// Named pipes serve one client per server instance, so the listener keeps
+    /// the next (not-yet-connected) instance ready and stages a fresh one each
+    /// time a client is accepted.
+    pub struct LocalSocketListener {
+        name: String,
+        /// The next pipe instance, waiting for a client to connect.
+        next: Option<NamedPipeServer>,
     }
 
-    /// Accept the next client connection, returning erased read/write halves.
-    pub async fn accept(&mut self) -> io::Result<(BoxedReader, BoxedWriter)> {
-        todo!("implemented in the following commit")
-    }
-}
+    impl LocalSocketListener {
+        /// Bind the first pipe instance at pipe name `address`.
+        ///
+        /// `first_pipe_instance(true)` fails if another instance already owns
+        /// the pipe — the caller's "not the rendezvous" signal, the exact
+        /// analog of the unix `AddrInUse` case.
+        pub async fn bind(address: &str) -> io::Result<Self> {
+            let next = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(address)?;
+            Ok(Self {
+                name: address.to_string(),
+                next: Some(next),
+            })
+        }
 
-/// Connect once to `address`, failing fast if nothing is listening.
-pub async fn connect(_address: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
-    todo!("implemented in the following commit")
+        /// Accept the next client connection, returning erased read/write halves.
+        pub async fn accept(&mut self) -> io::Result<(BoxedReader, BoxedWriter)> {
+            let server = self
+                .next
+                .as_ref()
+                .expect("listener always holds a pending pipe instance");
+            server.connect().await?;
+
+            // Hand off the connected instance and stage a fresh one for the
+            // next client before serving this one, so no client races into a
+            // missing pipe.
+            let connected = self.next.take().expect("pending instance present");
+            self.next = Some(ServerOptions::new().create(&self.name)?);
+
+            let (reader, writer) = tokio::io::split(connected);
+            Ok((Box::new(reader), Box::new(writer)))
+        }
+    }
+
+    /// Connect once to a pipe name, failing fast if it is not present.
+    pub async fn connect(address: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
+        let client = ClientOptions::new().open(address)?;
+        let (reader, writer) = tokio::io::split(client);
+        Ok((Box::new(reader), Box::new(writer)))
+    }
 }
 
 #[cfg(test)]

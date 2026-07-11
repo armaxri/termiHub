@@ -15,11 +15,14 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 /// The caller is responsible for ensuring `line` itself contains no interior
 /// newline (i.e. it is one serialized JSON value); NDJSON framing relies on
 /// `\n` being a message boundary.
-pub async fn write_line<W>(_writer: &mut W, _line: &str) -> io::Result<()>
+pub async fn write_line<W>(writer: &mut W, line: &str) -> io::Result<()>
 where
     W: AsyncWrite + Unpin + ?Sized,
 {
-    todo!("implemented in the following commit")
+    writer.write_all(line.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    Ok(())
 }
 
 /// Read one newline-delimited line into `buf` (cleared first).
@@ -29,11 +32,12 @@ where
 /// [`tokio::io::AsyncBufReadExt::read_line`]; callers typically `trim()` before
 /// parsing. A line split across multiple underlying reads is transparently
 /// reassembled by the buffered reader.
-pub async fn read_line<R>(_reader: &mut R, _buf: &mut String) -> io::Result<usize>
+pub async fn read_line<R>(reader: &mut R, buf: &mut String) -> io::Result<usize>
 where
     R: AsyncBufRead + Unpin + ?Sized,
 {
-    todo!("implemented in the following commit")
+    buf.clear();
+    reader.read_line(buf).await
 }
 
 #[cfg(test)]
