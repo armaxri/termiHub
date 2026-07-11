@@ -24,6 +24,7 @@ import { PortScannerPanel } from "./PortScannerPanel";
 import { DnsLookupPanel } from "./DnsLookupPanel";
 import { WolPanel } from "./WolPanel";
 import { HttpMonitorPanel } from "./HttpMonitorPanel";
+import { OpenPortsPanel } from "./OpenPortsPanel";
 
 vi.mock("@/services/networkApi", () => {
   const unlisten = () => {};
@@ -56,6 +57,7 @@ vi.mock("@/services/networkApi", () => {
     networkHttpMonitorResume: vi.fn(() => Promise.resolve()),
     networkHttpMonitorList: vi.fn(() => Promise.resolve([])),
     onHttpMonitorCheck: vi.fn(onEvent),
+    networkOpenPorts: vi.fn(() => Promise.resolve([])),
   };
 });
 
@@ -168,11 +170,13 @@ describe("Network Tools — shared ui/ primitives (#1435)", () => {
     expect(el("dns-hostname").classList.contains("ui-input")).toBe(true);
 
     const recordType = el("dns-record-type");
+    // The record-type dropdown is now the shared Select's trigger button, not a
+    // bespoke native <select> (Radix keeps a visually-hidden native select for
+    // form submission, so we assert on the trigger rather than tag absence).
+    expect(recordType.tagName).toBe("BUTTON");
     expect(recordType.classList.contains("ui-select__trigger")).toBe(true);
     // Radix renders the selected value's label into the trigger.
     expect(recordType.textContent).toContain("A");
-    // The native <select> is gone.
-    expect(container.querySelector("select")).toBeNull();
     expectNoBespokeFieldMarkup();
   });
 
@@ -198,9 +202,22 @@ describe("Network Tools — shared ui/ primitives (#1435)", () => {
       expect(input.classList.contains("ui-input")).toBe(true);
       expect(input.type).toBe("number");
     }
-    // Method dropdown is the shared Select, not a native <select>.
-    expect(container.querySelector(".ui-select__trigger")).not.toBeNull();
-    expect(container.querySelector("select")).toBeNull();
+    // Method dropdown is the shared Select's trigger button, not the bespoke
+    // native <select> markup.
+    const method = el("http-monitor-method");
+    expect(method.tagName).toBe("BUTTON");
+    expect(method.classList.contains("ui-select__trigger")).toBe(true);
+    expectNoBespokeFieldMarkup();
+  });
+
+  it("Open Ports: filter is a shared Input and protocol is a shared Select", async () => {
+    await render(<OpenPortsPanel />);
+    expect(el("open-ports-filter").classList.contains("ui-input")).toBe(true);
+
+    const protocol = el("open-ports-protocol");
+    expect(protocol.tagName).toBe("BUTTON");
+    expect(protocol.classList.contains("ui-select__trigger")).toBe(true);
+    expect(protocol.textContent).toContain("All");
     expectNoBespokeFieldMarkup();
   });
 });
