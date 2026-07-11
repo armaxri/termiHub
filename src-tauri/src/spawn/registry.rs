@@ -1791,7 +1791,8 @@ mod linux {
             pub other_files: bool,
         }
 
-        /// Produce the new `uca.xml` content: preserve every foreign `<action>`,
+        /// Produce the new `uca.xml` content: preserve every foreign `<action>`
+        /// verbatim — together with the comments and whitespace between them —
         /// drop any prior termiHub action (unique-id starting `our_id_prefix`),
         /// then append `ours`. A `None`/blank/invalid `existing` yields a fresh
         /// document containing only `ours`.
@@ -1808,7 +1809,10 @@ mod linux {
                 .write_event(Event::Start(BytesStart::new("actions")))
                 .context("write <actions>")?;
             if let Some(xml) = existing {
-                copy_foreign_actions(xml, our_id_prefix, &mut writer)?;
+                let foreign = copy_foreign_actions(xml, our_id_prefix)?;
+                // Inject the preserved source bytes verbatim so comments and
+                // whitespace between foreign actions survive byte-for-byte.
+                writer.get_mut().extend_from_slice(foreign.as_bytes());
             }
             for action in ours {
                 write_action(&mut writer, action)?;
@@ -1822,75 +1826,78 @@ mod linux {
             Ok(out)
         }
 
-        /// Stream the existing document and replay each top-level `<action>`
-        /// subtree into `out`, except those termiHub owns (unique-id prefixed).
-        fn copy_foreign_actions(
-            xml: &str,
-            our_id_prefix: &str,
-            out: &mut Writer<Vec<u8>>,
-        ) -> Result<()> {
+        /// Return the verbatim source bytes of the existing document's
+        /// `<actions>` body, minus any top-level `<action>` subtree termiHub
+        /// owns (its `<unique-id>` starts with `our_id_prefix`).
+        ///
+        /// Rather than replaying parsed events — which would normalise comments
+        /// and insignificant whitespace — this walks the reader only to learn
+        /// the byte offsets (`reader.buffer_position()`) of the body and of each
+        /// top-level `<action>…</action>` span, then copies the body slice while
+        /// skipping the owned spans. Foreign actions, and every comment and
+        /// whitespace run between them, are preserved exactly. A document
+        /// without an `<actions>` root yields an empty string.
+        fn copy_foreign_actions(xml: &str, our_id_prefix: &str) -> Result<String> {
             let mut reader = Reader::from_str(xml);
-            // Depth relative to the <actions> root: 0 = outside, 1 = inside
-            // <actions>, 2 = inside an <action> subtree we are buffering.
+            // Depth relative to the <actions> root: 0 = outside, 1 = directly
+            // inside <actions>, >=2 = inside an <action> subtree.
             let mut depth = 0usize;
-            let mut buffered: Vec<Event<'_>> = Vec::new();
-            let mut is_ours = false;
-            let mut in_unique_id = false;
+            // Byte range of the <actions> body: from just after the opening tag
+            // to just before the closing tag.
+            let mut body_start: Option<usize> = None;
+            let mut body_end: Option<usize> = None;
+            // Start offset of the top-level <action> currently being scanned.
+            let mut action_start: Option<usize> = None;
+            // Byte ranges of termiHub-owned <action> subtrees to drop, in order.
+            let mut owned: Vec<(usize, usize)> = Vec::new();
+            let owned_marker = format!("<unique-id>{our_id_prefix}");
 
             loop {
+                // buffer_position() is the offset just past the previously
+                // emitted event, i.e. the start of the event about to be read.
+                let before = reader.buffer_position() as usize;
                 let event = reader.read_event().context("parse uca.xml")?;
+                let after = reader.buffer_position() as usize;
                 match &event {
                     Event::Eof => break,
-                    Event::Decl(_) => {}
                     Event::Start(e) if e.name().as_ref() == b"actions" && depth == 0 => {
                         depth = 1;
+                        body_start = Some(after);
                     }
                     Event::End(e) if e.name().as_ref() == b"actions" && depth == 1 => {
                         depth = 0;
+                        body_end = Some(before);
                     }
                     Event::Start(e) if e.name().as_ref() == b"action" && depth == 1 => {
                         depth = 2;
-                        buffered.clear();
-                        is_ours = false;
-                        in_unique_id = false;
-                        buffered.push(event.clone());
+                        action_start = Some(before);
                     }
                     Event::End(e) if e.name().as_ref() == b"action" && depth == 2 => {
-                        buffered.push(event.clone());
-                        if !is_ours {
-                            for buffered_event in buffered.drain(..) {
-                                out.write_event(buffered_event)
-                                    .context("copy foreign action")?;
-                            }
-                        } else {
-                            buffered.clear();
-                        }
                         depth = 1;
-                    }
-                    _ if depth == 2 => {
-                        match &event {
-                            Event::Start(e) if e.name().as_ref() == b"unique-id" => {
-                                in_unique_id = true;
+                        if let Some(start) = action_start.take() {
+                            if xml[start..after].contains(&owned_marker) {
+                                owned.push((start, after));
                             }
-                            Event::End(e) if e.name().as_ref() == b"unique-id" => {
-                                in_unique_id = false;
-                            }
-                            Event::Text(t) if in_unique_id => {
-                                if let Ok(text) = t.xml_content() {
-                                    if text.trim().starts_with(our_id_prefix) {
-                                        is_ours = true;
-                                    }
-                                }
-                            }
-                            _ => {}
                         }
-                        buffered.push(event.clone());
                     }
-                    // Insignificant whitespace / comments between actions: drop.
+                    Event::Start(_) => depth += 1,
+                    Event::End(_) => depth = depth.saturating_sub(1),
                     _ => {}
                 }
             }
-            Ok(())
+
+            let (Some(start), Some(end)) = (body_start, body_end) else {
+                return Ok(String::new());
+            };
+            // Copy the body verbatim, skipping the termiHub-owned action spans.
+            let mut foreign = String::new();
+            let mut cursor = start;
+            for (drop_start, drop_end) in owned {
+                foreign.push_str(&xml[cursor..drop_start]);
+                cursor = drop_end;
+            }
+            foreign.push_str(&xml[cursor..end]);
+            Ok(foreign)
         }
 
         /// Write one termiHub `<action>` element.
@@ -2281,6 +2288,75 @@ mod linux {
                     .matches("<unique-id>termihub-open</unique-id>")
                     .count(),
                 1
+            );
+        }
+
+        #[test]
+        fn thunar_preserves_inter_action_comments_and_whitespace_on_edit_and_remove() {
+            let xdg = TempXdg::new("thunar-comments");
+            let thunar_dir = xdg.config.join("Thunar");
+            std::fs::create_dir_all(&thunar_dir).unwrap();
+
+            // Two foreign actions with a hand-written comment and blank line
+            // between them — the exact bytes we require to round-trip intact.
+            const FOREIGN_BLOCK: &str = "<action>\n\t<icon>utilities-terminal</icon>\n\t\
+<name>Open Terminal Here</name>\n\t<unique-id>1616000000000000-1</unique-id>\n\t\
+<command>xterm</command>\n\t<description>Foreign one</description>\n\t<patterns>*</patterns>\n\t\
+<directories/>\n</action>\n\n\
+<!-- keep this hand-written comment between actions -->\n\
+<action>\n\t<icon>edit-copy</icon>\n\t<name>Copy Path</name>\n\t\
+<unique-id>1616000000000000-2</unique-id>\n\t<command>echo %f</command>\n\t\
+<description>Foreign two</description>\n\t<patterns>*</patterns>\n\t<other-files/>\n</action>";
+
+            // A pre-existing termiHub action trails the foreign block, so both an
+            // edit (install) and a removal (uninstall) must leave the foreign
+            // block — comment and whitespace included — byte-intact.
+            let fixture = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<actions>\n\
+<!-- leading comment, keep me too -->\n\
+{FOREIGN_BLOCK}\n\
+<action>\n\t<icon>utilities-terminal</icon>\n\t<name>Stale termiHub</name>\n\t\
+<unique-id>termihub-open</unique-id>\n\t<command>stale</command>\n\t\
+<description>Open in termiHub</description>\n\t<patterns>*</patterns>\n\t<directories/>\n\
+</action>\n\
+</actions>\n"
+            );
+            let uca = thunar_dir.join("uca.xml");
+            std::fs::write(&uca, &fixture).unwrap();
+
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+
+            // Edit: reinstall rewrites termiHub's action but must not disturb the
+            // foreign block, its comment, or the leading comment.
+            reg.install(&s, EXE).unwrap();
+            let after_edit = xdg.read(&uca);
+            assert!(
+                after_edit.contains(FOREIGN_BLOCK),
+                "inter-action comment/whitespace lost on edit:\n{after_edit}"
+            );
+            assert!(after_edit.contains("<!-- leading comment, keep me too -->"));
+            assert!(after_edit.contains("<unique-id>termihub-open</unique-id>"));
+
+            // Remove: uninstall strips termiHub's action but keeps everything else.
+            reg.uninstall().unwrap();
+            let after_remove = xdg.read(&uca);
+            assert!(
+                after_remove.contains(FOREIGN_BLOCK),
+                "inter-action comment/whitespace lost on remove:\n{after_remove}"
+            );
+            assert!(after_remove.contains("<!-- leading comment, keep me too -->"));
+            assert!(
+                !after_remove.contains("termihub-open"),
+                "termiHub action must be removed"
             );
         }
 

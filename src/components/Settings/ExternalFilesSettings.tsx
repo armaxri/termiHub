@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/appStore";
 import { ExternalFileConfig } from "@/types/connection";
 import { Button, Toggle, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
+import { SettingsField } from "./SettingsField";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -208,10 +209,11 @@ export function ExternalFilesSettings() {
           Default settings for new SSH connections. Individual connections can override these in
           their SSH settings. Disabling a default disconnects active sessions that use the default.
         </p>
-        <div className="settings-form__field">
-          <span className="settings-form__label">Power Monitoring</span>
+        <SettingsField
+          label="Power Monitoring"
+          hint="Monitor CPU, memory, and power events via SSH agent connections."
+        >
           <Toggle
-            aria-label="Power Monitoring"
             checked={settings.powerMonitoringEnabled}
             onCheckedChange={() =>
               updateSettings({
@@ -221,15 +223,13 @@ export function ExternalFilesSettings() {
             }
             data-testid="toggle-power-monitoring"
           />
-          <span className="settings-form__hint">
-            Monitor CPU, memory, and power events via SSH agent connections.
-          </span>
-        </div>
+        </SettingsField>
 
-        <div className="settings-form__field">
-          <span className="settings-form__label">File Browser</span>
+        <SettingsField
+          label="File Browser"
+          hint="Enable the SFTP file browser for SSH agent sessions."
+        >
           <Toggle
-            aria-label="File Browser"
             checked={settings.fileBrowserEnabled}
             onCheckedChange={() =>
               updateSettings({
@@ -239,10 +239,7 @@ export function ExternalFilesSettings() {
             }
             data-testid="toggle-file-browser"
           />
-          <span className="settings-form__hint">
-            Enable the SFTP file browser for SSH agent sessions.
-          </span>
-        </div>
+        </SettingsField>
       </div>
     </div>
   );
