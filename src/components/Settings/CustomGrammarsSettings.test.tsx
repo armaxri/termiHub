@@ -179,6 +179,25 @@ describe("CustomGrammarsSettings", () => {
     expect(query("custom-grammar-remove-my-lang")).not.toBeNull();
   });
 
+  it("renders the remove button as a shared ghost Button primitive (not the bespoke shell)", () => {
+    act(() => {
+      useAppStore.setState({
+        settings: {
+          ...useAppStore.getState().settings,
+          customLanguageGrammars: [
+            { id: "my-lang", name: "My Lang", grammar: { scopeName: "source.my" } },
+          ],
+        },
+      });
+    });
+    render();
+
+    const btn = query("custom-grammar-remove-my-lang") as HTMLButtonElement;
+    expect(btn.classList.contains("ui-btn")).toBe(true);
+    expect(btn.classList.contains("ui-btn--ghost")).toBe(true);
+    expect(btn.classList.contains("settings-panel__file-remove")).toBe(false);
+  });
+
   it("removes a grammar when trash button is clicked", async () => {
     act(() => {
       useAppStore.setState({
