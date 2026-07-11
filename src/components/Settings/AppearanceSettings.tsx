@@ -1,6 +1,7 @@
 import { AppSettings } from "@/types/connection";
 import { Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
+import { SettingsField } from "./SettingsField";
 
 /** Static theme options, hoisted so they are not rebuilt on every render. */
 const THEME_OPTIONS: SelectOption[] = [
@@ -27,10 +28,8 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Appearance</h3>
       {show("theme") && (
-        <div className="settings-form__field">
-          <span className="settings-form__label">Theme</span>
+        <SettingsField label="Theme" hint="Application color theme.">
           <Select
-            aria-label="Theme"
             data-testid="appearance-theme-select"
             value={settings.theme ?? "dark"}
             onChange={(value) =>
@@ -41,26 +40,23 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
             }
             options={THEME_OPTIONS}
           />
-          <span className="settings-form__hint">Application color theme.</span>
-        </div>
+        </SettingsField>
       )}
       {show("fontFamily") && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Font Family</span>
+        <SettingsField
+          label="Font Family"
+          hint="Terminal font family. Leave empty to use the default Nerd Font chain."
+        >
           <input
             type="text"
             value={settings.fontFamily ?? ""}
             onChange={(e) => onChange({ ...settings, fontFamily: e.target.value || undefined })}
             placeholder={DEFAULT_FONT_FAMILY}
           />
-          <span className="settings-form__hint">
-            Terminal font family. Leave empty to use the default Nerd Font chain.
-          </span>
-        </label>
+        </SettingsField>
       )}
       {show("fontSize") && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Font Size</span>
+        <SettingsField label="Font Size" hint="Terminal font size in pixels (8–32).">
           <input
             type="number"
             min={8}
@@ -71,12 +67,13 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
               onChange({ ...settings, fontSize: isNaN(val) ? undefined : val });
             }}
           />
-          <span className="settings-form__hint">Terminal font size in pixels (8–32).</span>
-        </label>
+        </SettingsField>
       )}
       {show("lineHeight") && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Line Height</span>
+        <SettingsField
+          label="Line Height"
+          hint="Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters."
+        >
           <input
             type="number"
             min={0.8}
@@ -88,10 +85,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
               onChange({ ...settings, lineHeight: isNaN(val) ? undefined : val });
             }}
           />
-          <span className="settings-form__hint">
-            Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters.
-          </span>
-        </label>
+        </SettingsField>
       )}
     </div>
   );
