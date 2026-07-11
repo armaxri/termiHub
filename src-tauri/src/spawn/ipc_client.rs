@@ -19,9 +19,11 @@ pub async fn send(endpoint: &SpawnEndpoint, req: &SpawnRequest) -> anyhow::Resul
     exchange_halves(reader, writer, req).await
 }
 
-/// Perform the request/response exchange over an established stream. Generic so
-/// it is exercised in tests via an in-memory `tokio::io::duplex` pair on every
-/// platform.
+/// Perform the request/response exchange over a combined stream: split it and
+/// run the worker. A test-only convenience so the transport is exercised via an
+/// in-memory `tokio::io::duplex` pair on every platform; the production path
+/// calls [`exchange_halves`] directly with the connection's halves.
+#[cfg(test)]
 pub(crate) async fn exchange<S>(stream: S, req: &SpawnRequest) -> anyhow::Result<SpawnResponse>
 where
     S: AsyncRead + AsyncWrite + Unpin,

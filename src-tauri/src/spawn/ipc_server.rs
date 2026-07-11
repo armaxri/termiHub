@@ -31,9 +31,11 @@ pub async fn serve(endpoint: &SpawnEndpoint, handler: SpawnHandler) -> anyhow::R
     }
 }
 
-/// Handle a single client connection: read one request line, run the handler,
-/// write one response line. Generic over the stream so it is exercised in tests
-/// via an in-memory `tokio::io::duplex` pair on every platform.
+/// Handle a single client connection over a combined stream: split it and run
+/// the request/response worker. A test-only convenience so the transport is
+/// exercised via an in-memory `tokio::io::duplex` pair on every platform; the
+/// production path calls [`serve_halves`] directly with the listener's halves.
+#[cfg(test)]
 pub(crate) async fn serve_connection<S>(stream: S, handler: &SpawnHandler) -> anyhow::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
