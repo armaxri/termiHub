@@ -27,6 +27,7 @@ export interface ThemeColors {
   // Text
   textPrimary: string;
   textSecondary: string;
+  textMuted: string;
   textDisabled: string;
   textAccent: string;
   textLink: string;

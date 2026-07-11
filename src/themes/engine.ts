@@ -31,6 +31,7 @@ const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
 
   textPrimary: "--text-primary",
   textSecondary: "--text-secondary",
+  textMuted: "--text-muted",
   textDisabled: "--text-disabled",
   textAccent: "--text-accent",
   textLink: "--text-link",
