@@ -33,6 +33,7 @@ export const lightTheme: ThemeDefinition = {
     // Text
     textPrimary: "#383a42",
     textSecondary: "#6a737d",
+    textMuted: "#858a90",
     textDisabled: "#a0a0a0",
     textAccent: "#0366d6",
     textLink: "#0366d6",
