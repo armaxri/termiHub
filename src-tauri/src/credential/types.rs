@@ -145,6 +145,11 @@ mod tests {
     }
 
     #[test]
+    fn credential_type_display_sudo_password() {
+        assert_eq!(CredentialType::SudoPassword.to_string(), "sudo_password");
+    }
+
+    #[test]
     fn credential_key_new_constructs_correctly() {
         let key = CredentialKey::new("conn-abc123", CredentialType::Password);
         assert_eq!(key.connection_id, "conn-abc123");
@@ -175,6 +180,27 @@ mod tests {
         let key = CredentialKey::from_map_key("conn-abc123:key_passphrase").unwrap();
         assert_eq!(key.connection_id, "conn-abc123");
         assert_eq!(key.credential_type, CredentialType::KeyPassphrase);
+    }
+
+    #[test]
+    fn credential_key_display_sudo_password() {
+        let key = CredentialKey::new("conn-abc123", CredentialType::SudoPassword);
+        assert_eq!(key.to_string(), "conn-abc123:sudo_password");
+    }
+
+    #[test]
+    fn credential_key_from_map_key_sudo_password() {
+        let key = CredentialKey::from_map_key("conn-abc123:sudo_password").unwrap();
+        assert_eq!(key.connection_id, "conn-abc123");
+        assert_eq!(key.credential_type, CredentialType::SudoPassword);
+    }
+
+    #[test]
+    fn credential_key_sudo_password_round_trip() {
+        let key = CredentialKey::new("my-conn", CredentialType::SudoPassword);
+        let map_key = key.to_string();
+        let parsed = CredentialKey::from_map_key(&map_key).unwrap();
+        assert_eq!(parsed, key);
     }
 
     #[test]
