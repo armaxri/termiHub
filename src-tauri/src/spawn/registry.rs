@@ -1438,22 +1438,24 @@ mod linux {
         /// Install the enabled + detected surfaces (idempotent — a prior
         /// registration is cleared first).
         pub fn install(&self, settings: &ShellIntegrationSettings, exe_path: &str) -> Result<()> {
-            self.uninstall()?;
+            // Idempotency: start from a clean slate (without refreshing the
+            // desktop database yet — a single refresh happens at the end).
+            self.remove_all()?;
             let entries = &settings.entries;
-            if entries.is_empty() {
-                return Ok(());
+            if !entries.is_empty() {
+                self.install_xdg(entries, exe_path)?;
+                let toggles = settings.linux_file_managers;
+                if toggles.nautilus && self.nautilus_detected() {
+                    self.install_nautilus(entries, exe_path)?;
+                }
+                if toggles.kde && self.kde_detected() {
+                    self.install_kde(entries, exe_path)?;
+                }
+                if toggles.thunar && self.thunar_detected() {
+                    self.install_thunar(entries, exe_path)?;
+                }
             }
-            self.install_xdg(entries, exe_path)?;
-            let toggles = settings.linux_file_managers;
-            if toggles.nautilus && self.nautilus_detected() {
-                self.install_nautilus(entries, exe_path)?;
-            }
-            if toggles.kde && self.kde_detected() {
-                self.install_kde(entries, exe_path)?;
-            }
-            if toggles.thunar && self.thunar_detected() {
-                self.install_thunar(entries, exe_path)?;
-            }
+            self.refresh_desktop_db();
             Ok(())
         }
 
@@ -1461,11 +1463,30 @@ mod linux {
         /// files and foreign Thunar actions are left untouched. Never fails when
         /// nothing is registered.
         pub fn uninstall(&self) -> Result<()> {
+            self.remove_all()?;
+            self.refresh_desktop_db();
+            Ok(())
+        }
+
+        /// Remove all four termiHub surfaces without refreshing the desktop
+        /// database. Shared by [`install`](Self::install) (clean slate) and
+        /// [`uninstall`](Self::uninstall).
+        fn remove_all(&self) -> Result<()> {
             self.remove_xdg()?;
             self.remove_nautilus()?;
             self.remove_kde()?;
             self.remove_thunar()?;
             Ok(())
+        }
+
+        /// Best-effort refresh of the desktop MIME database, once per public
+        /// operation. Skipped when the applications dir does not exist (nothing
+        /// to index).
+        fn refresh_desktop_db(&self) {
+            let apps = self.applications_dir();
+            if apps.exists() {
+                (self.on_desktop_db_update)(&apps);
+            }
         }
 
         // ── XDG .desktop (universal "Open With") ────────────────────────
@@ -1486,17 +1507,15 @@ mod linux {
                 std::fs::write(&path, xdg_desktop_file(entry, exe_path))
                     .with_context(|| format!("write XDG desktop file {}", path.display()))?;
             }
-            (self.on_desktop_db_update)(&apps);
             Ok(())
         }
 
         fn remove_xdg(&self) -> Result<()> {
-            let apps = self.applications_dir();
-            let removed = remove_managed_files(&apps, Some(DESKTOP_PREFIX), DESKTOP_MARKER)?;
-            if removed && apps.exists() {
-                (self.on_desktop_db_update)(&apps);
-            }
-            Ok(())
+            remove_managed_files(
+                &self.applications_dir(),
+                Some(DESKTOP_PREFIX),
+                DESKTOP_MARKER,
+            )
         }
 
         // ── Nautilus scripts (GNOME) ────────────────────────────────────
@@ -1515,13 +1534,22 @@ mod linux {
         }
 
         fn remove_nautilus(&self) -> Result<()> {
-            remove_managed_files(&self.nautilus_scripts_dir(), None, NAUTILUS_MARKER)?;
-            Ok(())
+            remove_managed_files(&self.nautilus_scripts_dir(), None, NAUTILUS_MARKER)
         }
 
         // ── KDE service menus (Dolphin) ─────────────────────────────────
 
         fn install_kde(&self, entries: &[ShellEntry], exe_path: &str) -> Result<()> {
+            // The service menu targets the `inode/directory` MIME type, so only
+            // directory-applicable entries get one (consistent with the XDG
+            // launcher).
+            let dir_entries: Vec<&ShellEntry> = entries
+                .iter()
+                .filter(|e| e.show_for.folders || e.show_for.folder_background)
+                .collect();
+            if dir_entries.is_empty() {
+                return Ok(());
+            }
             // Write into whichever service-menu dirs already exist (KDE 5 and/or
             // KDE 6). If detection succeeded via the binary but no dir exists
             // yet, default to the modern KDE 6 location.
@@ -1538,7 +1566,7 @@ mod linux {
             for dir in targets {
                 std::fs::create_dir_all(&dir)
                     .with_context(|| format!("create KDE service-menu dir {}", dir.display()))?;
-                for entry in entries {
+                for entry in &dir_entries {
                     let path = dir.join(format!("{DESKTOP_PREFIX}{}.desktop", slug(entry)));
                     std::fs::write(&path, kde_service_menu(entry, exe_path))
                         .with_context(|| format!("write KDE service menu {}", path.display()))?;
@@ -1581,7 +1609,7 @@ mod linux {
 
         fn remove_thunar(&self) -> Result<()> {
             let uca = self.thunar_uca();
-            let Some(existing) = std::fs::read_to_string(&uca).ok() else {
+            let Ok(existing) = std::fs::read_to_string(&uca) else {
                 return Ok(());
             };
             let xml = thunar::rewrite(Some(&existing), &[], THUNAR_ID_PREFIX)
@@ -1593,17 +1621,15 @@ mod linux {
     }
 
     /// Remove files in `dir` that termiHub owns: matching `name_prefix` (when
-    /// given) and containing `content_marker`. Returns whether anything was
-    /// removed. Tolerates a missing directory.
+    /// given) and containing `content_marker`. Tolerates a missing directory.
     fn remove_managed_files(
         dir: &Path,
         name_prefix: Option<&str>,
         content_marker: &str,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         if !dir.exists() {
-            return Ok(false);
+            return Ok(());
         }
-        let mut removed = false;
         for dir_entry in
             std::fs::read_dir(dir).with_context(|| format!("read dir {}", dir.display()))?
         {
@@ -1625,10 +1651,9 @@ mod linux {
             if is_ours {
                 std::fs::remove_file(&path)
                     .with_context(|| format!("remove {}", path.display()))?;
-                removed = true;
             }
         }
-        Ok(removed)
+        Ok(())
     }
 
     /// The spawn command line invoked by a surface, with the clicked path
@@ -1735,8 +1760,8 @@ mod linux {
         )
     }
 
-    /// Set mode `0o755` on `path` (Unix only; a no-op on other targets).
-    #[cfg(unix)]
+    /// Set mode `0o755` on `path`. This module is Linux-gated, so `unix` always
+    /// holds and `PermissionsExt` is always available.
     fn set_executable(path: &Path) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(path)
@@ -1745,11 +1770,6 @@ mod linux {
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms)
             .with_context(|| format!("chmod 0o755 {}", path.display()))?;
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    fn set_executable(_path: &Path) -> Result<()> {
         Ok(())
     }
 
