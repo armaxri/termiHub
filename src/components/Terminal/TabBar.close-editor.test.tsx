@@ -52,6 +52,22 @@ function makeEditorTab(id = TAB_ID): TerminalTab {
   };
 }
 
+// A dirty tab whose contentType is NOT in the editor set
+// (settings/editor/connection-editor). This is the fallback branch that used
+// to trigger the native window.confirm and now surfaces the shared dialog.
+function makeDirtyOtherTab(id = TAB_ID): TerminalTab {
+  return {
+    id,
+    sessionId: null,
+    title: "tunnel.json",
+    connectionType: "local",
+    contentType: "tunnel-editor",
+    config: { type: "local", config: {} },
+    panelId: PANEL_ID,
+    isActive: true,
+  };
+}
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -65,6 +81,9 @@ function resetStore() {
   useAppStore.setState({
     editorDirtyTabs: {},
     pendingCloseRequest: null,
+    pendingSessionCloseConfirm: null,
+    // Restore the real action so a per-test spy from a prior case cannot leak.
+    closeTab: useAppStore.getInitialState().closeTab,
   });
 }
 
@@ -143,5 +162,68 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
 
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(useAppStore.getState().pendingCloseRequest).toBeNull();
+  });
+});
+
+describe("TabBar — unsaved-changes fallback dialog (shared Modal, no window.confirm)", () => {
+  const DIALOG = '[data-testid="unsaved-editor-close-dialog"]';
+
+  it("shows the shared confirm dialog instead of a native window.confirm", () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const closeTab = vi.fn();
+    useAppStore.setState({ closeTab });
+    render([makeDirtyOtherTab()]);
+
+    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+
+    act(() => {
+      (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
+    });
+
+    // Native confirm is never used; the in-app dialog is rendered instead.
+    expect(confirmSpy).not.toHaveBeenCalled();
+    const dialog = document.querySelector(DIALOG);
+    expect(dialog).toBeTruthy();
+    expect(dialog?.textContent).toContain("unsaved changes");
+    // Nothing closes until the user confirms.
+    expect(closeTab).not.toHaveBeenCalled();
+  });
+
+  it("confirming proceeds with the close", () => {
+    const closeTab = vi.fn();
+    useAppStore.setState({ closeTab });
+    render([makeDirtyOtherTab()]);
+
+    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+
+    act(() => {
+      (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
+    });
+
+    act(() => {
+      (document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLElement).click();
+    });
+
+    expect(closeTab).toHaveBeenCalledWith(TAB_ID, PANEL_ID);
+    expect(document.querySelector(DIALOG)).toBeNull();
+  });
+
+  it("cancelling keeps the tab open and closes the dialog", () => {
+    const closeTab = vi.fn();
+    useAppStore.setState({ closeTab });
+    render([makeDirtyOtherTab()]);
+
+    useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+
+    act(() => {
+      (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
+    });
+
+    act(() => {
+      (document.querySelector('[data-testid="confirm-dialog-cancel"]') as HTMLElement).click();
+    });
+
+    expect(closeTab).not.toHaveBeenCalled();
+    expect(document.querySelector(DIALOG)).toBeNull();
   });
 });
