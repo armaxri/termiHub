@@ -864,6 +864,27 @@ for #1348.
 3. **Cancel** → the scan does not start. Re-run and **Start scan** → the scan
    proceeds.
 
+### Network Tools shared field validation (#1381)
+
+Verifies every Network Tools text input shares one label + input + inline-error
+affordance and blocks the Run/Send button on invalid input. See PR #1435.
+
+1. Open **Network Tools → Ping** (repeat for **Traceroute** and **Port
+   Scanner**). Clear the **Host** field → an inline "Host is required" error
+   appears under the field and the **Start** button is disabled. Type a host →
+   the error clears and the button enables.
+2. Open **Network Tools → DNS Lookup**. Clear the **Hostname** field → an inline
+   "Hostname is required" error appears and **Run** is disabled. The **Server**
+   field renders through the same shared field (optional, no error).
+3. Open **Network Tools → Port Scanner**. Clear the **Ports** field → an inline
+   "Enter at least one port" error appears and **Start** is disabled.
+4. Open **Network Tools → Wake-on-LAN**. Type a malformed MAC (e.g. `zz:zz`) →
+   an inline "Enter a valid MAC address" error appears and **Send** is disabled.
+   Enter a valid MAC (e.g. `AA:BB:CC:DD:EE:FF`) → the error clears and **Send**
+   enables.
+5. In every case a pristine, never-touched field shows no error text (only the
+   disabled button) — the inline message appears once you engage the field.
+
 ### Remote-agent update-strategy settings persist (#1354)
 
 Verifies the per-agent update settings appear in the editor and round-trip
