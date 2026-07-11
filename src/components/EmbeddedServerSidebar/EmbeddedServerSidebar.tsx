@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, toast } from "@/components/ui";
+import { Button, ConfirmDialog, toast } from "@/components/ui";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
@@ -20,6 +20,8 @@ export function EmbeddedServerSidebar() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<EmbeddedServerConfig | null>(null);
+  // Id of the server pending delete confirmation (null when no confirm is open).
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const handleNew = useCallback(() => {
     setEditingConfig(null);
@@ -86,12 +88,33 @@ export function EmbeddedServerSidebar() {
     [servers, saveEmbeddedServer]
   );
 
-  const handleDelete = useCallback(
-    (id: string) => {
-      deleteEmbeddedServer(id);
-    },
-    [deleteEmbeddedServer]
+  // Delete is destructive (and stops a running server), so gate it behind an
+  // explicit confirmation — consistent with tunnels and workspaces (#1393).
+  const handleDelete = useCallback((id: string) => {
+    setPendingDeleteId(id);
+  }, []);
+
+  const pendingServer = useMemo(
+    () => servers.find((s) => s.id === pendingDeleteId) ?? null,
+    [servers, pendingDeleteId]
   );
+  const pendingIsRunning = pendingDeleteId
+    ? serverStates[pendingDeleteId]?.status === "running"
+    : false;
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!pendingServer) return;
+    const { id, name } = pendingServer;
+    setPendingDeleteId(null);
+    try {
+      await deleteEmbeddedServer(id);
+      toast.success(`Deleted "${name}"`);
+    } catch (err) {
+      toast.error(`Failed to delete "${name}"`, {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [pendingServer, deleteEmbeddedServer]);
 
   return (
     <div className="server-sidebar" data-testid="server-sidebar">
@@ -134,6 +157,20 @@ export function EmbeddedServerSidebar() {
         onOpenChange={setDialogOpen}
         config={editingConfig}
         onSave={handleSave}
+      />
+
+      <ConfirmDialog
+        open={pendingServer !== null}
+        title="Delete service"
+        message={
+          pendingIsRunning
+            ? `This will stop and delete the running server "${pendingServer?.name}". This cannot be undone.`
+            : `Delete "${pendingServer?.name}"? This cannot be undone.`
+        }
+        confirmLabel="Delete"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDeleteId(null)}
+        data-testid="server-delete-confirm"
       />
     </div>
   );

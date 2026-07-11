@@ -348,6 +348,7 @@ Fixed strings — match exactly.
 | `save-workspace-scope` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-scope-active` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-scope-all` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
+| `server-delete-confirm` | `src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx` |
 | `server-dialog-autostart` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
 | `server-dialog-bind-host` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
 | `server-dialog-cancel` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
@@ -501,6 +502,7 @@ Fixed strings — match exactly.
 | `unsaved-changes-cancel` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
 | `unsaved-changes-just-close` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
 | `unsaved-changes-save-and-close` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
+| `unsaved-editor-close-dialog` | `src/components/Terminal/TabBar.tsx` |
 | `update-auto-check-off` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-auto-check-on` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-build-hash` | `src/components/Settings/UpdateSettings.tsx` |

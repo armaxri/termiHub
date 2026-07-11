@@ -885,8 +885,27 @@ for #1399.
 
 1. Right-click a file → **Copy Name** → a `Copied name` toast appears and the
    file's name is on the clipboard (paste to verify).
+
 2. Right-click a file → **Copy Path** → a `Copied path` toast appears and the
    file's full path is on the clipboard.
+
+### Embedded-server delete confirmation (#1393)
+
+See PR #1426. Verifies that deleting an embedded server now requires an explicit
+confirmation via the shared `ConfirmDialog`, consistent with tunnels and
+workspaces.
+
+1. Open the **Services** sidebar and create (or select) a **stopped** embedded
+   server. Click its **Delete** (trash) action → a themed confirm dialog appears
+   (no instant deletion). **Cancel** → the server remains. Re-open and click
+   **Delete** in the dialog → the server is removed and a success toast appears.
+2. Start an embedded server so it is **running**. Click its **Delete** action →
+   the confirm dialog's wording states it will **stop and delete the running
+   server**. Confirm → the running server is stopped, deleted, and a success
+   toast appears.
+3. Repeat via the right-click **context menu → Delete** → the same confirmation
+   dialog gates the deletion.
+   > > > > > > > origin/develop
 
 ### Remote-agent update-strategy settings persist (#1354)
 
