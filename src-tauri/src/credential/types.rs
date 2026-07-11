@@ -9,6 +9,8 @@ pub enum CredentialType {
     Password,
     /// A passphrase protecting an SSH private key.
     KeyPassphrase,
+    /// A password used to elevate a save (e.g., `sudo` for an elevated write).
+    SudoPassword,
 }
 
 impl fmt::Display for CredentialType {
@@ -16,6 +18,7 @@ impl fmt::Display for CredentialType {
         match self {
             CredentialType::Password => write!(f, "password"),
             CredentialType::KeyPassphrase => write!(f, "key_passphrase"),
+            CredentialType::SudoPassword => write!(f, "sudo_password"),
         }
     }
 }
@@ -44,6 +47,7 @@ impl CredentialKey {
         let credential_type = match type_str {
             "password" => CredentialType::Password,
             "key_passphrase" => CredentialType::KeyPassphrase,
+            "sudo_password" => CredentialType::SudoPassword,
             _ => return None,
         };
         Some(Self::new(conn_id, credential_type))
