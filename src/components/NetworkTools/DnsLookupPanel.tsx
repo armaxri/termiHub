@@ -4,6 +4,8 @@ import { Button } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
+import { NetworkTextField } from "./NetworkTextField";
+import { validateHost } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import { frontendLog } from "@/utils/frontendLog";
@@ -36,6 +38,8 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
 
   const hostnameRef = useAutofocusSelect<HTMLInputElement>();
 
+  const hostnameError = validateHost(hostname, "Hostname");
+
   const handleRun = useCallback(async () => {
     if (!hostname.trim()) return;
     setRecords([]);
@@ -56,7 +60,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   // Enter submits the form; a mouse click goes through the Button's onClick so its
   // async lifecycle drives the pending affordance (useFormSubmit swallows the
   // Enter-path rejection that the click path uses to drive the Button error state).
-  const handleSubmit = useFormSubmit(!!hostname.trim(), handleRun);
+  const handleSubmit = useFormSubmit(!hostnameError, handleRun);
 
   const columns = [
     { key: "recordType", label: "Type" },
@@ -84,7 +88,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
             icon={<Play size={14} />}
             pendingLabel="Looking up…"
             errorToast={false}
-            disabled={!hostname.trim()}
+            disabled={!!hostnameError}
             onClick={(e) => {
               e.preventDefault();
               return handleRun();
@@ -97,17 +101,15 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>Hostname</span>
-          <input
-            ref={hostnameRef}
-            className="network-panel__input"
-            value={hostname}
-            onChange={(e) => setHostname(e.target.value)}
-            placeholder="example.com"
-            data-testid="dns-hostname"
-          />
-        </label>
+        <NetworkTextField
+          label="Hostname"
+          value={hostname}
+          onChange={setHostname}
+          error={hostnameError}
+          inputRef={hostnameRef}
+          placeholder="example.com"
+          data-testid="dns-hostname"
+        />
         <label className="network-panel__field network-panel__field--small">
           <span>Type</span>
           <select
@@ -123,15 +125,14 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
             ))}
           </select>
         </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Server (auto)</span>
-          <input
-            className="network-panel__input"
-            value={server}
-            onChange={(e) => setServer(e.target.value)}
-            placeholder="8.8.8.8"
-          />
-        </label>
+        <NetworkTextField
+          label="Server (auto)"
+          value={server}
+          onChange={setServer}
+          small
+          placeholder="8.8.8.8"
+          data-testid="dns-server"
+        />
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}
