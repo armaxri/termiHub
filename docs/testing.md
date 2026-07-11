@@ -881,6 +881,19 @@ workspaces.
 3. Repeat via the right-click **context menu → Delete** → the same confirmation
    dialog gates the deletion.
 
+### Embedded-server delete backend-failure toast (#1427)
+
+See PR #PR_PLACEHOLDER. Verifies that a backend delete failure surfaces a
+user-visible error toast instead of failing silently (the store used to swallow
+the error to `console.error`).
+
+1. Create an embedded server, then make its delete fail on the backend (e.g.
+   revoke write access to the config store, or otherwise force
+   `delete_embedded_server` to error).
+2. Click **Delete** and confirm in the dialog → an **error toast** ("Failed to
+   delete …") appears with the backend error message, and the server **remains**
+   in the Services list (it is not removed).
+
 ### Remote-agent update-strategy settings persist (#1354)
 
 Verifies the per-agent update settings appear in the editor and round-trip
