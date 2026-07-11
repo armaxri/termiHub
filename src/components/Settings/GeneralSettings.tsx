@@ -7,6 +7,7 @@ import { useAppStore } from "@/store/appStore";
 import { isWindows } from "@/utils/platform";
 import { Select, SelectItem, Toggle } from "@/components/ui";
 import { KeyPathInput } from "./KeyPathInput";
+import { SettingsField } from "./SettingsField";
 
 /** Sentinel value for the "platform default" shell option (Radix Select forbids empty-string item values). */
 const PLATFORM_DEFAULT_SHELL = "__platform_default__";
@@ -55,8 +56,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         <h3 className="settings-panel__category-title">General</h3>
 
         {show("defaultUser") && (
-          <label className="settings-form__field">
-            <span className="settings-form__label">Default User</span>
+          <SettingsField
+            label="Default User"
+            hint="Default username pre-filled for new SSH connections."
+          >
             <input
               type="text"
               value={settings.defaultUser ?? ""}
@@ -64,32 +67,29 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               placeholder="e.g. admin"
               data-testid="settings-default-user"
             />
-            <span className="settings-form__hint">
-              Default username pre-filled for new SSH connections.
-            </span>
-          </label>
+          </SettingsField>
         )}
 
         {show("defaultSshKeyPath") && (
-          <div className="settings-form__field">
-            <span className="settings-form__label">Default SSH Key Path</span>
+          <SettingsField
+            label="Default SSH Key Path"
+            hint="Default private key path for SSH key authentication."
+          >
             <KeyPathInput
               value={settings.defaultSshKeyPath ?? ""}
               onChange={(value) => onChange({ ...settings, defaultSshKeyPath: value || undefined })}
               placeholder="~/.ssh/id_ed25519"
               testIdPrefix="general-settings"
             />
-            <span className="settings-form__hint">
-              Default private key path for SSH key authentication.
-            </span>
-          </div>
+          </SettingsField>
         )}
 
         {show("defaultShell") && (
-          <div className="settings-form__field">
-            <span className="settings-form__label">Default Shell</span>
+          <SettingsField
+            label="Default Shell"
+            hint="Default shell for new local terminal sessions."
+          >
             <Select
-              aria-label="Default Shell"
               data-testid="settings-default-shell"
               value={settings.defaultShell ?? PLATFORM_DEFAULT_SHELL}
               onChange={(value) =>
@@ -113,81 +113,68 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
                 </SelectItem>
               ))}
             </Select>
-            <span className="settings-form__hint">
-              Default shell for new local terminal sessions.
-            </span>
-          </div>
+          </SettingsField>
         )}
 
         {show("confirmCloseTabOnShortcut") && (
-          <div className="settings-form__field">
-            <span className="settings-form__label">Confirm Close Tab on Shortcut</span>
+          <SettingsField
+            label="Confirm Close Tab on Shortcut"
+            hint="Ask for confirmation when closing a tab or tab group via keyboard shortcut."
+          >
             <Toggle
-              aria-label="Confirm Close Tab on Shortcut"
               checked={settings.confirmCloseTabOnShortcut ?? true}
               onCheckedChange={(checked) =>
                 onChange({ ...settings, confirmCloseTabOnShortcut: checked })
               }
               data-testid="settings-confirm-close-tab-on-shortcut"
             />
-            <span className="settings-form__hint">
-              Ask for confirmation when closing a tab or tab group via keyboard shortcut.
-            </span>
-          </div>
+          </SettingsField>
         )}
 
         {show("confirmCloseLiveSession") && (
-          <div className="settings-form__field">
-            <span className="settings-form__label">Confirm Closing a Live Session</span>
+          <SettingsField
+            label="Confirm Closing a Live Session"
+            hint="Ask for confirmation before closing a tab (X or middle-click) or split panel that holds a live SSH, serial, or shell session."
+          >
             <Toggle
-              aria-label="Confirm Closing a Live Session"
               checked={settings.confirmCloseLiveSession ?? true}
               onCheckedChange={(checked) =>
                 onChange({ ...settings, confirmCloseLiveSession: checked })
               }
               data-testid="settings-confirm-close-live-session"
             />
-            <span className="settings-form__hint">
-              Ask for confirmation before closing a tab (X or middle-click) or split panel that
-              holds a live SSH, serial, or shell session.
-            </span>
-          </div>
+          </SettingsField>
         )}
 
         {show("experimentalFeaturesEnabled") && (
-          <div className="settings-form__field">
-            <span className="settings-form__label">Allow Experimental Features</span>
+          <SettingsField
+            label="Allow Experimental Features"
+            hint="Enables hidden features under active development. Experimental features may change, break, or be removed at any time without notice."
+            hintVariant="warning"
+          >
             <Toggle
-              aria-label="Allow Experimental Features"
               checked={settings.experimentalFeaturesEnabled ?? false}
               onCheckedChange={(checked) =>
                 onChange({ ...settings, experimentalFeaturesEnabled: checked })
               }
               data-testid="settings-experimental-features"
             />
-            <span className="settings-form__hint settings-form__hint--warning">
-              Enables hidden features under active development. Experimental features may change,
-              break, or be removed at any time without notice.
-            </span>
-          </div>
+          </SettingsField>
         )}
 
         {show("restoreLastSessionOnStartup") && (
-          <div className="settings-form__field">
-            <span className="settings-form__label">Restore Last Session on Startup</span>
+          <SettingsField
+            label="Restore Last Session on Startup"
+            hint="Reopen the tabs and panel layout from your previous session when the app starts. Sessions that can no longer reconnect are shown in a disconnected state."
+          >
             <Toggle
-              aria-label="Restore Last Session on Startup"
               checked={settings.restoreLastSessionOnStartup ?? true}
               onCheckedChange={(checked) =>
                 onChange({ ...settings, restoreLastSessionOnStartup: checked })
               }
               data-testid="settings-restore-last-session"
             />
-            <span className="settings-form__hint">
-              Reopen the tabs and panel layout from your previous session when the app starts.
-              Sessions that can no longer reconnect are shown in a disconnected state.
-            </span>
-          </div>
+          </SettingsField>
         )}
       </div>
 
@@ -196,37 +183,33 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           <h3 className="settings-panel__category-title">SSH Defaults</h3>
 
           {show("defaultShellIntegration") && (
-            <div className="settings-form__field">
-              <span className="settings-form__label">Shell Integration by Default</span>
+            <SettingsField
+              label="Shell Integration by Default"
+              hint="Pre-enable Shell Integration (OSC 7 CWD tracking) for new SSH connections."
+            >
               <Toggle
-                aria-label="Shell Integration by Default"
                 checked={settings.defaultShellIntegration ?? true}
                 onCheckedChange={(checked) =>
                   onChange({ ...settings, defaultShellIntegration: checked })
                 }
                 data-testid="settings-default-shell-integration"
               />
-              <span className="settings-form__hint">
-                Pre-enable Shell Integration (OSC 7 CWD tracking) for new SSH connections.
-              </span>
-            </div>
+            </SettingsField>
           )}
 
           {show("defaultX11Forwarding") && (
-            <div className="settings-form__field">
-              <span className="settings-form__label">X11 Forwarding by Default</span>
+            <SettingsField
+              label="X11 Forwarding by Default"
+              hint="Pre-enable X11 Forwarding for new SSH connections."
+            >
               <Toggle
-                aria-label="X11 Forwarding by Default"
                 checked={settings.defaultX11Forwarding ?? true}
                 onCheckedChange={(checked) =>
                   onChange({ ...settings, defaultX11Forwarding: checked })
                 }
                 data-testid="settings-default-x11-forwarding"
               />
-              <span className="settings-form__hint">
-                Pre-enable X11 Forwarding for new SSH connections.
-              </span>
-            </div>
+            </SettingsField>
           )}
         </div>
       )}
@@ -236,38 +219,33 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           <h3 className="settings-panel__category-title">X Server</h3>
 
           {show("provideXServerAutomatically") && (
-            <div className="settings-form__field">
-              <span className="settings-form__label">Provide X Server Automatically</span>
+            <SettingsField
+              label="Provide X Server Automatically"
+              hint="Windows: download & run VcXsrv automatically. macOS/Linux: use the detected/guided server."
+            >
               <Toggle
-                aria-label="Provide X Server Automatically"
                 checked={settings.provideXServerAutomatically ?? isWindows()}
                 onCheckedChange={(checked) =>
                   onChange({ ...settings, provideXServerAutomatically: checked })
                 }
                 data-testid="settings-provide-x-server"
               />
-              <span className="settings-form__hint">
-                Windows: download &amp; run VcXsrv automatically. macOS/Linux: use the
-                detected/guided server.
-              </span>
-            </div>
+            </SettingsField>
           )}
 
           {show("stopXServerWhenIdle") && (
-            <div className="settings-form__field">
-              <span className="settings-form__label">Stop X Server When Idle</span>
+            <SettingsField
+              label="Stop X Server When Idle"
+              hint="Shut the managed X server down once no connection is using it."
+            >
               <Toggle
-                aria-label="Stop X Server When Idle"
                 checked={settings.stopXServerWhenIdle ?? true}
                 onCheckedChange={(checked) =>
                   onChange({ ...settings, stopXServerWhenIdle: checked })
                 }
                 data-testid="settings-stop-x-server-idle"
               />
-              <span className="settings-form__hint">
-                Shut the managed X server down once no connection is using it.
-              </span>
-            </div>
+            </SettingsField>
           )}
         </div>
       )}
