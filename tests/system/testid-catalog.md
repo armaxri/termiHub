@@ -348,6 +348,7 @@ Fixed strings — match exactly.
 | `save-workspace-scope` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-scope-active` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-scope-all` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
+| `server-delete-confirm` | `src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx` |
 | `server-dialog-autostart` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
 | `server-dialog-bind-host` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
 | `server-dialog-cancel` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
