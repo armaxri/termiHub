@@ -49,102 +49,17 @@
   gap: 8px;
 }
 
-.tunnel-item {
-  display: flex;
-  flex-direction: column;
-  padding: 6px 12px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.tunnel-item:hover {
-  background: var(--bg-hover);
-}
-
-.tunnel-item__header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.tunnel-item__status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.tunnel-item__status--disconnected {
-  background-color: var(--text-secondary);
-}
-
-.tunnel-item__status--connecting,
-.tunnel-item__status--reconnecting {
-  background-color: var(--color-warning);
-}
-
-.tunnel-item__status--connected {
-  background-color: var(--color-success);
-}
-
-.tunnel-item__status--error {
-  background-color: var(--color-error);
-}
-
-.tunnel-item__name {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tunnel-item__actions {
-  display: flex;
-  gap: 2px;
-  opacity: 0;
-}
-
-.tunnel-item:hover .tunnel-item__actions {
-  opacity: 1;
-}
-
-.tunnel-item__details {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px 0 0 14px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.tunnel-item__type-badge {
-  font-size: 10px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
+/*
+ * Tunnel rows are composed from the shared `SidebarListItem` shell (issue 1383),
+ * so the row layout (container, header, status dot, name, badge, actions,
+ * details) lives in `SidebarListItem.css`. Only the tunnel-specific detail lines
+ * — stats, the errored resting row, and the reconnecting row — remain here.
+ */
 .tunnel-item__stats {
   display: flex;
   gap: 8px;
-  font-size: 10px;
   color: var(--text-secondary);
   padding-top: 2px;
-}
-
-/*
- * Errored resting row (issue 1240): the persisted error message plus its recovery
- * controls (Retry / View last error) stay visible without a hover, so the user
- * always sees why the tunnel failed and how to recover it.
- */
-.tunnel-item--error .tunnel-item__actions {
-  opacity: 1;
 }
 
 .tunnel-item__error {
