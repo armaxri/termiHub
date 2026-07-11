@@ -276,7 +276,9 @@ mod tests {
     #[tokio::test]
     async fn bind_rejects_live_endpoint() {
         let address = unique_address("live");
-        let _held = LocalSocketListener::bind(&address).await.expect("first bind");
+        let _held = LocalSocketListener::bind(&address)
+            .await
+            .expect("first bind");
         let second = LocalSocketListener::bind(&address).await;
         assert!(
             second.is_err(),

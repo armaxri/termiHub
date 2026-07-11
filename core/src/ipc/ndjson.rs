@@ -67,7 +67,9 @@ mod tests {
         assert_eq!(line.trim(), "first line");
 
         // A second read advances past the frame boundary.
-        read_line(&mut reader, &mut line).await.expect("read second");
+        read_line(&mut reader, &mut line)
+            .await
+            .expect("read second");
         assert_eq!(line.trim(), "second line");
     }
 
@@ -82,7 +84,10 @@ mod tests {
             client.write_all(b"hel").await.expect("write chunk 1");
             client.flush().await.expect("flush 1");
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            client.write_all(b"lo world\n").await.expect("write chunk 2");
+            client
+                .write_all(b"lo world\n")
+                .await
+                .expect("write chunk 2");
             client.flush().await.expect("flush 2");
         });
 
