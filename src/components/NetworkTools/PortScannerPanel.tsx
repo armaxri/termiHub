@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button, Modal, Field, Input } from "@/components/ui";
+import { Button, Modal, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -12,7 +12,7 @@ import {
 } from "@/services/networkApi";
 import type { PortScanSummary } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { validateIntRange, parseNumberInput } from "@/utils/fieldValidation";
+import { validateIntRange } from "@/utils/fieldValidation";
 import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
@@ -200,11 +200,10 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
           htmlFor="port-scanner-timeout"
           error={timeoutError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="port-scanner-timeout"
-            type="number"
             value={timeoutMs}
-            onChange={(e) => setTimeoutMs(parseNumberInput(e.target.value))}
+            onValueChange={setTimeoutMs}
             error={!!timeoutError}
             data-testid="port-scanner-timeout"
           />
@@ -215,11 +214,10 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
           htmlFor="port-scanner-concurrency"
           error={concurrencyError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="port-scanner-concurrency"
-            type="number"
             value={concurrency}
-            onChange={(e) => setConcurrency(parseNumberInput(e.target.value))}
+            onValueChange={setConcurrency}
             error={!!concurrencyError}
             data-testid="port-scanner-concurrency"
           />

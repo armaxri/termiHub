@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button, Field, Input } from "@/components/ui";
+import { Button, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -12,7 +12,7 @@ import {
 } from "@/services/networkApi";
 import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
-import { validateIntRange, parseNumberInput } from "@/utils/fieldValidation";
+import { validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface PingPanelProps {
@@ -215,11 +215,10 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
           htmlFor="ping-interval"
           error={intervalError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="ping-interval"
-            type="number"
             value={intervalMs}
-            onChange={(e) => setIntervalMs(parseNumberInput(e.target.value))}
+            onValueChange={setIntervalMs}
             error={!!intervalError}
             data-testid="ping-interval"
           />
@@ -230,11 +229,10 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
           htmlFor="ping-count"
           error={countError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="ping-count"
-            type="number"
             value={count}
-            onChange={(e) => setCount(parseNumberInput(e.target.value))}
+            onValueChange={setCount}
             placeholder="∞"
             error={!!countError}
             data-testid="ping-count"

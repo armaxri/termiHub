@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
-import { Button, Tooltip, toast, Modal, Field, Input } from "@/components/ui";
+import { Button, Tooltip, toast, Modal, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -10,7 +10,7 @@ import {
   networkWolDeviceDelete,
 } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
-import { validatePort, validateHost, validateMac, parseNumberInput } from "@/utils/fieldValidation";
+import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface WolHistoryEntry {
@@ -184,11 +184,10 @@ export function WolPanel() {
           htmlFor="wol-port"
           error={portError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="wol-port"
-            type="number"
             value={port}
-            onChange={(e) => setPort(parseNumberInput(e.target.value))}
+            onValueChange={setPort}
             error={!!portError}
             data-testid="wol-port"
           />

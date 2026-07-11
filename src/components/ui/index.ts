@@ -11,6 +11,9 @@ export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button";
 export { Input } from "./Input";
 export type { InputProps } from "./Input";
 
+export { NumberInput } from "./NumberInput";
+export type { NumberInputProps } from "./NumberInput";
+
 export { Field } from "./Field";
 export type { FieldProps } from "./Field";
 

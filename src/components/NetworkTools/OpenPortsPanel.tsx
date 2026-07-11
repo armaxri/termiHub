@@ -6,6 +6,13 @@ import type { OpenPort, PortProtocol } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { frontendLog } from "@/utils/frontendLog";
 
+/** Protocol-filter dropdown options. */
+const PROTOCOL_OPTIONS = [
+  { value: "All", label: "All" },
+  { value: "TCP", label: "TCP" },
+  { value: "UDP", label: "UDP" },
+];
+
 /** Open Ports Viewer diagnostic tab content. */
 export function OpenPortsPanel() {
   const [loaded, setLoaded] = useState(false);
@@ -91,11 +98,7 @@ export function OpenPortsPanel() {
           <Select
             value={protocolFilter}
             onChange={(value) => setProtocolFilter(value as PortProtocol | "All")}
-            options={[
-              { value: "All", label: "All" },
-              { value: "TCP", label: "TCP" },
-              { value: "UDP", label: "UDP" },
-            ]}
+            options={PROTOCOL_OPTIONS}
             aria-label="Protocol filter"
             data-testid="open-ports-protocol"
           />

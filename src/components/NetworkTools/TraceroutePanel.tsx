@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button, Field, Input } from "@/components/ui";
+import { Button, Field, Input, NumberInput } from "@/components/ui";
 import {
   networkTraceroute,
   networkTracerouteCancel,
@@ -10,7 +10,7 @@ import {
 } from "@/services/networkApi";
 import type { TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { validateIntRange, parseNumberInput } from "@/utils/fieldValidation";
+import { validateIntRange } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
@@ -137,11 +137,10 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
           htmlFor="traceroute-max-hops"
           error={maxHopsError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="traceroute-max-hops"
-            type="number"
             value={maxHops}
-            onChange={(e) => setMaxHops(parseNumberInput(e.target.value))}
+            onValueChange={setMaxHops}
             error={!!maxHopsError}
             data-testid="traceroute-max-hops"
           />

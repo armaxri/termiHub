@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
-import { Button, Tooltip, toast, Field, Input, Select } from "@/components/ui";
+import { Button, Tooltip, toast, Field, Input, NumberInput, Select } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -14,10 +14,17 @@ import {
 } from "@/services/networkApi";
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
-import { isValidHttpUrl, validateIntRange, parseNumberInput } from "@/utils/fieldValidation";
+import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 const MAX_HISTORY = 120;
+
+/** HTTP methods offered by the monitor's Method dropdown. */
+const HTTP_METHOD_OPTIONS = [
+  { value: "GET", label: "GET" },
+  { value: "HEAD", label: "HEAD" },
+  { value: "POST", label: "POST" },
+];
 
 /**
  * HTTP Monitor diagnostic tab content.
@@ -308,11 +315,7 @@ export function HttpMonitorPanel() {
           <Select
             value={method}
             onChange={setMethod}
-            options={[
-              { value: "GET", label: "GET" },
-              { value: "HEAD", label: "HEAD" },
-              { value: "POST", label: "POST" },
-            ]}
+            options={HTTP_METHOD_OPTIONS}
             aria-label="HTTP method"
             data-testid="http-monitor-method"
           />
@@ -323,12 +326,11 @@ export function HttpMonitorPanel() {
           htmlFor="http-monitor-interval"
           error={intervalError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="http-monitor-interval"
-            type="number"
             min={1}
             value={intervalSecs}
-            onChange={(e) => setIntervalSecs(parseNumberInput(e.target.value))}
+            onValueChange={setIntervalSecs}
             error={!!intervalError}
             data-testid="http-monitor-interval"
           />
@@ -339,11 +341,10 @@ export function HttpMonitorPanel() {
           htmlFor="http-monitor-expected-status"
           error={statusError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="http-monitor-expected-status"
-            type="number"
             value={expectedStatus}
-            onChange={(e) => setExpectedStatus(parseNumberInput(e.target.value))}
+            onValueChange={setExpectedStatus}
             error={!!statusError}
             placeholder="200"
             data-testid="http-monitor-expected-status"
@@ -355,12 +356,11 @@ export function HttpMonitorPanel() {
           htmlFor="http-monitor-timeout"
           error={timeoutError ?? undefined}
         >
-          <Input
+          <NumberInput
             id="http-monitor-timeout"
-            type="number"
             min={1}
             value={timeoutSecs}
-            onChange={(e) => setTimeoutSecs(parseNumberInput(e.target.value))}
+            onValueChange={setTimeoutSecs}
             error={!!timeoutError}
             data-testid="http-monitor-timeout"
           />

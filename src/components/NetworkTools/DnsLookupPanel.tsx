@@ -21,6 +21,9 @@ const RECORD_TYPES: DnsRecordType[] = [
   "ANY",
 ];
 
+/** Record-type dropdown options (value === label), derived once. */
+const RECORD_TYPE_OPTIONS = RECORD_TYPES.map((t) => ({ value: t, label: t }));
+
 interface DnsLookupPanelProps {
   prefillHost?: string;
 }
@@ -115,7 +118,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
           <Select
             value={recordType}
             onChange={(value) => setRecordType(value as DnsRecordType)}
-            options={RECORD_TYPES.map((t) => ({ value: t, label: t }))}
+            options={RECORD_TYPE_OPTIONS}
             aria-label="Record type"
             data-testid="dns-record-type"
           />
