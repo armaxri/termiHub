@@ -1411,3 +1411,44 @@ On macOS:
 > discovery aid; the fully functional path is the per-entry Quick Action bundles
 > above. Wiring a native Services provider so the **app** entry also runs is
 > tracked as a follow-up.
+
+#### Linux file-manager registration (#1370)
+
+termiHub registers each configured shell-integration entry into the Linux file
+managers (`src-tauri/src/spawn/registry.rs`, Linux arm): a universal XDG
+`.desktop` launcher plus per-manager Nautilus scripts, KDE service menus, and a
+Thunar custom action. The file content, `0o755` script mode, detection logic,
+Thunar `uca.xml` append/de-append (foreign-action preservation), and
+owner-aware uninstall are covered by Linux-gated unit tests
+(`spawn::registry::linux::tests`, validated by the Linux CI job). Confirming
+each file manager actually surfaces and runs the entries is desktop-environment
+specific and manual.
+
+On a Linux desktop (run steps for whichever managers you have installed):
+
+1. Configure at least one shell-integration entry with **Show for → Folders**
+   enabled and its per-manager toggles (Nautilus / KDE / Thunar) on. Run the
+   install action (the `install_shell_integration` command, or
+   `termiHub install-shell-integration`).
+2. **XDG (universal):** confirm a `termihub-<slug>.desktop` file appears under
+   `~/.local/share/applications/` and that `update-desktop-database` ran
+   (`grep -l termiHub ~/.local/share/applications/mimeinfo.cache` or simply
+   right-click a folder → **Open With Other Application** and confirm termiHub is
+   listed for folders).
+3. **Nautilus (GNOME Files):** confirm a script named after the entry exists
+   under `~/.local/share/nautilus/scripts/` and is executable (`ls -l`; mode
+   `0o755`). In Files, right-click a folder → **Scripts → <entry name>** and
+   confirm termiHub opens a session at that path.
+4. **KDE (Dolphin):** confirm a `termihub-<slug>.desktop` service menu exists
+   under `~/.local/share/kio/servicemenus/` (KDE 6) and/or
+   `~/.local/share/kservices5/ServiceMenus/` (KDE 5). Right-click a folder in
+   Dolphin → **Actions** (or the top-level menu) → confirm the entry runs.
+5. **Thunar (XFCE):** confirm the action was appended to
+   `~/.config/Thunar/uca.xml` (`grep termihub- ~/.config/Thunar/uca.xml`) and
+   that **any custom actions you had before are still present**. In Thunar,
+   right-click a folder → confirm the entry appears and opens a termiHub session.
+6. Run the uninstall action (`uninstall_shell_integration` /
+   `termiHub uninstall-shell-integration`) and confirm **all four** artifacts are
+   removed: the XDG `.desktop`, the Nautilus script, the KDE service menu, and
+   termiHub's Thunar action — while any **foreign** Thunar actions in `uca.xml`
+   and unrelated Nautilus scripts remain untouched.

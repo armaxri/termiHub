@@ -287,15 +287,6 @@ pub fn build_status(
     }
 }
 
-/// Detect file managers installed on the host.
-///
-/// **Stub**: returns an empty list. Real per-OS detection (Nautilus / KDE /
-/// Thunar on Linux, etc.) is implemented with the registration work in a later
-/// epic issue.
-pub fn detect_file_managers() -> Vec<DetectedFileManager> {
-    Vec::new()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,11 +504,6 @@ mod tests {
         let status = build_status(&settings, None, true, managers.clone());
         assert!(status.portable);
         assert_eq!(status.detected_file_managers, managers);
-    }
-
-    #[test]
-    fn detect_file_managers_is_stubbed_empty() {
-        assert!(detect_file_managers().is_empty());
     }
 
     // ── Settings serde round-trip + forward-compat ───────────────────────
