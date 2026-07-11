@@ -1304,8 +1304,7 @@ mod imp {
 /// `uca.xml`, preserves any foreign actions.
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::{DetectedFileManager, ShellIntegrationSettings};
-    use crate::connection::shell_integration::ShellEntry;
+    use super::{DetectedFileManager, ShellEntry, ShellIntegrationSettings};
     use anyhow::{Context, Result};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
