@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { Play } from "lucide-react";
 import { Button } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
-import type { DnsRecord, DnsRecordType, DiagnosticStatus } from "@/types/network";
+import type { DnsRecord, DnsRecordType } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
@@ -30,7 +30,6 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   const [hostname, setHostname] = useState(prefillHost ?? "");
   const [recordType, setRecordType] = useState<DnsRecordType>("A");
   const [server, setServer] = useState("");
-  const [status, setStatus] = useState<DiagnosticStatus>("idle");
   const [records, setRecords] = useState<DnsRecord[]>([]);
   const [queryMs, setQueryMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +38,6 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
 
   const handleRun = useCallback(async () => {
     if (!hostname.trim()) return;
-    setStatus("running");
     setRecords([]);
     setQueryMs(null);
     setError(null);
@@ -48,16 +46,17 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       const result = await networkDnsLookup(hostname, recordType, server.trim() || undefined);
       setRecords(result.records);
       setQueryMs(result.queryMs);
-      setStatus("completed");
     } catch (err) {
       setError(String(err));
-      setStatus("error");
       frontendLog("dns_lookup", `DNS lookup failed: ${err}`);
+      throw err; // keep the async Button in its error path (no false success flash)
     }
   }, [hostname, recordType, server]);
 
-  // Enter submits the form (respects the Run button's disabled state).
-  const handleSubmit = useFormSubmit(status !== "running" && !!hostname.trim(), handleRun);
+  // Enter submits the form; a mouse click goes through the Button's onClick so its
+  // async lifecycle drives the pending affordance (useFormSubmit swallows the
+  // Enter-path rejection that the click path uses to drive the Button error state).
+  const handleSubmit = useFormSubmit(!!hostname.trim(), handleRun);
 
   const columns = [
     { key: "recordType", label: "Type" },
@@ -83,7 +82,13 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
             variant="primary"
             size="sm"
             icon={<Play size={14} />}
-            disabled={!hostname.trim() || status === "running"}
+            pendingLabel="Looking up…"
+            errorToast={false}
+            disabled={!hostname.trim()}
+            onClick={(e) => {
+              e.preventDefault();
+              return handleRun();
+            }}
             data-testid="dns-run"
           >
             Run
@@ -136,11 +141,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
         rows={formattedRows}
         rowTestIdPrefix="dns-result"
         footer={
-          queryMs != null
-            ? `Query time: ${queryMs}ms · ${records.length} record(s) found`
-            : status === "running"
-              ? "Querying…"
-              : null
+          queryMs != null ? `Query time: ${queryMs}ms · ${records.length} record(s) found` : null
         }
       />
     </form>

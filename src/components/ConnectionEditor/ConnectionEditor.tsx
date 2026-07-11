@@ -54,6 +54,20 @@ import "./ConnectionEditor.css";
 
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
 
+/**
+ * Thrown from `handleSaveAndConnect` when the user dismisses a credential prompt
+ * (password or store-unlock). The Save & Connect Button suppresses its default
+ * error toast (`errorToast={false}`), so this rejection lands the Button back at
+ * idle — no false success flash — while the handler surfaces its own recoverable
+ * `toast.info`. See #1344.
+ */
+class PromptCanceledError extends Error {
+  constructor() {
+    super("Connect canceled by user");
+    this.name = "PromptCanceledError";
+  }
+}
+
 const EDITOR_CATEGORIES = [
   { id: "connection", label: "Connection" },
   { id: "terminal", label: "Terminal" },
@@ -824,7 +838,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return;
     }
     if (isAgentDefinitionMode && existingAgent) {
-      if (!(await saveAgentDefinition())) return;
+      try {
+        if (!(await saveAgentDefinition())) return;
+      } catch (err) {
+        // Save & Connect suppresses the Button's default error toast so it can
+        // choose the right severity; surface the save failure explicitly here.
+        toast.error("Failed to save agent connection", {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
       addTab(
         name.trim(),
         "remote-session",
@@ -893,7 +916,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             authMethod,
             savePassword: savePasswordFlag,
           });
-          if (!proceed) return;
+          if (!proceed) {
+            // The connection was saved; only the connect step was aborted. Surface
+            // a recoverable state (rather than silently resolving, which would flash
+            // a false success on the Button) and stop here — see #1344.
+            toast.info("Connect canceled — your changes were saved.");
+            throw new PromptCanceledError();
+          }
 
           const resolution = await resolveConnectionCredential(
             saved.id,
@@ -907,7 +936,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
         if (!resolvedPassword) {
           resolvedPassword = await requestPassword(host, username);
-          if (resolvedPassword === null) return;
+          if (resolvedPassword === null) {
+            // Same recoverable-state handling as the unlock gate above (#1344):
+            // the save persisted, so inform the user the connect was canceled
+            // instead of returning silently into a false success flash.
+            toast.info("Connect canceled — your changes were saved.");
+            throw new PromptCanceledError();
+          }
           // Persist the freshly-entered secret when the prompt's Save box is
           // checked. The sidebar connect path did this but Save & Connect did not,
           // so "Save password" was silently ignored here (#874, #879). The
@@ -1234,6 +1269,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <Button
             variant="primary"
             onClick={handleSaveAndConnect}
+            errorToast={false}
             aria-disabled={!canSave}
             data-invalid={!canSave || undefined}
             data-testid="connection-editor-save-connect"

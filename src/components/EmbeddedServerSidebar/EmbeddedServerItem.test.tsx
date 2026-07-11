@@ -145,6 +145,41 @@ describe("EmbeddedServerItem", () => {
     ).toBe(false);
   });
 
+  it("drives the shared Button async lifecycle (aria-busy) while starting", async () => {
+    // Regression for #1344: the pending state must come from the shared Button's
+    // async lifecycle (onClick returns the promise), not a hand-rolled `busy`
+    // flag. A hand-rolled flag never sets aria-busy on the pressed control.
+    let resolveStart!: () => void;
+    const onStart = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStart = resolve;
+        })
+    );
+    render(<EmbeddedServerItem {...baseProps({ onStart })} />);
+
+    const startBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="server-start-srv-1"]'
+    )!;
+    click(startBtn);
+
+    expect(startBtn.getAttribute("aria-busy")).toBe("true");
+    expect(startBtn.disabled).toBe(true);
+
+    await act(async () => {
+      resolveStart();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Returns to idle after the promise settles.
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="server-start-srv-1"]')!
+        .getAttribute("aria-busy")
+    ).toBeNull();
+  });
+
   it("surfaces a toast.error when stopping fails", async () => {
     const onStop = vi.fn(() => Promise.reject("stop boom"));
     render(<EmbeddedServerItem {...baseProps({ onStop, state: runningState })} />);

@@ -144,7 +144,14 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         <span className="network-panel__title">Port Scanner</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <Button variant="danger" size="sm" icon={<StopCircle size={14} />} onClick={stop}>
+            <Button
+              variant="danger"
+              size="sm"
+              icon={<StopCircle size={14} />}
+              pendingLabel="Stopping…"
+              errorToast={false}
+              onClick={stop}
+            >
               Stop
             </Button>
           ) : (
@@ -153,10 +160,16 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
+              pendingLabel="Starting…"
+              errorToast={false}
               disabled={!canRun}
+              onClick={(e) => {
+                e.preventDefault();
+                return handleRun();
+              }}
               data-testid="port-scanner-run"
             >
-              Run
+              Start
             </Button>
           )}
         </div>

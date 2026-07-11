@@ -171,6 +171,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
               variant="danger"
               size="sm"
               icon={<StopCircle size={14} />}
+              pendingLabel="Stopping…"
+              errorToast={false}
               onClick={handleStop}
               data-testid="ping-stop"
             >
@@ -182,7 +184,13 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
+              pendingLabel="Starting…"
+              errorToast={false}
               disabled={!canStart}
+              onClick={(e) => {
+                e.preventDefault();
+                return handleStart();
+              }}
               data-testid="ping-start"
             >
               Start

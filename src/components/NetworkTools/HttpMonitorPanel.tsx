@@ -257,6 +257,8 @@ export function HttpMonitorPanel() {
               variant="danger"
               size="sm"
               icon={<StopCircle size={14} />}
+              pendingLabel="Stopping…"
+              errorToast={false}
               onClick={handleStop}
               data-testid="http-monitor-stop"
             >
@@ -268,7 +270,13 @@ export function HttpMonitorPanel() {
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
+              pendingLabel="Starting…"
+              errorToast={false}
               disabled={!canStart}
+              onClick={(e) => {
+                e.preventDefault();
+                return handleStart();
+              }}
               data-testid="http-monitor-start"
             >
               Start
