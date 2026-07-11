@@ -694,14 +694,10 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `tunnel-delete-*` | `tunnel-delete-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-duplicate-*` | `tunnel-duplicate-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-edit-*` | `tunnel-edit-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-item-*` | `tunnel-item-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-name-*` | `tunnel-name-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-reconnect-*` | `tunnel-reconnect-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-retry-*` | `tunnel-retry-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-start-*` | `tunnel-start-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-status-*` | `tunnel-status-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-stop-*` | `tunnel-stop-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-type-*` | `tunnel-type-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-view-error-*` | `tunnel-view-error-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `workspace-delete-*` | `workspace-delete-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-duplicate-*` | `workspace-duplicate-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
