@@ -990,9 +990,9 @@ export function FileBrowser() {
           setDeleteConfirm({
             message: `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`,
             onConfirm: () => {
-              deleteEntry(entry.path, entry.isDirectory).catch((err: unknown) =>
-                console.error("Delete failed:", err)
-              );
+              deleteEntry(entry.path, entry.isDirectory)
+                .then(() => toast.success(`Deleted "${entry.name}"`))
+                .catch((err: unknown) => toast.error(`Failed to delete "${entry.name}": ${err}`));
             },
           });
           break;
@@ -1176,8 +1176,22 @@ export function FileBrowser() {
           setDeleteConfirm({
             message: `Delete ${entries.length} items?`,
             onConfirm: () => {
-              Promise.all(entries.map((e) => deleteEntry(e.path, e.isDirectory))).catch(
-                (err: unknown) => console.error("Delete failed:", err)
+              // Settle every delete independently so a partial failure never
+              // hides which items were actually removed (#1394).
+              void Promise.allSettled(entries.map((e) => deleteEntry(e.path, e.isDirectory))).then(
+                (results) => {
+                  const failed = entries.filter((_, i) => results[i].status === "rejected");
+                  const deleted = entries.length - failed.length;
+                  const noun = (n: number) => (n === 1 ? "item" : "items");
+                  if (failed.length === 0) {
+                    toast.success(`Deleted ${deleted} ${noun(deleted)}`);
+                  } else {
+                    const names = failed.map((e) => e.name).join(", ");
+                    toast.error(
+                      `Deleted ${deleted} ${noun(deleted)}, ${failed.length} failed: ${names}`
+                    );
+                  }
+                }
               );
               setSelectedPaths(new Set());
               setLastClickedPath(null);
