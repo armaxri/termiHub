@@ -5,6 +5,7 @@ import { TerminalTab } from "@/types/terminal";
 import { deriveTabStatus } from "@/utils/tabStatus";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
 import { reopenPayloadForTab, showReopenToast } from "@/utils/reopenTab";
+import { ConfirmDialog } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
@@ -39,25 +40,15 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
+  // Tab awaiting confirmation in the shared unsaved-changes dialog (fallback for
+  // dirty tabs whose editor does not route through `setPendingCloseRequest`).
+  const [unsavedCloseTabId, setUnsavedCloseTabId] = useState<string | null>(null);
 
-  const handleCloseTab = (tabId: string) => {
-    // Read fresh state directly from the store to avoid stale closure values:
-    // the render-time editorDirtyTabs snapshot may lag behind a setEditorDirty
-    // call that hasn't caused a re-render yet (e.g. the user reverted changes).
+  // Continue the close flow once any unsaved-changes gate has been cleared:
+  // warn before tearing down a live session, otherwise close and offer Undo.
+  const finishCloseTab = (tabId: string) => {
     const state = useAppStore.getState();
     const tab = tabs.find((t) => t.id === tabId);
-    const isDirty = state.editorDirtyTabs[tabId];
-    if (isDirty) {
-      if (
-        tab?.contentType === "connection-editor" ||
-        tab?.contentType === "settings" ||
-        tab?.contentType === "editor"
-      ) {
-        setPendingCloseRequest({ tabId, panelId });
-        return;
-      }
-      if (!window.confirm("This file has unsaved changes. Close anyway?")) return;
-    }
 
     if (!tab) {
       closeTab(tabId, panelId);
@@ -84,6 +75,31 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
     closeTab(tabId, panelId);
     showReopenToast(reopenPayloadForTab(tab));
+  };
+
+  const handleCloseTab = (tabId: string) => {
+    // Read fresh state directly from the store to avoid stale closure values:
+    // the render-time editorDirtyTabs snapshot may lag behind a setEditorDirty
+    // call that hasn't caused a re-render yet (e.g. the user reverted changes).
+    const state = useAppStore.getState();
+    const tab = tabs.find((t) => t.id === tabId);
+    const isDirty = state.editorDirtyTabs[tabId];
+    if (isDirty) {
+      if (
+        tab?.contentType === "connection-editor" ||
+        tab?.contentType === "settings" ||
+        tab?.contentType === "editor"
+      ) {
+        setPendingCloseRequest({ tabId, panelId });
+        return;
+      }
+      // Any other dirty tab is gated by the shared confirm dialog; the actual
+      // close is deferred to `finishCloseTab` once the user confirms.
+      setUnsavedCloseTabId(tabId);
+      return;
+    }
+
+    finishCloseTab(tabId);
   };
 
   const renameTabData = renameTabId ? tabs.find((t) => t.id === renameTabId) : null;
@@ -147,6 +163,20 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
         onRename={(newTitle) => {
           if (renameTabId) renameTab(renameTabId, newTitle);
         }}
+      />
+      <ConfirmDialog
+        open={unsavedCloseTabId !== null}
+        title="Unsaved changes"
+        message="This file has unsaved changes. Close anyway?"
+        confirmLabel="Close anyway"
+        cancelLabel="Cancel"
+        data-testid="unsaved-editor-close-dialog"
+        onConfirm={() => {
+          const tabId = unsavedCloseTabId;
+          setUnsavedCloseTabId(null);
+          if (tabId) finishCloseTab(tabId);
+        }}
+        onCancel={() => setUnsavedCloseTabId(null)}
       />
     </div>
   );
