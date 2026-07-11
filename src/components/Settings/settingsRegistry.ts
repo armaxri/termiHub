@@ -2,6 +2,7 @@ export type SettingsCategory =
   | "general"
   | "appearance"
   | "terminal"
+  | "shell-integration"
   | "keyboard"
   | "security"
   | "external-files"
@@ -25,6 +26,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "general", label: "General" },
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
+  { id: "shell-integration", label: "Shell Integration" },
   { id: "keyboard", label: "Keyboard" },
   { id: "security", label: "Security" },
   { id: "external-files", label: "External Files" },
@@ -135,6 +137,45 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Offer to open terminal content in an editor tab after saving it to a file",
     category: "terminal",
     keywords: ["save", "file", "tab", "editor", "monaco", "terminal", "open", "prompt"],
+  },
+  {
+    id: "shellIntegrationRegistration",
+    label: "Context Menu Registration",
+    description: "Register or remove the file-manager right-click integration",
+    category: "shell-integration",
+    keywords: [
+      "shell integration",
+      "context menu",
+      "right-click",
+      "explorer",
+      "finder",
+      "nautilus",
+      "register",
+      "reinstall",
+      "uninstall",
+      "open in termihub",
+    ],
+  },
+  {
+    id: "shellIntegrationEntries",
+    label: "Quick-Access Entries",
+    description: "Configure the entries shown in your file manager's right-click menu",
+    category: "shell-integration",
+    keywords: ["entry", "quick access", "context menu", "shell", "connection", "picker", "reorder"],
+  },
+  {
+    id: "shellIntegrationFallback",
+    label: "Shell Integration Fallback",
+    description: "What to open when no quick-access entry matches a request",
+    category: "shell-integration",
+    keywords: ["fallback", "picker", "default shell", "shell integration", "new window"],
+  },
+  {
+    id: "shellIntegrationLinux",
+    label: "Linux File Manager Integrations",
+    description: "Install Nautilus, KDE, or Thunar file-manager integrations on Linux",
+    category: "shell-integration",
+    keywords: ["linux", "nautilus", "kde", "dolphin", "thunar", "file manager", "service menu"],
   },
   {
     id: "keybindings",

@@ -4,7 +4,10 @@
 use tauri::State;
 
 use crate::connection::manager::ConnectionManager;
-use crate::connection::shell_integration::{self, ShellIntegrationStatus};
+use crate::connection::settings::AppSettings;
+use crate::connection::shell_integration::{
+    self, ShellIntegrationSettings, ShellIntegrationStatus,
+};
 use crate::spawn::registry;
 use crate::utils::portable::detect_app_mode;
 
@@ -70,4 +73,79 @@ pub fn uninstall_shell_integration(
     registry::unregister(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
     manager.save_settings(settings).map_err(|e| e.to_string())?;
     Ok(current_status(&manager))
+}
+
+/// Replace the shell-integration settings on `settings` and report whether the
+/// OS registration must be refreshed afterwards.
+///
+/// Re-registration only runs when the integration **was** registered and the
+/// incoming settings keep it registered — editing entries while registered
+/// should keep the OS context-menu items in sync. Turning registration off is
+/// handled by [`uninstall_shell_integration`], not here, so a `registered:
+/// false` payload never triggers a registry write.
+fn stage_shell_integration(settings: &mut AppSettings, new_si: ShellIntegrationSettings) -> bool {
+    let re_register = settings.shell_integration.registered && new_si.registered;
+    settings.shell_integration = new_si;
+    re_register
+}
+
+/// Persist the shell-integration settings and, when currently registered,
+/// refresh the OS context-menu registration so it reflects the edited entries.
+///
+/// The settings UI calls this for every mutation (entry add/edit/reorder/delete,
+/// fallback + window-behaviour radios, Linux per-manager toggles, and the
+/// first-launch banner dismissal). Returns the recomputed status so the UI can
+/// surface the staleness banner without a second round-trip.
+#[tauri::command]
+pub fn save_shell_integration_settings(
+    manager: State<'_, ConnectionManager>,
+    shell_integration: ShellIntegrationSettings,
+) -> Result<ShellIntegrationStatus, String> {
+    let mut settings = manager.get_settings();
+    let re_register = stage_shell_integration(&mut settings, shell_integration);
+    if re_register {
+        registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
+    }
+    manager.save_settings(settings).map_err(|e| e.to_string())?;
+    Ok(current_status(&manager))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection::shell_integration::{ShellEntry, ShellEntryVisibility, ShowForTargets};
+
+    fn entry(id: &str) -> ShellEntry {
+        ShellEntry {
+            id: id.to_string(),
+            name: "Open in termiHub".to_string(),
+            connection_id: None,
+            visibility: ShellEntryVisibility::Always,
+            show_for: ShowForTargets::default(),
+        }
+    }
+
+    #[test]
+    fn stage_replaces_entries_and_gates_reregistration() {
+        // Was registered, stays registered → re-register to keep the OS in sync.
+        let mut settings = AppSettings::default();
+        settings.shell_integration.registered = true;
+        let mut new_si = ShellIntegrationSettings {
+            registered: true,
+            entries: vec![entry("a")],
+            ..ShellIntegrationSettings::default()
+        };
+        assert!(stage_shell_integration(&mut settings, new_si.clone()));
+        assert_eq!(settings.shell_integration.entries, vec![entry("a")]);
+
+        // Not previously registered → never touches the registry.
+        let mut fresh = AppSettings::default();
+        assert!(!stage_shell_integration(&mut fresh, new_si.clone()));
+
+        // Payload turns registration off → no registry write (uninstall owns that).
+        let mut on = AppSettings::default();
+        on.shell_integration.registered = true;
+        new_si.registered = false;
+        assert!(!stage_shell_integration(&mut on, new_si));
+    }
 }
