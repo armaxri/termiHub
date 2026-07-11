@@ -867,7 +867,7 @@ for #1348.
 ### Network Tools shared field validation (#1381)
 
 Verifies every Network Tools text input shares one label + input + inline-error
-affordance and blocks the Run/Send button on invalid input. See PR #1435.
+affordance and blocks the Run/Send button on invalid input. See PR #1436.
 
 1. Open **Network Tools → Ping** (repeat for **Traceroute** and **Port
    Scanner**). Clear the **Host** field → an inline "Host is required" error
