@@ -32,6 +32,9 @@
   /* Text colors */
   --text-primary: #dde1ec;
   --text-secondary: #7b8597;
+  /* Muted: lower emphasis than secondary (badges, counts, incidental labels).
+     Per-theme values are supplied by the theme engine; this is the dark default. */
+  --text-muted: #656e80;
   --text-disabled: #3d4557;
   --text-accent: #5aa6ff;
   --text-link: #4190ee;
@@ -119,6 +122,8 @@
   --radius-md: 6px;
   --radius-lg: 10px;
   --radius-xl: 14px;
+  /* Fully rounded — pill badges, progress bars, circular indicators. */
+  --radius-full: 999px;
 
   /* Control heights */
   --control-height-sm: 24px;

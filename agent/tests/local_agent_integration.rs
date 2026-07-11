@@ -171,6 +171,34 @@ fn ready_timeout() -> Duration {
         .unwrap_or(Duration::from_secs(60))
 }
 
+/// Poll `condition` until it returns `true` or `timeout` elapses, sleeping the
+/// [`readiness_backoff`] schedule between attempts.
+///
+/// Returns `true` as soon as the condition holds — the happy path returns on the
+/// **first** poll and never sleeps — or `false` once the ceiling is hit. This is
+/// the eventually-consistent counterpart to the readiness waits: use it to await
+/// an agent state that arrives asynchronously (e.g. a session flipping to
+/// `attached: false` after a client TCP disconnect triggers `detach_all()`),
+/// rather than a fixed sleep. A fixed budget is a guess — under a starved CI
+/// runner the agent may not have processed the detach in time, so the next
+/// `connection.list` still reports the stale `attached: true` and the test
+/// flakes; polling with backoff is robust without slowing the normal case. The
+/// ceiling reuses [`ready_timeout`] (env-overridable via
+/// `TERMIHUB_TEST_READY_TIMEOUT_SECS`).
+fn wait_until(mut condition: impl FnMut() -> bool, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    let mut backoff = readiness_backoff();
+    loop {
+        if condition() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(backoff.next_delay().unwrap_or(READINESS_BACKOFF_CAP));
+    }
+}
+
 /// Spawn a `termihub-agent --listen <addr>` with its stderr captured to a temp
 /// file, isolated from the developer's real config via `XDG_CONFIG_HOME`.
 ///
@@ -638,6 +666,17 @@ impl AgentClient {
             .unwrap_or_default()
     }
 
+    /// Return `true` if `connection.list` reports `session_id` with
+    /// `attached: false` — the eventually-consistent state the agent reaches
+    /// after a client TCP disconnect triggers `detach_all()`. Used with
+    /// [`wait_until`] to await the detach instead of a fixed post-disconnect
+    /// sleep.
+    fn session_detached(&mut self, session_id: &str) -> bool {
+        self.list_sessions()
+            .iter()
+            .any(|s| s["session_id"].as_str() == Some(session_id) && s["attached"] == false)
+    }
+
     fn write_input(&mut self, session_id: &str, data: &str) -> Value {
         let encoded = base64::engine::general_purpose::STANDARD.encode(data.as_bytes());
         self.rpc(
@@ -772,11 +811,16 @@ fn shell_session_persists_across_client_disconnect() {
         // implicit drop → TCP connection closes → agent calls detach_all()
     }
 
-    // Allow the agent's async runtime to process the disconnect.
-    std::thread::sleep(Duration::from_millis(200));
-
     let mut client2 = AgentClient::connect(&agent.addr);
     client2.initialize();
+
+    // Wait for the agent's async runtime to process the disconnect and mark the
+    // session detached, rather than guessing with a fixed sleep (a starved CI
+    // runner may need longer). Returns on the first successful poll.
+    assert!(
+        wait_until(|| client2.session_detached(&session_id), ready_timeout()),
+        "session {session_id} not reported detached after client disconnect"
+    );
 
     let sessions = client2.list_sessions();
     let entry = sessions
@@ -832,10 +876,15 @@ fn shell_session_reattach_after_reconnect() {
         // implicit drop → disconnects
     }
 
-    std::thread::sleep(Duration::from_millis(200));
-
     let mut client2 = AgentClient::connect(&agent.addr);
     client2.initialize();
+
+    // Poll until the agent reports the session detached instead of a fixed sleep
+    // that flakes under CI load. Returns on the first successful poll.
+    assert!(
+        wait_until(|| client2.session_detached(&session_id), ready_timeout()),
+        "session {session_id} not reported detached before re-attach"
+    );
 
     let sessions = client2.list_sessions();
     let entry = sessions
@@ -1193,11 +1242,18 @@ fn persistent_shell_buffer_replayed_after_tcp_reconnect() {
         // The daemon keeps the shell running and the ring buffer intact.
     }
 
-    std::thread::sleep(Duration::from_millis(200));
-
     // ── Connection 2: TCP reconnect → re-attach → buffer replay ───────────────
     {
         let mut client = setup.connect_client();
+
+        // Poll until the daemon has processed the detach (session shows
+        // `attached: false`) instead of a fixed sleep that flakes under CI load.
+        // Returns on the first successful poll.
+        let session_id = setup.session_id.clone();
+        assert!(
+            wait_until(|| client.session_detached(&session_id), ready_timeout()),
+            "session {session_id} not reported detached after TCP reconnect"
+        );
 
         let sessions = client.list_sessions();
         let entry = sessions

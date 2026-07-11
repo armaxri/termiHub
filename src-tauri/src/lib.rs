@@ -241,14 +241,10 @@ pub fn run() {
 
             // Load settings to determine the credential storage mode.
             // On failure, fall back to defaults so the app can still start.
-            let config_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
-                Ok(dir) => std::path::PathBuf::from(dir),
-                Err(_) => app
-                    .handle()
-                    .path()
-                    .app_config_dir()
-                    .expect("Failed to resolve app config directory"),
-            };
+            // Portable mode already exported `TERMIHUB_CONFIG_DIR` above, so the
+            // shared resolver's handle branch yields the correct directory.
+            let config_dir = utils::config_paths::resolve_config_dir(Some(app.handle()))
+                .expect("Failed to resolve app config directory");
             std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
 
             // Capture path for the connections file watcher before config_dir is moved.

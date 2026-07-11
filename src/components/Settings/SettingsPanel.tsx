@@ -32,7 +32,7 @@ import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
-import { getAppInfo, type AppInfo } from "@/services/api";
+import { useAppInfo } from "@/hooks/useAppInfo";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -69,7 +69,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("general");
   const [searchQuery, setSearchQuery] = useState("");
   const [isCompact, setIsCompact] = useState(false);
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const appInfo = useAppInfo();
   const [showSavedAck, setShowSavedAck] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,12 +105,6 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       updateSettings(toSave);
     }
   }, [updateSettings]);
-
-  useEffect(() => {
-    getAppInfo()
-      .then(setAppInfo)
-      .catch(() => setAppInfo(null));
-  }, []);
 
   // ResizeObserver for compact mode
   useEffect(() => {

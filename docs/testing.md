@@ -829,6 +829,21 @@ for #1348.
 4. Start another rename and press **Escape** (or click away with no change) →
    the edit is abandoned and no rename occurs.
 
+**File multi-delete outcome reporting (#1394).**
+
+1. Open the file browser on a local or SFTP directory. Prepare at least one entry
+   that cannot be deleted (e.g. a read-only / permission-protected file) alongside
+   ordinary files.
+2. Multi-select several files including the undeletable one (Ctrl/Cmd-click), then
+   right-click → **Delete (N items)** and confirm the dialog.
+3. The batch does **not** abort on the first failure: the deletable files are
+   removed and a single toast reports the outcome — "Deleted N items, M failed:
+   \<names>" naming the failed entries. When every item deletes, a "Deleted N
+   items" success toast appears instead.
+4. Delete a **single** undeletable file (right-click → **Delete**, confirm) → an
+   error toast naming the file appears instead of failing silently; deleting a
+   normal single file shows a success toast.
+
 **Wake-on-LAN "Save Current".**
 
 1. Open **Network Tools → Wake-on-LAN**, enter a valid MAC address, then click
@@ -848,6 +863,23 @@ for #1348.
    native confirm) stating the approximate probe count.
 3. **Cancel** → the scan does not start. Re-run and **Start scan** → the scan
    proceeds.
+
+### Embedded-server delete confirmation (#1393)
+
+See PR #1426. Verifies that deleting an embedded server now requires an explicit
+confirmation via the shared `ConfirmDialog`, consistent with tunnels and
+workspaces.
+
+1. Open the **Services** sidebar and create (or select) a **stopped** embedded
+   server. Click its **Delete** (trash) action → a themed confirm dialog appears
+   (no instant deletion). **Cancel** → the server remains. Re-open and click
+   **Delete** in the dialog → the server is removed and a success toast appears.
+2. Start an embedded server so it is **running**. Click its **Delete** action →
+   the confirm dialog's wording states it will **stop and delete the running
+   server**. Confirm → the running server is stopped, deleted, and a success
+   toast appears.
+3. Repeat via the right-click **context menu → Delete** → the same confirmation
+   dialog gates the deletion.
 
 ### Remote-agent update-strategy settings persist (#1354)
 
@@ -1268,6 +1300,24 @@ exhausted. Pending a fault-injection system test (follow-up), verify manually:
    **Offline** and stops retrying (no runaway reconnect loop).
 4. Repeat against a monitored host **behind the agent** (agent monitoring
    subscription) to confirm the agent mirrors the same behavior.
+
+### Design tokens: pill radius + muted text (#1406)
+
+Verifies the `--radius-full` and `--text-muted` design tokens render their
+intended pill radius / muted color across every theme (they were previously
+referenced but undefined). See PR #1421. Purely visual, so manual.
+
+For **each** theme (Dark, Light, Solarized Dark, Solarized Light — switch via
+Settings):
+
+1. Open the **Open Connections** panel (Settings wheel → Open Connections).
+   Confirm the section-count and `.oc-row__badge` pills have fully rounded
+   (pill) corners, and that muted row text (icons, detail text, muted titles)
+   reads as lower-emphasis than the primary row title — not black/transparent.
+2. Trigger the **X server setup dialog** and confirm the progress bar is fully
+   rounded and any muted helper text renders in the theme's muted color.
+3. Confirm **status bar** muted text renders with the per-theme muted color
+   (visible but de-emphasized) rather than a broken fallback.
 
 ### Legacy Guided Manual Test Runner (YAML)
 

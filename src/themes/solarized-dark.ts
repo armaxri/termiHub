@@ -33,6 +33,7 @@ export const solarizedDarkTheme: ThemeDefinition = {
     // Text
     textPrimary: "#839496", // base0
     textSecondary: "#657b83", // base00
+    textMuted: "#586e75", // base01
     textDisabled: "#3d5862",
     textAccent: "#268bd2",
     textLink: "#268bd2",

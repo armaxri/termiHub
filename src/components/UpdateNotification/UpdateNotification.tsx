@@ -3,7 +3,7 @@ import { X, Shield, RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
 import { Button } from "@/components/ui";
-import { getAppInfo } from "@/services/api";
+import { useDesktopVersion } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UpdateNotification.css";
 
@@ -23,13 +23,7 @@ export function UpdateNotification() {
   const settings = useAppStore((s) => s.settings);
 
   const [showNotes, setShowNotes] = useState(false);
-  const [runningVersion, setRunningVersion] = useState("");
-
-  useEffect(() => {
-    getAppInfo()
-      .then((info) => setRunningVersion(info.version))
-      .catch(() => setRunningVersion(""));
-  }, []);
+  const runningVersion = useDesktopVersion();
 
   // Reset "what's new" panel whenever the detected version changes.
   useEffect(() => {

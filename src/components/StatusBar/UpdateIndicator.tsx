@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/appStore";
-import { getAppInfo, type AppInfo } from "@/services/api";
+import { useAppInfo } from "@/hooks/useAppInfo";
 
 /**
  * Version chip in the status bar.  Shows an amber or red dot when an update
@@ -8,15 +7,9 @@ import { getAppInfo, type AppInfo } from "@/services/api";
  * Shows a "develop" badge when running a develop-branch build.
  */
 export function UpdateIndicator() {
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const appInfo = useAppInfo();
   const updateInfo = useAppStore((s) => s.updateInfo);
   const updateCheckState = useAppStore((s) => s.updateCheckState);
-
-  useEffect(() => {
-    getAppInfo()
-      .then(setAppInfo)
-      .catch(() => null);
-  }, []);
 
   const hasUpdate = updateCheckState === "available" && updateInfo?.available === true;
   const isSecurity = hasUpdate && updateInfo?.isSecurity === true;

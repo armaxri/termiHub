@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
-import { setUpdateAutoCheck, getAppInfo, type AppInfo } from "@/services/api";
+import { setUpdateAutoCheck } from "@/services/api";
+import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { Button } from "@/components/ui";
 import "./UpdateSettings.css";
@@ -30,13 +31,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const [savingAutoCheck, setSavingAutoCheck] = useState(false);
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
-
-  useEffect(() => {
-    getAppInfo()
-      .then(setAppInfo)
-      .catch(() => setAppInfo(null));
-  }, []);
+  const appInfo = useAppInfo();
 
   const autoCheck = settings.updates?.autoCheck ?? true;
   const lastCheckTime = settings.updates?.lastCheckTime;

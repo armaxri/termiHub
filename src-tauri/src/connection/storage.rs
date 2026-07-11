@@ -2,11 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use super::config::{ConnectionStore, ConnectionTreeNode, FlatConnectionStore, SavedRemoteAgent};
 use super::recovery::{RecoveryResult, RecoveryWarning};
 use super::tree::flatten_tree;
+use crate::utils::config_paths::resolve_config_dir;
 
 const FILE_NAME: &str = "connections.json";
 
@@ -20,13 +21,7 @@ impl ConnectionStorage {
     ///
     /// If `TERMIHUB_CONFIG_DIR` is set, it overrides the default Tauri config directory.
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        let config_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
-            Ok(dir) => PathBuf::from(dir),
-            Err(_) => app_handle
-                .path()
-                .app_config_dir()
-                .context("Failed to resolve app config directory")?,
-        };
+        let config_dir = resolve_config_dir(Some(app_handle))?;
 
         tracing::info!("Using config directory: {}", config_dir.display());
 
