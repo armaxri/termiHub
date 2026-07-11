@@ -15,14 +15,17 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde_json::{json, Value};
 
-use tempfile::TempDir;
+use tempfile::{NamedTempFile, TempDir};
+use termihub_core::monitoring::BackoffSchedule;
 
 // ── Binary path ───────────────────────────────────────────────────────────────
 
@@ -40,6 +43,24 @@ fn agent_binary() -> &'static str {
 /// soon as the response arrives; it only widens the window before we give up.
 const RPC_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+// ── Readiness retry backoff ───────────────────────────────────────────────────
+
+/// Cap on the readiness retry backoff (see [`readiness_backoff`]).
+const READINESS_BACKOFF_CAP: Duration = Duration::from_millis(500);
+
+/// Exponential-backoff schedule for the agent-readiness retry loops.
+///
+/// Reuses the production [`BackoffSchedule`] helper instead of a bespoke copy.
+/// Starts at 20ms and doubles to [`READINESS_BACKOFF_CAP`], so a fast local
+/// start returns almost immediately while a **starved CI runner** is not
+/// hammered with hundreds of `connect()` attempts a second — the pattern that
+/// let #1398 flake with `connect: Connection refused`. The attempt budget is
+/// effectively unbounded (`u32::MAX`); these loops stop on their own wall-clock
+/// deadline (or a dead child), never on an attempt count.
+fn readiness_backoff() -> BackoffSchedule {
+    BackoffSchedule::new(Duration::from_millis(20), READINESS_BACKOFF_CAP, u32::MAX)
+}
+
 // ── LocalAgent: process lifecycle manager ────────────────────────────────────
 
 /// Spawns a `termihub-agent --listen` process on a free port.
@@ -49,13 +70,13 @@ struct LocalAgent {
     pub addr: String,
     /// Temp config dir kept alive for the agent's lifetime (cleaned on drop).
     _config_dir: TempDir,
+    /// Captured agent stderr, kept alive so `wait_for_agent_ready` can surface
+    /// it in a panic if startup fails.
+    _stderr: NamedTempFile,
 }
 
 impl LocalAgent {
     fn spawn() -> Self {
-        let port = unique_agent_port();
-        let addr = format!("127.0.0.1:{port}");
-
         // Isolate the agent's config/state from the developer's real
         // `~/.config/termihub-agent` (XDG_CONFIG_HOME is honored on every
         // platform). Without this, recover_sessions() reads real state at
@@ -63,19 +84,12 @@ impl LocalAgent {
         // live in which a connection could be reset.
         let config_dir = TempDir::new().expect("failed to create temp config dir");
 
-        let process = Command::new(agent_binary())
-            .args(["--listen", &addr])
-            .env("XDG_CONFIG_HOME", config_dir.path())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("failed to spawn termihub-agent");
-
-        wait_for_agent_ready(&addr, Duration::from_secs(30));
+        let (process, addr, stderr) = spawn_ready_listener(config_dir.path(), None);
         LocalAgent {
             process,
             addr,
             _config_dir: config_dir,
+            _stderr: stderr,
         }
     }
 }
@@ -89,29 +103,109 @@ impl Drop for LocalAgent {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Atomic port counter to prevent TOCTOU collisions when many tests run in parallel.
-///
-/// `free_port()` (bind :0, get port, drop listener, return port) has a race window
-/// between dropping the listener and the agent binding the same port: a concurrent
-/// test can claim the same port in that gap, causing both agents to collide and one
-/// test to connect to the other's agent, which gets killed before it can respond.
-///
-/// Using an incrementing counter means each test in this binary gets a unique port.
-/// Ports 19200–19900 are IANA-unassigned and not in use by any well-known service.
-static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(19200);
+/// Low/high bounds of the test port range. 19200–20200 is IANA-unassigned and
+/// not used by any well-known service.
+const PORT_RANGE_LO: u16 = 19200;
+const PORT_RANGE_HI: u16 = 20200;
 
-/// Reserve a unique TCP port for a test agent.
+/// Per-process port counter, seeded once to a **process-specific** base.
 ///
-/// Advances a per-binary atomic counter so parallel tests never pick the same port.
-/// Skips any port that happens to be in use by an external process (rare on a
-/// dedicated CI runner, but handled to avoid spurious failures).
+/// A plain counter starting at a fixed 19200 for every process means two
+/// concurrent `cargo test` invocations (e.g. parallel CI jobs on one runner)
+/// march through the *same* ports in lockstep and keep colliding. Seeding the
+/// base from the PID desynchronises them so they walk different sub-ranges,
+/// making a collision rare — and [`spawn_ready_listener`] retries on the rare
+/// one that still lands on a `TIME_WAIT`/in-use port left by another run
+/// (#1398).
+fn port_counter() -> &'static AtomicU16 {
+    static COUNTER: OnceLock<AtomicU16> = OnceLock::new();
+    COUNTER.get_or_init(|| {
+        let span = PORT_RANGE_HI - PORT_RANGE_LO;
+        // Reserve headroom (span - 200) so a process starting near the top
+        // still has room for its handful of ports + retries before wrapping.
+        let base = PORT_RANGE_LO + (std::process::id() as u16 % (span - 200));
+        AtomicU16::new(base)
+    })
+}
+
+/// Reserve a candidate TCP port for a test agent.
+///
+/// Advances the per-process counter (wrapping within the range) so tests in the
+/// same process never pick the same port, and skips any port currently held by
+/// an unrelated process via a bind probe.
+///
+/// # Why a counter and not an ephemeral `:0` port
+///
+/// Binding `:0`, reading back the OS-assigned port, dropping the listener, and
+/// letting the agent re-bind it opens a TOCTOU window: a concurrent test can
+/// grab the same port in the gap. The counter (plus the bind probe here, and
+/// [`spawn_ready_listener`]'s retry on a bind failure) gives each test a
+/// private port far more reliably than `:0` round-tripping would.
 fn unique_agent_port() -> u16 {
+    let counter = port_counter();
     loop {
-        let port = NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed);
-        assert!(port < 19900, "exhausted test port range 19200–19900");
+        // Wrap within [LO, HI) so a long-lived process never runs off the end.
+        let raw = counter.fetch_add(1, Ordering::Relaxed);
+        let port =
+            PORT_RANGE_LO + (raw.wrapping_sub(PORT_RANGE_LO) % (PORT_RANGE_HI - PORT_RANGE_LO));
         if TcpListener::bind(format!("127.0.0.1:{port}")).is_ok() {
             return port;
         }
+    }
+}
+
+/// Readiness budget for [`wait_for_agent_ready`].
+///
+/// A loaded CI runner can take much longer than a dev box to cold-start the
+/// agent process, so the default is deliberately generous (60s). Because the
+/// wait returns the instant the agent is ready — and fails fast if the child
+/// process dies (see [`wait_for_agent_ready`]) — a high ceiling never slows the
+/// passing path; it only widens the window before we give up on a genuinely
+/// slow start. CI can override it via `TERMIHUB_TEST_READY_TIMEOUT_SECS` without
+/// a code change if a particular runner class needs even more headroom.
+fn ready_timeout() -> Duration {
+    std::env::var("TERMIHUB_TEST_READY_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(60))
+}
+
+/// Spawn a `termihub-agent --listen <addr>` with its stderr captured to a temp
+/// file, isolated from the developer's real config via `XDG_CONFIG_HOME`.
+///
+/// Returns the child plus the [`NamedTempFile`] holding its stderr; the caller
+/// passes the file's path to [`wait_for_agent_ready`] so a failed startup can be
+/// diagnosed from the agent's own error output rather than an opaque timeout.
+fn spawn_listener_process(
+    addr: &str,
+    config_home: &Path,
+    rust_log: Option<&str>,
+) -> (Child, NamedTempFile) {
+    let stderr_file = NamedTempFile::new().expect("failed to create stderr capture file");
+    let stderr_handle = stderr_file
+        .reopen()
+        .expect("failed to reopen stderr capture file");
+
+    let mut cmd = Command::new(agent_binary());
+    cmd.args(["--listen", addr])
+        .env("XDG_CONFIG_HOME", config_home)
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr_handle));
+    if let Some(log) = rust_log {
+        cmd.env("RUST_LOG", log);
+    }
+
+    let child = cmd.spawn().expect("failed to spawn termihub-agent");
+    (child, stderr_file)
+}
+
+/// Read the captured agent stderr for inclusion in a diagnostic panic.
+fn read_stderr(path: &Path) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(s) if s.trim().is_empty() => "(agent stderr was empty)".to_string(),
+        Ok(s) => s,
+        Err(e) => format!("(failed to read agent stderr: {e})"),
     }
 }
 
@@ -128,9 +222,32 @@ fn unique_agent_port() -> u16 {
 /// probe, ran its transport loop to completion, and looped back to `accept()` —
 /// i.e. it is live and idle, leaving no overlapping connection for the test's
 /// real connection to race against. Transient errors (not-yet-bound, read
-/// timeout) are retried until the deadline.
-fn wait_for_agent_ready(addr: &str, timeout: Duration) {
+/// timeout) are retried with exponential backoff (see [`readiness_backoff`])
+/// until the deadline.
+///
+/// # Robustness for loaded CI (#1398)
+///
+/// Two properties keep this from flaking when a starved runner is slow to start
+/// the agent:
+///
+/// * **Fail fast on a dead child.** Between probes we poll [`Child::try_wait`].
+///   If the agent process has already exited we return
+///   [`ReadyError::ProcessExited`] at once — with its exit status and captured
+///   stderr — instead of blindly retrying `connect()` for the whole timeout
+///   against a port that will never open. This lets [`spawn_ready_listener`]
+///   retry on a fresh port when the exit was a bind collision (#1398).
+/// * **Rich timeout diagnostics.** On genuine timeout the returned
+///   [`ReadyError::Timeout`] reports whether the process is still running plus
+///   its stderr — so a CI failure says whether the agent never spawned,
+///   crashed, or is merely slow, rather than just "connection refused".
+fn wait_for_agent_ready(
+    child: &mut Child,
+    addr: &str,
+    stderr_path: &Path,
+    timeout: Duration,
+) -> Result<(), ReadyError> {
     let deadline = Instant::now() + timeout;
+    let mut backoff = readiness_backoff();
 
     // One probe at a time: connect, half-close (send FIN), and wait for the
     // agent to serve it to completion and close its end (EOF). Reaching EOF
@@ -140,22 +257,93 @@ fn wait_for_agent_ready(addr: &str, timeout: Duration) {
     //
     // A single probe can still fail transiently while the agent is mid-startup
     // under heavy parallel load (e.g. a brief listener hiccup resets the
-    // connection). The agent's accept loop survives such errors, so we simply
-    // retry with a fresh connection until the deadline. Because each attempt
-    // runs to completion before the next, retries never pile up a backlog.
+    // connection). The agent's accept loop survives such errors, so we retry
+    // with a fresh connection — spacing attempts out via exponential backoff —
+    // until the deadline. Because each attempt runs to completion before the
+    // next, retries never pile up a backlog.
     loop {
         match probe_once(addr, &deadline) {
-            None => return,
+            None => return Ok(()),
             Some(err) => {
+                // If the child has already died, there is no point waiting out
+                // the rest of the timeout — surface the crash straight away.
+                if let Ok(Some(status)) = child.try_wait() {
+                    return Err(ReadyError::ProcessExited(format!(
+                        "agent process exited before becoming ready — addr: {addr}, \
+                         exit: {status}, last probe: {err}\n\
+                         --- agent stderr ---\n{}",
+                        read_stderr(stderr_path)
+                    )));
+                }
                 if Instant::now() >= deadline {
-                    panic!(
-                        "agent did not become ready within {timeout:?} — addr: {addr}, last: {err}"
-                    );
+                    let still_running = matches!(child.try_wait(), Ok(None));
+                    return Err(ReadyError::Timeout(format!(
+                        "agent did not become ready within {timeout:?} — addr: {addr}, \
+                         process still running: {still_running}, last probe: {err}\n\
+                         --- agent stderr ---\n{}",
+                        read_stderr(stderr_path)
+                    )));
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(backoff.next_delay().unwrap_or(READINESS_BACKOFF_CAP));
     }
+}
+
+/// Why an agent listener never became ready.
+#[derive(Debug)]
+enum ReadyError {
+    /// The process exited before the port opened — usually a port collision
+    /// with a `TIME_WAIT`/in-use socket from another run, which retrying on a
+    /// fresh port resolves. Carries the full diagnostic (exit status + stderr).
+    ProcessExited(String),
+    /// The deadline elapsed while the process was still running (genuinely slow
+    /// or wedged). Carries the full diagnostic.
+    Timeout(String),
+}
+
+/// Max attempts to bring up a `--listen` agent on a bindable port.
+const MAX_SPAWN_ATTEMPTS: u32 = 5;
+
+/// Spawn a `--listen` agent and block until it is ready, retrying on a fresh
+/// port if the process dies during startup.
+///
+/// The fixed test-port range can collide with a socket left in `TIME_WAIT` (or
+/// held) by a previous or concurrent run on the same host — the agent then
+/// exits with `Address already in use` before its port ever opens (#1398). The
+/// bind probe in [`unique_agent_port`] cannot prevent this because another
+/// process owns the port, so we detect the early exit via
+/// [`ReadyError::ProcessExited`] and simply try the next port. A genuine
+/// startup bug fails the same way on every port and surfaces after the retry
+/// budget with full diagnostics; a slow-but-alive start ([`ReadyError::Timeout`])
+/// is not retried (that would just burn another full timeout).
+fn spawn_ready_listener(
+    config_home: &Path,
+    rust_log: Option<&str>,
+) -> (Child, String, NamedTempFile) {
+    let mut last_diag = String::new();
+    for attempt in 1..=MAX_SPAWN_ATTEMPTS {
+        let port = unique_agent_port();
+        let addr = format!("127.0.0.1:{port}");
+        let (mut child, stderr) = spawn_listener_process(&addr, config_home, rust_log);
+        match wait_for_agent_ready(&mut child, &addr, stderr.path(), ready_timeout()) {
+            Ok(()) => return (child, addr, stderr),
+            Err(ReadyError::ProcessExited(diag)) => {
+                child.kill().ok();
+                child.wait().ok();
+                last_diag = format!("attempt {attempt}/{MAX_SPAWN_ATTEMPTS}: {diag}");
+            }
+            Err(ReadyError::Timeout(diag)) => {
+                child.kill().ok();
+                child.wait().ok();
+                panic!("{diag}");
+            }
+        }
+    }
+    panic!(
+        "agent listener failed to become ready after {MAX_SPAWN_ATTEMPTS} attempts \
+         (each exited during startup) — {last_diag}"
+    );
 }
 
 /// One FIN-readiness probe. Returns `None` on success (EOF observed), or
@@ -192,6 +380,49 @@ fn rpc(stream: &mut TcpStream, msg: &str) -> String {
     let mut response = String::new();
     reader.read_line(&mut response).expect("read_line failed");
     response.trim().to_string()
+}
+
+/// A dead agent process must be reported immediately, not waited out.
+///
+/// Regression guard for #1398's diagnostics: if the child exits before the port
+/// ever opens, `wait_for_agent_ready` must fail fast (via `try_wait`) with a
+/// [`ReadyError::ProcessExited`] that identifies the crash — never blindly retry
+/// `connect()` for the whole timeout against a port that will never listen. It
+/// is this fast, classified exit that lets `spawn_ready_listener` retry on a
+/// fresh port when the cause is a bind collision.
+#[test]
+fn wait_for_agent_ready_reports_dead_process_fast() {
+    // `--version` makes the agent print and exit at once instead of listening,
+    // standing in for a process that dies during startup.
+    let port = unique_agent_port();
+    let addr = format!("127.0.0.1:{port}");
+    let stderr = NamedTempFile::new().expect("stderr temp file");
+    let stderr_handle = stderr.reopen().expect("reopen stderr");
+    let mut child = Command::new(agent_binary())
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr_handle))
+        .spawn()
+        .expect("spawn agent --version");
+
+    let started = Instant::now();
+    // Generous timeout: if fail-fast is broken this would take ~10s, which the
+    // elapsed-time assertion below still catches.
+    let result = wait_for_agent_ready(&mut child, &addr, stderr.path(), Duration::from_secs(10));
+    let elapsed = started.elapsed();
+    child.wait().ok();
+
+    match result {
+        Err(ReadyError::ProcessExited(diag)) => assert!(
+            diag.contains("exited before becoming ready"),
+            "diagnostic must identify the dead child — got: {diag}"
+        ),
+        other => panic!("expected ProcessExited on a dead child, got: {other:?}"),
+    }
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "readiness wait must fail fast, not wait out the timeout — took {elapsed:?}"
+    );
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -303,9 +534,11 @@ struct AgentClient {
 impl AgentClient {
     fn connect(addr: &str) -> Self {
         let stream = TcpStream::connect(addr).expect("connect failed");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
+        // Match the simple `rpc()` helper's generous per-round-trip budget: a
+        // loaded CI runner can momentarily take several seconds to answer an
+        // RPC, and a 10s ceiling flaked under that load (#1398). The read still
+        // returns as soon as the response arrives.
+        stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
         let writer = stream.try_clone().expect("clone failed");
         AgentClient {
             writer,
@@ -442,7 +675,7 @@ impl AgentClient {
                                 .unwrap_or_default();
                             let text = String::from_utf8_lossy(&bytes);
                             if text.contains(needle) {
-                                self.set_read_timeout(Some(Duration::from_secs(10)));
+                                self.set_read_timeout(Some(RPC_READ_TIMEOUT));
                                 return true;
                             }
                         }
@@ -458,7 +691,7 @@ impl AgentClient {
             }
         }
 
-        self.set_read_timeout(Some(Duration::from_secs(10)));
+        self.set_read_timeout(Some(RPC_READ_TIMEOUT));
         false
     }
 }
@@ -658,21 +891,42 @@ fn shell_session_reattach_after_reconnect() {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-/// Poll until `path` exists or `timeout` expires.
+/// Poll until the daemon's `path` socket appears, or panic on timeout.
+///
+/// Hardened the same way as [`wait_for_agent_ready`] (#1398): the previous
+/// version used a fixed non-overridable 5s budget, a flat 20ms spin, and threw
+/// the daemon's stderr away — so a slow/loaded CI runner flaked and the panic
+/// said nothing. Now it fails fast if the daemon process has already died
+/// (with its exit status + captured stderr), uses the shared exponential
+/// [`readiness_backoff`], and appends stderr on genuine timeout.
 #[cfg(unix)]
-fn wait_for_socket(path: &std::path::Path, timeout: Duration) {
+fn wait_for_socket(child: &mut Child, path: &Path, stderr_path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
+    let mut backoff = readiness_backoff();
     loop {
         if path.exists() {
             return;
         }
-        if Instant::now() >= deadline {
+        // A dead daemon will never create the socket — surface the crash now
+        // instead of spinning until the deadline.
+        if let Ok(Some(status)) = child.try_wait() {
             panic!(
-                "daemon socket did not appear within {timeout:?}: {}",
-                path.display()
+                "daemon process exited before creating its socket — exit: {status}, \
+                 socket: {}\n--- daemon stderr ---\n{}",
+                path.display(),
+                read_stderr(stderr_path)
             );
         }
-        std::thread::sleep(Duration::from_millis(20));
+        if Instant::now() >= deadline {
+            let still_running = matches!(child.try_wait(), Ok(None));
+            panic!(
+                "daemon socket did not appear within {timeout:?} — socket: {}, \
+                 process still running: {still_running}\n--- daemon stderr ---\n{}",
+                path.display(),
+                read_stderr(stderr_path)
+            );
+        }
+        std::thread::sleep(backoff.next_delay().unwrap_or(READINESS_BACKOFF_CAP));
     }
 }
 
@@ -690,10 +944,16 @@ fn test_session_id() -> String {
 /// Spawn `termihub-agent --daemon <session_id>` for a local shell.
 ///
 /// The daemon writes its Unix socket to `socket_path` when it is ready.
-/// Caller must call `wait_for_socket` before using it.
+/// Caller must call [`wait_for_socket`] before using it. Returns the child plus
+/// the [`NamedTempFile`] capturing its stderr, so a startup failure can be
+/// diagnosed from the daemon's own error output.
 #[cfg(unix)]
-fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &std::path::Path) -> Child {
-    Command::new(agent_binary())
+fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child, NamedTempFile) {
+    let stderr_file = NamedTempFile::new().expect("failed to create daemon stderr capture file");
+    let stderr_handle = stderr_file
+        .reopen()
+        .expect("failed to reopen daemon stderr capture file");
+    let child = Command::new(agent_binary())
         .arg("--daemon")
         .arg(session_id)
         .env("TERMIHUB_TYPE_ID", "local")
@@ -702,9 +962,10 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &std::path::Path)
         .env("TERMIHUB_BUFFER_SIZE", "65536")
         .env("RUST_LOG", "warn")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(stderr_handle))
         .spawn()
-        .expect("failed to spawn daemon")
+        .expect("failed to spawn daemon");
+    (child, stderr_file)
 }
 
 /// A TCP listener agent isolated from the developer's real config by setting
@@ -713,25 +974,21 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &std::path::Path)
 struct IsolatedAgent {
     process: Child,
     pub addr: String,
+    /// Captured agent stderr, kept alive for startup-failure diagnostics.
+    _stderr: NamedTempFile,
 }
 
 #[cfg(unix)]
 impl IsolatedAgent {
     fn spawn(xdg_home: &std::path::Path) -> Self {
-        let port = unique_agent_port();
-        let addr = format!("127.0.0.1:{port}");
-        let process = Command::new(agent_binary())
-            .args(["--listen", &addr])
-            .env("XDG_CONFIG_HOME", xdg_home)
-            .env("RUST_LOG", "warn")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("failed to spawn isolated agent");
-        // The readiness probe waits until the accept loop is idle, which is
-        // after recover_sessions() finishes — no fixed-sleep guess needed.
-        wait_for_agent_ready(&addr, Duration::from_secs(30));
-        IsolatedAgent { process, addr }
+        // spawn_ready_listener waits until the accept loop is idle (after
+        // recover_sessions() finishes) and retries on a port collision.
+        let (process, addr, stderr) = spawn_ready_listener(xdg_home, Some("warn"));
+        IsolatedAgent {
+            process,
+            addr,
+            _stderr: stderr,
+        }
     }
 }
 
@@ -758,6 +1015,8 @@ impl Drop for IsolatedAgent {
 struct PersistentShellSetup {
     agent: IsolatedAgent,
     daemon: Child,
+    /// Captured daemon stderr, kept alive for startup-failure diagnostics.
+    _daemon_stderr: NamedTempFile,
     _tmp: TempDir,
     pub session_id: String,
 }
@@ -770,9 +1029,15 @@ impl PersistentShellSetup {
         let session_id = test_session_id();
         let socket_path = tmp_path.join(format!("session-{session_id}.sock"));
 
-        // Start daemon, wait for its socket to appear.
-        let daemon = spawn_daemon_for_local_shell(&session_id, &socket_path);
-        wait_for_socket(&socket_path, Duration::from_secs(5));
+        // Start daemon, wait for its socket to appear. Uses the shared
+        // adaptive readiness budget so a loaded CI runner has headroom.
+        let (mut daemon, daemon_stderr) = spawn_daemon_for_local_shell(&session_id, &socket_path);
+        wait_for_socket(
+            &mut daemon,
+            &socket_path,
+            daemon_stderr.path(),
+            ready_timeout(),
+        );
 
         // Write AgentState so the TCP listener's recover_sessions() finds this
         // daemon when it starts.
@@ -799,6 +1064,7 @@ impl PersistentShellSetup {
         PersistentShellSetup {
             agent,
             daemon,
+            _daemon_stderr: daemon_stderr,
             _tmp: tmp,
             session_id,
         }
