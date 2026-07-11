@@ -3,7 +3,7 @@ import { PackagePlus, PackageMinus, Search } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ALL_LANGUAGE_PACKAGES, BUILTIN_PACKAGE_IDS } from "@/utils/monacoLanguagePackages";
 import { registerAdditionalLanguagePackages } from "@/utils/monacoCustomLanguages";
-import { Tooltip } from "@/components/ui";
+import { Button, Tooltip } from "@/components/ui";
 
 interface LanguagePackagesSettingsProps {
   visibleFields?: Set<string>;
@@ -114,14 +114,15 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
                     <span className="settings-panel__badge">restart required</span>
                   )}
                   <Tooltip content={`Uninstall ${pkg.name}`}>
-                    <button
-                      className="settings-panel__file-remove"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      icon={<PackageMinus size={14} />}
                       onClick={() => handleUninstall(pkg.id)}
                       aria-label={`Uninstall ${pkg.name}`}
                       data-testid={`lang-pkg-uninstall-${pkg.id}`}
-                    >
-                      <PackageMinus size={14} />
-                    </button>
+                    />
                   </Tooltip>
                 </li>
               ))}
@@ -192,14 +193,15 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
                       <span className="settings-panel__badge">installed</span>
                     ) : (
                       <Tooltip content={`Install ${pkg.name}`}>
-                        <button
-                          className="settings-panel__file-remove"
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          icon={<PackagePlus size={14} />}
                           onClick={() => handleInstall(pkg.id)}
                           aria-label={`Install ${pkg.name}`}
                           data-testid={`lang-pkg-install-${pkg.id}`}
-                        >
-                          <PackagePlus size={14} />
-                        </button>
+                        />
                       </Tooltip>
                     )}
                   </li>
