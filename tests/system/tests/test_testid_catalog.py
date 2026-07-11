@@ -91,6 +91,58 @@ def test_scan_mixed_jsx():
     assert ("expr", "option.testId") in found
 
 
+# ── forwarded SidebarListItem/SidebarStatusDot props (#1431) ─────────────────
+
+
+def test_scan_forwarded_props_quoted_and_template():
+    # Consumers pass row/name/badge/status ids through the shared shell's props
+    # instead of a raw data-testid, so the scanner must recognise them too.
+    snippet = """
+      <SidebarListItem
+        testId="server-item-one"
+        nameTestId={`server-name-${id}`}
+        badgeTestId="server-type-one"
+        status={<SidebarStatusDot tone="neutral" testId={`server-status-${id}`} />}
+      />
+    """
+    found = mod.scan_testids(snippet)
+    assert ("quoted", "server-item-one") in found
+    assert ("expr", "`server-name-${id}`") in found
+    assert ("quoted", "server-type-one") in found
+    assert ("expr", "`server-status-${id}`") in found
+
+
+def test_forwarding_prop_boundary_no_false_substring():
+    # `nameTestId` / `badgeTestId` embed the substring `testId`; the boundary
+    # check must not register a phantom bare `testId` match for either.
+    found = mod.scan_testids('<X nameTestId="n" badgeTestId="b" />')
+    assert ("quoted", "n") in found
+    assert ("quoted", "b") in found
+    assert len(found) == 2
+
+
+def test_collect_attributes_forwarded_prop_to_consumer_file(tmp_path, monkeypatch):
+    src = tmp_path / "src" / "components" / "Foo"
+    src.mkdir(parents=True)
+    consumer = src / "FooItem.tsx"
+    consumer.write_text(
+        "<SidebarListItem\n"
+        '  testId="foo-item"\n'
+        '  nameTestId="foo-name"\n'
+        '  badgeTestId="foo-type"\n'
+        '  status={<SidebarStatusDot tone="neutral" testId="foo-status" />}\n'
+        "/>\n",
+        encoding="utf-8",
+    )
+    # collect() renders source paths relative to REPO_ROOT; point it at tmp_path.
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    literal = mod.collect(tmp_path / "src")["literal"]
+    rel = "src/components/Foo/FooItem.tsx"
+    for tid in ("foo-item", "foo-name", "foo-type", "foo-status"):
+        assert tid in literal, f"{tid} not cataloged"
+        assert rel in literal[tid]["files"]
+
+
 # ── committed catalog stays in sync ─────────────────────────────────────────
 
 
@@ -111,3 +163,22 @@ def test_catalog_contains_a_known_literal_id():
     text = CATALOG.read_text(encoding="utf-8")
     assert "`connection-editor-save`" in text
     assert "`file-row-*`" in text
+
+
+def test_catalog_contains_forwarded_sidebar_prop_ids():
+    # Ids forwarded through SidebarListItem/SidebarStatusDot props must appear in
+    # the catalog even though they are never written as a literal data-testid.
+    text = CATALOG.read_text(encoding="utf-8")
+    for pattern in (
+        "`server-item-*`",
+        "`server-name-*`",
+        "`server-status-*`",
+        "`server-type-*`",
+        "`workspace-item-*`",
+        "`workspace-name-*`",
+        "`tunnel-item-*`",
+        "`tunnel-name-*`",
+        "`tunnel-status-*`",
+        "`tunnel-type-*`",
+    ):
+        assert pattern in text, f"{pattern} missing from catalog"
