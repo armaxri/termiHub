@@ -864,6 +864,30 @@ for #1348.
 3. **Cancel** → the scan does not start. Re-run and **Start scan** → the scan
    proceeds.
 
+### File browser rename / new-file / new-folder / copy feedback (#1399)
+
+Verifies every FileBrowser mutating/clipboard action gives success/error
+feedback instead of resolving silently or only logging to the console. See PR
+for #1399.
+
+**New folder / New file.**
+
+1. Open the file browser on a local or SFTP directory. Click **New Folder**
+   (toolbar or background right-click → **New Folder**), type a name, press
+   **Enter** → the folder is created and a `Created folder "<name>"` success
+   toast appears.
+2. Repeat with **New File** → a `Created file "<name>"` success toast appears.
+3. Trigger a failure (e.g. create a folder whose name already exists, or in a
+   read-only directory) → a recoverable error toast naming the target appears
+   instead of a silent no-op.
+
+**Copy Name / Copy Path.**
+
+1. Right-click a file → **Copy Name** → a `Copied name` toast appears and the
+   file's name is on the clipboard (paste to verify).
+2. Right-click a file → **Copy Path** → a `Copied path` toast appears and the
+   file's full path is on the clipboard.
+
 ### Remote-agent update-strategy settings persist (#1354)
 
 Verifies the per-agent update settings appear in the editor and round-trip
