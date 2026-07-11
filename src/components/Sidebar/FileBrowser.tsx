@@ -976,10 +976,20 @@ export function FileBrowser() {
           cutEntry([entry]);
           break;
         case "copyName":
-          writeClipboard(entry.name);
+          writeClipboard(entry.name)
+            .then(() => toast.success("Copied name"))
+            .catch((err: unknown) => {
+              frontendLog("file_browser", `Copy name failed: ${err}`);
+              toast.error(`Failed to copy name: ${err}`);
+            });
           break;
         case "copyPath":
-          writeClipboard(entry.path);
+          writeClipboard(entry.path)
+            .then(() => toast.success("Copied path"))
+            .catch((err: unknown) => {
+              frontendLog("file_browser", `Copy path failed: ${err}`);
+              toast.error(`Failed to copy path: ${err}`);
+            });
           break;
         case "rename": {
           // Inline rename: the row renders an editable input (see FileRow).
@@ -1206,18 +1216,26 @@ export function FileBrowser() {
 
   const handleCreateDir = useCallback(() => {
     if (newDirName && newDirName.trim()) {
-      createDirectory(newDirName.trim()).catch((err: unknown) =>
-        console.error("Create directory failed:", err)
-      );
+      const name = newDirName.trim();
+      createDirectory(name)
+        .then(() => toast.success(`Created folder "${name}"`))
+        .catch((err: unknown) => {
+          frontendLog("file_browser", `Create directory failed: ${err}`);
+          toast.error(`Failed to create folder "${name}": ${err}`);
+        });
       setNewDirName(null);
     }
   }, [newDirName, createDirectory]);
 
   const handleCreateFile = useCallback(() => {
     if (newFileName && newFileName.trim()) {
-      createFile(newFileName.trim()).catch((err: unknown) =>
-        console.error("Create file failed:", err)
-      );
+      const name = newFileName.trim();
+      createFile(name)
+        .then(() => toast.success(`Created file "${name}"`))
+        .catch((err: unknown) => {
+          frontendLog("file_browser", `Create file failed: ${err}`);
+          toast.error(`Failed to create file "${name}": ${err}`);
+        });
       setNewFileName(null);
     }
   }, [newFileName, createFile]);
