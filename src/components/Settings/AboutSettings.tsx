@@ -1,7 +1,6 @@
-import { useState, useEffect } from "react";
 import { Github, ExternalLink, ScrollText } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getAppInfo, type AppInfo } from "@/services/api";
+import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { Button } from "@/components/ui";
 import "./AboutSettings.css";
@@ -13,13 +12,7 @@ const THIRD_PARTY_LICENSES_URL =
 
 /** Settings page section showing app version, project links, and license info. */
 export function AboutSettings() {
-  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
-
-  useEffect(() => {
-    getAppInfo()
-      .then(setAppInfo)
-      .catch((err) => frontendLog("about", `Failed to load app info: ${err}`));
-  }, []);
+  const appInfo = useAppInfo();
 
   const handleGitHub = async () => {
     try {
