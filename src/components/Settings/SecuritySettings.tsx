@@ -5,6 +5,7 @@ import { CredentialStorageMode } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Select, toast } from "@/components/ui";
+import { SettingsField } from "./SettingsField";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -373,19 +374,17 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             <div className="settings-panel__section">
               <h3 className="settings-panel__section-title">Master Password Options</h3>
 
-              <div className="settings-form__field">
-                <span className="settings-form__label">Auto-Lock Timeout</span>
+              <SettingsField
+                label="Auto-Lock Timeout"
+                hint="Lock the credential store after a period of inactivity."
+              >
                 <Select
-                  aria-label="Auto-Lock Timeout"
                   data-testid="auto-lock-timeout"
                   value={String(settings.credentialAutoLockMinutes ?? 15)}
                   onChange={(value) => handleAutoLockChange(Number(value))}
                   options={AUTO_LOCK_SELECT_OPTIONS}
                 />
-                <span className="settings-form__hint">
-                  Lock the credential store after a period of inactivity.
-                </span>
-              </div>
+              </SettingsField>
 
               <div className="settings-panel__field">
                 <Button
