@@ -829,6 +829,21 @@ for #1348.
 4. Start another rename and press **Escape** (or click away with no change) →
    the edit is abandoned and no rename occurs.
 
+**File multi-delete outcome reporting (#1394).**
+
+1. Open the file browser on a local or SFTP directory. Prepare at least one entry
+   that cannot be deleted (e.g. a read-only / permission-protected file) alongside
+   ordinary files.
+2. Multi-select several files including the undeletable one (Ctrl/Cmd-click), then
+   right-click → **Delete (N items)** and confirm the dialog.
+3. The batch does **not** abort on the first failure: the deletable files are
+   removed and a single toast reports the outcome — "Deleted N items, M failed:
+   \<names>" naming the failed entries. When every item deletes, a "Deleted N
+   items" success toast appears instead.
+4. Delete a **single** undeletable file (right-click → **Delete**, confirm) → an
+   error toast naming the file appears instead of failing silently; deleting a
+   normal single file shows a success toast.
+
 **Wake-on-LAN "Save Current".**
 
 1. Open **Network Tools → Wake-on-LAN**, enter a valid MAC address, then click
