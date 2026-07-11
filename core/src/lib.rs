@@ -11,6 +11,7 @@ pub mod config;
 pub mod connection;
 pub mod errors;
 pub mod files;
+pub mod ipc;
 pub mod monitoring;
 #[cfg(any(feature = "telnet", feature = "ssh"))]
 pub mod net;
