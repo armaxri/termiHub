@@ -54,6 +54,16 @@ _SKIP_DIR_PARTS = {"__tests__", "test", "__mocks__", "testbridge"}
 _INTERP = re.compile(r"\$\{[^}]*\}")  # a ${...} interpolation
 _COLLAPSE = re.compile(r"\*+")  # runs of glob stars
 _EQ = re.compile(r"\s*=\s*")  # the `=` between attribute name and value
+_IDENT = re.compile(r"[A-Za-z0-9_$]")  # a JS identifier character
+
+# The literal ``data-testid`` DOM attribute plus the shared sidebar shell's
+# test-id props. ``SidebarListItem``/``SidebarStatusDot`` consumers pass their
+# row/name/badge/status ids through these props instead of a raw
+# ``data-testid``, so scanning the attribute alone drops them from the catalog
+# even though they render at runtime (#1431). Values are read the same way as a
+# ``data-testid`` (quoted literal or ``{...}`` expression), so forwarded ids are
+# classified and attributed to the consumer file just like direct attributes.
+_TESTID_ATTRS = ("data-testid", "testId", "nameTestId", "badgeTestId")
 
 
 # ---------------------------------------------------------------------------
@@ -116,22 +126,26 @@ def _read_braced(text: str, start: int) -> "tuple[str, int]":
     return text[start + 1 :], i
 
 
-def scan_testids(text: str) -> "list[tuple[str, str]]":
-    """Return ``(origin, value)`` for every ``data-testid=`` in ``text``.
+def _scan_attr(text: str, name: str) -> "list[tuple[str, str]]":
+    """Return ``(origin, value)`` for every ``name=`` occurrence in ``text``.
 
     ``origin`` is ``"quoted"`` (value is the literal attribute string content) or
-    ``"expr"`` (value is the inner JSX ``{...}`` expression). Keeping the origin
-    lets classification tell a literal string from a bare expression — the quotes
-    are gone by then.
+    ``"expr"`` (value is the inner JSX ``{...}`` expression). A non-identifier
+    character must precede ``name`` so a prop like ``testId`` is not matched
+    inside ``nameTestId`` / ``badgeTestId``.
     """
-    needle = "data-testid"
     out: "list[tuple[str, str]]" = []
     i = 0
     while True:
-        j = text.find(needle, i)
+        j = text.find(name, i)
         if j < 0:
             break
-        k = j + len(needle)
+        k = j + len(name)
+        # Require a word boundary before the name (e.g. whitespace or `{`), so
+        # `testId` does not match the tail of `nameTestId`/`badgeTestId`.
+        if j > 0 and _IDENT.match(text[j - 1]):
+            i = k
+            continue
         m = _EQ.match(text, k)
         if not m:
             i = k
@@ -150,6 +164,20 @@ def scan_testids(text: str) -> "list[tuple[str, str]]":
             i = end
         else:
             i = p
+    return out
+
+
+def scan_testids(text: str) -> "list[tuple[str, str]]":
+    """Return ``(origin, value)`` for every test-id attribute/prop in ``text``.
+
+    Scans the literal ``data-testid`` DOM attribute plus the shared sidebar
+    shell's forwarding props (``testId`` / ``nameTestId`` / ``badgeTestId``);
+    see ``_TESTID_ATTRS``. Keeping the origin lets classification tell a literal
+    string from a bare expression — the quotes are gone by then.
+    """
+    out: "list[tuple[str, str]]" = []
+    for name in _TESTID_ATTRS:
+        out.extend(_scan_attr(text, name))
     return out
 
 
