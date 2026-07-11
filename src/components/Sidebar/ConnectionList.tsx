@@ -664,9 +664,21 @@ export function ConnectionList() {
     [addTab, requestPassword]
   );
 
+  // While a search filter is active, folders are force-expanded by the render
+  // logic and their stored `isExpanded` is ignored (#1378). Suppress folder
+  // toggles (click + keyboard) so a toggle has no hidden effect and clearing the
+  // filter restores exactly the expansion state the tree had before filtering.
+  const handleToggleFolder = useCallback(
+    (folderId: string) => {
+      if (filter) return;
+      toggleFolder(folderId);
+    },
+    [filter, toggleFolder]
+  );
+
   const { containerRef, focusedId, setFocusedId, handleKeyDown } = useTreeKeyboardNav(treeNodes, {
     onConnect: handleConnect,
-    onToggleFolder: toggleFolder,
+    onToggleFolder: handleToggleFolder,
   });
 
   // The row that owns tabindex=0: the tracked focus if still present, else the
@@ -1090,7 +1102,7 @@ export function ConnectionList() {
               rootConnections={rootConnections}
               folders={folders}
               connections={connections}
-              onToggle={toggleFolder}
+              onToggle={handleToggleFolder}
               onConnect={handleConnect}
               onEdit={handleEdit}
               onDelete={handleDelete}
