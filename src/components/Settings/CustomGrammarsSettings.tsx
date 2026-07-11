@@ -274,14 +274,15 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                       {g.name}
                     </span>
                     <Tooltip content={`Remove grammar "${g.name}"`}>
-                      <button
-                        className="settings-panel__file-remove"
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        icon={<Trash2 size={14} />}
                         onClick={() => handleRemove(g.id)}
                         aria-label={`Remove grammar "${g.name}"`}
                         data-testid={`custom-grammar-remove-${g.id}`}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      />
                     </Tooltip>
                   </li>
                 ))}
