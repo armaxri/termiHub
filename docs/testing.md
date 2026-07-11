@@ -883,7 +883,7 @@ workspaces.
 
 ### Embedded-server delete backend-failure toast (#1427)
 
-See PR #PR_PLACEHOLDER. Verifies that a backend delete failure surfaces a
+See PR #1439. Verifies that a backend delete failure surfaces a
 user-visible error toast instead of failing silently (the store used to swallow
 the error to `console.error`).
 
