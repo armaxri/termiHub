@@ -3,6 +3,7 @@ import { LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
 import { Select, Toggle } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
+import { SettingsField } from "./SettingsField";
 
 /** Sentinel for the "platform default" right-click option (Radix Select forbids empty-string item values). */
 const RIGHT_CLICK_PLATFORM_DEFAULT = "__platform_default__";
@@ -38,23 +39,23 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Terminal</h3>
       {show("defaultHorizontalScrolling") && (
-        <div className="settings-form__field">
-          <span className="settings-form__label">Default Horizontal Scrolling</span>
+        <SettingsField
+          label="Default Horizontal Scrolling"
+          hint="Enable horizontal scrolling for new terminals by default."
+        >
           <Toggle
-            aria-label="Default Horizontal Scrolling"
             checked={settings.defaultHorizontalScrolling ?? false}
             onCheckedChange={(checked) =>
               onChange({ ...settings, defaultHorizontalScrolling: checked })
             }
           />
-          <span className="settings-form__hint">
-            Enable horizontal scrolling for new terminals by default.
-          </span>
-        </div>
+        </SettingsField>
       )}
       {show("scrollbackBuffer") && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Scrollback Buffer</span>
+        <SettingsField
+          label="Scrollback Buffer"
+          hint="Number of lines kept in the terminal scrollback (100–1 000 000). Larger values consume more memory — roughly 1–2 MB per 10 000 lines of typical output."
+        >
           <input
             type="number"
             min={100}
@@ -65,17 +66,11 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
               onChange({ ...settings, scrollbackBuffer: isNaN(val) ? undefined : val });
             }}
           />
-          <span className="settings-form__hint">
-            Number of lines kept in the terminal scrollback (100–1 000 000). Larger values consume
-            more memory — roughly 1–2 MB per 10 000 lines of typical output.
-          </span>
-        </label>
+        </SettingsField>
       )}
       {show("cursorStyle") && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Cursor Style</span>
+        <SettingsField label="Cursor Style" hint="Terminal cursor shape.">
           <Select
-            aria-label="Cursor Style"
             data-testid="settings-cursor-style"
             value={settings.cursorStyle ?? "block"}
             onChange={(value) =>
@@ -86,25 +81,22 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             }
             options={CURSOR_STYLE_OPTIONS}
           />
-          <span className="settings-form__hint">Terminal cursor shape.</span>
-        </label>
+        </SettingsField>
       )}
       {show("cursorBlink") && (
-        <div className="settings-form__field">
-          <span className="settings-form__label">Cursor Blink</span>
+        <SettingsField label="Cursor Blink" hint="Whether the terminal cursor blinks.">
           <Toggle
-            aria-label="Cursor Blink"
             checked={settings.cursorBlink ?? true}
             onCheckedChange={(checked) => onChange({ ...settings, cursorBlink: checked })}
           />
-          <span className="settings-form__hint">Whether the terminal cursor blinks.</span>
-        </div>
+        </SettingsField>
       )}
       {show("defaultLineEnding") && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Line Ending (Enter &amp; Paste)</span>
+        <SettingsField
+          label="Line Ending (Enter & Paste)"
+          hint="Sequence sent when pressing Enter and used to normalize line endings in pasted text. Prevents Windows CRLF from inserting blank lines on Unix shells and serial devices. Can be overridden per connection."
+        >
           <Select
-            aria-label="Line Ending (Enter & Paste)"
             data-testid="settings-line-ending"
             value={settings.defaultLineEnding ?? DEFAULT_LINE_ENDING}
             onChange={(value) =>
@@ -115,18 +107,14 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             }
             options={LINE_ENDING_SELECT_OPTIONS}
           />
-          <span className="settings-form__hint">
-            Sequence sent when pressing Enter and used to normalize line endings in pasted text.
-            Prevents Windows CRLF from inserting blank lines on Unix shells and serial devices. Can
-            be overridden per connection.
-          </span>
-        </label>
+        </SettingsField>
       )}
       {show("rightClickBehavior") && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Right-Click Behavior</span>
+        <SettingsField
+          label="Right-Click Behavior"
+          hint="Context Menu shows the full right-click menu. Quick Copy/Paste copies selected text or pastes if nothing is selected. Default: Context Menu on macOS/Linux, Quick Copy/Paste on Windows."
+        >
           <Select
-            aria-label="Right-Click Behavior"
             data-testid="settings-right-click-behavior"
             value={settings.rightClickBehavior ?? RIGHT_CLICK_PLATFORM_DEFAULT}
             onChange={(value) =>
@@ -140,27 +128,19 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             }
             options={RIGHT_CLICK_OPTIONS}
           />
-          <span className="settings-form__hint">
-            Context Menu shows the full right-click menu. Quick Copy/Paste copies selected text or
-            pastes if nothing is selected. Default: Context Menu on macOS/Linux, Quick Copy/Paste on
-            Windows.
-          </span>
-        </label>
+        </SettingsField>
       )}
       {show("askOpenSavedFileInTab") && (
-        <div className="settings-form__field">
-          <span className="settings-form__label">Open Saved File in Tab</span>
+        <SettingsField
+          label="Open Saved File in Tab"
+          hint="After saving terminal content to a file, ask whether to open it in an editor tab. When off, files are saved without prompting and are not opened."
+        >
           <Toggle
-            aria-label="Open Saved File in Tab"
             checked={settings.askOpenSavedFileInTab ?? true}
             onCheckedChange={(checked) => onChange({ ...settings, askOpenSavedFileInTab: checked })}
             data-testid="settings-ask-open-saved-file-in-tab"
           />
-          <span className="settings-form__hint">
-            After saving terminal content to a file, ask whether to open it in an editor tab. When
-            off, files are saved without prompting and are not opened.
-          </span>
-        </div>
+        </SettingsField>
       )}
     </div>
   );
