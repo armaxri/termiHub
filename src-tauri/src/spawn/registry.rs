@@ -2284,6 +2284,75 @@ mod linux {
             );
         }
 
+        #[test]
+        fn thunar_preserves_inter_action_comments_and_whitespace_on_edit_and_remove() {
+            let xdg = TempXdg::new("thunar-comments");
+            let thunar_dir = xdg.config.join("Thunar");
+            std::fs::create_dir_all(&thunar_dir).unwrap();
+
+            // Two foreign actions with a hand-written comment and blank line
+            // between them — the exact bytes we require to round-trip intact.
+            const FOREIGN_BLOCK: &str = "<action>\n\t<icon>utilities-terminal</icon>\n\t\
+<name>Open Terminal Here</name>\n\t<unique-id>1616000000000000-1</unique-id>\n\t\
+<command>xterm</command>\n\t<description>Foreign one</description>\n\t<patterns>*</patterns>\n\t\
+<directories/>\n</action>\n\n\
+<!-- keep this hand-written comment between actions -->\n\
+<action>\n\t<icon>edit-copy</icon>\n\t<name>Copy Path</name>\n\t\
+<unique-id>1616000000000000-2</unique-id>\n\t<command>echo %f</command>\n\t\
+<description>Foreign two</description>\n\t<patterns>*</patterns>\n\t<other-files/>\n</action>";
+
+            // A pre-existing termiHub action trails the foreign block, so both an
+            // edit (install) and a removal (uninstall) must leave the foreign
+            // block — comment and whitespace included — byte-intact.
+            let fixture = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<actions>\n\
+<!-- leading comment, keep me too -->\n\
+{FOREIGN_BLOCK}\n\
+<action>\n\t<icon>utilities-terminal</icon>\n\t<name>Stale termiHub</name>\n\t\
+<unique-id>termihub-open</unique-id>\n\t<command>stale</command>\n\t\
+<description>Open in termiHub</description>\n\t<patterns>*</patterns>\n\t<directories/>\n\
+</action>\n\
+</actions>\n"
+            );
+            let uca = thunar_dir.join("uca.xml");
+            std::fs::write(&uca, &fixture).unwrap();
+
+            let reg = xdg.registrar();
+            let s = settings(
+                vec![entry(
+                    "open",
+                    "Open in termiHub",
+                    targets(true, false, false),
+                )],
+                all_on(),
+            );
+
+            // Edit: reinstall rewrites termiHub's action but must not disturb the
+            // foreign block, its comment, or the leading comment.
+            reg.install(&s, EXE).unwrap();
+            let after_edit = xdg.read(&uca);
+            assert!(
+                after_edit.contains(FOREIGN_BLOCK),
+                "inter-action comment/whitespace lost on edit:\n{after_edit}"
+            );
+            assert!(after_edit.contains("<!-- leading comment, keep me too -->"));
+            assert!(after_edit.contains("<unique-id>termihub-open</unique-id>"));
+
+            // Remove: uninstall strips termiHub's action but keeps everything else.
+            reg.uninstall().unwrap();
+            let after_remove = xdg.read(&uca);
+            assert!(
+                after_remove.contains(FOREIGN_BLOCK),
+                "inter-action comment/whitespace lost on remove:\n{after_remove}"
+            );
+            assert!(after_remove.contains("<!-- leading comment, keep me too -->"));
+            assert!(
+                !after_remove.contains("termihub-open"),
+                "termiHub action must be removed"
+            );
+        }
+
         // ── Detection ───────────────────────────────────────────────────
 
         #[test]
