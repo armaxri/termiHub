@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
+use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::portable::AppMode;
 
 /// Frontend-facing representation of the current app mode.
@@ -128,15 +129,10 @@ pub fn export_config_to_portable(
     dest_dir: String,
     files: Vec<String>,
 ) -> Result<ConfigMigrationResult, String> {
-    let src_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
-        Ok(dir) => dir,
-        Err(_) => app_handle
-            .path()
-            .app_config_dir()
-            .map_err(|e| format!("Failed to resolve config directory: {e}"))?
-            .to_string_lossy()
-            .into_owned(),
-    };
+    let src_dir = resolve_config_dir(Some(&app_handle))
+        .map_err(|e| format!("Failed to resolve config directory: {e}"))?
+        .to_string_lossy()
+        .into_owned();
 
     export_config(src_dir, dest_dir, files)
 }
@@ -151,15 +147,10 @@ pub fn import_config_from_portable(
     src_dir: String,
     files: Vec<String>,
 ) -> Result<ConfigMigrationResult, String> {
-    let dest_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
-        Ok(dir) => dir,
-        Err(_) => app_handle
-            .path()
-            .app_config_dir()
-            .map_err(|e| format!("Failed to resolve config directory: {e}"))?
-            .to_string_lossy()
-            .into_owned(),
-    };
+    let dest_dir = resolve_config_dir(Some(&app_handle))
+        .map_err(|e| format!("Failed to resolve config directory: {e}"))?
+        .to_string_lossy()
+        .into_owned();
 
     export_config(src_dir, dest_dir, files)
 }
