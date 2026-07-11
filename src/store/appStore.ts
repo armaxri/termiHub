@@ -4744,7 +4744,12 @@ export const useAppStore = create<AppState>((set, get) => {
           ),
         }));
       } catch (err) {
-        console.error("Failed to delete embedded server:", err);
+        // Propagate the failure so the caller (EmbeddedServerSidebar) can show
+        // an error toast — #1427. The server is only removed from the store on
+        // success above, so state stays correct on failure. Mirrors
+        // saveEmbeddedServer / deleteTunnel.
+        frontendLog("embedded_server", `Failed to delete embedded server ${serverId}: ${err}`);
+        throw err;
       }
     },
 
