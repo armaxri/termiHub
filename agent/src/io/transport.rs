@@ -85,13 +85,14 @@ where
 }
 
 /// Write a pre-serialised JSON string as an NDJSON line to the writer.
+///
+/// Delegates to the shared [`termihub_core::ipc::write_line`] framing helper so
+/// the desktop spawn IPC and the agent transport share one NDJSON writer (#1386).
 pub async fn write_line<W: AsyncWriteExt + Unpin>(
     writer: &mut W,
     json: &str,
 ) -> anyhow::Result<()> {
-    writer.write_all(json.as_bytes()).await?;
-    writer.write_all(b"\n").await?;
-    writer.flush().await?;
+    termihub_core::ipc::write_line(writer, json).await?;
     Ok(())
 }
 
