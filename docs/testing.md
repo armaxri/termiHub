@@ -1269,6 +1269,24 @@ exhausted. Pending a fault-injection system test (follow-up), verify manually:
 4. Repeat against a monitored host **behind the agent** (agent monitoring
    subscription) to confirm the agent mirrors the same behavior.
 
+### Design tokens: pill radius + muted text (#1406)
+
+Verifies the `--radius-full` and `--text-muted` design tokens render their
+intended pill radius / muted color across every theme (they were previously
+referenced but undefined). See PR #1421. Purely visual, so manual.
+
+For **each** theme (Dark, Light, Solarized Dark, Solarized Light — switch via
+Settings):
+
+1. Open the **Open Connections** panel (Settings wheel → Open Connections).
+   Confirm the section-count and `.oc-row__badge` pills have fully rounded
+   (pill) corners, and that muted row text (icons, detail text, muted titles)
+   reads as lower-emphasis than the primary row title — not black/transparent.
+2. Trigger the **X server setup dialog** and confirm the progress bar is fully
+   rounded and any muted helper text renders in the theme's muted color.
+3. Confirm **status bar** muted text renders with the per-theme muted color
+   (visible but de-emphasized) rather than a broken fallback.
+
 ### Legacy Guided Manual Test Runner (YAML)
 
 The remaining manual test items are still defined as machine-readable YAML in [`tests/manual/*.yaml`](../tests/manual/). The standalone runner presents applicable tests one at a time, manages infrastructure, and generates a JSON report. It is being subsumed by the harness flow above:
