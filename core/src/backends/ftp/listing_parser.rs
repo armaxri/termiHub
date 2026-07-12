@@ -38,7 +38,13 @@ pub(crate) fn decode_bytes(raw: &[u8]) -> String {
 /// Returns `None` for lines the crate cannot parse and for `.` / `..` / empty
 /// names, so malformed lines are skipped rather than failing the whole listing.
 pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
-    todo!()
+    let line = decode_bytes(raw);
+    let file = FtpFile::from_mlsx_line(&line).ok()?;
+    if is_ignored_name(file.name()) {
+        return None;
+    }
+    // MLSD carries machine-readable permissions (default or `unix.mode`).
+    Some(entry_from_file(&file, dir, true))
 }
 
 /// Parse one `LIST` line (Unix `ls -l` first, then Windows/DOS) into a
@@ -47,19 +53,46 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
 /// Returns `None` for unparseable lines, `total …` summary lines and
 /// `.` / `..` entries.
 pub(crate) fn parse_list_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
-    todo!()
+    let decoded = decode_bytes(raw);
+    let line = decoded.trim_end_matches(['\r', '\n']);
+    // Unix `ls -l` first (the common case), then Windows/DOS. POSIX lines carry
+    // real permissions; DOS lines do not.
+    if let Ok(file) = FtpFile::from_posix_line(line) {
+        if is_ignored_name(file.name()) {
+            return None;
+        }
+        return Some(entry_from_file(&file, dir, true));
+    }
+    if let Ok(file) = FtpFile::from_dos_line(line) {
+        if is_ignored_name(file.name()) {
+            return None;
+        }
+        return Some(entry_from_file(&file, dir, false));
+    }
+    None
 }
 
 /// Parse a full MLSD listing (as returned by [`suppaftp`]) into entries,
 /// skipping any malformed lines.
 pub(crate) fn parse_mlsd(lines: &[String], dir: &str) -> Vec<FileEntry> {
-    todo!()
+    lines
+        .iter()
+        .filter_map(|line| parse_mlsd_line(line.as_bytes(), dir))
+        .collect()
 }
 
 /// Parse a full `LIST` listing (as returned by [`suppaftp`]) into entries,
 /// skipping any malformed lines.
 pub(crate) fn parse_list(lines: &[String], dir: &str) -> Vec<FileEntry> {
-    todo!()
+    lines
+        .iter()
+        .filter_map(|line| parse_list_line(line.as_bytes(), dir))
+        .collect()
+}
+
+/// Names that are never surfaced as listing entries.
+fn is_ignored_name(name: &str) -> bool {
+    name.is_empty() || name == "." || name == ".."
 }
 
 /// Build the 9-character `rwxrwxrwx` POSIX permission string for `file`.

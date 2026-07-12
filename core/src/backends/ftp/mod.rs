@@ -9,9 +9,12 @@
 //! (see the FTP client concept); `write`/`resize` are no-ops because FTP has no
 //! terminal channel.
 
+mod file_browser;
 mod listing_parser;
 
 use std::sync::Arc;
+
+use file_browser::FtpFileBrowser;
 
 use futures_rustls::rustls::crypto::aws_lc_rs;
 use futures_rustls::rustls::{ClientConfig, RootCertStore};
@@ -43,12 +46,19 @@ const ANONYMOUS_PASSWORD: &str = "anonymous@termihub";
 pub struct Ftp {
     /// Active control connection; `None` when disconnected.
     client: Option<AsyncRustlsFtpStream>,
+    /// File browser bound to this connection; created on connect. It runs its
+    /// own control connection (opened lazily) so it can offer the `&self`-based
+    /// [`FileBrowser`] API independently of this session's mutable stream.
+    browser: Option<FtpFileBrowser>,
 }
 
 impl Ftp {
     /// Create a new disconnected `Ftp` instance.
     pub fn new() -> Self {
-        Self { client: None }
+        Self {
+            client: None,
+            browser: None,
+        }
     }
 }
 
@@ -365,10 +375,13 @@ impl ConnectionType for Ftp {
             })??;
 
         self.client = Some(stream);
+        self.browser = Some(FtpFileBrowser::new(config));
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
+        // Drop the browser (closing its own control connection, if opened).
+        self.browser = None;
         if let Some(mut client) = self.client.take() {
             if let Err(e) = client.quit().await {
                 debug!("FTP QUIT failed during disconnect: {e}");
@@ -403,9 +416,7 @@ impl ConnectionType for Ftp {
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
-        // File browsing (listing/transfers) is added in a later step; the
-        // capability flag is already advertised so the UI can prepare for it.
-        None
+        self.browser.as_ref().map(|b| b as &dyn FileBrowser)
     }
 }
 
@@ -555,5 +566,15 @@ mod tests {
         let ftp = Ftp::new();
         assert!(ftp.write(b"ignored").is_ok());
         assert!(ftp.resize(80, 24).is_ok());
+    }
+
+    #[test]
+    fn file_browser_none_until_connected_then_some() {
+        let mut ftp = Ftp::new();
+        // No browser before connecting.
+        assert!(ftp.file_browser().is_none());
+        // Once a browser is bound (as `connect` does), it is exposed.
+        ftp.browser = Some(FtpFileBrowser::new(FtpConfig::default()));
+        assert!(ftp.file_browser().is_some());
     }
 }
