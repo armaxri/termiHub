@@ -35,6 +35,7 @@ use crate::connection::shell_integration::{
     DetectedFileManager, ShellEntry, ShellIntegrationSettings,
 };
 use anyhow::Context;
+use std::path::Path;
 
 /// Message returned by the install / uninstall entry points on platforms that
 /// have no context-menu / Quick Action registration implementation.
@@ -154,6 +155,165 @@ fn uninstall() -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
 }
 
+// ── Shared per-OS registration helpers ──────────────────────────────────────
+//
+// These four helpers are hoisted to file scope so the Windows, macOS and Linux
+// `Registrar` arms below share one implementation each instead of carrying
+// near-identical private copies. Each arm is `#[cfg]`-gated, so on any given
+// platform some helpers have no non-test caller; `#[allow(dead_code)]` keeps
+// that from tripping the `-D warnings` build. The `shared_helper_tests` module
+// pins their exact output on every platform.
+
+/// The termiHub spawn command line a surface invokes:
+/// `"{exe_path}" spawn --entry-id {entry_id} --location {location}`.
+///
+/// `location` is the *already-formatted* location token — the caller supplies
+/// whatever quoting or placeholder its surface needs (macOS passes the quoted
+/// `"$@"`, Windows the quoted `"%1"` / `"%V"`, Linux a bare `%f` or the quoted
+/// `"$1"`).
+#[allow(dead_code)]
+fn spawn_command_line(exe_path: &str, entry_id: &str, location: &str) -> String {
+    format!(r#""{exe_path}" spawn --entry-id {entry_id} --location {location}"#)
+}
+
+/// Reduce an entry id to a single safe key/filename token: ASCII alphanumerics
+/// are lowercased and every other character becomes `separator`. When `trim` is
+/// set, leading and trailing `separator` runs are stripped (Linux slugs); when
+/// unset the mapped string is kept verbatim (Windows registry key names). If the
+/// result is empty, `empty_fallback` is returned — pass `""` to allow an empty
+/// slug through unchanged.
+#[allow(dead_code)]
+fn id_slug(id: &str, separator: char, trim: bool, empty_fallback: &str) -> String {
+    let mapped: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                separator
+            }
+        })
+        .collect();
+    let slug = if trim {
+        mapped.trim_matches(separator)
+    } else {
+        mapped.as_str()
+    };
+    if slug.is_empty() {
+        empty_fallback.to_string()
+    } else {
+        slug.to_string()
+    }
+}
+
+/// Sanitize a display name into a filesystem-safe base: every character in
+/// `replace` becomes `-`, then surrounding whitespace is trimmed. The result may
+/// be empty (e.g. an all-whitespace name), in which case the caller supplies its
+/// own fallback and any suffix.
+#[allow(dead_code)]
+fn sanitize_display_name(name: &str, replace: &[char]) -> String {
+    name.chars()
+        .map(|c| if replace.contains(&c) { '-' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// True when the file at `path` can be read and contains `marker`. A missing or
+/// unreadable file yields `false` (it is simply "not ours").
+#[allow(dead_code)]
+fn file_contains_marker(path: &Path, marker: &str) -> bool {
+    std::fs::read_to_string(path)
+        .map(|contents| contents.contains(marker))
+        .unwrap_or(false)
+}
+
+/// Unit tests pinning the exact behavior of the file-scope helpers shared by
+/// all three OS `Registrar`s. These run on every platform (they touch none of
+/// the `#[cfg]`-gated OS arms), so the byte-for-byte output each OS arm relies
+/// on is verified even where that arm is compiled out.
+#[cfg(test)]
+mod shared_helper_tests {
+    use super::*;
+
+    #[test]
+    fn spawn_command_line_formats_exe_id_and_location_token() {
+        // Linux desktop / KDE / Thunar: bare `%f` placeholder, no quoting.
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --location %f"#
+        );
+        // macOS: the already-quoted `"$@"` token is passed through verbatim.
+        assert_eq!(
+            spawn_command_line("/Applications/termiHub", "open", r#""$@""#),
+            r#""/Applications/termiHub" spawn --entry-id open --location "$@""#
+        );
+        // Windows: the caller pre-quotes the `%1` / `%V` placeholder.
+        assert_eq!(
+            spawn_command_line(r"C:\termiHub.exe", "open", "\"%1\""),
+            r#""C:\termiHub.exe" spawn --entry-id open --location "%1""#
+        );
+    }
+
+    #[test]
+    fn id_slug_windows_style_uses_underscore_without_trim_or_fallback() {
+        // Windows `entry_key_name`: non-alnum → `_`, lowercased, no trimming,
+        // and an all-non-alnum / empty id keeps an empty slug.
+        assert_eq!(id_slug("Open.Session", '_', false, ""), "open_session");
+        assert_eq!(id_slug(".git", '_', false, ""), "_git");
+        assert_eq!(id_slug("a b", '_', false, ""), "a_b");
+        assert_eq!(id_slug("", '_', false, ""), "");
+        assert_eq!(id_slug("...", '_', false, ""), "___");
+    }
+
+    #[test]
+    fn id_slug_linux_style_uses_hyphen_with_trim_and_fallback() {
+        // Linux `slug`: non-alnum → `-`, lowercased, trimmed, empty → `entry`.
+        assert_eq!(id_slug("Open.Session", '-', true, "entry"), "open-session");
+        assert_eq!(id_slug("-a-", '-', true, "entry"), "a");
+        assert_eq!(id_slug("...", '-', true, "entry"), "entry");
+        assert_eq!(id_slug("", '-', true, "entry"), "entry");
+    }
+
+    #[test]
+    fn sanitize_display_name_replaces_configured_chars_and_trims() {
+        // macOS `bundle_dir_name` set includes the colon; Linux
+        // `nautilus_script_name` set does not.
+        assert_eq!(
+            sanitize_display_name("Open / Here", &['/', '\\', ':']),
+            "Open - Here"
+        );
+        assert_eq!(sanitize_display_name("a:b", &['/', '\\', ':']), "a-b");
+        assert_eq!(sanitize_display_name("a:b", &['/', '\\']), "a:b");
+        // Surrounding whitespace is trimmed; an all-whitespace name is empty so
+        // the caller can substitute its own fallback.
+        assert_eq!(sanitize_display_name("  Name  ", &['/', '\\']), "Name");
+        assert_eq!(sanitize_display_name("   ", &['/', '\\']), "");
+    }
+
+    #[test]
+    fn file_contains_marker_detects_marker_and_tolerates_missing_file() {
+        let dir = std::env::temp_dir().join(format!("termihub-marker-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp marker dir");
+
+        let present = dir.join("present.txt");
+        std::fs::write(&present, "first line\nMARKER-XYZ\nlast line\n").expect("write present");
+        let absent = dir.join("absent.txt");
+        std::fs::write(&absent, "nothing to see here\n").expect("write absent");
+
+        assert!(file_contains_marker(&present, "MARKER-XYZ"));
+        assert!(!file_contains_marker(&absent, "MARKER-XYZ"));
+        // A missing/unreadable file is simply "not ours".
+        assert!(!file_contains_marker(
+            &dir.join("missing.txt"),
+            "MARKER-XYZ"
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// macOS Finder Quick Action / Services registration (#1369).
 ///
 /// Each configured [`ShellEntry`] is written as a self-contained Automator
@@ -165,7 +325,7 @@ fn uninstall() -> anyhow::Result<()> {
 /// uninstall removes only termiHub-owned bundles and never touches foreign ones.
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::ShellEntry;
+    use super::{file_contains_marker, sanitize_display_name, spawn_command_line, ShellEntry};
     use crate::connection::shell_integration::ShowForTargets;
     use anyhow::{Context, Result};
     use std::path::{Path, PathBuf};
@@ -268,9 +428,7 @@ mod macos {
 
     /// True when the bundle's `Info.plist` carries the termiHub owner marker.
     fn bundle_is_ours(bundle: &Path) -> bool {
-        std::fs::read_to_string(bundle.join("Contents/Info.plist"))
-            .map(|contents| contents.contains(MARKER_KEY))
-            .unwrap_or(false)
+        file_contains_marker(&bundle.join("Contents/Info.plist"), MARKER_KEY)
     }
 
     /// Filesystem-safe `<name>.workflow` directory name for an entry.
@@ -279,17 +437,9 @@ mod macos {
     /// are replaced with `-`; an entry whose name reduces to empty falls back to
     /// its stable id.
     fn bundle_dir_name(entry: &ShellEntry) -> String {
-        let sanitized: String = entry
-            .name
-            .chars()
-            .map(|c| match c {
-                '/' | '\\' | ':' => '-',
-                other => other,
-            })
-            .collect();
-        let base = sanitized.trim();
+        let base = sanitize_display_name(&entry.name, &['/', '\\', ':']);
         let base = if base.is_empty() {
-            entry.id.as_str()
+            entry.id.clone()
         } else {
             base
         };
@@ -315,12 +465,9 @@ mod macos {
     }
 
     /// The shell script the Quick Action runs: the spawn subcommand with the
-    /// selected paths passed as positional arguments.
+    /// selected paths passed as positional arguments (the quoted `"$@"` token).
     fn shell_command(entry: &ShellEntry, exe_path: &str) -> String {
-        format!(
-            r#""{exe_path}" spawn --entry-id {id} --location "$@""#,
-            id = entry.id,
-        )
+        spawn_command_line(exe_path, &entry.id, r#""$@""#)
     }
 
     /// Escape the five XML predefined entities so arbitrary names / paths embed
@@ -739,7 +886,7 @@ mod macos {
 
 #[cfg(windows)]
 mod imp {
-    use super::ShellEntry;
+    use super::{id_slug, spawn_command_line, ShellEntry};
     use crate::connection::shell_integration::ShellEntryVisibility;
     use anyhow::{Context, Result};
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
@@ -802,20 +949,10 @@ mod imp {
 
     /// Registry key name for an entry: `termihub_<slug>`, where the slug is the
     /// entry id reduced to lowercase ASCII alphanumerics (other characters →
-    /// `_`) so it is always a valid single-segment key name.
+    /// `_`) so it is always a valid single-segment key name. No trimming or
+    /// empty fallback: the prefix always keeps the key non-empty.
     fn entry_key_name(entry: &ShellEntry) -> String {
-        let slug: String = entry
-            .id
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_lowercase()
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        format!("{ENTRY_KEY_PREFIX}{slug}")
+        format!("{ENTRY_KEY_PREFIX}{}", id_slug(&entry.id, '_', false, ""))
     }
 
     /// The `Icon` value pointing at the executable's first icon resource.
@@ -823,12 +960,11 @@ mod imp {
         format!("{exe_path},0")
     }
 
-    /// The `command` default value invoked when the entry is chosen.
+    /// The `command` default value invoked when the entry is chosen. The
+    /// Explorer `placeholder` (`%1` / `%V`) is wrapped in quotes for the command
+    /// line.
     fn command_line(exe_path: &str, entry: &ShellEntry, placeholder: &str) -> String {
-        format!(
-            r#""{exe_path}" spawn --entry-id {id} --location "{placeholder}""#,
-            id = entry.id,
-        )
+        spawn_command_line(exe_path, &entry.id, &format!("\"{placeholder}\""))
     }
 
     /// True for any registry key name termiHub owns (entry keys and the submenu
@@ -1304,7 +1440,10 @@ mod imp {
 /// `uca.xml`, preserves any foreign actions.
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::{DetectedFileManager, ShellEntry, ShellIntegrationSettings};
+    use super::{
+        file_contains_marker, id_slug, sanitize_display_name, spawn_command_line,
+        DetectedFileManager, ShellEntry, ShellIntegrationSettings,
+    };
     use anyhow::{Context, Result};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -1594,7 +1733,7 @@ mod linux {
                 .map(|entry| thunar::Action {
                     name: entry.name.clone(),
                     unique_id: format!("{THUNAR_ID_PREFIX}{}", slug(entry)),
-                    command: spawn_command(exe_path, &entry.id, "%f"),
+                    command: spawn_command_line(exe_path, &entry.id, "%f"),
                     directories: entry.show_for.folders || entry.show_for.folder_background,
                     other_files: entry.show_for.files,
                 })
@@ -1644,10 +1783,7 @@ mod linux {
                     continue;
                 }
             }
-            let is_ours = std::fs::read_to_string(&path)
-                .map(|c| c.contains(content_marker))
-                .unwrap_or(false);
-            if is_ours {
+            if file_contains_marker(&path, content_marker) {
                 std::fs::remove_file(&path)
                     .with_context(|| format!("remove {}", path.display()))?;
             }
@@ -1655,51 +1791,21 @@ mod linux {
         Ok(())
     }
 
-    /// The spawn command line invoked by a surface, with the clicked path
-    /// substituted via `placeholder` (`%f` for desktop/Thunar, `"$1"` for
-    /// Nautilus scripts).
-    fn spawn_command(exe_path: &str, entry_id: &str, placeholder: &str) -> String {
-        format!(r#""{exe_path}" spawn --entry-id {entry_id} --location {placeholder}"#)
-    }
-
     /// Filesystem-safe slug for an entry id: lowercase ASCII alphanumerics, all
-    /// other characters collapsed to `-`. Falls back to `entry` when empty.
+    /// other characters collapsed to `-` and trimmed. Falls back to `entry` when
+    /// empty.
     fn slug(entry: &ShellEntry) -> String {
-        let mapped: String = entry
-            .id
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_lowercase()
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        let trimmed = mapped.trim_matches('-');
-        if trimmed.is_empty() {
-            "entry".to_string()
-        } else {
-            trimmed.to_string()
-        }
+        id_slug(&entry.id, '-', true, "entry")
     }
 
     /// Nautilus script filename — the display name shown in the Scripts submenu,
     /// with path separators replaced. Falls back to the slug when empty.
     fn nautilus_script_name(entry: &ShellEntry) -> String {
-        let sanitized: String = entry
-            .name
-            .chars()
-            .map(|c| match c {
-                '/' | '\\' => '-',
-                other => other,
-            })
-            .collect();
-        let trimmed = sanitized.trim();
-        if trimmed.is_empty() {
+        let base = sanitize_display_name(&entry.name, &['/', '\\']);
+        if base.is_empty() {
             slug(entry)
         } else {
-            trimmed.to_string()
+            base
         }
     }
 
@@ -1724,7 +1830,7 @@ mod linux {
              MimeType=inode/directory;\n\
              {DESKTOP_MARKER}\n",
             name = desktop_value(&entry.name),
-            exec = spawn_command(exe_path, &entry.id, "%f"),
+            exec = spawn_command_line(exe_path, &entry.id, "%f"),
         )
     }
 
@@ -1735,7 +1841,7 @@ mod linux {
             "#!/bin/sh\n\
              {NAUTILUS_MARKER}\n\
              {command}\n",
-            command = spawn_command(exe_path, &entry.id, "\"$1\""),
+            command = spawn_command_line(exe_path, &entry.id, "\"$1\""),
         )
     }
 
@@ -1755,7 +1861,7 @@ mod linux {
              Icon={ICON}\n\
              Exec={exec}\n",
             name = desktop_value(&entry.name),
-            exec = spawn_command(exe_path, &entry.id, "%f"),
+            exec = spawn_command_line(exe_path, &entry.id, "%f"),
         )
     }
 
