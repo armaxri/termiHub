@@ -20,6 +20,7 @@ import {
   Check,
   Unplug,
   Power,
+  Package,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Modal, Button, Tooltip, Progress, ConfirmDialog, toast } from "@/components/ui";
@@ -115,13 +116,22 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     .flatMap((leaf) => leaf.tabs)
     .filter((tab) => terminalConnecting[tab.id]);
 
-  // Every live tab id across all tab groups (the active group is the live
-  // rootPanel, the others their stored trees) — used to flag orphaned SFTP
-  // sessions whose owning tab no longer exists (#1241, orphan safety net).
-  const liveTabIds = new Set(
-    tabGroups
-      .flatMap((g) => getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel))
-      .flatMap((leaf) => leaf.tabs.map((t) => t.id))
+  // Every tab across all tab groups (the active group is the live rootPanel, the
+  // others their stored trees), walked once and reused below.
+  const allTabs = tabGroups.flatMap((g) =>
+    getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel).flatMap((leaf) => leaf.tabs)
+  );
+
+  // Every live tab id — used to flag orphaned SFTP sessions whose owning tab no
+  // longer exists (#1241, orphan safety net).
+  const liveTabIds = new Set(allTabs.map((t) => t.id));
+
+  // Session ids of spawned containers (#1446): tabs opened from an external
+  // `termiHub spawn` with no saved connection id. They are backend-local
+  // sessions, so they must be pulled OUT of "Local Sessions" and tracked in
+  // their own "Spawned Containers" section.
+  const spawnedSessionIds = new Set(
+    allTabs.filter((t) => t.spawned && t.sessionId).map((t) => t.sessionId as string)
   );
 
   // One entry per live backend SFTP session, keyed by its UUID. Orphaned
@@ -142,6 +152,12 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [xServer, setXServer] = useState<XServerStatusReport | null>(null);
   const [xServerSetupOpen, setXServerSetupOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Split backend-local sessions: spawned containers get their own section, the
+  // rest stay under "Local Sessions" (#1446). Keeps spawned containers tracked
+  // separately from configured connections and avoids double-listing.
+  const spawnedSessions = localSessions.filter((s) => spawnedSessionIds.has(s.id));
+  const plainLocalSessions = localSessions.filter((s) => !spawnedSessionIds.has(s.id));
 
   const connectedAgents = remoteAgents.filter((a) => a.connectionState === "connected");
 
@@ -291,11 +307,20 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     setLocalSessions((prev) => prev.filter((s) => s.id !== id));
   };
 
-  const handleKillAllLocal = async () => {
-    localSessions.forEach((s) => markSessionKilled(s.id));
-    await Promise.all(localSessions.map((s) => closeTerminal(s.id).catch(() => {})));
-    setLocalSessions([]);
+  // Kill a set of backend-local sessions at once, marking each kill intentional
+  // (#1121) and dropping the killed rows from the cache. Shared by the "Local
+  // Sessions" and "Spawned Containers" bulk actions (#1446).
+  const killSessions = async (sessions: LocalSessionInfo[]) => {
+    const ids = new Set(sessions.map((s) => s.id));
+    sessions.forEach((s) => markSessionKilled(s.id));
+    await Promise.all(sessions.map((s) => closeTerminal(s.id).catch(() => {})));
+    setLocalSessions((prev) => prev.filter((s) => !ids.has(s.id)));
   };
+
+  const handleKillAllLocal = () => killSessions(plainLocalSessions);
+
+  // Kill every spawned container at once (#1446).
+  const handleKillAllSpawned = () => killSessions(spawnedSessions);
 
   // Clear the cached native-session rows for an agent once its transport is gone
   // (both teardown intents drop the transport, so the "Sessions on <agent>"
@@ -594,20 +619,43 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           </Section>
         )}
 
-        {/* Local Sessions */}
-        {localSessions.length > 0 && (
+        {/* Local Sessions (excluding spawned containers, tracked below) */}
+        {plainLocalSessions.length > 0 && (
           <Section
             title="Local Sessions"
             icon={<Terminal size={14} />}
-            count={localSessions.length}
+            count={plainLocalSessions.length}
             onKillAll={handleKillAllLocal}
           >
-            {localSessions.map((s) => (
+            {plainLocalSessions.map((s) => (
               <ConnectionRow
                 key={s.id}
                 icon={<Terminal size={14} />}
                 title={s.title}
                 badge={s.alive ? "alive" : "dead"}
+                onKill={() => handleKillLocal(s.id)}
+              />
+            ))}
+          </Section>
+        )}
+
+        {/* Spawned Containers — opened from an external `termiHub spawn`, no
+            saved connection id, so tracked separately from configured Docker
+            connections (#1446). */}
+        {spawnedSessions.length > 0 && (
+          <Section
+            title="Spawned Containers"
+            icon={<Package size={14} />}
+            count={spawnedSessions.length}
+            onKillAll={handleKillAllSpawned}
+            data-testid="open-connections-spawned-section"
+          >
+            {spawnedSessions.map((s) => (
+              <ConnectionRow
+                key={s.id}
+                icon={<Package size={14} />}
+                title={s.title}
+                badge={s.alive ? "spawned" : "dead"}
                 onKill={() => handleKillLocal(s.id)}
               />
             ))}
@@ -1048,6 +1096,7 @@ type BadgeVariant =
   | "paused"
   | "stopped"
   | "orphaned"
+  | "spawned"
   | "error";
 
 interface TransferRowProps {

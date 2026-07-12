@@ -127,6 +127,11 @@ export function Tab({
         {tab.title}
       </span>
       {tab.persistentConnectionId && <span className="tab__persistent-badge">∞</span>}
+      {tab.spawned && (
+        <span className="tab__spawned-badge" title="Spawned container">
+          Spawned
+        </span>
+      )}
       <Tooltip content="Close" side="bottom">
         <button
           className="tab__close"

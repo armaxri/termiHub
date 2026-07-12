@@ -567,6 +567,41 @@ export async function onXServerProgress(
 }
 
 /**
+ * Payload of a `spawn-request` event (#1364). Emitted by the backend IPC
+ * rendezvous when an external `termiHub spawn …` invocation reaches the running
+ * instance. Fields mirror the Rust `SpawnRequest` (snake_case, all optional).
+ */
+export interface SpawnRequestPayload {
+  /** Filesystem path (folder or file) the session should open at. */
+  location?: string;
+  /** Identifier of the context-menu entry that triggered the spawn. */
+  entry_id?: string;
+  /** Explicit connection id override. */
+  connection?: string;
+  /** Open in a fresh window instead of attaching to the running instance. */
+  new_window?: boolean;
+  /** Force the interactive session picker. */
+  pick?: boolean;
+  /** Docker/Podman image for a "new container" spawn (marks a container spawn). */
+  container_image?: string;
+  /** Mount target path inside the container. */
+  container_mount?: string;
+}
+
+/**
+ * Subscribe to `spawn-request` events (#1364/#1446). Each event is one external
+ * spawn invocation the running instance should act on. Returns the unlisten
+ * handle.
+ */
+export async function onSpawnRequest(
+  callback: (payload: SpawnRequestPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SpawnRequestPayload>("spawn-request", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
  * Subscribe to connect-time X server download-consent prompts (#1116). Emitted
  * when opening an X11-forwarding SSH connection would need to download the X
  * dependency and the user has not consented yet; the connect pauses until the

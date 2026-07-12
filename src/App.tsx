@@ -24,6 +24,7 @@ import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
+import { useSpawnRequests } from "@/hooks/useSpawnRequests";
 import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
@@ -104,6 +105,7 @@ function App() {
   useTransferEvents();
   useEmbeddedServerEvents();
   useCredentialStoreEvents();
+  useSpawnRequests();
   useHttpMonitorNotifications();
   useWebviewZoom();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
