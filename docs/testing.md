@@ -814,6 +814,28 @@ that the desktop rejects a tampered binary before install. See PR #1350.
 4. Delete the tampered cache entry; the next deploy re-downloads, re-verifies,
    and succeeds.
 
+### Docker/Podman directory-mount container spawn — Podman variant (#1372)
+
+The Docker path is covered by the `docker_spawn` integration test
+(`core/tests/docker_spawn.rs`, runs with `--features docker` against a reachable
+daemon). The Podman variant is manual because CI has no Podman daemon. See PR #1372.
+
+**Podman new-container spawn with a mounted directory.**
+
+1. With a working `podman` machine running, create a scratch directory on the
+   host and drop a marker file in it (e.g. `echo hi > ~/tmp/mnt-check/hello.txt`).
+2. Spawn a Podman "new container" for that directory (via the CLI path once SI-3
+   lands, or by driving `resolve_container_spawn` + create session with the
+   returned settings and `runtime: "podman"`). Use a tagged image such as
+   `alpine:3`.
+3. Confirm the shell opens **already `cd`'d into `/workspace`** (`pwd` prints
+   `/workspace`) and that the marker file is visible (`cat hello.txt` prints the
+   content) — proving the host directory is bind-mounted.
+4. Close the session/tab. Run `podman ps -a` and confirm the `termihub-…`
+   container is **still present in an exited state** (stopped, not removed).
+5. Restarting that container (`podman start`) and re-attaching should still see
+   the mounted directory. Remove it manually to clean up.
+
 ### Native-dialog → Modal migration (#1348)
 
 Verifies the three flows that previously used native `window.prompt` /

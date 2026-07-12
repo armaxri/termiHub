@@ -75,4 +75,24 @@ describe("Input", () => {
     expect(input.classList.contains("ui-input--inline")).toBe(true);
     expect(input.classList.contains("ui-input--error")).toBe(true);
   });
+
+  it("does not apply the compact size modifier by default", () => {
+    render(<Input data-testid="in" />);
+    const input = document.querySelector('[data-testid="in"]') as HTMLInputElement;
+    expect(input.classList.contains("ui-input--sm")).toBe(false);
+  });
+
+  it("applies the compact size modifier when size is sm", () => {
+    render(<Input data-testid="in" size="sm" />);
+    const input = document.querySelector('[data-testid="in"]') as HTMLInputElement;
+    expect(input.classList.contains("ui-input")).toBe(true);
+    expect(input.classList.contains("ui-input--sm")).toBe(true);
+  });
+
+  it("keeps the error modifier alongside the compact size modifier", () => {
+    render(<Input data-testid="in" size="sm" error />);
+    const input = document.querySelector('[data-testid="in"]') as HTMLInputElement;
+    expect(input.classList.contains("ui-input--sm")).toBe(true);
+    expect(input.classList.contains("ui-input--error")).toBe(true);
+  });
 });
