@@ -3,7 +3,8 @@
     feature = "serial",
     feature = "telnet",
     feature = "ssh",
-    feature = "docker"
+    feature = "docker",
+    feature = "ftp"
 ))]
 pub mod backends;
 pub mod buffer;

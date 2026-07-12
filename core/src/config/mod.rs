@@ -436,6 +436,104 @@ impl Default for TelnetConfig {
     }
 }
 
+/// TLS negotiation mode for an FTP connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FtpTlsMode {
+    /// Plain FTP — no encryption (credentials and data sent in cleartext).
+    #[default]
+    None,
+    /// Explicit FTPS — connect plain, then upgrade via `AUTH TLS` (STARTTLS).
+    Explicit,
+    /// Implicit FTPS — TLS handshake immediately on connect (legacy, port 990).
+    Implicit,
+}
+
+/// FTP data-channel mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FtpDataMode {
+    /// Passive mode (default, firewall-friendly): client opens the data channel.
+    #[default]
+    Passive,
+    /// Active mode: server connects back to the client for the data channel.
+    Active,
+}
+
+/// FTP transfer representation type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FtpTransferType {
+    /// Binary / image mode — bytes transferred verbatim (default).
+    #[default]
+    Binary,
+    /// ASCII mode — line-ending translation between hosts.
+    Ascii,
+}
+
+/// FTP / FTPS session configuration.
+///
+/// Desktop-only connection config for the `ftp` backend. File listing and
+/// transfers are layered on later; this struct carries the connect-time
+/// settings (server, TLS, auth, data mode).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FtpConfig {
+    /// Hostname or IP address of the FTP server.
+    pub host: String,
+    /// Control-channel port (21 for plain/explicit, 990 for implicit FTPS).
+    #[serde(default = "default_ftp_port")]
+    pub port: u16,
+    /// TLS negotiation mode.
+    #[serde(default)]
+    pub tls_mode: FtpTlsMode,
+    /// Whether to log in anonymously (username `anonymous`).
+    #[serde(default)]
+    pub anonymous: bool,
+    /// Login username (ignored when [`anonymous`](Self::anonymous) is set).
+    #[serde(default)]
+    pub username: String,
+    /// Login password (ignored when [`anonymous`](Self::anonymous) is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Data-channel mode (passive/active).
+    #[serde(default)]
+    pub mode: FtpDataMode,
+    /// Transfer representation type (binary/ascii).
+    #[serde(default)]
+    pub transfer_type: FtpTransferType,
+    /// Directory to change into after login (`CWD`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_directory: Option<String>,
+    /// Connect timeout in seconds.
+    #[serde(default = "default_ftp_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl Default for FtpConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: default_ftp_port(),
+            tls_mode: FtpTlsMode::default(),
+            anonymous: false,
+            username: String::new(),
+            password: None,
+            mode: FtpDataMode::default(),
+            transfer_type: FtpTransferType::default(),
+            initial_directory: None,
+            timeout_secs: default_ftp_timeout_secs(),
+        }
+    }
+}
+
+impl FtpConfig {
+    /// Connect timeout as a [`Duration`].
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout_secs)
+    }
+}
+
 // --- Expand methods ---
 
 impl ShellConfig {
@@ -470,6 +568,17 @@ impl SerialConfig {
     /// Return a copy with all `${VAR}` placeholders and `~` expanded.
     pub fn expand(mut self) -> Self {
         self.port = expand_config_value(&self.port);
+        self
+    }
+}
+
+impl FtpConfig {
+    /// Return a copy with all `${VAR}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.host = expand_config_value(&self.host);
+        self.username = expand_config_value(&self.username);
+        self.password = self.password.map(|s| expand_config_value(&s));
+        self.initial_directory = self.initial_directory.map(|s| expand_config_value(&s));
         self
     }
 }
@@ -544,6 +653,14 @@ fn default_ssh_port() -> u16 {
 
 fn default_telnet_port() -> u16 {
     23
+}
+
+fn default_ftp_port() -> u16 {
+    21
+}
+
+fn default_ftp_timeout_secs() -> u64 {
+    30
 }
 
 #[cfg(test)]
@@ -1274,6 +1391,136 @@ mod tests {
         let cfg: TelnetConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.host, "example.com");
         assert_eq!(cfg.port, 23);
+    }
+
+    #[test]
+    fn ftp_config_default() {
+        let cfg = FtpConfig::default();
+        assert!(cfg.host.is_empty());
+        assert_eq!(cfg.port, 21);
+        assert_eq!(cfg.tls_mode, FtpTlsMode::None);
+        assert!(!cfg.anonymous);
+        assert!(cfg.username.is_empty());
+        assert!(cfg.password.is_none());
+        assert_eq!(cfg.mode, FtpDataMode::Passive);
+        assert_eq!(cfg.transfer_type, FtpTransferType::Binary);
+        assert!(cfg.initial_directory.is_none());
+        assert_eq!(cfg.timeout_secs, 30);
+        assert_eq!(cfg.timeout(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn ftp_config_missing_fields_use_defaults() {
+        // Only host provided — port/tlsMode/anonymous/timeout fall back to defaults.
+        let json = r#"{"host": "ftp.example.com"}"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.host, "ftp.example.com");
+        assert_eq!(cfg.port, 21);
+        assert_eq!(cfg.tls_mode, FtpTlsMode::None);
+        assert!(!cfg.anonymous);
+        assert_eq!(cfg.mode, FtpDataMode::Passive);
+        assert_eq!(cfg.transfer_type, FtpTransferType::Binary);
+        assert_eq!(cfg.timeout_secs, 30);
+    }
+
+    #[test]
+    fn ftp_config_camel_case_fields() {
+        let json = r#"{
+            "host": "ftp.example.com",
+            "port": 990,
+            "tlsMode": "implicit",
+            "anonymous": false,
+            "username": "admin",
+            "password": "secret",
+            "mode": "active",
+            "transferType": "ascii",
+            "initialDirectory": "/pub",
+            "timeoutSecs": 45
+        }"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.port, 990);
+        assert_eq!(cfg.tls_mode, FtpTlsMode::Implicit);
+        assert_eq!(cfg.username, "admin");
+        assert_eq!(cfg.password.as_deref(), Some("secret"));
+        assert_eq!(cfg.mode, FtpDataMode::Active);
+        assert_eq!(cfg.transfer_type, FtpTransferType::Ascii);
+        assert_eq!(cfg.initial_directory.as_deref(), Some("/pub"));
+        assert_eq!(cfg.timeout_secs, 45);
+    }
+
+    #[test]
+    fn ftp_config_anonymous_parse() {
+        let json = r#"{"host": "ftp.example.com", "anonymous": true}"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.anonymous);
+        assert!(cfg.username.is_empty());
+    }
+
+    #[test]
+    fn ftp_tls_mode_serde_values() {
+        for (mode, expected) in [
+            (FtpTlsMode::None, "\"none\""),
+            (FtpTlsMode::Explicit, "\"explicit\""),
+            (FtpTlsMode::Implicit, "\"implicit\""),
+        ] {
+            let json = serde_json::to_string(&mode).unwrap();
+            assert_eq!(json, expected);
+            let back: FtpTlsMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, mode);
+        }
+    }
+
+    #[test]
+    fn ftp_config_roundtrip() {
+        let cfg = FtpConfig {
+            host: "ftp.example.com".into(),
+            port: 21,
+            tls_mode: FtpTlsMode::Explicit,
+            anonymous: false,
+            username: "admin".into(),
+            password: Some("pw".into()),
+            mode: FtpDataMode::Passive,
+            transfer_type: FtpTransferType::Binary,
+            initial_directory: Some("/pub".into()),
+            timeout_secs: 30,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"tlsMode\""));
+        assert!(json.contains("\"transferType\""));
+        assert!(json.contains("\"initialDirectory\""));
+        let back: FtpConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.host, "ftp.example.com");
+        assert_eq!(back.tls_mode, FtpTlsMode::Explicit);
+        assert_eq!(back.initial_directory.as_deref(), Some("/pub"));
+    }
+
+    #[test]
+    fn ftp_config_expand_replaces_placeholders() {
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_FTP_HOST", Some("10.0.0.9")),
+                ("TERMIHUB_TEST_FTP_USER", Some("deploy")),
+            ],
+            || {
+                let cfg = FtpConfig {
+                    host: "${TERMIHUB_TEST_FTP_HOST}".into(),
+                    username: "${TERMIHUB_TEST_FTP_USER}".into(),
+                    initial_directory: Some("~/uploads".into()),
+                    ..FtpConfig::default()
+                };
+                let expanded = cfg.expand();
+                assert_eq!(expanded.host, "10.0.0.9");
+                assert_eq!(expanded.username, "deploy");
+                assert!(
+                    !expanded
+                        .initial_directory
+                        .as_ref()
+                        .unwrap()
+                        .starts_with('~'),
+                    "tilde should be expanded in initial directory"
+                );
+            },
+        );
     }
 
     #[test]

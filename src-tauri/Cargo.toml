@@ -7,6 +7,13 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+# FTP / FTPS connection type. Enabled by default so the desktop ships it, but
+# kept as a toggle so the registry registration is gated (`#[cfg(feature = "ftp")]`)
+# and a build without it still compiles.
+default = ["ftp"]
+ftp = ["termihub-core/ftp"]
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
