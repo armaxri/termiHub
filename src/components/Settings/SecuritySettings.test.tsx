@@ -391,6 +391,99 @@ describe("SecuritySettings", () => {
     expect(query("change-password-dialog")).toBeNull();
   });
 
+  // --- #1360: switching away from an existing master-password store is gated ---
+
+  it("routes a switch away from master_password through requestUnlock while locked", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+    });
+    // Never resolves: lets us assert requestUnlock ran and the confirm did NOT open.
+    const requestUnlock = vi.fn(() => new Promise<boolean>(() => {}));
+    useAppStore.setState({ requestUnlock });
+
+    render();
+
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    expect(requestUnlock).toHaveBeenCalledTimes(1);
+    // The switch confirm stays closed until the store is unlocked.
+    expect(query("confirm-switch-dialog")).toBeNull();
+  });
+
+  it("opens the switch confirm after a successful unlock when leaving master_password", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+    });
+    const requestUnlock = vi.fn(() => Promise.resolve(true));
+    useAppStore.setState({ requestUnlock });
+
+    render();
+
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    expect(requestUnlock).toHaveBeenCalledTimes(1);
+    expect(query("confirm-switch-dialog")).not.toBeNull();
+  });
+
+  it("does not open the switch confirm if the unlock is cancelled", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+    });
+    const requestUnlock = vi.fn(() => Promise.resolve(false));
+    useAppStore.setState({ requestUnlock });
+
+    render();
+
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    expect(requestUnlock).toHaveBeenCalledTimes(1);
+    expect(query("confirm-switch-dialog")).toBeNull();
+  });
+
+  it("does not gate a switch when the master-password store is already unlocked", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+    const requestUnlock = vi.fn(() => Promise.resolve(true));
+    useAppStore.setState({ requestUnlock });
+
+    render();
+
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    expect(requestUnlock).not.toHaveBeenCalled();
+    expect(query("confirm-switch-dialog")).not.toBeNull();
+  });
+
+  it("uses strengthened, irreversible copy in the switch-to-none confirm", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+
+    render();
+
+    const noneOption = query("storage-mode-none") as HTMLElement;
+    await act(async () => {
+      noneOption.click();
+    });
+
+    const dialog = query("confirm-switch-dialog") as HTMLElement;
+    expect(dialog.textContent).toMatch(/permanently/i);
+    expect(dialog.textContent).toMatch(/cannot be undone/i);
+  });
+
   it("keeps the wrong-password change failure inline (no success toast, dialog stays open)", async () => {
     // Per the audit, the wrong-current-password case stays an inline field error
     // (not a toast); only the success path is promoted to a toast.
