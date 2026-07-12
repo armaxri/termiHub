@@ -241,6 +241,27 @@ describe("useRovingListNav", () => {
     expect(nav.activeIndex).toBe(0);
   });
 
+  it("focusRow moves the active index and DOM focus to the given row", () => {
+    render(ITEMS, makeCallbacks());
+    act(() => nav.focusRow(2));
+    expect(nav.activeIndex).toBe(2);
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="row-banana"]'));
+  });
+
+  it("focusRow lets a hierarchical consumer own arrow keys the shared handler ignores", () => {
+    // ArrowLeft/ArrowRight are not handled by the shared keydown handler, so a
+    // tree consumer composes its own handling and calls focusRow to move the
+    // roving focus (e.g. to a parent/child row).
+    const cb = makeCallbacks();
+    render(ITEMS, cb);
+    press("ArrowRight"); // ignored by the shared handler
+    expect(nav.activeIndex).toBe(0);
+    expect(cb.onSelectSingle).not.toHaveBeenCalled();
+    act(() => nav.focusRow(3));
+    expect(nav.activeIndex).toBe(3);
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="row-cherry"]'));
+  });
+
   it("reset() returns the active index to the top", () => {
     render(ITEMS, makeCallbacks());
     press("End");

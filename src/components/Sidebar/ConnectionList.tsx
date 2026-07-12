@@ -48,8 +48,8 @@ import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
-import { useTreeKeyboardNav } from "@/hooks/useTreeKeyboardNav";
-import { computeVisibleTreeNodes } from "@/utils/computeVisibleTreeNodes";
+import { useRovingListNav } from "@/hooks/useRovingListNav";
+import { computeVisibleTreeNodes, type VisibleTreeNode } from "@/utils/computeVisibleTreeNodes";
 import { filterConnectionTree, type ConnectionTreeFilter } from "@/utils/connectionSearch";
 import {
   getJumpHosts,
@@ -67,16 +67,24 @@ import "./ConnectionList.css";
 /**
  * Shared keyboard-navigation / filter plumbing threaded through the tree so
  * every row participates in roving-tabindex focus and search filtering (#1356).
+ *
+ * Roving-tabindex focus + type-ahead are driven by the shared
+ * {@link useRovingListNav} hook over the flattened visible node list; these
+ * props expose the pieces each row needs to take part.
  */
 interface TreeNavProps {
   /** Active search filter, or `null` when no query is entered. */
   filter: ConnectionTreeFilter | null;
-  /** Row that currently owns `tabindex=0`. */
-  focusedId: string | null;
+  /** Roving-tabindex active index into the flattened visible node list. */
+  activeIndex: number;
+  /** Flattened-list index of a node by id (`-1` when not currently visible). */
+  getNodeIndex: (id: string) => number;
+  /** Stable per-index ref callback wiring a row into the roving-nav hook. */
+  getRowRef: (index: number) => (el: HTMLButtonElement | null) => void;
   /** Keyboard handler for a tree row, keyed by its node id. */
   onTreeKeyDown: (event: React.KeyboardEvent, nodeId: string) => void;
-  /** Sync the roving-tabindex focus when a row gains DOM focus. */
-  onFocusNode: (id: string) => void;
+  /** Sync the roving active index when a row gains DOM focus. */
+  onRowFocus: (index: number) => void;
 }
 
 interface TreeNodeProps extends TreeNavProps {
@@ -118,9 +126,11 @@ function TreeNode({
   onConnectionClick,
   depth,
   filter,
-  focusedId,
+  activeIndex,
+  getNodeIndex,
+  getRowRef,
   onTreeKeyDown,
-  onFocusNode,
+  onRowFocus,
 }: TreeNodeProps) {
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   // Under an active filter, matched folders are force-expanded regardless of
@@ -138,6 +148,17 @@ function TreeNode({
     id: folder.id,
     data: { type: "folder" },
   });
+  const rowIndex = getNodeIndex(folder.id);
+  const rowRef = getRowRef(rowIndex);
+  // Merge the droppable ref with the roving-nav row ref so the folder button is
+  // both a drop target and a focusable roving-tabindex row.
+  const setRowNode = useCallback(
+    (el: HTMLButtonElement | null) => {
+      setNodeRef(el);
+      rowRef(el);
+    },
+    [setNodeRef, rowRef]
+  );
   const { active } = useDndContext();
   const isConnectionOver =
     isOver &&
@@ -149,7 +170,7 @@ function TreeNode({
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <button
-            ref={setNodeRef}
+            ref={setRowNode}
             className={`connection-tree__folder${isConnectionOver ? " connection-tree__folder--drop-over" : ""}`}
             onClick={() => onToggle(folder.id)}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
@@ -157,10 +178,9 @@ function TreeNode({
             role="treeitem"
             aria-expanded={expanded}
             aria-level={depth + 1}
-            tabIndex={focusedId === folder.id ? 0 : -1}
-            data-tree-node-id={folder.id}
+            tabIndex={rowIndex === activeIndex ? 0 : -1}
             onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
-            onFocus={() => onFocusNode(folder.id)}
+            onFocus={() => onRowFocus(rowIndex)}
           >
             <Folder size={16} />
             <span className="connection-tree__label">{folder.name}</span>
@@ -227,9 +247,11 @@ function TreeNode({
               onConnectionClick={onConnectionClick}
               depth={depth + 1}
               filter={filter}
-              focusedId={focusedId}
+              activeIndex={activeIndex}
+              getNodeIndex={getNodeIndex}
+              getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
-              onFocusNode={onFocusNode}
+              onRowFocus={onRowFocus}
             />
           ))}
           {visibleConnections.map((conn) => (
@@ -244,9 +266,11 @@ function TreeNode({
               onDuplicate={onDuplicate}
               onPingHost={onPingHost}
               onConnectionClick={onConnectionClick}
-              focusedId={focusedId}
+              activeIndex={activeIndex}
+              getNodeIndex={getNodeIndex}
+              getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
-              onFocusNode={onFocusNode}
+              onRowFocus={onRowFocus}
             />
           ))}
         </div>
@@ -257,7 +281,7 @@ function TreeNode({
 
 interface ConnectionItemProps extends Pick<
   TreeNavProps,
-  "focusedId" | "onTreeKeyDown" | "onFocusNode"
+  "activeIndex" | "getNodeIndex" | "getRowRef" | "onTreeKeyDown" | "onRowFocus"
 > {
   connection: SavedConnection;
   depth: number;
@@ -280,9 +304,11 @@ function ConnectionItem({
   onDuplicate,
   onPingHost,
   onConnectionClick,
-  focusedId,
+  activeIndex,
+  getNodeIndex,
+  getRowRef,
   onTreeKeyDown,
-  onFocusNode,
+  onRowFocus,
 }: ConnectionItemProps) {
   const {
     attributes,
@@ -293,6 +319,17 @@ function ConnectionItem({
     id: connection.id,
     data: { type: "connection", connection },
   });
+  const rowIndex = getNodeIndex(connection.id);
+  const rowRef = getRowRef(rowIndex);
+  // Merge the draggable ref with the roving-nav row ref so the connection
+  // button is both draggable and a focusable roving-tabindex row.
+  const setRowNode = useCallback(
+    (el: HTMLButtonElement | null) => {
+      setDragRef(el);
+      rowRef(el);
+    },
+    [setDragRef, rowRef]
+  );
 
   let className = "connection-tree__item";
   if (isDragging) className += " connection-tree__item--dragging";
@@ -314,7 +351,7 @@ function ConnectionItem({
         <ContextMenu.Trigger asChild>
           <div className="connection-tree__item-row" role="none">
             <button
-              ref={setDragRef}
+              ref={setRowNode}
               className={className}
               style={{ paddingLeft: `${depth * 16 + 8}px` }}
               onClick={(e) => onConnectionClick(connection.id, e)}
@@ -326,10 +363,9 @@ function ConnectionItem({
               role="treeitem"
               aria-level={depth + 1}
               aria-selected={isSelected}
-              tabIndex={focusedId === connection.id ? 0 : -1}
-              data-tree-node-id={connection.id}
+              tabIndex={rowIndex === activeIndex ? 0 : -1}
               onKeyDown={(e) => onTreeKeyDown(e, connection.id)}
-              onFocus={() => onFocusNode(connection.id)}
+              onFocus={() => onRowFocus(rowIndex)}
             >
               <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
               <span className="connection-tree__label">{connection.name}</span>
@@ -514,6 +550,34 @@ export function ConnectionList() {
     selectSingle: selectConnectionSingle,
   } = useTreeSelection(flatVisibleConnectionIds);
 
+  // Flat-list index lookup by node id, so each row can resolve its position in
+  // the roving-nav item array (`treeNodes`) for tabindex and ref wiring.
+  const nodeIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    treeNodes.forEach((node, index) => map.set(node.id, index));
+    return map;
+  }, [treeNodes]);
+  const getNodeIndex = useCallback((id: string) => nodeIndexById.get(id) ?? -1, [nodeIndexById]);
+
+  // Type-ahead label for a node: a connection's name, or a folder's name.
+  const folderNameById = useMemo(() => new Map(folders.map((f) => [f.id, f.name])), [folders]);
+  const getNodeLabel = useCallback(
+    (node: VisibleTreeNode) =>
+      node.kind === "connection"
+        ? (node.connection?.name ?? "")
+        : (folderNameById.get(node.id) ?? ""),
+    [folderNameById]
+  );
+
+  // Roving-tabindex keyboard navigation + type-ahead over the flattened visible
+  // rows, shared with the file browser (#1461). The hook owns the active focus
+  // index, type-ahead buffer, and per-row ref wiring; tree-specific keys
+  // (ArrowLeft/ArrowRight collapse/expand, Space) are layered on below.
+  const { activeIndex, setActiveIndex, getRowRef, focusRow, makeKeyDownHandler } = useRovingListNav<
+    VisibleTreeNode,
+    HTMLButtonElement
+  >(treeNodes, getNodeLabel);
+
   const handleConnect = useCallback(
     async (connection: SavedConnection) => {
       let config = connection.config;
@@ -676,15 +740,79 @@ export function ConnectionList() {
     [filter, toggleFolder]
   );
 
-  const { containerRef, focusedId, setFocusedId, handleKeyDown } = useTreeKeyboardNav(treeNodes, {
-    onConnect: handleConnect,
-    onToggleFolder: handleToggleFolder,
-  });
+  // Activate a row: folders toggle, connections connect — shared by Enter (via
+  // the roving-nav handler) and Space (tree-specific handler below).
+  const activateNode = useCallback(
+    (node: VisibleTreeNode) => {
+      if (node.kind === "folder") handleToggleFolder(node.id);
+      else if (node.connection) handleConnect(node.connection);
+    },
+    [handleToggleFolder, handleConnect]
+  );
 
-  // The row that owns tabindex=0: the tracked focus if still present, else the
-  // first visible row (so Tab always lands somewhere sensible).
-  const effectiveFocusedId =
-    focusedId && treeNodes.some((n) => n.id === focusedId) ? focusedId : (treeNodes[0]?.id ?? null);
+  // Shared roving-nav keydown handler (Up/Down, Home/End, Enter, type-ahead,
+  // Escape). The tree navigates focus without mutating the multi-selection, so
+  // the selection callbacks are intentionally inert; the drag/bulk selection is
+  // driven by mouse via useTreeSelection.
+  const rovingKeyDown = useMemo(
+    () =>
+      makeKeyDownHandler({
+        onActivate: activateNode,
+        onNavigateUp: () => {},
+        onRename: () => {},
+        onSelectAll: () => {},
+        onClearSelection: clearConnectionSelection,
+        getAnchorIndex: () => -1,
+        onSelectRange: () => {},
+        onSelectSingle: () => {},
+      }),
+    [makeKeyDownHandler, activateNode, clearConnectionSelection]
+  );
+
+  // Per-row keydown: tree-specific keys (expand/collapse, move to parent/child,
+  // Space to activate) are handled here; everything else delegates to the
+  // shared roving-nav handler.
+  const handleTreeKeyDown = useCallback(
+    (event: React.KeyboardEvent, nodeId: string) => {
+      const index = getNodeIndex(nodeId);
+      const node = treeNodes[index];
+      if (!node) return;
+      switch (event.key) {
+        case "ArrowRight": {
+          if (node.kind !== "folder") return;
+          event.preventDefault();
+          if (!node.isExpanded && node.hasChildren) {
+            handleToggleFolder(node.id);
+          } else if (node.isExpanded) {
+            const child = treeNodes[index + 1];
+            if (child && child.depth > node.depth) focusRow(index + 1);
+          }
+          return;
+        }
+        case "ArrowLeft": {
+          event.preventDefault();
+          if (node.kind === "folder" && node.isExpanded) {
+            handleToggleFolder(node.id);
+          } else if (node.parentId) {
+            const parentIndex = getNodeIndex(node.parentId);
+            if (parentIndex >= 0) focusRow(parentIndex);
+          }
+          return;
+        }
+        case " ": {
+          event.preventDefault();
+          activateNode(node);
+          return;
+        }
+        default:
+          rovingKeyDown(event);
+      }
+    },
+    [treeNodes, getNodeIndex, focusRow, activateNode, rovingKeyDown, handleToggleFolder]
+  );
+
+  // Sync the roving active index when a row gains DOM focus (Tab, click).
+  const handleRowFocus = useCallback((index: number) => setActiveIndex(index), [setActiveIndex]);
 
   const handleFilterKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1008,7 +1136,7 @@ export function ConnectionList() {
   );
 
   return (
-    <div className="connection-list" ref={containerRef}>
+    <div className="connection-list">
       <DndContext
         sensors={sensors}
         collisionDetection={pointerWithin}
@@ -1115,9 +1243,11 @@ export function ConnectionList() {
               onConnectionClick={handleConnectionClick}
               onTreeAreaClick={handleTreeAreaClick}
               filter={filter}
-              focusedId={effectiveFocusedId}
-              onTreeKeyDown={handleKeyDown}
-              onFocusNode={setFocusedId}
+              activeIndex={activeIndex}
+              getNodeIndex={getNodeIndex}
+              getRowRef={getRowRef}
+              onTreeKeyDown={handleTreeKeyDown}
+              onRowFocus={handleRowFocus}
             />
           )}
         </div>
@@ -1284,9 +1414,11 @@ function RootDropZone({
   onConnectionClick,
   onTreeAreaClick,
   filter,
-  focusedId,
+  activeIndex,
+  getNodeIndex,
+  getRowRef,
   onTreeKeyDown,
-  onFocusNode,
+  onRowFocus,
 }: RootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: "root",
@@ -1348,9 +1480,11 @@ function RootDropZone({
               onConnectionClick={onConnectionClick}
               depth={0}
               filter={filter}
-              focusedId={focusedId}
+              activeIndex={activeIndex}
+              getNodeIndex={getNodeIndex}
+              getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
-              onFocusNode={onFocusNode}
+              onRowFocus={onRowFocus}
             />
           ))}
           {visibleRootConnections.map((conn) => (
@@ -1365,9 +1499,11 @@ function RootDropZone({
               onDuplicate={onDuplicate}
               onPingHost={onPingHost}
               onConnectionClick={onConnectionClick}
-              focusedId={focusedId}
+              activeIndex={activeIndex}
+              getNodeIndex={getNodeIndex}
+              getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
-              onFocusNode={onFocusNode}
+              onRowFocus={onRowFocus}
             />
           ))}
         </div>
