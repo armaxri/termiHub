@@ -1,9 +1,10 @@
 import { useState, useCallback } from "react";
 import { Play } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Field, Input, Select } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
+import { validateHost } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import { frontendLog } from "@/utils/frontendLog";
@@ -21,6 +22,9 @@ const RECORD_TYPES: DnsRecordType[] = [
   "ANY",
 ];
 
+/** Record-type dropdown options (value === label), derived once. */
+const RECORD_TYPE_OPTIONS = RECORD_TYPES.map((t) => ({ value: t, label: t }));
+
 interface DnsLookupPanelProps {
   prefillHost?: string;
 }
@@ -35,6 +39,8 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   const [error, setError] = useState<string | null>(null);
 
   const hostnameRef = useAutofocusSelect<HTMLInputElement>();
+
+  const hostnameError = validateHost(hostname, "Hostname");
 
   const handleRun = useCallback(async () => {
     if (!hostname.trim()) return;
@@ -56,7 +62,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   // Enter submits the form; a mouse click goes through the Button's onClick so its
   // async lifecycle drives the pending affordance (useFormSubmit swallows the
   // Enter-path rejection that the click path uses to drive the Button error state).
-  const handleSubmit = useFormSubmit(!!hostname.trim(), handleRun);
+  const handleSubmit = useFormSubmit(!hostnameError, handleRun);
 
   const columns = [
     { key: "recordType", label: "Type" },
@@ -84,7 +90,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
             icon={<Play size={14} />}
             pendingLabel="Looking up…"
             errorToast={false}
-            disabled={!hostname.trim()}
+            disabled={!!hostnameError}
             onClick={(e) => {
               e.preventDefault();
               return handleRun();
@@ -97,41 +103,48 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>Hostname</span>
-          <input
+        <Field
+          className="network-panel__field"
+          label="Hostname"
+          htmlFor="dns-hostname"
+          error={hostnameError ?? undefined}
+        >
+          <Input
             ref={hostnameRef}
-            className="network-panel__input"
+            id="dns-hostname"
             value={hostname}
             onChange={(e) => setHostname(e.target.value)}
             placeholder="example.com"
+            error={!!hostnameError}
             data-testid="dns-hostname"
           />
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Type</span>
-          <select
-            className="network-panel__select"
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Type"
+          htmlFor="dns-record-type"
+        >
+          <Select
             value={recordType}
-            onChange={(e) => setRecordType(e.target.value as DnsRecordType)}
+            onChange={(value) => setRecordType(value as DnsRecordType)}
+            options={RECORD_TYPE_OPTIONS}
+            aria-label="Record type"
             data-testid="dns-record-type"
-          >
-            {RECORD_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="network-panel__field network-panel__field--small">
-          <span>Server (auto)</span>
-          <input
-            className="network-panel__input"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Server (auto)"
+          htmlFor="dns-server"
+        >
+          <Input
+            id="dns-server"
             value={server}
             onChange={(e) => setServer(e.target.value)}
             placeholder="8.8.8.8"
+            data-testid="dns-server"
           />
-        </label>
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

@@ -180,4 +180,25 @@ describe("EmbeddedServerSidebar — delete confirmation (#1393)", () => {
     await clickDelete("srv-1");
     expect(document.body.textContent?.toLowerCase()).toContain("stop");
   });
+
+  // #1427: the store's deleteEmbeddedServer used to swallow backend errors, so
+  // this error path never fired. When the delete rejects, the user must see an
+  // error toast and the server must remain listed.
+  it("shows an error toast and keeps the server when the backend delete fails", async () => {
+    const deleteEmbeddedServer = vi.fn(() => Promise.reject(new Error("boom")));
+    seedStore(deleteEmbeddedServer, [makeServer("srv-1", "Share")]);
+    await renderSidebar();
+
+    await clickDelete("srv-1");
+    await clickConfirm();
+
+    expect(deleteEmbeddedServer).toHaveBeenCalledWith("srv-1");
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining("Share"),
+      expect.objectContaining({ description: "boom" })
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
+    // The server row is still present (the store keeps it on failure).
+    expect(container.querySelector('[data-testid="server-list"]')).not.toBeNull();
+  });
 });

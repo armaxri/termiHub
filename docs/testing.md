@@ -864,6 +864,53 @@ for #1348.
 3. **Cancel** → the scan does not start. Re-run and **Start scan** → the scan
    proceeds.
 
+### File browser rename / new-file / new-folder / copy feedback (#1399)
+
+Verifies every FileBrowser mutating/clipboard action gives success/error
+feedback instead of resolving silently or only logging to the console. See PR
+for #1399.
+
+**New folder / New file.**
+
+1. Open the file browser on a local or SFTP directory. Click **New Folder**
+   (toolbar or background right-click → **New Folder**), type a name, press
+   **Enter** → the folder is created and a `Created folder "<name>"` success
+   toast appears.
+2. Repeat with **New File** → a `Created file "<name>"` success toast appears.
+3. Trigger a failure (e.g. create a folder whose name already exists, or in a
+   read-only directory) → a recoverable error toast naming the target appears
+   instead of a silent no-op.
+
+**Copy Name / Copy Path.**
+
+1. Right-click a file → **Copy Name** → a `Copied name` toast appears and the
+   file's name is on the clipboard (paste to verify).
+
+2. Right-click a file → **Copy Path** → a `Copied path` toast appears and the
+   file's full path is on the clipboard.
+
+### Network Tools shared field validation (#1381)
+
+Verifies every Network Tools text input shares one label + input + inline-error
+affordance and blocks the Run/Send button on invalid input. See PR #1436.
+
+1. Open **Network Tools → Ping** (repeat for **Traceroute** and **Port
+   Scanner**). Clear the **Host** field → an inline "Host is required" error
+   appears under the field and the **Start** button is disabled. Type a host →
+   the error clears and the button enables.
+2. Open **Network Tools → DNS Lookup**. Clear the **Hostname** field → an inline
+   "Hostname is required" error appears and **Run** is disabled. The **Server**
+   field renders through the same shared field (optional, no error).
+3. Open **Network Tools → Port Scanner**. Clear the **Ports** field → an inline
+   "Enter at least one port" error appears and **Start** is disabled.
+4. Open **Network Tools → Wake-on-LAN**. Type a malformed MAC (e.g. `zz:zz`) →
+   an inline "Enter a valid MAC address" error appears and **Send** is disabled.
+   Enter a valid MAC (e.g. `AA:BB:CC:DD:EE:FF`) → the error clears and **Send**
+   enables.
+
+5. In every case a pristine, never-touched field shows no error text (only the
+   disabled button) — the inline message appears once you engage the field.
+
 ### Embedded-server delete confirmation (#1393)
 
 See PR #1426. Verifies that deleting an embedded server now requires an explicit
@@ -880,6 +927,19 @@ workspaces.
    toast appears.
 3. Repeat via the right-click **context menu → Delete** → the same confirmation
    dialog gates the deletion.
+
+### Embedded-server delete backend-failure toast (#1427)
+
+See PR #1439. Verifies that a backend delete failure surfaces a
+user-visible error toast instead of failing silently (the store used to swallow
+the error to `console.error`).
+
+1. Create an embedded server, then make its delete fail on the backend (e.g.
+   revoke write access to the config store, or otherwise force
+   `delete_embedded_server` to error).
+2. Click **Delete** and confirm in the dialog → an **error toast** ("Failed to
+   delete …") appears with the backend error message, and the server **remains**
+   in the Services list (it is not removed).
 
 ### Remote-agent update-strategy settings persist (#1354)
 
