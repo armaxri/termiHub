@@ -82,7 +82,23 @@ def test_tftp_download_missing_file_raises(tmp_path: Path):
 
 @contextlib.contextmanager
 def _ftp_server(root: Path):
-    """Run a pyftpdlib FTP server (anonymous read) in a background thread."""
+    """Run a pyftpdlib FTP server (anonymous read) in a background thread.
+
+    The server thread must shut down **deterministically**, otherwise the run
+    intermittently fails with ``OSError: [Errno 9] Bad file descriptor`` — a
+    thread exception pytest surfaces as ``PytestUnhandledThreadExceptionWarning``
+    (see issue #1477). The race is calling :meth:`FTPServer.close_all` from the
+    main thread while the server thread is still inside ``ioloop.poll`` on the
+    same sockets: closing the fds out from under ``kqueue``/``epoll`` yields
+    ``EBADF``.
+
+    To avoid it we mirror pyftpdlib's own threaded test helper: the thread runs
+    ``serve_forever(blocking=False)`` in a loop gated by a stop event, and it is
+    the *thread itself* that calls ``close_all`` once the loop exits — so the
+    poll and the socket close never overlap. The main thread only sets the event
+    and :meth:`~threading.Thread.join`\\ s, guaranteeing the loop has returned
+    before the context exits.
+    """
     pyftpdlib = pytest.importorskip(
         "pyftpdlib", reason="pyftpdlib (test-only) not installed; ftp_download uses stdlib"
     )
@@ -96,14 +112,27 @@ def _ftp_server(root: Path):
     handler.authorizer = authorizer
     port = _free_port()
     server = FTPServer(("127.0.0.1", port), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+
+    stop = threading.Event()
+
+    def _run() -> None:
+        # Single-shot polling (blocking=False) lets us re-check the stop event
+        # each iteration; close_all() runs here, in the polling thread, so it can
+        # never race an in-flight poll on the just-closed sockets.
+        try:
+            while not stop.is_set():
+                server.serve_forever(timeout=0.1, blocking=False)
+        finally:
+            server.close_all()
+
+    thread = threading.Thread(target=_run, daemon=True)
     thread.start()
     time.sleep(0.3)
     try:
         yield port
     finally:
-        with contextlib.suppress(Exception):
-            server.close_all()
+        stop.set()
+        thread.join(timeout=5.0)
 
 
 def test_ftp_download_returns_file_bytes(tmp_path: Path):
