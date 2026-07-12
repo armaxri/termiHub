@@ -12,7 +12,13 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
+// SSH-only imports: the SSH helpers below need the `ssh` feature (and its
+// optional `russh` dependency). Gating them keeps this shared module compilable
+// for feature-scoped integration binaries — e.g. `--features ftp` alone, which
+// the FTP browser test relies on.
+#[cfg(feature = "ssh")]
 use russh::ChannelMsg;
+#[cfg(feature = "ssh")]
 use termihub_core::backends::ssh::handler::SshSession;
 
 /// Check if a TCP port is reachable on the given host.
@@ -135,6 +141,7 @@ pub fn ssh_key_passphrase_config(port: u16, key_name: &str) -> termihub_core::co
 }
 
 /// Execute a command on an authenticated SSH session and return the output.
+#[cfg(feature = "ssh")]
 pub async fn ssh_exec(session: &SshSession, command: &str) -> Result<String, String> {
     let mut channel = session
         .channel_open_session()
@@ -277,4 +284,8 @@ pub fn port_sftp_stress() -> u16 {
 /// telnet-server container.
 pub fn port_telnet() -> u16 {
     resolve_port("TERMIHUB_TEST_TELNET_PORT", 2301)
+}
+/// ftp-server container control port (plain FTP + explicit FTPS on :21).
+pub fn port_ftp() -> u16 {
+    resolve_port("TERMIHUB_TEST_FTP_PORT", 2401)
 }
