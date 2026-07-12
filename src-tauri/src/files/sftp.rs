@@ -643,6 +643,56 @@ mod tests {
         assert!(!exec_probe_indicates_capability(&output));
     }
 
+    /// Build a synthetic SFTP status error for the given status code.
+    fn status_error(code: StatusCode) -> RusshSftpError {
+        RusshSftpError::Status(russh_sftp::protocol::Status {
+            id: 0,
+            status_code: code,
+            error_message: String::new(),
+            language_tag: String::new(),
+        })
+    }
+
+    /// A `PERMISSION_DENIED` write-open is the authoritative read-only signal.
+    #[test]
+    fn classify_permission_denied_is_read_only() {
+        let err = status_error(StatusCode::PermissionDenied);
+        assert_eq!(classify_write_open_error(&err), Writability::ReadOnly);
+    }
+
+    /// Any other status (e.g. missing file) is inconclusive → Unknown.
+    #[test]
+    fn classify_other_status_is_unknown() {
+        let err = status_error(StatusCode::NoSuchFile);
+        assert_eq!(classify_write_open_error(&err), Writability::Unknown);
+        let err = status_error(StatusCode::Failure);
+        assert_eq!(classify_write_open_error(&err), Writability::Unknown);
+    }
+
+    /// Non-status errors (transport/protocol) are also inconclusive → Unknown.
+    #[test]
+    fn classify_non_status_error_is_unknown() {
+        let err = RusshSftpError::Timeout;
+        assert_eq!(classify_write_open_error(&err), Writability::Unknown);
+    }
+
+    /// `Writability` serializes as camelCase strings for the frontend.
+    #[test]
+    fn writability_serializes_camel_case() {
+        assert_eq!(
+            serde_json::to_value(Writability::ReadOnly).unwrap(),
+            serde_json::json!("readOnly")
+        );
+        assert_eq!(
+            serde_json::to_value(Writability::Writable).unwrap(),
+            serde_json::json!("writable")
+        );
+        assert_eq!(
+            serde_json::to_value(Writability::Unknown).unwrap(),
+            serde_json::json!("unknown")
+        );
+    }
+
     /// The lock helper must map a poisoned mutex to a recoverable
     /// `TerminalError` instead of panicking (audit GAP C1, #1143).
     #[test]

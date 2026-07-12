@@ -143,6 +143,43 @@ mod tests {
     }
 
     #[test]
+    fn writable_from_permissions_read_only() {
+        // `-r--r--r--` collapses to the 9-char form `r--r--r--`: no write bit.
+        assert_eq!(writable_from_permissions("r--r--r--"), Some(false));
+    }
+
+    #[test]
+    fn writable_from_permissions_all_writable() {
+        assert_eq!(writable_from_permissions("rw-rw-rw-"), Some(true));
+    }
+
+    #[test]
+    fn writable_from_permissions_owner_only_writable() {
+        // Owner has write, group/other do not — writable via ANY class.
+        assert_eq!(writable_from_permissions("rw-r--r--"), Some(true));
+    }
+
+    #[test]
+    fn writable_from_permissions_owner_rwx() {
+        assert_eq!(writable_from_permissions("rwx------"), Some(true));
+    }
+
+    #[test]
+    fn writable_from_permissions_read_execute_only() {
+        assert_eq!(writable_from_permissions("r-xr-xr-x"), Some(false));
+    }
+
+    #[test]
+    fn writable_from_permissions_empty_is_none() {
+        assert_eq!(writable_from_permissions(""), None);
+    }
+
+    #[test]
+    fn writable_from_permissions_group_only_writable() {
+        assert_eq!(writable_from_permissions("r--rw-r--"), Some(true));
+    }
+
+    #[test]
     fn normalize_path_separators_converts_backslashes() {
         assert_eq!(
             normalize_path_separators(r"C:\Users\foo\bar"),
