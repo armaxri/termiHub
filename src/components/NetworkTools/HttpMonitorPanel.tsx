@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
 import { Button, Tooltip, toast, Field, Input, NumberInput, Select } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useFormSubmit } from "@/hooks/useFormSubmit";
+import { useSubmitButton } from "@/hooks/useSubmitButton";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
@@ -224,9 +224,9 @@ export function HttpMonitorPanel() {
     [loadMonitors, clearActiveMonitor]
   );
 
-  // Enter submits the form → start a monitor. A monitor is either running
-  // (activeMonitorId set → Stop is shown) or invalid, in which case do nothing.
-  const handleSubmit = useFormSubmit(!activeMonitorId && canStart, handleStart);
+  // Enter and click share one gate and one async Button lifecycle (#1414). A
+  // monitor is either running (activeMonitorId set → Stop shown) or invalid.
+  const { formProps, submitProps } = useSubmitButton(!activeMonitorId && canStart, handleStart);
 
   // Tear the listener down on unmount.
   useEffect(() => stopListening, [stopListening]);
@@ -244,7 +244,7 @@ export function HttpMonitorPanel() {
       : null;
 
   return (
-    <form className="network-panel" data-testid="http-monitor-panel" onSubmit={handleSubmit}>
+    <form className="network-panel" data-testid="http-monitor-panel" {...formProps}>
       <div className="network-panel__header">
         <span className="network-panel__title">HTTP Monitor</span>
         <div className="network-panel__actions">
@@ -271,17 +271,12 @@ export function HttpMonitorPanel() {
             </Button>
           ) : (
             <Button
-              type="submit"
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
               pendingLabel="Starting…"
               errorToast={false}
-              disabled={!canStart}
-              onClick={(e) => {
-                e.preventDefault();
-                return handleStart();
-              }}
+              {...submitProps}
               data-testid="http-monitor-start"
             >
               Start

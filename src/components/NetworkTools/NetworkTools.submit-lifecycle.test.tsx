@@ -147,16 +147,19 @@ describe("Network Tools — submit lifecycle parity (#1414)", () => {
     expect(networkApi.networkDnsLookup).not.toHaveBeenCalled();
   });
 
-  it("Ping (streaming): pressing Enter shows the pending affordance", async () => {
-    const gate = deferred<string>();
-    vi.mocked(networkApi.networkPingStart).mockReturnValueOnce(gate.promise);
+  it("Ping (streaming): Enter drives the same start transition as clicking Start", async () => {
+    // A streaming panel flips to "running" synchronously, so the Start button is
+    // immediately replaced by Stop on BOTH paths — the parity here is that Enter
+    // routes through the same action/transition as a click, not a lingering
+    // spinner on Start. (The Start button is only ever gated by the shared gate.)
     await render(<PingPanel />);
     await fill("ping-host", "example.com");
 
     await submit("ping-panel");
 
     expect(networkApi.networkPingStart).toHaveBeenCalledTimes(1);
-    expect(isPending(get<HTMLButtonElement>("ping-start"))).toBe(true);
-    gate.resolve("task-1");
+    // Transitioned to running: the Stop button (not Start) is now shown.
+    expect(get<HTMLButtonElement>("ping-stop")).toBeTruthy();
+    expect(container.querySelector('[data-testid="ping-start"]')).toBeNull();
   });
 });
