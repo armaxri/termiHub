@@ -662,6 +662,7 @@ pub fn run() {
             commands::files::local_write_file,
             commands::files::sftp_read_file_content,
             commands::files::sftp_write_file_content,
+            commands::files::sftp_has_exec_capability,
             commands::files::vscode_available,
             commands::files::vscode_open_local,
             commands::files::vscode_open_remote,

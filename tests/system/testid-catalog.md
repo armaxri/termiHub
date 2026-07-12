@@ -291,6 +291,7 @@ Fixed strings — match exactly.
 | `open-connections-http-monitors-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-prune-dead-agents` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-sftp-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-connections-spawned-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-transfer` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-transfers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-server-empty` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |

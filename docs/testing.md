@@ -836,6 +836,36 @@ daemon). The Podman variant is manual because CI has no Podman daemon. See PR #1
 5. Restarting that container (`podman start`) and re-attaching should still see
    the mounted directory. Remove it manually to clean up.
 
+### Container spawn opens a Spawned Docker tab (frontend consumption, #1446)
+
+The frontend wiring (event listener → `resolve_container_spawn` → open Docker
+tab → "Spawned" badge → separate Open Connections tracking → confirmation toast)
+is covered by unit tests (`src/hooks/useSpawnRequests.test.ts`,
+`src/components/Terminal/Tab.spawned-badge.test.tsx`,
+`src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx`). A live
+end-to-end run needs Docker + a built app (PR #1464), so the full path below is
+manual.
+
+**Container spawn from the CLI opens a bind-mounted Spawned tab.**
+
+1. With a working Docker daemon and the built app already running, create a
+   scratch directory and drop a marker file (e.g. `echo hi > ~/tmp/spawn/hi.txt`).
+2. From another terminal run
+   `termiHub spawn --location ~/tmp/spawn --container-image alpine:3`.
+3. Confirm a **new Docker terminal tab** opens in the running app, titled
+   `Container: alpine:3 (Spawned)`, and that a brief **confirmation toast**
+   reports the spawn (mentions the location).
+4. Confirm the tab shows a **"Spawned"** badge next to its title.
+5. In the terminal, `pwd` prints `/workspace` and `cat hi.txt` prints `hi` —
+   proving the host directory is bind-mounted at the working directory.
+6. Open **Settings → Open Connections**. Confirm a dedicated **Spawned
+   Containers** section lists the container (with a `spawned` badge) and that it
+   is **not** also listed under **Local Sessions**. Its **Kill** action stops the
+   backend session.
+7. (Boundary) Run `termiHub spawn --location ~/tmp/spawn` with **no**
+   `--container-image`. Confirm no tab opens (non-container spawns are SI-2; the
+   request is ignored, logged in the LogViewer under `frontend::spawn`).
+
 ### Native-dialog → Modal migration (#1348)
 
 Verifies the three flows that previously used native `window.prompt` /

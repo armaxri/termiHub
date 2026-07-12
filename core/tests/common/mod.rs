@@ -281,6 +281,10 @@ pub fn port_network_fault() -> u16 {
 pub fn port_sftp_stress() -> u16 {
     resolve_port("TERMIHUB_TEST_SFTP_STRESS_PORT", 2210)
 }
+/// ssh-sftp-only container (`ForceCommand internal-sftp` — no exec channel).
+pub fn port_ssh_sftp_only() -> u16 {
+    resolve_port("TERMIHUB_TEST_SSH_SFTP_ONLY_PORT", 2211)
+}
 /// telnet-server container.
 pub fn port_telnet() -> u16 {
     resolve_port("TERMIHUB_TEST_TELNET_PORT", 2301)

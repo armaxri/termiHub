@@ -49,6 +49,7 @@ podman compose -f tests/docker/docker-compose.yml up -d
 | Container              | Port     | Auth                  | Purpose                                                 |
 | ---------------------- | -------- | --------------------- | ------------------------------------------------------- |
 | `ssh-password`         | 2201     | `testuser`/`testpass` | Standard password auth (OpenSSH latest)                 |
+| `ssh-sftp-only`        | 2211     | `testuser`/`testpass` | SFTP-only (`ForceCommand internal-sftp`, no exec)       |
 | `ssh-legacy`           | 2202     | password + keys       | Legacy OpenSSH 7.x compatibility                        |
 | `ssh-keys`             | 2203     | key only              | All key types (RSA, Ed25519, ECDSA)                     |
 | `ssh-jumphost-bastion` | 2204     | key only              | ProxyJump bastion (2-hop chain entry)                   |

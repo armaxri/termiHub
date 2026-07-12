@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useFormSubmit } from "@/hooks/useFormSubmit";
+import { useSubmitButton } from "@/hooks/useSubmitButton";
 import {
   networkPingStart,
   networkPingStop,
@@ -146,8 +146,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     taskIdRef.current = null;
   }, []);
 
-  // Enter submits the form (respects the Start button's disabled state).
-  const handleSubmit = useFormSubmit(status !== "running" && canStart, handleStart);
+  // Enter and click share one gate and one async Button lifecycle (#1414).
+  const { formProps, submitProps } = useSubmitButton(status !== "running" && canStart, handleStart);
 
   // Cleanup on unmount.
   useEffect(() => {
@@ -162,7 +162,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const latencyPoints = results.map((r) => r.latencyMs ?? null);
 
   return (
-    <form className="network-panel" data-testid="ping-panel" onSubmit={handleSubmit}>
+    <form className="network-panel" data-testid="ping-panel" {...formProps}>
       <div className="network-panel__header">
         <span className="network-panel__title">Ping</span>
         <div className="network-panel__actions">
@@ -180,17 +180,12 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
             </Button>
           ) : (
             <Button
-              type="submit"
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
               pendingLabel="Starting…"
               errorToast={false}
-              disabled={!canStart}
-              onClick={(e) => {
-                e.preventDefault();
-                return handleStart();
-              }}
+              {...submitProps}
               data-testid="ping-start"
             >
               Start

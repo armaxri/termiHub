@@ -26,6 +26,22 @@ function renderWith(settings: AppSettings, onChange = vi.fn()) {
   return onChange;
 }
 
+/** Drive a controlled input the way a real keystroke would. */
+function setValue(el: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function scrollbackInput(): HTMLInputElement {
+  const label = Array.from(container.querySelectorAll(".settings-form__label")).find(
+    (el) => el.textContent === "Scrollback Buffer"
+  );
+  return label?.closest(".settings-form__field")?.querySelector("input") as HTMLInputElement;
+}
+
 describe("TerminalSettings", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -111,14 +127,27 @@ describe("TerminalSettings", () => {
     expect(input).not.toBeNull();
   });
 
-  it("shows 10000 as default when scrollbackBuffer is undefined", () => {
+  it("shows a blank field when scrollbackBuffer is undefined (#1453)", () => {
     renderWith(defaultSettings);
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const field = labels
-      .find((el) => el.textContent === "Scrollback Buffer")
-      ?.closest(".settings-form__field");
-    const input = field?.querySelector("input[type='number']") as HTMLInputElement;
-    expect(input.value).toBe("10000");
+    // An unset value now reads blank instead of coercing to the built-in default.
+    expect(scrollbackInput().value).toBe("");
+  });
+
+  it("renders the scrollback buffer through the shared NumberInput primitive (#1453)", () => {
+    renderWith(defaultSettings);
+    expect(scrollbackInput().classList.contains("ui-input")).toBe(true);
+  });
+
+  it("editing the scrollback buffer emits the parsed number (#1453)", () => {
+    const onChange = renderWith(defaultSettings);
+    setValue(scrollbackInput(), "50000");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ scrollbackBuffer: 50000 }));
+  });
+
+  it("clearing the scrollback buffer emits undefined instead of coercing (#1453)", () => {
+    const onChange = renderWith({ ...defaultSettings, scrollbackBuffer: 25000 });
+    setValue(scrollbackInput(), "");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ scrollbackBuffer: undefined }));
   });
 
   it("reflects a custom scrollbackBuffer value", () => {

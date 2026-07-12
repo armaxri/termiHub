@@ -6,7 +6,7 @@ import type { DnsRecord, DnsRecordType } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useFormSubmit } from "@/hooks/useFormSubmit";
+import { useSubmitButton } from "@/hooks/useSubmitButton";
 import { frontendLog } from "@/utils/frontendLog";
 
 const RECORD_TYPES: DnsRecordType[] = [
@@ -59,10 +59,8 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
     }
   }, [hostname, recordType, server]);
 
-  // Enter submits the form; a mouse click goes through the Button's onClick so its
-  // async lifecycle drives the pending affordance (useFormSubmit swallows the
-  // Enter-path rejection that the click path uses to drive the Button error state).
-  const handleSubmit = useFormSubmit(!hostnameError, handleRun);
+  // Enter and click share one gate and one async Button lifecycle (#1414).
+  const { formProps, submitProps } = useSubmitButton(!hostnameError, handleRun);
 
   const columns = [
     { key: "recordType", label: "Type" },
@@ -79,22 +77,17 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   }));
 
   return (
-    <form className="network-panel" data-testid="dns-lookup-panel" onSubmit={handleSubmit}>
+    <form className="network-panel" data-testid="dns-lookup-panel" {...formProps}>
       <div className="network-panel__header">
         <span className="network-panel__title">DNS Lookup</span>
         <div className="network-panel__actions">
           <Button
-            type="submit"
             variant="primary"
             size="sm"
             icon={<Play size={14} />}
             pendingLabel="Looking up…"
             errorToast={false}
-            disabled={!!hostnameError}
-            onClick={(e) => {
-              e.preventDefault();
-              return handleRun();
-            }}
+            {...submitProps}
             data-testid="dns-run"
           >
             Run

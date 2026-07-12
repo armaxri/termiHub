@@ -16,8 +16,10 @@ import {
   localWriteFile,
   sftpReadFileContent,
   sftpWriteFileContent,
+  sftpHasExecCapability,
 } from "@/services/api";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
+import { frontendLog } from "@/utils/frontendLog";
 import "./FileEditor.css";
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
@@ -99,6 +101,12 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // behaves like a normal on-disk editor (subsequent saves write here directly).
   const [scratchSavedPath, setScratchSavedPath] = useState<string | null>(null);
 
+  // Whether the remote (SFTP) connection can also open an exec channel — i.e.
+  // it is a full SSH+shell connection, not an SFTP-only / relayed one. Gates
+  // future privilege-elevated ("save with sudo") writes, which need a shell to
+  // run `sudo`. `false` for local files and SFTP-only connections.
+  const [execCapable, setExecCapable] = useState(false);
+
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
@@ -170,6 +178,36 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       cancelled = true;
     };
   }, [meta.filePath, meta.isRemote, meta.sftpSessionId, meta.scratch, meta.scratchContent]);
+
+  // Probe whether the remote connection can run remote commands (shell vs
+  // SFTP-only). Determines whether privilege-elevated writes will be offered.
+  useEffect(() => {
+    let cancelled = false;
+    if (!meta.isRemote || !meta.sftpSessionId) {
+      setExecCapable(false);
+      return;
+    }
+    const sessionId = meta.sftpSessionId;
+    sftpHasExecCapability(sessionId)
+      .then((capable) => {
+        if (cancelled) return;
+        setExecCapable(capable);
+        frontendLog("file_editor", `exec capability for sftp session ${sessionId}: ${capable}`);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setExecCapable(false);
+        frontendLog(
+          "file_editor",
+          `exec capability probe failed for sftp session ${sessionId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [meta.isRemote, meta.sftpSessionId]);
 
   // An unsaved scratch buffer has no on-disk copy, so it is always considered
   // dirty (closing it would lose the captured content) until saved via Save As.
@@ -397,7 +435,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         onJustClose={handleDialogJustClose}
         onSaveAndClose={handleDialogSaveAndClose}
       />
-      <div className="file-editor__toolbar">
+      <div className="file-editor__toolbar" data-exec-capable={execCapable}>
         <div className="file-editor__path">
           {meta.isRemote && (
             <span className="file-editor__remote-badge" data-testid="file-editor-remote-badge">
