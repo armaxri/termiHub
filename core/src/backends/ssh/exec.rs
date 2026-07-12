@@ -7,6 +7,8 @@
 //! open an exec channel at all, or (later) piping content into `sudo tee` for
 //! privilege-elevated writes.
 
+use russh::ChannelMsg;
+
 use crate::errors::CoreError;
 
 use super::handler::SshSession;
@@ -64,15 +66,90 @@ trait ExecChannel {
 /// Starts the command, writes `stdin` (when non-empty), signals EOF, then
 /// drains channel events accumulating stdout, stderr, and the exit status
 /// until the channel closes.
-#[allow(dead_code, unused_variables)]
 async fn run_exec<C: ExecChannel>(
     channel: &mut C,
     command: &str,
     stdin: &str,
 ) -> Result<SshExecOutput, CoreError> {
-    // Implemented in the follow-up refactor commit; stubbed so the unit tests
-    // below fail first (TDD red).
-    todo!("run_exec is implemented in the refactor commit")
+    channel.exec(command).await?;
+
+    if !stdin.is_empty() {
+        channel.write_stdin(stdin.as_bytes()).await?;
+    }
+    // Always signal EOF so a command that reads stdin (e.g. `cat`, `sudo tee`)
+    // sees end-of-input and terminates; harmless for commands that read none.
+    channel.send_eof().await?;
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut stderr: Vec<u8> = Vec::new();
+    let mut exit_status = 0;
+
+    while let Some(event) = channel.next_event().await {
+        match event {
+            ExecEvent::Stdout(data) => stdout.extend_from_slice(&data),
+            ExecEvent::Stderr(data) => stderr.extend_from_slice(&data),
+            ExecEvent::Exit(status) => exit_status = status,
+            ExecEvent::Eof => {}
+            ExecEvent::Closed => break,
+        }
+    }
+
+    Ok(SshExecOutput {
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        exit_status,
+    })
+}
+
+/// Adapter implementing [`ExecChannel`] over a live russh channel.
+struct RusshExecChannel(russh::Channel<russh::client::Msg>);
+
+#[async_trait::async_trait]
+impl ExecChannel for RusshExecChannel {
+    async fn exec(&mut self, command: &str) -> Result<(), CoreError> {
+        self.0
+            .exec(false, command)
+            .await
+            .map_err(|e| CoreError::Other(format!("Exec failed: {e}")))
+    }
+
+    async fn write_stdin(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        self.0
+            .data(data)
+            .await
+            .map_err(|e| CoreError::Other(format!("Write stdin failed: {e}")))
+    }
+
+    async fn send_eof(&mut self) -> Result<(), CoreError> {
+        self.0
+            .eof()
+            .await
+            .map_err(|e| CoreError::Other(format!("Send EOF failed: {e}")))
+    }
+
+    async fn next_event(&mut self) -> Option<ExecEvent> {
+        // Loop so unrecognised messages (window adjustments, non-stderr
+        // extended data, …) don't end the drain prematurely.
+        loop {
+            match self.0.wait().await {
+                Some(ChannelMsg::Data { data }) => return Some(ExecEvent::Stdout(data.to_vec())),
+                Some(ChannelMsg::ExtendedData { data, ext }) => {
+                    // ext == 1 is stderr (SSH_EXTENDED_DATA_STDERR); ignore
+                    // other extended-data types and keep draining.
+                    if ext == 1 {
+                        return Some(ExecEvent::Stderr(data.to_vec()));
+                    }
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                    return Some(ExecEvent::Exit(exit_status as i32));
+                }
+                Some(ChannelMsg::Eof) => return Some(ExecEvent::Eof),
+                Some(ChannelMsg::Close) => return Some(ExecEvent::Closed),
+                None => return None,
+                _ => {}
+            }
+        }
+    }
 }
 
 /// Execute `command` over an authenticated SSH `session`, sending `stdin` to
@@ -81,14 +158,17 @@ async fn run_exec<C: ExecChannel>(
 ///
 /// Pass an empty `stdin` for commands that read no input. This generalizes the
 /// stdout-only exec used internally by the monitoring provider.
-#[allow(dead_code, unused_variables)]
 pub async fn ssh_exec_with_stdin(
     session: &SshSession,
     command: &str,
     stdin: &str,
 ) -> Result<SshExecOutput, CoreError> {
-    // Implemented in the follow-up refactor commit.
-    todo!("ssh_exec_with_stdin is implemented in the refactor commit")
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| CoreError::Other(format!("Channel open failed: {e}")))?;
+    let mut channel = RusshExecChannel(channel);
+    run_exec(&mut channel, command, stdin).await
 }
 
 #[cfg(test)]
