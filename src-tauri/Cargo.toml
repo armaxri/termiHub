@@ -76,7 +76,20 @@ keyring = { version = "3", default-features = false }
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString"] }
+objc2-foundation = { version = "0.3", features = [
+    "NSUserDefaults",
+    "NSString",
+    "NSArray",
+] }
+# Native Cocoa Services provider for the app-level "Open in termiHub"
+# Services-menu entry (#1409): register on NSApp.servicesProvider and read the
+# selection off the pasteboard. macOS-only by nature.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSResponder",
+    "NSPasteboard",
+] }
 # macOS Keychain backend for the `keyring` crate.
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
