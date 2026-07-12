@@ -40,6 +40,17 @@ ringbuf = "0.5.0"
 shellexpand = "3.1"
 vte = "0.13"
 
+[target.'cfg(windows)'.dependencies]
+# Used to build a per-user DACL for a security-hardened local-IPC listener
+# (the security analog of the Unix socket's 0o700 permissions) — see
+# `ipc::ListenerSecurity::CurrentUserOnly`.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tempfile = "3"
 temp-env = "0.3"

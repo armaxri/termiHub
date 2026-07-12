@@ -102,7 +102,7 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     // Bind the transport listener — this creates the endpoint (socket file on
     // unix, named pipe on windows), restricted to the current user, signalling
     // to callers that the daemon is ready to accept connections.
-    let mut listener = DaemonListener::bind(&config.endpoint)?;
+    let mut listener = DaemonListener::bind(&config.endpoint).await?;
 
     info!("Listening on endpoint: {}", config.endpoint);
 

@@ -52,12 +52,11 @@ nix = { version = "0.29", features = ["signal", "process", "term", "poll", "fs"]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-# Used to build a per-user DACL for the session daemon's named-pipe transport
-# (the security analog of the Unix socket's 0o700 permissions).
+# Named-pipe liveness probe (WaitNamedPipeW) for the session daemon's endpoint
+# and detached-process creation flags. The per-user DACL construction moved to
+# termihub-core's shared IPC transport (`ipc::ListenerSecurity::CurrentUserOnly`).
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
     "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }
