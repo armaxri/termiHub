@@ -506,6 +506,43 @@ mod tests {
         assert_eq!(status.detected_file_managers, managers);
     }
 
+    #[test]
+    fn status_reflects_undetected_manager_without_version() {
+        // An injected "not found" manager round-trips as detected=false / no version.
+        let managers = vec![DetectedFileManager {
+            id: "thunar".to_string(),
+            name: "Thunar".to_string(),
+            detected: false,
+            version: None,
+        }];
+        let status = build_status(
+            &ShellIntegrationSettings::default(),
+            None,
+            false,
+            managers.clone(),
+        );
+        assert_eq!(status.detected_file_managers, managers);
+        assert!(!status.detected_file_managers[0].detected);
+        assert!(status.detected_file_managers[0].version.is_none());
+    }
+
+    #[test]
+    fn status_reflects_detected_manager_with_version() {
+        // A detected manager surfaces its version verbatim through build_status.
+        let managers = vec![DetectedFileManager {
+            id: "nautilus".to_string(),
+            name: "Nautilus".to_string(),
+            detected: true,
+            version: Some("43.2".to_string()),
+        }];
+        let status = build_status(&ShellIntegrationSettings::default(), None, false, managers);
+        assert!(status.detected_file_managers[0].detected);
+        assert_eq!(
+            status.detected_file_managers[0].version.as_deref(),
+            Some("43.2")
+        );
+    }
+
     // ── Settings serde round-trip + forward-compat ───────────────────────
 
     #[test]

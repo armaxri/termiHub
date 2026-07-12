@@ -75,6 +75,67 @@ pub fn detect_file_managers() -> Vec<DetectedFileManager> {
     }
 }
 
+#[cfg(test)]
+mod version_parsing_tests {
+    use super::{parse_dolphin_version, parse_nautilus_version, parse_thunar_version};
+
+    #[test]
+    fn nautilus_version_extracted() {
+        // `nautilus --version` → "GNOME nautilus 43.2".
+        assert_eq!(
+            parse_nautilus_version("GNOME nautilus 43.2"),
+            Some("43.2".to_string())
+        );
+        assert_eq!(
+            parse_nautilus_version("GNOME nautilus 3.26.4"),
+            Some("3.26.4".to_string())
+        );
+    }
+
+    #[test]
+    fn dolphin_version_extracted() {
+        // `dolphin --version` → "dolphin 22.12.3".
+        assert_eq!(
+            parse_dolphin_version("dolphin 22.12.3"),
+            Some("22.12.3".to_string())
+        );
+        assert_eq!(
+            parse_dolphin_version("dolphin 24.08.1\n"),
+            Some("24.08.1".to_string())
+        );
+    }
+
+    #[test]
+    fn thunar_version_extracted() {
+        // `thunar --version` → "Thunar 4.18.4\nCopyright ...".
+        assert_eq!(
+            parse_thunar_version("Thunar 4.18.4\nCopyright (c) 2004-2023"),
+            Some("4.18.4".to_string())
+        );
+        // A leading "xfce4" token must not be mistaken for the version.
+        assert_eq!(
+            parse_thunar_version("xfce4 Thunar 4.16.0"),
+            Some("4.16.0".to_string())
+        );
+    }
+
+    #[test]
+    fn malformed_or_absent_output_yields_none() {
+        assert_eq!(parse_nautilus_version(""), None);
+        assert_eq!(parse_dolphin_version("no version here"), None);
+        assert_eq!(parse_thunar_version("Thunar"), None);
+    }
+
+    #[test]
+    fn trailing_prerelease_suffix_trimmed_to_numeric() {
+        // A "45.0-beta" token is reduced to its leading numeric run.
+        assert_eq!(
+            parse_nautilus_version("GNOME nautilus 45.0-beta"),
+            Some("45.0".to_string())
+        );
+    }
+}
+
 /// Remove the integration and clear the recorded registration facts from
 /// `settings`. Cross-platform counterpart to [`register`].
 pub fn unregister(settings: &mut ShellIntegrationSettings) -> anyhow::Result<()> {
