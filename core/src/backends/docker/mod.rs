@@ -19,7 +19,7 @@ use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
-use crate::config::{ContainerRuntime, DockerConfig};
+use crate::config::{ContainerRuntime, DockerConfig, VolumeMount};
 use crate::connection::{
     Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SelectOption,
     SettingsField, SettingsGroup, SettingsSchema,
@@ -301,6 +301,18 @@ fn generate_container_name() -> String {
         .as_millis();
     let pid = std::process::id();
     format!("{CONTAINER_PREFIX}-{ts}-{pid}")
+}
+
+/// Build the `HostConfig.binds` strings for a set of [`VolumeMount`]s.
+///
+/// Each mount renders as `"<host_path>:<container_path>"`, with a trailing
+/// `:ro` appended for read-only mounts — the same syntax `docker run -v` and
+/// `podman run -v` accept. Used by the interactive connect path and by the
+/// directory-mount container spawn (#1372), so the bind format has one source
+/// of truth and is unit-testable without a running daemon.
+pub(crate) fn build_volume_binds(volumes: &[VolumeMount]) -> Vec<String> {
+    let _ = volumes;
+    todo!("implemented in the feat commit")
 }
 
 #[async_trait::async_trait]
@@ -1155,6 +1167,42 @@ mod tests {
             errors.iter().any(|e| e.field.contains("containerPath")),
             "expected containerPath error: {errors:?}"
         );
+    }
+
+    // --- Volume bind construction tests (#1372) ---
+
+    fn vol(host: &str, container: &str, read_only: bool) -> VolumeMount {
+        VolumeMount {
+            host_path: host.to_string(),
+            container_path: container.to_string(),
+            read_only,
+        }
+    }
+
+    #[test]
+    fn build_volume_binds_single_read_write() {
+        let binds = build_volume_binds(&[vol("/home/user/proj", "/workspace", false)]);
+        assert_eq!(binds, vec!["/home/user/proj:/workspace".to_string()]);
+    }
+
+    #[test]
+    fn build_volume_binds_read_only_appends_ro() {
+        let binds = build_volume_binds(&[vol("/data", "/mnt/data", true)]);
+        assert_eq!(binds, vec!["/data:/mnt/data:ro".to_string()]);
+    }
+
+    #[test]
+    fn build_volume_binds_multiple_preserve_order() {
+        let binds = build_volume_binds(&[
+            vol("/a", "/x", false),
+            vol("/b", "/y", true),
+        ]);
+        assert_eq!(binds, vec!["/a:/x".to_string(), "/b:/y:ro".to_string()]);
+    }
+
+    #[test]
+    fn build_volume_binds_empty_is_empty() {
+        assert!(build_volume_binds(&[]).is_empty());
     }
 
     // --- Settings parsing tests ---
