@@ -1195,10 +1195,7 @@ mod tests {
 
     #[test]
     fn build_volume_binds_multiple_preserve_order() {
-        let binds = build_volume_binds(&[
-            vol("/a", "/x", false),
-            vol("/b", "/y", true),
-        ]);
+        let binds = build_volume_binds(&[vol("/a", "/x", false), vol("/b", "/y", true)]);
         assert_eq!(binds, vec!["/a:/x".to_string(), "/b:/y:ro".to_string()]);
     }
 
