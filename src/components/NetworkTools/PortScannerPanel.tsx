@@ -12,7 +12,7 @@ import {
 } from "@/services/networkApi";
 import type { PortScanSummary } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { validateIntRange } from "@/utils/fieldValidation";
+import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
@@ -48,7 +48,9 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     max: 2000,
     label: "Concurrency",
   });
-  const canRun = !!host.trim() && !timeoutError && !concurrencyError;
+  const hostError = validateHost(host);
+  const portsError = ports.trim() ? null : "Enter at least one port";
+  const canRun = !hostError && !portsError && !timeoutError && !concurrencyError;
 
   // Warn before a very large scan. The estimate factors in the CIDR host-count
   // as well as the port count, so a small port list over a wide block still
@@ -175,22 +177,34 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <Field className="network-panel__field" label="Host / CIDR" htmlFor="port-scanner-host">
+        <Field
+          className="network-panel__field"
+          label="Host / CIDR"
+          htmlFor="port-scanner-host"
+          error={hostError ?? undefined}
+        >
           <Input
             ref={hostRef}
             id="port-scanner-host"
             value={host}
             onChange={(e) => setHost(e.target.value)}
             placeholder="192.168.1.1, 10.0.0.0/24, example.com"
+            error={!!hostError}
             data-testid="port-scanner-host"
           />
         </Field>
-        <Field className="network-panel__field" label="Ports" htmlFor="port-scanner-ports">
+        <Field
+          className="network-panel__field"
+          label="Ports"
+          htmlFor="port-scanner-ports"
+          error={portsError ?? undefined}
+        >
           <Input
             id="port-scanner-ports"
             value={ports}
             onChange={(e) => setPorts(e.target.value)}
             placeholder="22,80,443,8080-8090"
+            error={!!portsError}
             data-testid="port-scanner-ports"
           />
         </Field>

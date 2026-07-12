@@ -10,7 +10,7 @@ import {
 } from "@/services/networkApi";
 import type { TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { validateIntRange } from "@/utils/fieldValidation";
+import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
@@ -28,7 +28,8 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
   const hostRef = useAutofocusSelect<HTMLInputElement>();
 
   const maxHopsError = validateIntRange(maxHops, { min: 1, max: 255, label: "Max hops" });
-  const canRun = !!host.trim() && !maxHopsError;
+  const hostError = validateHost(host);
+  const canRun = !hostError && !maxHopsError;
 
   const subscribe = useCallback(async ({ matchesTask, register, finish }: NetworkTaskContext) => {
     register(
@@ -121,13 +122,19 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <Field className="network-panel__field" label="Host" htmlFor="traceroute-host">
+        <Field
+          className="network-panel__field"
+          label="Host"
+          htmlFor="traceroute-host"
+          error={hostError ?? undefined}
+        >
           <Input
             ref={hostRef}
             id="traceroute-host"
             value={host}
             onChange={(e) => setHost(e.target.value)}
             placeholder="example.com"
+            error={!!hostError}
             data-testid="traceroute-host"
           />
         </Field>

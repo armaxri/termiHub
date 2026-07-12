@@ -12,7 +12,7 @@ import {
 } from "@/services/networkApi";
 import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
-import { validateIntRange } from "@/utils/fieldValidation";
+import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface PingPanelProps {
@@ -76,7 +76,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     label: "Count",
     allowEmpty: true,
   });
-  const canStart = !!host.trim() && !intervalError && !countError;
+  const hostError = validateHost(host);
+  const canStart = !hostError && !intervalError && !countError;
 
   const handleStart = useCallback(async () => {
     if (!canStart) return;
@@ -199,13 +200,19 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <Field className="network-panel__field" label="Host" htmlFor="ping-host">
+        <Field
+          className="network-panel__field"
+          label="Host"
+          htmlFor="ping-host"
+          error={hostError ?? undefined}
+        >
           <Input
             ref={hostRef}
             id="ping-host"
             value={host}
             onChange={(e) => setHost(e.target.value)}
             placeholder="example.com"
+            error={!!hostError}
             data-testid="ping-host"
           />
         </Field>

@@ -26,9 +26,10 @@ export function WolPanel() {
 
   const macRef = useAutofocusSelect<HTMLInputElement>();
 
+  const macError = useMemo(() => validateMac(mac), [mac]);
   const portError = validatePort(port);
   const broadcastError = validateHost(broadcast, "Broadcast address");
-  const canSend = !!mac.trim() && !portError && !broadcastError;
+  const canSend = !macError && !portError && !broadcastError;
   const [savedDevices, setSavedDevices] = useState<WolDevice[]>([]);
   const [history, setHistory] = useState<WolHistoryEntry[]>([]);
   const [sentMessage, setSentMessage] = useState<string | null>(null);
@@ -36,7 +37,6 @@ export function WolPanel() {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
 
-  const macError = useMemo(() => validateMac(mac), [mac]);
   const canSaveDevice = saveName.trim().length > 0 && !macError;
 
   const loadDevices = useCallback(async () => {
@@ -154,13 +154,19 @@ export function WolPanel() {
       </div>
 
       <div className="network-panel__form">
-        <Field className="network-panel__field" label="MAC Address" htmlFor="wol-mac">
+        <Field
+          className="network-panel__field"
+          label="MAC Address"
+          htmlFor="wol-mac"
+          error={macError ?? undefined}
+        >
           <Input
             ref={macRef}
             id="wol-mac"
             value={mac}
             onChange={(e) => setMac(e.target.value)}
             placeholder="AA:BB:CC:DD:EE:FF"
+            error={!!macError}
             data-testid="wol-mac"
           />
         </Field>
