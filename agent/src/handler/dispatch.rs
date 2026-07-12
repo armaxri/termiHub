@@ -348,8 +348,11 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             s.agent_settings = p.agent_settings.clone();
             // Record the connected client (additive to the single-client
             // settings above). One entry per agent process in `--stdio` mode.
-            s.client_registry
-                .register(s.client_id.clone(), p.client.clone(), p.client_version.clone());
+            s.client_registry.register(
+                s.client_id.clone(),
+                p.client.clone(),
+                p.client_version.clone(),
+            );
             let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
                 s.session_manager.clone(),
