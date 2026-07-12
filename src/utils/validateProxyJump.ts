@@ -1,5 +1,6 @@
 import type { JumpHostConfig, SavedConnection } from "@/types/connection";
 import { getJumpHosts } from "@/utils/jumpHost";
+import { validatePort } from "@/utils/fieldValidation";
 
 export interface ProxyJumpValidation {
   /** Blocking problems — save is prevented while any exist. */
@@ -52,9 +53,13 @@ export function validateProxyJump(
         }
       }
     } else {
-      // Inline hop: require the fields needed to open the connection.
+      // Inline hop: require the fields needed to open the connection. The port
+      // follows the shared `number | ""` blank-value convention (#1444) — a
+      // cleared field is `""`, flagged required here rather than coerced.
       if (!hop.host?.trim()) errors.push(`${label}: host is required.`);
       if (!hop.username?.trim()) errors.push(`${label}: username is required.`);
+      const portErr = validatePort(hop.port, { label: "Port" });
+      if (portErr) errors.push(`${label}: ${portErr.charAt(0).toLowerCase()}${portErr.slice(1)}.`);
     }
   });
 
