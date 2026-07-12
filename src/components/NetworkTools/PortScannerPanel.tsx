@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button, Modal, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useFormSubmit } from "@/hooks/useFormSubmit";
+import { useSubmitButton } from "@/hooks/useSubmitButton";
 import {
   networkPortScan,
   networkPortScanCancel,
@@ -110,9 +110,9 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     await run();
   }, [run]);
 
-  // Enter submits the form (handleRun re-checks and may open the large-scan
-  // confirmation instead).
-  const handleSubmit = useFormSubmit(status !== "running" && canRun, handleRun);
+  // Enter and click share one gate and one async Button lifecycle (#1414).
+  // handleRun re-checks and may open the large-scan confirmation instead.
+  const { formProps, submitProps } = useSubmitButton(status !== "running" && canRun, handleRun);
 
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results
@@ -140,7 +140,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   }));
 
   return (
-    <form className="network-panel" data-testid="port-scanner-panel" onSubmit={handleSubmit}>
+    <form className="network-panel" data-testid="port-scanner-panel" {...formProps}>
       <div className="network-panel__header">
         <span className="network-panel__title">Port Scanner</span>
         <div className="network-panel__actions">
@@ -157,17 +157,12 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
             </Button>
           ) : (
             <Button
-              type="submit"
               variant="primary"
               size="sm"
               icon={<Play size={14} />}
               pendingLabel="Starting…"
               errorToast={false}
-              disabled={!canRun}
-              onClick={(e) => {
-                e.preventDefault();
-                return handleRun();
-              }}
+              {...submitProps}
               data-testid="port-scanner-run"
             >
               Start
