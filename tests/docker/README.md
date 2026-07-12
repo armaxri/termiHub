@@ -11,6 +11,9 @@ docker compose -f tests/docker/docker-compose.yml up -d
 # Start everything (including fault injection + stress tests)
 docker compose -f tests/docker/docker-compose.yml --profile all up -d
 
+# Start the FTP/FTPS server only
+docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
+
 # Stop all
 docker compose -f tests/docker/docker-compose.yml down
 ```
@@ -63,10 +66,11 @@ podman compose -f tests/docker/docker-compose.yml up -d
 
 ### Profile Containers
 
-| Container             | Port | Profile  | Purpose                             |
-| --------------------- | ---- | -------- | ----------------------------------- |
-| `network-fault-proxy` | 2209 | `fault`  | tc/netem network fault injection    |
-| `sftp-stress`         | 2210 | `stress` | Pre-populated SFTP stress test data |
+| Container             | Port        | Profile  | Purpose                                       |
+| --------------------- | ----------- | -------- | --------------------------------------------- |
+| `network-fault-proxy` | 2209        | `fault`  | tc/netem network fault injection              |
+| `sftp-stress`         | 2210        | `stress` | Pre-populated SFTP stress test data           |
+| `ftp-server`          | 2401 / 2402 | `ftp`    | External FTP/FTPS server + seeded `/pub` tree |
 
 ## Networks
 
@@ -128,6 +132,87 @@ ssh -X -p 2208 testuser@localhost /usr/local/bin/test-x11.sh
 The render check is a genuine in-container capability check; it is **not** a
 stand-in for the end-to-end forward into the operator's real display, which
 remains a manual step (no host X server can be faked in the harness).
+
+## FTP server (profile: `ftp`)
+
+The `ftp-server` container (`ftp-server/`) runs an **independent external FTP
+server (ProFTPD)** — deliberately **not** termiHub's embedded `libunftp` server,
+so the FTP backend sub-issues (#1334 / #1335 / #1336 / #1339) validate real
+interop. One container serves three endpoints over a single seeded `/srv/ftp`
+tree:
+
+| Endpoint      | Host port | Container | Auth                                          |
+| ------------- | --------- | --------- | --------------------------------------------- |
+| plain FTP     | `2401`    | `21`      | `anonymous` (read-only) + `ftpuser`/`ftppass` |
+| explicit FTPS | `2401`    | `21`      | AUTH TLS (STARTTLS) on the same listener      |
+| implicit FTPS | `2402`    | `990`     | TLS from the first byte                       |
+
+> **Why ProFTPD, not vsftpd?** vsftpd 3.0.5 on Ubuntu 24.04 segfaults on any TLS
+> data connection (an OpenSSL-3 incompatibility), which is fatal for the FTPS
+> endpoints. ProFTPD (with `proftpd-mod-crypto`) handles all three modes
+> reliably in a container.
+
+### Logins
+
+- **Anonymous** — user `anonymous` (any password); **read-only** browse of the
+  whole tree. Writes are denied.
+- **`ftpuser` / `ftppass`** — a local account chrooted to the same tree; may
+  **read everything and upload into `/uploads`**.
+
+### Seeded tree (`/srv/ftp`)
+
+Generated deterministically at build time by `ftp-server/generate-test-data.sh`
+(fixed sizes **and** fixed content, so `SIZE` and checksums are reproducible).
+`/pub` holds **3 folders and 14 files**:
+
+```text
+/pub/readme.txt              61 bytes
+/pub/welcome.txt             65 bytes
+/pub/docs/guide.txt          52 bytes
+/pub/docs/manual.txt         54 bytes
+/pub/docs/changelog.txt      44 bytes
+/pub/docs/faq.txt            51 bytes
+/pub/images/logo.bin       2 048 bytes
+/pub/images/banner.bin     4 096 bytes
+/pub/data/dataset-1k.bin   1 024 bytes
+/pub/data/dataset-8k.bin   8 192 bytes
+/pub/data/dataset-64k.bin 65 536 bytes
+/pub/data/dataset-1m.bin  1 048 576 bytes
+/pub/data/empty.bin            0 bytes
+/pub/data/single-byte.bin      1 byte
+/uploads/                  (writable landing zone for STOR tests)
+```
+
+### Passive ports
+
+FTP passive data connections are advertised as the **same** port number the host
+publishes, so the whole passive range is mapped **1:1** (host port == container
+port). Two ranges are used — `30000-30009` (plain/explicit) and `30010-30019`
+(implicit) — and both the port and the range are offset per checkout via
+`scripts/internal/dev-local-env.sh` (`TERMIHUB_TEST_FTP_PORT`,
+`TERMIHUB_TEST_FTPS_IMPLICIT_PORT`, `TERMIHUB_TEST_FTP_PASV_MIN/MAX`,
+`TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN/MAX`). The container templates ProFTPD's
+`PassivePorts` from those same values at start-up.
+
+### Verifying the fixture
+
+```bash
+# Bring it up (waits for the healthcheck on port 21)
+docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
+
+# Backend-independent smoke test: lists /pub over plain, explicit + implicit
+# FTPS and checks a known-size download. Honours the same port env vars.
+bash tests/docker/ftp-server/smoke-test.sh
+
+# Or by hand with curl (-k trusts the self-signed cert):
+curl ftp://anonymous:test@127.0.0.1:2401/pub/                 # plain, anonymous
+curl -k --ssl-reqd ftp://ftpuser:ftppass@127.0.0.1:2401/pub/  # explicit FTPS
+curl -k ftps://ftpuser:ftppass@127.0.0.1:2402/pub/            # implicit FTPS
+```
+
+The automated app-level integration tests land with the FTP backend sub-issues;
+until then the smoke test above (plus the manual "connect termiHub" step in
+[`docs/testing.md`](../../docs/testing.md)) is the verification path.
 
 ## Requirements
 

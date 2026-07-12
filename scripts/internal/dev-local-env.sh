@@ -63,6 +63,15 @@ _thdl_port TERMIHUB_TEST_SFTP_STRESS_PORT    2210
 _thdl_port TERMIHUB_TEST_REMOTE_AGENT_PORT   2211
 _thdl_port TERMIHUB_TEST_TELNET_PORT         2301
 _thdl_port TERMIHUB_TEST_NETWORK_TARGET_PORT 8080
+# FTP fixtures (tests/docker/ftp-server). Control ports plus two passive-port
+# ranges; the ranges are advertised 1:1, so both the min AND max of each range
+# are offset in lockstep with the control ports.
+_thdl_port TERMIHUB_TEST_FTP_PORT                  2401
+_thdl_port TERMIHUB_TEST_FTPS_IMPLICIT_PORT        2402
+_thdl_port TERMIHUB_TEST_FTP_PASV_MIN              30000
+_thdl_port TERMIHUB_TEST_FTP_PASV_MAX              30009
+_thdl_port TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN    30010
+_thdl_port TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MAX    30019
 # examples/docker quick-start dev target (examples/docker/docker-compose.yml).
 _thdl_port TERMIHUB_TEST_E2E_SSH_PORT        2222
 _thdl_port TERMIHUB_TEST_E2E_TELNET_PORT     2323

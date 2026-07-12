@@ -513,6 +513,10 @@ cargo test -p termihub-core --all-features --test network_resilience -- --nocapt
 docker compose -f tests/docker/docker-compose.yml --profile stress up -d
 cargo test -p termihub-core --all-features --test sftp_stress -- --nocapture
 
+# Include the FTP/FTPS server (requires ftp profile) + backend-independent smoke
+docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
+bash tests/docker/ftp-server/smoke-test.sh   # lists /pub over plain/explicit/implicit FTPS
+
 # Stop all containers
 docker compose -f tests/docker/docker-compose.yml --profile all down
 ```
@@ -1337,6 +1341,27 @@ server automatically" left at its default/undecided):
    and that Retry re-provisions in place; on a missing-dependency failure an
    **Install** action appears. The screen must match the manual "X Servers → Set
    up" dialog (`XServerSetupContent.tsx`).
+
+### FTP client against the FTP fixture (#1333)
+
+Backs the FTP-client epic (#1331). The `ftp-server` Docker fixture (profile
+`ftp`, see [tests/docker/README.md](../tests/docker/README.md)) provides plain
+FTP, explicit FTPS, and implicit FTPS over a deterministic seeded `/pub` tree.
+The **backend-independent** listing/transfer path is already covered by
+`tests/docker/ftp-server/smoke-test.sh`; this manual step verifies the future
+termiHub FTP **client** end-to-end once the backend sub-issues
+(#1334/#1335/#1336/#1339) land.
+
+1. Start the fixture: `docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server`.
+2. In termiHub, add an FTP connection to `127.0.0.1:2401`, log in as
+   `ftpuser` / `ftppass` (or anonymous), and open it — the file browser should
+   list `/pub` with **3 folders (docs, images, data) and 14 files** of the
+   documented sizes (e.g. `data/dataset-1m.bin` = 1 048 576 bytes).
+3. Download `pub/data/dataset-1k.bin` and confirm it is exactly 1 024 bytes;
+   upload a file into `/uploads` as `ftpuser` (anonymous uploads must be denied).
+4. Repeat with **explicit FTPS** (TLS Mode = Explicit, port 2401) and **implicit
+   FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
+   plain-FTP insecure warning must appear only for TLS Mode = None.
 
 ### Remote system monitoring
 
