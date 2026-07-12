@@ -36,9 +36,32 @@ p384 = { version = "=0.14.0-rc.9", optional = true }
 p521 = { version = "=0.14.0-rc.9", optional = true }
 bollard = { workspace = true, optional = true }
 futures-util = { version = "0.3", optional = true }
+# FTP / FTPS client. `async-rustls` aligns with termiHub's rustls stack
+# (the concept originally proposed `async-native-tls`; deviation flagged in the PR).
+# `deprecated` is required for implicit FTPS (`connect_secure_implicit`).
+suppaftp = { version = "6", default-features = false, features = [
+    "async-rustls",
+    "deprecated",
+], optional = true }
+# rustls async TLS connector for FTPS — version pinned to suppaftp's own
+# `futures-rustls` so the `rustls` / `rustls-pki-types` types unify.
+futures-rustls = { version = "0.26", optional = true }
+# Mozilla root CA bundle for the FTPS (rustls) client-config trust store.
+webpki-roots = { version = "1", optional = true }
 ringbuf = "0.5.0"
 shellexpand = "3.1"
 vte = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+# Used to build a per-user DACL for a security-hardened local-IPC listener
+# (the security analog of the Unix socket's 0o700 permissions) — see
+# `ipc::ListenerSecurity::CurrentUserOnly`.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -72,3 +95,9 @@ ssh = [
 ]
 docker = ["dep:bollard", "dep:futures-util", "dep:tracing"]
 wsl = ["dep:portable-pty", "dep:tracing"]
+ftp = [
+    "dep:suppaftp",
+    "dep:futures-rustls",
+    "dep:webpki-roots",
+    "dep:tracing",
+]

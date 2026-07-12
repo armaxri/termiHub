@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -12,8 +12,6 @@ import {
 } from "@/services/networkApi";
 import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
-import { NetworkNumberField } from "./NetworkNumberField";
-import { NetworkTextField } from "./NetworkTextField";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -202,32 +200,51 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <NetworkTextField
+        <Field
+          className="network-panel__field"
           label="Host"
-          value={host}
-          onChange={setHost}
-          error={hostError}
-          inputRef={hostRef}
-          placeholder="example.com"
-          data-testid="ping-host"
-        />
-        <NetworkNumberField
+          htmlFor="ping-host"
+          error={hostError ?? undefined}
+        >
+          <Input
+            ref={hostRef}
+            id="ping-host"
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            placeholder="example.com"
+            error={!!hostError}
+            data-testid="ping-host"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Interval (ms)"
-          value={intervalMs}
-          onChange={setIntervalMs}
-          error={intervalError}
-          small
-          data-testid="ping-interval"
-        />
-        <NetworkNumberField
+          htmlFor="ping-interval"
+          error={intervalError ?? undefined}
+        >
+          <NumberInput
+            id="ping-interval"
+            value={intervalMs}
+            onValueChange={setIntervalMs}
+            error={!!intervalError}
+            data-testid="ping-interval"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Count (∞ = empty)"
-          value={count}
-          onChange={setCount}
-          error={countError}
-          small
-          placeholder="∞"
-          data-testid="ping-count"
-        />
+          htmlFor="ping-count"
+          error={countError ?? undefined}
+        >
+          <NumberInput
+            id="ping-count"
+            value={count}
+            onValueChange={setCount}
+            placeholder="∞"
+            error={!!countError}
+            data-testid="ping-count"
+          />
+        </Field>
       </div>
 
       {tcpFallback && (

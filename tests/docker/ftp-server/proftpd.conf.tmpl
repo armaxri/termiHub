@@ -1,0 +1,93 @@
+# ProFTPD config for the termiHub FTP integration fixtures.
+#
+# One daemon exposes three endpoints over one seeded /srv/ftp tree:
+#   * plain FTP + explicit FTPS (AUTH TLS) on port 21   (TLSRequired off)
+#   * implicit FTPS (TLS from the first byte) on port 990 (VirtualHost below)
+# Logins: anonymous (read-only) and ftpuser/ftppass (read + write to uploads/).
+#
+# __PLACEHOLDERS__ are substituted by entrypoint.sh from the container env so the
+# advertised passive-port ranges can be offset per parallel checkout (the host
+# and container passive ports must match 1:1, so the ranges are templated).
+
+# mod_tls is a DSO (from proftpd-mod-crypto); load it before the TLS blocks.
+<IfModule mod_dso.c>
+  LoadModule mod_tls.c
+</IfModule>
+
+ServerName            "termiHub FTP test server"
+ServerType            standalone
+DefaultServer         on
+UseIPv6               off
+UseReverseDNS         off
+Port                  21
+Umask                 022
+MaxInstances          30
+
+User                  proftpd
+Group                 nogroup
+
+# Chroot every login to its landing directory; the fixture never needs a shell.
+DefaultRoot           ~
+RequireValidShell     off
+RootLogin             off
+
+# Passive data connections for the plain/explicit (port 21) server.
+PassivePorts          __MAIN_PASV_MIN__ __MAIN_PASV_MAX__
+MasqueradeAddress     __PASV_ADDRESS__
+
+# --- TLS shared by every server (explicit on 21, implicit on 990) ---
+<IfModule mod_tls.c>
+  TLSEngine                on
+  TLSProtocol              TLSv1.2 TLSv1.3
+  TLSRSACertificateFile    /etc/ssl/private/proftpd.pem
+  TLSRSACertificateKeyFile /etc/ssl/private/proftpd.pem
+  # Self-signed fixture cert; don't ask clients for one, and don't force TLS
+  # session reuse on the data channel (curl/lftp don't reuse by default).
+  TLSVerifyClient          off
+  TLSOptions               NoSessionReuseRequired
+  # Explicit-only on the main server: plain FTP is still allowed here.
+  TLSRequired              off
+</IfModule>
+
+# --- Anonymous, read-only browse of the seeded tree (applies to all servers) ---
+<Anonymous /srv/ftp>
+  User                     ftp
+  Group                    nogroup
+  UserAlias                anonymous ftp
+  RequireValidShell        off
+  MaxClients               10
+  <Limit WRITE>
+    DenyAll
+  </Limit>
+</Anonymous>
+
+# --- Implicit FTPS: dedicated server on port 990, TLS from the first byte ---
+<VirtualHost 0.0.0.0>
+  Port                     990
+  ServerName               "termiHub FTP test server (implicit FTPS)"
+  DefaultRoot              ~
+  RequireValidShell        off
+  RootLogin                off
+  PassivePorts             __IMPLICIT_PASV_MIN__ __IMPLICIT_PASV_MAX__
+  MasqueradeAddress        __PASV_ADDRESS__
+  <IfModule mod_tls.c>
+    TLSEngine              on
+    TLSProtocol            TLSv1.2 TLSv1.3
+    TLSRSACertificateFile  /etc/ssl/private/proftpd.pem
+    TLSRSACertificateKeyFile /etc/ssl/private/proftpd.pem
+    TLSVerifyClient        off
+    # Enforce TLS and treat connections as implicit FTPS on this port.
+    TLSRequired            on
+    TLSOptions             UseImplicitSSL NoSessionReuseRequired
+  </IfModule>
+  <Anonymous /srv/ftp>
+    User                   ftp
+    Group                  nogroup
+    UserAlias              anonymous ftp
+    RequireValidShell      off
+    MaxClients             10
+    <Limit WRITE>
+      DenyAll
+    </Limit>
+  </Anonymous>
+</VirtualHost>

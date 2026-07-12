@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Field, Input, NumberInput } from "@/components/ui";
 import {
   networkTraceroute,
   networkTracerouteCancel,
@@ -10,8 +10,6 @@ import {
 } from "@/services/networkApi";
 import type { TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { NetworkNumberField } from "./NetworkNumberField";
-import { NetworkTextField } from "./NetworkTextField";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
@@ -124,23 +122,36 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <NetworkTextField
+        <Field
+          className="network-panel__field"
           label="Host"
-          value={host}
-          onChange={setHost}
-          error={hostError}
-          inputRef={hostRef}
-          placeholder="example.com"
-          data-testid="traceroute-host"
-        />
-        <NetworkNumberField
+          htmlFor="traceroute-host"
+          error={hostError ?? undefined}
+        >
+          <Input
+            ref={hostRef}
+            id="traceroute-host"
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            placeholder="example.com"
+            error={!!hostError}
+            data-testid="traceroute-host"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Max Hops"
-          value={maxHops}
-          onChange={setMaxHops}
-          error={maxHopsError}
-          small
-          data-testid="traceroute-max-hops"
-        />
+          htmlFor="traceroute-max-hops"
+          error={maxHopsError ?? undefined}
+        >
+          <NumberInput
+            id="traceroute-max-hops"
+            value={maxHops}
+            onValueChange={setMaxHops}
+            error={!!maxHopsError}
+            data-testid="traceroute-max-hops"
+          />
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}

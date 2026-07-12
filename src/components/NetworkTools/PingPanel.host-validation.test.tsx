@@ -1,9 +1,9 @@
 /**
  * Tests for PingPanel host-field validation (#1381).
  *
- * The Host field is routed through the shared {@link NetworkTextField}, so a
- * cleared host surfaces the inline `network-panel__field-error` affordance and
- * blocks Start rather than only greying the button.
+ * The Host field is composed from the shared ui {@link Field} + {@link Input}
+ * primitives, so a cleared host surfaces the inline `ui-field__msg` affordance
+ * and blocks Start rather than only greying the button.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -39,7 +39,7 @@ function hostInput(): HTMLInputElement {
 }
 
 function fieldError(): Element | null {
-  return container.querySelector(".network-panel__field-error");
+  return container.querySelector(".ui-field__msg");
 }
 
 describe("PingPanel — host validation", () => {

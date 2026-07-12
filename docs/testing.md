@@ -513,6 +513,10 @@ cargo test -p termihub-core --all-features --test network_resilience -- --nocapt
 docker compose -f tests/docker/docker-compose.yml --profile stress up -d
 cargo test -p termihub-core --all-features --test sftp_stress -- --nocapture
 
+# Include the FTP/FTPS server (requires ftp profile) + backend-independent smoke
+docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
+bash tests/docker/ftp-server/smoke-test.sh   # lists /pub over plain/explicit/implicit FTPS
+
 # Stop all containers
 docker compose -f tests/docker/docker-compose.yml --profile all down
 ```
@@ -886,6 +890,31 @@ for #1348.
 3. **Cancel** → the scan does not start. Re-run and **Start scan** → the scan
    proceeds.
 
+### File browser rename / new-file / new-folder / copy feedback (#1399)
+
+Verifies every FileBrowser mutating/clipboard action gives success/error
+feedback instead of resolving silently or only logging to the console. See PR
+for #1399.
+
+**New folder / New file.**
+
+1. Open the file browser on a local or SFTP directory. Click **New Folder**
+   (toolbar or background right-click → **New Folder**), type a name, press
+   **Enter** → the folder is created and a `Created folder "<name>"` success
+   toast appears.
+2. Repeat with **New File** → a `Created file "<name>"` success toast appears.
+3. Trigger a failure (e.g. create a folder whose name already exists, or in a
+   read-only directory) → a recoverable error toast naming the target appears
+   instead of a silent no-op.
+
+**Copy Name / Copy Path.**
+
+1. Right-click a file → **Copy Name** → a `Copied name` toast appears and the
+   file's name is on the clipboard (paste to verify).
+
+2. Right-click a file → **Copy Path** → a `Copied path` toast appears and the
+   file's full path is on the clipboard.
+
 ### Network Tools shared field validation (#1381)
 
 Verifies every Network Tools text input shares one label + input + inline-error
@@ -924,7 +953,6 @@ workspaces.
    toast appears.
 3. Repeat via the right-click **context menu → Delete** → the same confirmation
    dialog gates the deletion.
-   > > > > > > > origin/develop
 
 ### Embedded-server delete backend-failure toast (#1427)
 
@@ -988,6 +1016,39 @@ settings UI lands; until then, seed `shellIntegration.entries` in `settings.json
    from every right-click surface, and no `termihub_*` / `termiHubMenu` keys
    remain under `HKCU\Software\Classes\Directory\shell`,
    `…\Directory\Background\shell`, or `…\*\shell` (verify with `regedit`).
+
+### macOS app-level Services provider (#1409)
+
+Verifies the app-level **"Open in termiHub"** entry in the macOS **Services**
+menu is functional — i.e. it opens a session at the selected path rather than
+being an inert menu item. **macOS only** — the native Cocoa service provider is
+`#[cfg(target_os = "macos")]`-gated and needs a running GUI, so it cannot be
+automated (no WKWebView driver; see [ADR-5](#platform-support)). The app-level
+`NSServices` entry (`openInTermiHub`) is declared in `src-tauri/Info.plist`
+(#1369) and wired to `NSApp.servicesProvider` at startup (#1409). See PR #1449.
+
+Prerequisites: an **installed** `termiHub.app` bundle (a plain `cargo run`/dev
+build is not registered with Launch Services, so the OS will not surface its app
+Services). Build the bundle with `./scripts/build.sh`, then move
+`termiHub.app` into `/Applications` and launch it at least once.
+
+1. **Register with Launch Services.** After first launch, open **System
+   Settings → Keyboard → Keyboard Shortcuts → Services** (or right-click a
+   Finder item → **Services**) and confirm **"Open in termiHub"** is listed. If
+   it does not appear immediately, run
+   `/System/Library/CoreServices/pbs -flush` (or log out/in) and re-check.
+2. **Folder.** In Finder, **right-click a folder → Services → "Open in
+   termiHub"** → the running termiHub opens a new session at that folder.
+3. **File.** **Right-click a file → Services → "Open in termiHub"** → a session
+   opens at (or targeting) the selected file's path.
+4. **Multiple selection.** Select several items, invoke the Service → one
+   session opens per selected path.
+5. **No dead item.** Confirm the entry never does nothing: every invocation
+   results in a session (this is the regression the app-level entry previously
+   exhibited — it was declared but not backed by a provider).
+6. The per-entry **Automator Quick Action** bundles under
+   `~/Library/Services` (#1369) remain the primary path and continue to work
+   independently; both surfaces can coexist.
 
 ### Agent GitHub self-update (opt-in, #1355)
 
@@ -1335,6 +1396,27 @@ server automatically" left at its default/undecided):
    and that Retry re-provisions in place; on a missing-dependency failure an
    **Install** action appears. The screen must match the manual "X Servers → Set
    up" dialog (`XServerSetupContent.tsx`).
+
+### FTP client against the FTP fixture (#1333)
+
+Backs the FTP-client epic (#1331). The `ftp-server` Docker fixture (profile
+`ftp`, see [tests/docker/README.md](../tests/docker/README.md)) provides plain
+FTP, explicit FTPS, and implicit FTPS over a deterministic seeded `/pub` tree.
+The **backend-independent** listing/transfer path is already covered by
+`tests/docker/ftp-server/smoke-test.sh`; this manual step verifies the future
+termiHub FTP **client** end-to-end once the backend sub-issues
+(#1334/#1335/#1336/#1339) land.
+
+1. Start the fixture: `docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server`.
+2. In termiHub, add an FTP connection to `127.0.0.1:2401`, log in as
+   `ftpuser` / `ftppass` (or anonymous), and open it — the file browser should
+   list `/pub` with **3 folders (docs, images, data) and 14 files** of the
+   documented sizes (e.g. `data/dataset-1m.bin` = 1 048 576 bytes).
+3. Download `pub/data/dataset-1k.bin` and confirm it is exactly 1 024 bytes;
+   upload a file into `/uploads` as `ftpuser` (anonymous uploads must be denied).
+4. Repeat with **explicit FTPS** (TLS Mode = Explicit, port 2401) and **implicit
+   FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
+   plain-FTP insecure warning must appear only for TLS Mode = None.
 
 ### Remote system monitoring
 

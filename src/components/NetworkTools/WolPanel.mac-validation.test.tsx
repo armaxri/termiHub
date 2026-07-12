@@ -1,9 +1,9 @@
 /**
  * Tests for WolPanel MAC-field validation (#1381).
  *
- * The MAC Address field is routed through the shared {@link NetworkTextField};
- * a malformed MAC surfaces the inline error and blocks Send, while a valid MAC
- * clears the error and enables it.
+ * The MAC Address field is composed from the shared ui {@link Field} +
+ * {@link Input} primitives; a malformed MAC surfaces the inline error and
+ * blocks Send, while a valid MAC clears the error and enables it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -73,9 +73,7 @@ describe("WolPanel — MAC validation", () => {
     await act(async () => setInputValue(macInput(), "zz:zz"));
     await flush();
     expect(sendButton().disabled).toBe(true);
-    expect(container.querySelector(".network-panel__field-error")?.textContent).toContain(
-      "valid MAC address"
-    );
+    expect(container.querySelector(".ui-field__msg")?.textContent).toContain("valid MAC address");
   });
 
   it("enables Send and clears the error for a valid MAC", async () => {
@@ -83,6 +81,6 @@ describe("WolPanel — MAC validation", () => {
     await act(async () => setInputValue(macInput(), "AA:BB:CC:DD:EE:FF"));
     await flush();
     expect(sendButton().disabled).toBe(false);
-    expect(container.querySelector(".network-panel__field-error")).toBeNull();
+    expect(container.querySelector(".ui-field__msg")).toBeNull();
   });
 });

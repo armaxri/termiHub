@@ -14,6 +14,7 @@
 #   fault      - Network fault injection proxy
 #   stress     - SFTP stress test container
 #   network    - Network tools live test target (HTTP server on :8080)
+#   ftp        - FTP/FTPS server (plain :2401, implicit FTPS :2402) + seeded tree
 #   all        - Everything
 #
 # Networks:
@@ -279,6 +280,44 @@ services:
       timeout: 3s
       retries: 5
 
+  # ============================================================
+  # FTP Server (profile: ftp)
+  # ============================================================
+
+  # External vsftpd server (NOT the embedded libunftp) with a deterministic
+  # seeded /srv/ftp tree. One container, three endpoints over one tree:
+  #   * plain FTP + explicit FTPS (AUTH TLS) on the control port  -> :21
+  #   * implicit FTPS (TLS from the first byte)                    -> :990
+  # Logins: anonymous (read-only) and ftpuser/ftppass (read + write to uploads/).
+  #
+  # Passive ports must be advertised as the SAME number the host publishes, so
+  # the whole passive range is mapped 1:1 and offset per checkout via env (the
+  # entrypoint templates vsftpd's pasv_min/max_port from these same values).
+  ftp-server:
+    build: ./ftp-server
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ftp-server
+    environment:
+      PASV_ADDRESS: "127.0.0.1"
+      MAIN_PASV_MIN: "${TERMIHUB_TEST_FTP_PASV_MIN:-30000}"
+      MAIN_PASV_MAX: "${TERMIHUB_TEST_FTP_PASV_MAX:-30009}"
+      IMPLICIT_PASV_MIN: "${TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN:-30010}"
+      IMPLICIT_PASV_MAX: "${TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MAX:-30019}"
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_FTP_PORT:-2401}:21"
+      - "127.0.0.1:${TERMIHUB_TEST_FTPS_IMPLICIT_PORT:-2402}:990"
+      - "127.0.0.1:${TERMIHUB_TEST_FTP_PASV_MIN:-30000}-${TERMIHUB_TEST_FTP_PASV_MAX:-30009}:${TERMIHUB_TEST_FTP_PASV_MIN:-30000}-${TERMIHUB_TEST_FTP_PASV_MAX:-30009}"
+      - "127.0.0.1:${TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN:-30010}-${TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MAX:-30019}:${TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN:-30010}-${TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MAX:-30019}"
+    networks:
+      - test-net
+    profiles:
+      - ftp
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/21"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 networks:
   test-net:
     name: ${TERMIHUB_TEST_PROJECT:-termihub}-test-net
@@ -286,4 +325,4 @@ networks:
   jumphost-net:
     name: ${TERMIHUB_TEST_PROJECT:-termihub}-jumphost-net
     driver: bridge
-    internal: true  # No external access — only bastion bridges to test-net
+    internal: true # No external access — only bastion bridges to test-net

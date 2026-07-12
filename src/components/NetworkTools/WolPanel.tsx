@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
-import { Button, Tooltip, toast, Modal, Field, Input } from "@/components/ui";
+import { Button, Tooltip, toast, Modal, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
 import {
@@ -10,8 +10,6 @@ import {
   networkWolDeviceDelete,
 } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
-import { NetworkNumberField } from "./NetworkNumberField";
-import { NetworkTextField } from "./NetworkTextField";
 import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -156,30 +154,50 @@ export function WolPanel() {
       </div>
 
       <div className="network-panel__form">
-        <NetworkTextField
+        <Field
+          className="network-panel__field"
           label="MAC Address"
-          value={mac}
-          onChange={setMac}
-          error={macError}
-          inputRef={macRef}
-          placeholder="AA:BB:CC:DD:EE:FF"
-          data-testid="wol-mac"
-        />
-        <NetworkTextField
+          htmlFor="wol-mac"
+          error={macError ?? undefined}
+        >
+          <Input
+            ref={macRef}
+            id="wol-mac"
+            value={mac}
+            onChange={(e) => setMac(e.target.value)}
+            placeholder="AA:BB:CC:DD:EE:FF"
+            error={!!macError}
+            data-testid="wol-mac"
+          />
+        </Field>
+        <Field
+          className="network-panel__field"
           label="Broadcast"
-          value={broadcast}
-          onChange={setBroadcast}
-          error={broadcastError}
-          data-testid="wol-broadcast"
-        />
-        <NetworkNumberField
+          htmlFor="wol-broadcast"
+          error={broadcastError ?? undefined}
+        >
+          <Input
+            id="wol-broadcast"
+            value={broadcast}
+            onChange={(e) => setBroadcast(e.target.value)}
+            error={!!broadcastError}
+            data-testid="wol-broadcast"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Port"
-          value={port}
-          onChange={setPort}
-          error={portError}
-          small
-          data-testid="wol-port"
-        />
+          htmlFor="wol-port"
+          error={portError ?? undefined}
+        >
+          <NumberInput
+            id="wol-port"
+            value={port}
+            onValueChange={setPort}
+            error={!!portError}
+            data-testid="wol-port"
+          />
+        </Field>
       </div>
 
       {sentMessage && <div className="network-panel__info">{sentMessage}</div>}

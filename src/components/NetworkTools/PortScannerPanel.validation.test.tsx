@@ -1,9 +1,9 @@
 /**
  * Tests for PortScannerPanel host/ports validation (#1381).
  *
- * The Host / CIDR and Ports fields are routed through the shared
- * {@link NetworkTextField}; clearing either one surfaces the inline error and
- * blocks Start.
+ * The Host / CIDR and Ports fields are composed from the shared ui
+ * {@link Field} + {@link Input} primitives; clearing either one surfaces the
+ * inline error and blocks Start.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -67,9 +67,7 @@ describe("PortScannerPanel — host/ports validation", () => {
     });
     await act(async () => setInputValue(hostInput(), ""));
     expect(runButton().disabled).toBe(true);
-    expect(container.querySelector(".network-panel__field-error")?.textContent).toContain(
-      "Host is required"
-    );
+    expect(container.querySelector(".ui-field__msg")?.textContent).toContain("Host is required");
   });
 
   it("flags the ports inline and blocks Start once cleared", async () => {

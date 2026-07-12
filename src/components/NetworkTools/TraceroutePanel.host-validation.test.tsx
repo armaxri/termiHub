@@ -1,8 +1,9 @@
 /**
  * Tests for TraceroutePanel host-field validation (#1381).
  *
- * The Host field is routed through the shared {@link NetworkTextField}; a
- * cleared host surfaces the inline error affordance and blocks Start.
+ * The Host field is composed from the shared ui {@link Field} + {@link Input}
+ * primitives; a cleared host surfaces the inline error affordance and blocks
+ * Start.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -37,7 +38,7 @@ function hostInput(): HTMLInputElement {
 }
 
 function fieldError(): Element | null {
-  return container.querySelector(".network-panel__field-error");
+  return container.querySelector(".ui-field__msg");
 }
 
 describe("TraceroutePanel — host validation", () => {

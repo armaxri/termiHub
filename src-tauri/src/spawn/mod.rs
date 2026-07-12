@@ -25,6 +25,12 @@ pub mod registry;
 #[cfg(test)]
 mod tests;
 
+/// Tauri event name emitted (to the frontend) for each received
+/// [`SpawnRequest`], whether it arrives over the IPC rendezvous, as a
+/// self-handled pending request, or from the native macOS Services provider
+/// (#1409). Centralised so every producer stays in sync.
+pub const SPAWN_REQUEST_EVENT: &str = "spawn-request";
+
 /// A request to open a new session, originating from an external
 /// `termiHub spawn` invocation.
 ///

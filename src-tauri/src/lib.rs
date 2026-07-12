@@ -6,6 +6,10 @@ mod embedded_servers;
 /// subsystem (public so integration tests can drive `SftpSession` /
 /// `TransferRegistry` directly — issue #1245).
 pub mod files;
+/// Native macOS Services provider wiring the app-level "Open in termiHub"
+/// Services-menu entry (#1409). macOS-only.
+#[cfg(target_os = "macos")]
+mod macos_services;
 mod network;
 mod session;
 mod spawn;
@@ -185,6 +189,16 @@ pub fn run() {
                 use objc2_foundation::{NSString, NSUserDefaults};
                 let defaults = NSUserDefaults::standardUserDefaults();
                 defaults.setBool_forKey(false, &NSString::from_str("ApplePressAndHoldEnabled"));
+
+                // Register the native Cocoa Services provider so the app-level
+                // "Open in termiHub" Services-menu entry (declared in Info.plist
+                // by #1369) actually opens a session at the selected path (#1409).
+                // Best-effort: a failure leaves the entry inert but never blocks
+                // startup. The per-entry Automator Quick Action bundles remain
+                // the primary, self-contained path.
+                if let Err(e) = macos_services::register(app.handle().clone()) {
+                    tracing::warn!("could not register macOS Services provider: {e}");
+                }
             }
 
             // Inject AppHandle into the log capture layer so it can emit events
@@ -500,7 +514,7 @@ pub fn run() {
                     let emit_handle = app.handle().clone();
                     let handler: spawn::SpawnHandler =
                         Arc::new(move |req: spawn::SpawnRequest| match emit_handle
-                            .emit("spawn-request", &req)
+                            .emit(spawn::SPAWN_REQUEST_EVENT, &req)
                         {
                             Ok(()) => spawn::SpawnResponse::accepted(),
                             Err(e) => {
@@ -520,7 +534,7 @@ pub fn run() {
             // Process a spawn request this instance launched to handle itself
             // (no running instance accepted the pre-init forward).
             if let Some(req) = &pending_spawn {
-                if let Err(e) = app.handle().emit("spawn-request", req) {
+                if let Err(e) = app.handle().emit(spawn::SPAWN_REQUEST_EVENT, req) {
                     tracing::warn!("failed to emit pending spawn-request: {e}");
                 }
             }

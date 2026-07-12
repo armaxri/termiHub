@@ -21,3 +21,6 @@ pub mod docker;
 
 #[cfg(all(feature = "wsl", windows))]
 pub mod wsl;
+
+#[cfg(feature = "ftp")]
+pub mod ftp;
