@@ -208,6 +208,7 @@ Fixed strings — match exactly.
 | `http-monitor-expected-status` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-history` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-interval` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
+| `http-monitor-method` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-panel` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-start` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
 | `http-monitor-stop` | `src/components/NetworkTools/HttpMonitorPanel.tsx` |
@@ -296,7 +297,9 @@ Fixed strings — match exactly.
 | `open-connections-x-server-row` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-server-setup` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `open-connections-x-servers-section` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
+| `open-ports-filter` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-ports-panel` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
+| `open-ports-protocol` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-ports-refresh` | `src/components/NetworkTools/OpenPortsPanel.tsx` |
 | `open-saved-file-ask-again` | `src/components/Terminal/OpenSavedFileDialog.tsx` |
 | `open-saved-file-cancel` | `src/components/Terminal/OpenSavedFileDialog.tsx` |
@@ -739,7 +742,7 @@ where the component is used, not at the `data-testid` site.
 | `{paused ? `monitor-resume-${entry.key}` : `monitor-pause-${entry.key}`}` | `src/components/OpenConnections/OpenConnectionsModal.tsx` |
 | `{rest["data-testid"]}` | `src/components/ui/ConfirmDialog.tsx`, `src/components/ui/Modal.tsx`, `src/components/ui/Tooltip.tsx` |
 | `{rowTestIdPrefix ? `${rowTestIdPrefix}-${i}` : undefined}` | `src/components/NetworkTools/DiagnosticResultsTable.tsx` |
-| `{testId}` | `src/components/AgentVersionBadge/AgentVersionBadge.tsx`, `src/components/NetworkTools/NetworkNumberField.tsx`, `src/components/NetworkTools/NetworkTextField.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/SidebarListItem/SidebarListItem.tsx` |
+| `{testId}` | `src/components/AgentVersionBadge/AgentVersionBadge.tsx`, `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/SidebarListItem/SidebarListItem.tsx` |
 | `{testid}` | `src/components/ui/Select.tsx` |
 | `{tid("auth-method")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |
 | `{tid("connect-timeout")}` | `src/components/ConnectionEditor/JumpHostEntry.tsx` |

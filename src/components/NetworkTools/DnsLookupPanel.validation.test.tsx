@@ -1,9 +1,9 @@
 /**
  * Tests for DnsLookupPanel field validation (#1381).
  *
- * The Hostname (and optional Server) fields are routed through the shared
- * {@link NetworkTextField}; a cleared hostname surfaces the inline error and
- * blocks Run.
+ * The Hostname (and optional Server) fields are composed from the shared ui
+ * {@link Field} + {@link Input} primitives; a cleared hostname surfaces the
+ * inline error and blocks Run.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -34,7 +34,7 @@ function hostnameInput(): HTMLInputElement {
 }
 
 function fieldError(): Element | null {
-  return container.querySelector(".network-panel__field-error");
+  return container.querySelector(".ui-field__msg");
 }
 
 describe("DnsLookupPanel — hostname validation", () => {

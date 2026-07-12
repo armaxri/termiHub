@@ -1,10 +1,9 @@
 import { useState, useCallback } from "react";
 import { Play } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button, Field, Input, Select } from "@/components/ui";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { NetworkTextField } from "./NetworkTextField";
 import { validateHost } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useFormSubmit } from "@/hooks/useFormSubmit";
@@ -22,6 +21,9 @@ const RECORD_TYPES: DnsRecordType[] = [
   "PTR",
   "ANY",
 ];
+
+/** Record-type dropdown options (value === label), derived once. */
+const RECORD_TYPE_OPTIONS = RECORD_TYPES.map((t) => ({ value: t, label: t }));
 
 interface DnsLookupPanelProps {
   prefillHost?: string;
@@ -101,38 +103,48 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <NetworkTextField
+        <Field
+          className="network-panel__field"
           label="Hostname"
-          value={hostname}
-          onChange={setHostname}
-          error={hostnameError}
-          inputRef={hostnameRef}
-          placeholder="example.com"
-          data-testid="dns-hostname"
-        />
-        <label className="network-panel__field network-panel__field--small">
-          <span>Type</span>
-          <select
-            className="network-panel__select"
+          htmlFor="dns-hostname"
+          error={hostnameError ?? undefined}
+        >
+          <Input
+            ref={hostnameRef}
+            id="dns-hostname"
+            value={hostname}
+            onChange={(e) => setHostname(e.target.value)}
+            placeholder="example.com"
+            error={!!hostnameError}
+            data-testid="dns-hostname"
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Type"
+          htmlFor="dns-record-type"
+        >
+          <Select
             value={recordType}
-            onChange={(e) => setRecordType(e.target.value as DnsRecordType)}
+            onChange={(value) => setRecordType(value as DnsRecordType)}
+            options={RECORD_TYPE_OPTIONS}
+            aria-label="Record type"
             data-testid="dns-record-type"
-          >
-            {RECORD_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <NetworkTextField
+          />
+        </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
           label="Server (auto)"
-          value={server}
-          onChange={setServer}
-          small
-          placeholder="8.8.8.8"
-          data-testid="dns-server"
-        />
+          htmlFor="dns-server"
+        >
+          <Input
+            id="dns-server"
+            value={server}
+            onChange={(e) => setServer(e.target.value)}
+            placeholder="8.8.8.8"
+            data-testid="dns-server"
+          />
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}
