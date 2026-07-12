@@ -45,6 +45,14 @@ export interface RovingListNav<T, E extends HTMLElement = HTMLElement> {
   /** Return roving focus to the top of the list (e.g. after navigation). */
   reset: () => void;
   /**
+   * Move roving focus to `index`: mark it active and move DOM focus to its row.
+   *
+   * The shared keydown handler only moves focus for the keys it owns; a
+   * consumer that adds its own keys (e.g. a tree's ArrowLeft/ArrowRight to jump
+   * to a parent/child row) calls this to keep the roving focus in sync.
+   */
+  focusRow: (index: number) => void;
+  /**
    * Build the list's `onKeyDown` handler from the supplied callbacks. Call this
    * in render *after* the consumer's navigation/selection callbacks exist; the
    * returned handler closes over the current `items` and `activeIndex`.
@@ -104,6 +112,11 @@ export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
   }, [items.length]);
 
   const reset = useCallback(() => setActiveIndex(0), []);
+
+  const focusRow = useCallback((index: number) => {
+    setActiveIndex(index);
+    rowRefs.current[index]?.focus();
+  }, []);
 
   const makeKeyDownHandler = useCallback(
     (callbacks: RovingListNavCallbacks<T>) => (e: React.KeyboardEvent) => {
@@ -189,5 +202,5 @@ export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
     [items, activeIndex]
   );
 
-  return { activeIndex, setActiveIndex, getRowRef, reset, makeKeyDownHandler };
+  return { activeIndex, setActiveIndex, getRowRef, reset, focusRow, makeKeyDownHandler };
 }
