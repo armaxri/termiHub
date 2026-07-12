@@ -8,16 +8,19 @@
 //! * **Unix `ls -l`** and **Windows/DOS** `LIST` output, parsed (in that order)
 //!   by [`parse_list_line`].
 //!
-//! Parsing of the individual line formats is delegated to
-//! [`suppaftp::list::File`], which covers POSIX (`ls -l`), DOS and MLSx lines.
-//! This module owns the mapping into [`FileEntry`] (ISO-8601 timestamps, POSIX
-//! `rwxrwxrwx` permission strings, path joining, symlink handling) plus a
-//! byte-level name decode (UTF-8 with a Latin-1 fallback) and the skipping of
-//! malformed / `.` / `..` / `total …` lines.
+//! Parsing of the `LIST` line formats is delegated to
+//! [`suppaftp::list::File`], which covers POSIX (`ls -l`) and DOS lines. MLSD
+//! facts lines are parsed here directly (see [`parse_mlsd_line`]) because
+//! suppaftp's MLSx parser rejects common real-world output (four-digit
+//! `UNIX.mode` values and `type=cdir` / `type=pdir` markers). This module owns
+//! the mapping into [`FileEntry`] (ISO-8601 timestamps, POSIX `rwxrwxrwx`
+//! permission strings, path joining, symlink handling) plus a byte-level name
+//! decode (UTF-8 with a Latin-1 fallback) and the skipping of malformed /
+//! `.` / `..` / `total …` lines.
 
 use suppaftp::list::{File as FtpFile, PosixPexQuery};
 
-use crate::files::utils::chrono_from_epoch;
+use crate::files::utils::{chrono_from_epoch, format_permissions};
 use crate::files::FileEntry;
 
 /// Decode raw listing bytes as UTF-8, falling back to Latin-1 (ISO-8859-1).
@@ -33,18 +36,91 @@ pub(crate) fn decode_bytes(raw: &[u8]) -> String {
     }
 }
 
-/// Parse one MLSD facts line into a [`FileEntry`], rooted at `dir`.
+/// Parse one MLSD facts line (RFC 3659 §7.2) into a [`FileEntry`], rooted at
+/// `dir`.
 ///
-/// Returns `None` for lines the crate cannot parse and for `.` / `..` / empty
-/// names, so malformed lines are skipped rather than failing the whole listing.
+/// The line is `fact=value;fact=value;…; name` — a semicolon-separated set of
+/// facts, then a single space, then the entry name. Returns `None` for `.` /
+/// `..` (including the `type=cdir` / `type=pdir` self/parent entries), empty
+/// names, and any entry without a `type` of `dir` / `file` / `link`.
+///
+/// This is parsed directly (not via [`suppaftp::list::File::from_mlsx_line`])
+/// because that parser rejects real-world server output: it errors on
+/// four-digit `UNIX.mode` values (e.g. ProFTPD's `UNIX.mode=0755`) and on the
+/// `type=cdir` / `type=pdir` markers, which would silently drop every entry.
 pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
     let line = decode_bytes(raw);
-    let file = FtpFile::from_mlsx_line(&line).ok()?;
-    if is_ignored_name(file.name()) {
+
+    // Split the trailing " name" off the facts. Per RFC 3659 the name follows
+    // the final ';' and a single space.
+    let (facts, name) = line.rsplit_once(';')?;
+    let name = name.strip_prefix(' ').unwrap_or(name);
+    // MLSD reports base names, but MLST (single-entry) echoes the full pathname;
+    // reduce to the base name so `FileEntry.name` is always a leaf.
+    let name = name.rsplit('/').next().unwrap_or(name);
+    if is_ignored_name(name) {
         return None;
     }
-    // MLSD carries machine-readable permissions (default or `unix.mode`).
-    Some(entry_from_file(&file, dir, true))
+
+    let mut type_val: Option<String> = None;
+    let mut size: u64 = 0;
+    let mut modified = String::new();
+    // MLSD carries machine-readable permissions; default to `rwxrwxrwx` when no
+    // `UNIX.mode` fact is present (mirroring the previous behaviour).
+    let mut permissions = "rwxrwxrwx".to_string();
+
+    for fact in facts.split(';') {
+        let Some((key, value)) = fact.split_once('=') else {
+            continue;
+        };
+        match key.trim().to_ascii_lowercase().as_str() {
+            "type" => type_val = Some(value.to_ascii_lowercase()),
+            "size" => size = value.parse().unwrap_or(0),
+            "modify" => modified = parse_mlsx_time(value),
+            "unix.mode" => {
+                if let Ok(mode) = u32::from_str_radix(value.trim(), 8) {
+                    permissions = format_permissions(mode & 0o777);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Only real entries: `cdir` / `pdir` (self/parent) and unknown/missing
+    // types are skipped.
+    let is_directory = match type_val.as_deref() {
+        Some("dir") => true,
+        Some("file") | Some("link") => false,
+        _ => return None,
+    };
+
+    Some(FileEntry {
+        name: name.to_string(),
+        path: join_path(dir, name),
+        is_directory,
+        size,
+        modified,
+        permissions: Some(permissions),
+    })
+}
+
+/// Reformat an MLSD `modify` fact (`YYYYMMDDHHMMSS`, optionally with a
+/// `.fraction`, in UTC per RFC 3659) as an ISO-8601 timestamp. Returns an empty
+/// string for values that are not a 14+ digit timestamp.
+fn parse_mlsx_time(value: &str) -> String {
+    let digits = value.split('.').next().unwrap_or(value);
+    if digits.len() < 14 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return String::new();
+    }
+    format!(
+        "{}-{}-{}T{}:{}:{}Z",
+        &digits[0..4],
+        &digits[4..6],
+        &digits[6..8],
+        &digits[8..10],
+        &digits[10..12],
+        &digits[12..14],
+    )
 }
 
 /// Parse one `LIST` line (Unix `ls -l` first, then Windows/DOS) into a
@@ -337,6 +413,65 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+            },
+        ];
+        for case in &cases {
+            check(parse_mlsd_line(case.line, DIR), case);
+        }
+    }
+
+    /// Real ProFTPD MLSD output: rich fact set with a four-digit `UNIX.mode`,
+    /// `perm=`, `unique=`, `UNIX.*` facts, and `type=cdir` / `type=pdir` self /
+    /// parent markers. suppaftp's own MLSx parser rejects these, which is why
+    /// the file browser parses MLSD directly. Regression for issue #1456.
+    #[test]
+    fn parses_proftpd_mlsd_lines() {
+        let cases = [
+            // Self entry (cdir) → skipped like `.`.
+            Case {
+                line: b"modify=20260712220726;perm=fle;type=cdir;unique=43U1000329;UNIX.group=0;UNIX.groupname=ftpuser;UNIX.mode=0755;UNIX.owner=0;UNIX.ownername=ftpuser; .",
+                name: None,
+                is_dir: false,
+                size: 0,
+                modified: "",
+                perms: None,
+            },
+            // Parent entry (pdir) → skipped like `..`.
+            Case {
+                line: b"modify=20260712220726;perm=fle;type=pdir;unique=43UCEF2BD;UNIX.group=65534;UNIX.groupname=ftpuser;UNIX.mode=0755;UNIX.owner=101;UNIX.ownername=ftpuser; ..",
+                name: None,
+                is_dir: false,
+                size: 0,
+                modified: "",
+                perms: None,
+            },
+            // Directory with a four-digit UNIX.mode.
+            Case {
+                line: b"modify=20260712220726;perm=fle;type=dir;unique=43U1459CB7;UNIX.group=0;UNIX.groupname=ftpuser;UNIX.mode=0755;UNIX.owner=0;UNIX.ownername=ftpuser; data",
+                name: Some("data"),
+                is_dir: true,
+                size: 0,
+                modified: "2026-07-12T22:07:26Z",
+                perms: Some("rwxr-xr-x"),
+            },
+            // Regular file with size + four-digit UNIX.mode.
+            Case {
+                line: b"modify=20260712220726;perm=adfr;size=61;type=file;unique=43U100032A;UNIX.group=0;UNIX.groupname=ftpuser;UNIX.mode=0644;UNIX.owner=0;UNIX.ownername=ftpuser; readme.txt",
+                name: Some("readme.txt"),
+                is_dir: false,
+                size: 61,
+                modified: "2026-07-12T22:07:26Z",
+                perms: Some("rw-r--r--"),
+            },
+            // MLST (single-entry) echoes the full pathname as the name; it must
+            // be reduced to the base name (DIR here is the entry's parent).
+            Case {
+                line: b"type=file;size=61;modify=20260712220726;UNIX.mode=0644; /pub/readme.txt",
+                name: Some("readme.txt"),
+                is_dir: false,
+                size: 61,
+                modified: "2026-07-12T22:07:26Z",
+                perms: Some("rw-r--r--"),
             },
         ];
         for case in &cases {
