@@ -1,5 +1,3 @@
-# Changes for dev1/feature/1360-master-password-ux
-
 ### Added
 
 - Caps Lock warning on every password field. The shared `PasswordInput` now detects
