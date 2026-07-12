@@ -342,6 +342,23 @@ pub async fn sftp_write_file_content(
     .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
+/// Report whether the SFTP session's SSH connection can open an exec channel
+/// (i.e. run remote commands such as `sudo`).
+///
+/// Returns `true` for a normal SSH+shell connection and `false` for an
+/// SFTP-only (`ForceCommand internal-sftp`) or relayed connection. Used by the
+/// file editor to know whether privilege-elevated writes are possible.
+#[tauri::command]
+pub async fn sftp_has_exec_capability(
+    session_id: String,
+    manager: State<'_, SftpManager>,
+) -> Result<bool, TerminalError> {
+    let session = manager.get_session(&session_id)?;
+    tokio::task::spawn_blocking(move || Ok(lock_session(&session)?.has_exec_capability()))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+}
+
 // --- VS Code integration ---
 
 #[derive(Clone, Serialize)]

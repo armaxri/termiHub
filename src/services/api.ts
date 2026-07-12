@@ -761,6 +761,18 @@ export async function sftpWriteFileContent(
   await invoke("sftp_write_file_content", { sessionId, remotePath, content });
 }
 
+/**
+ * Report whether the SFTP session's SSH connection can open an exec channel
+ * (i.e. run remote commands such as `sudo`).
+ *
+ * Returns `true` for a normal SSH+shell connection and `false` for an
+ * SFTP-only or relayed connection. Lets the editor know whether
+ * privilege-elevated writes are possible.
+ */
+export async function sftpHasExecCapability(sessionId: string): Promise<boolean> {
+  return await invoke<boolean>("sftp_has_exec_capability", { sessionId });
+}
+
 // --- Session-based file browsing commands ---
 // These work with any connection type that has file browser capability
 // (including remote agent sessions) by using the terminal session ID directly.

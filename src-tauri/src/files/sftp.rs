@@ -6,6 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
 
 use termihub_core::backends::ssh::handler::SshSession;
+use termihub_core::backends::ssh::{ssh_exec_with_stdin, SshExecOutput};
 use termihub_core::errors::FileError;
 use termihub_core::files::utils::{chrono_from_epoch, format_permissions};
 use termihub_core::files::{FileBackend, FileEntry};
@@ -44,13 +45,31 @@ fn drain_sessions<V>(sessions: &Mutex<HashMap<String, V>>) -> usize {
     count
 }
 
+/// Marker echoed by the exec-capability probe.
+///
+/// A working shell/exec channel echoes it back on stdout; an SFTP-only
+/// connection (`ForceCommand internal-sftp`) or a relayed connection cannot run
+/// the command, so the marker never reaches stdout. Kept in sync with the
+/// integration test in `core/tests/ssh_exec_with_stdin.rs`.
+const EXEC_PROBE_MARKER: &str = "termihub_exec_probe_ok";
+
+/// Decide, from an exec probe's captured output, whether the connection can run
+/// remote commands (i.e. an exec channel is usable).
+///
+/// Keyed off the marker in stdout (not just a zero exit) so an SFTP-only server
+/// that quietly closes the forced-subsystem channel with exit 0 is still
+/// reported as not capable.
+fn exec_probe_indicates_capability(output: &SshExecOutput) -> bool {
+    output.exit_status == 0 && output.stdout.contains(EXEC_PROBE_MARKER)
+}
+
 /// SFTP session backed by a dedicated SSH connection.
 ///
 /// The canonical implementation is now
 /// [`termihub_core::backends::ssh::SftpFileBrowser`](termihub_core::backends::ssh).
 /// This struct is kept for the legacy SFTP command API used by the desktop file browser.
 pub struct SftpSession {
-    _session: SshSession,
+    session: SshSession,
     sftp: RusshSftp,
 }
 
@@ -76,9 +95,27 @@ impl SftpSession {
             })
         })?;
 
-        Ok(Self {
-            _session: session,
-            sftp,
+        Ok(Self { session, sftp })
+    }
+
+    /// Report whether an exec (command) channel can be opened and used on the
+    /// retained SSH connection.
+    ///
+    /// Runs a tiny probe that echoes a known marker back over an exec channel.
+    /// A normal SSH+shell connection echoes it (`true`); an SFTP-only or
+    /// relayed connection (e.g. `ForceCommand internal-sftp`) cannot run the
+    /// command, so the marker never appears (`false`). Lets the file editor
+    /// know whether privilege-elevated writes — which need a shell to run
+    /// `sudo` — are possible for this connection.
+    pub fn has_exec_capability(&self) -> bool {
+        let probe = format!("echo {EXEC_PROBE_MARKER}");
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match ssh_exec_with_stdin(&self.session, &probe, "").await {
+                    Ok(output) => exec_probe_indicates_capability(&output),
+                    Err(_) => false,
+                }
+            })
         })
     }
 
@@ -91,7 +128,7 @@ impl SftpSession {
     /// navigation live on the browsing channel during a transfer.
     pub async fn open_dedicated_sftp(&self) -> Result<RusshSftp, TerminalError> {
         let channel = self
-            ._session
+            .session
             .channel_open_session()
             .await
             .map_err(|e| TerminalError::SshError(format!("transfer channel open: {e}")))?;
@@ -575,6 +612,36 @@ impl SftpManager {
 mod tests {
     use super::*;
     use std::thread;
+
+    fn probe_output(stdout: &str, exit_status: i32) -> SshExecOutput {
+        SshExecOutput {
+            stdout: stdout.to_string(),
+            exit_status,
+            ..Default::default()
+        }
+    }
+
+    /// A shell connection echoes the probe marker with exit 0 → capable.
+    #[test]
+    fn exec_probe_true_when_marker_echoed_and_exit_zero() {
+        let output = probe_output(&format!("{EXEC_PROBE_MARKER}\n"), 0);
+        assert!(exec_probe_indicates_capability(&output));
+    }
+
+    /// An SFTP-only channel yields no marker (e.g. binary SFTP bytes, even at
+    /// exit 0) → not capable.
+    #[test]
+    fn exec_probe_false_when_marker_absent() {
+        let output = probe_output("\u{0}\u{0}sftp-subsystem-bytes", 0);
+        assert!(!exec_probe_indicates_capability(&output));
+    }
+
+    /// A non-zero exit means the probe did not run cleanly → not capable.
+    #[test]
+    fn exec_probe_false_on_nonzero_exit() {
+        let output = probe_output(&format!("{EXEC_PROBE_MARKER}\n"), 1);
+        assert!(!exec_probe_indicates_capability(&output));
+    }
 
     /// The lock helper must map a poisoned mutex to a recoverable
     /// `TerminalError` instead of panicking (audit GAP C1, #1143).
