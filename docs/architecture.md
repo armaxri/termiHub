@@ -1319,6 +1319,27 @@ A first-time, download-backed Windows provision is gated on a connect-time conse
 
 **Trade-off:** Three code paths instead of one. The Windows path installs VcXsrv via **winget** and the macOS path installs XQuartz via **Homebrew** (#1318) — termiHub runs each as a separate process but does not host/redistribute them, so neither carries a redistribution obligation (the earlier GPL-3.0 pinned-artifact concern, #1076, was dropped with that approach). Full E2E rendering cannot be automated in CI, so the cross-platform release matrix is a documented human step.
 
+### ADR-11: Per-Process Agent Connection Tracking (Multi-Host Model)
+
+**Context:** The remote-agent update strategy epic (#1345, concept `docs/concepts/backlog/remote-agent-update-strategy.html`) needs an agent to answer "who else is connected?" so a desktop can update a shared agent without silently killing another desktop's sessions. The concept assumed **one shared agent process that knows all connected clients**. The code does not work that way: `AgentConnectionManager::connect_agent` (`src-tauri/src/terminal/agent_manager.rs`) opens a **russh exec channel per desktop** and runs `termihub-agent --stdio` (`RemoteAgentConfig::agent_exec_command`), so there is **one agent OS process per desktop→agent channel**, and that process's `AgentHandler`/`HandlerState` serves exactly one client. The `--listen` TCP mode (`agent/src/io/tcp.rs`) shares a `SessionManager` across connections but still accepts **one client at a time**. The only host-side state shared across `--stdio` workers is the layer of detached session **daemons** (`termihub-agent --daemon <id>`, unix socket / Windows named pipe), which outlive the worker and replay a ring buffer on re-attach. This gap (SI-1, #1346) is the foundational risk for every cross-client feature in the epic.
+
+Three options were prototyped against the real code:
+
+- **(a) A new host-side coordinator/supervisor process** that all `--stdio` workers and daemons register with.
+- **(b) Switch the desktop→agent transport to the existing `--listen` TCP shared server** (one agent, many clients).
+- **(c) Build cross-client awareness on the already-shared persistent-daemon layer**, and keep a per-process registry of the one client each worker serves.
+
+**Decision:** Adopt **(c)**. Each agent process owns a `ConnectionRegistry` (`agent/src/client_registry.rs`) that records its single connected client — `ConnectedClient { client_id, client, client_version, connected_since }` — populated from `initialize` (`handler/dispatch.rs::register_initialize`) and cleared on disconnect by the transport loops (`io/stdio.rs`, `io/tcp.rs`). Cross-client/cross-worker coordination for later epic phases (`list_connections`, coordinated update broadcast) will be built by **extending the existing daemon layer** to carry client identity, **not** by introducing a new coordinator process (a) or changing the transport (b). The registry is the within-process building block that ships now; it is shaped for many clients (add/remove/list/get) so the same API serves the `--listen` path and any future coordination layer. Reject (a) and (b).
+
+**Rationale:**
+
+- **Topology reality.** One `--stdio` process per desktop is fixed by the SSH-exec transport; a process genuinely knows one client, so per-process tracking is the honest primitive. The daemons are the _only_ thing already shared across workers on a host, and the epic's deferred-update approach already "leans entirely on" them surviving a binary swap — so they are the natural coordination substrate.
+- **Security.** `--stdio` runs inside the existing authenticated SSH channel and opens no new socket. Option (b) would require a listening TCP port on every remote host plus its own authentication and port management — a real attack-surface regression over SSH-tunneled stdio.
+- **Retry / streaming.** Daemons already persist across agent-worker restarts and replay their ring buffer on re-attach; extending them keeps cross-client visibility that survives an agent binary swap. A new coordinator (a) would have to re-implement that restart/streaming story from scratch.
+- **Platform coverage.** The daemon layer already works on all three platforms (unix domain socket / Windows named pipe; Windows agent parity landed in #771), so (c) inherits the 3-platform matrix. A new long-lived coordinator (a) would need fresh cross-platform daemonization, and (b)'s single-client-at-a-time accept loop does not even deliver concurrent multi-client visibility without further rework.
+
+**Trade-off:** The shipped registry does not yet give cross-agent visibility on its own — in `--stdio` it holds exactly one client — so the epic's `list_connections`/broadcast features still need the follow-up daemon-layer work chosen here. That is deliberate: SI-1 fixes the model and lands the queryable primitive; the coordination surface is built on top in later sub-issues. RPC methods, UI, and update logic are explicitly out of scope for #1346.
+
 ---
 
 ## 10. Quality Requirements
