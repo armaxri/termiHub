@@ -616,6 +616,7 @@ pub fn run() {
             commands::shell_integration::install_shell_integration,
             commands::shell_integration::uninstall_shell_integration,
             commands::shell_integration::save_shell_integration_settings,
+            commands::spawn::resolve_container_spawn,
             commands::connection::move_connection_to_file,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,

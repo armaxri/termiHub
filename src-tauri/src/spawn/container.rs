@@ -44,15 +44,18 @@ pub struct ContainerSpawn {
 /// `--container-image` value from the request, then a saved per-entry
 /// preference, then [`DEFAULT_CONTAINER_IMAGE`]. Blank values are ignored.
 pub fn resolve_container_image(explicit: Option<&str>, saved_pref: Option<&str>) -> String {
-    let _ = (explicit, saved_pref);
-    todo!("implemented in the feat commit")
+    non_blank(explicit)
+        .or(non_blank(saved_pref))
+        .unwrap_or(DEFAULT_CONTAINER_IMAGE)
+        .to_string()
 }
 
 /// Resolve the in-container mount target, defaulting to
 /// [`DEFAULT_MOUNT_TARGET`] when the request does not specify one.
 pub fn resolve_mount_target(explicit: Option<&str>) -> String {
-    let _ = explicit;
-    todo!("implemented in the feat commit")
+    non_blank(explicit)
+        .unwrap_or(DEFAULT_MOUNT_TARGET)
+        .to_string()
 }
 
 /// Resolve the host directory to bind-mount from a spawn `location`.
@@ -61,8 +64,13 @@ pub fn resolve_mount_target(explicit: Option<&str>) -> String {
 /// (so "open in termiHub" on a file mounts its folder). A path that does not
 /// exist is returned unchanged so the caller/daemon surfaces a clear error.
 pub fn resolve_host_directory(location: &str) -> String {
-    let _ = location;
-    todo!("implemented in the feat commit")
+    let path = std::path::Path::new(location);
+    if path.is_file() {
+        if let Some(parent) = path.parent() {
+            return parent.to_string_lossy().into_owned();
+        }
+    }
+    location.to_string()
 }
 
 /// Build the [`DockerConfig`] for a directory-mount spawn: a single read-write
@@ -70,15 +78,39 @@ pub fn resolve_host_directory(location: &str) -> String {
 /// (so it opens `cd`'d there), and `remove_on_exit = false` so closing the
 /// session stops — but does not remove — the container.
 pub fn build_spawn_docker_config(host_dir: &str, image: &str, mount: &str) -> DockerConfig {
-    let _ = (host_dir, image, mount);
-    todo!("implemented in the feat commit")
+    DockerConfig {
+        image: image.to_string(),
+        volumes: vec![VolumeMount {
+            host_path: host_dir.to_string(),
+            container_path: mount.to_string(),
+            read_only: false,
+        }],
+        working_directory: Some(mount.to_string()),
+        // Stop — but do not remove — the container when the session closes, so
+        // the user can restart or inspect it afterwards (#1372).
+        remove_on_exit: false,
+        ..DockerConfig::default()
+    }
 }
 
 /// Resolve a full [`ContainerSpawn`] from a spawn request and an optional saved
 /// per-entry image preference.
 pub fn build_container_spawn(req: &SpawnRequest, saved_image_pref: Option<&str>) -> ContainerSpawn {
-    let _ = (req, saved_image_pref);
-    todo!("implemented in the feat commit")
+    let image = resolve_container_image(req.container_image.as_deref(), saved_image_pref);
+    let mount = resolve_mount_target(req.container_mount.as_deref());
+    let host_dir = resolve_host_directory(req.location.as_deref().unwrap_or("."));
+
+    let config = build_spawn_docker_config(&host_dir, &image, &mount);
+    // Serializing the config yields the exact camelCase JSON the Docker
+    // backend's `parse_docker_settings` consumes, so there is one source of
+    // truth for the field shape.
+    let settings = serde_json::to_value(&config).unwrap_or_else(|_| serde_json::json!({}));
+
+    ContainerSpawn {
+        settings,
+        title: format!("Container: {image} (Spawned)"),
+        spawned: true,
+    }
 }
 
 /// Ignore blank/whitespace-only overrides so an empty CLI flag falls through to
@@ -157,7 +189,9 @@ mod tests {
         std::fs::write(&file, b"x").expect("write temp file");
         let resolved = resolve_host_directory(&file.to_string_lossy());
         std::fs::remove_file(&file).ok();
-        assert_eq!(resolved, dir.to_string_lossy());
+        // Compare against the file's own parent (temp_dir may carry a trailing
+        // separator on some platforms that `Path::parent` normalizes away).
+        assert_eq!(resolved, file.parent().unwrap().to_string_lossy());
     }
 
     #[test]

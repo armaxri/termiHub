@@ -311,8 +311,16 @@ fn generate_container_name() -> String {
 /// directory-mount container spawn (#1372), so the bind format has one source
 /// of truth and is unit-testable without a running daemon.
 pub(crate) fn build_volume_binds(volumes: &[VolumeMount]) -> Vec<String> {
-    let _ = volumes;
-    todo!("implemented in the feat commit")
+    volumes
+        .iter()
+        .map(|v| {
+            let mut bind = format!("{}:{}", v.host_path, v.container_path);
+            if v.read_only {
+                bind.push_str(":ro");
+            }
+            bind
+        })
+        .collect()
 }
 
 #[async_trait::async_trait]
@@ -568,17 +576,7 @@ impl ConnectionType for Docker {
             .collect();
 
         // Build volume binds.
-        let binds: Vec<String> = config
-            .volumes
-            .iter()
-            .map(|v| {
-                let mut bind = format!("{}:{}", v.host_path, v.container_path);
-                if v.read_only {
-                    bind.push_str(":ro");
-                }
-                bind
-            })
-            .collect();
+        let binds = build_volume_binds(&config.volumes);
 
         // Create container configuration.
         let container_config = Config {
@@ -622,13 +620,17 @@ impl ConnectionType for Docker {
 
         info!(container_id = %container_id, "Container started");
 
-        // Create an interactive exec instance with the shell.
+        // Create an interactive exec instance with the shell. When a working
+        // directory is configured, start the exec there so the shell opens
+        // `cd`'d into it — this is how a directory-mount container spawn (#1372)
+        // lands the user in the bind-mounted directory without echoing a `cd`.
         let exec_config = CreateExecOptions {
             attach_stdin: Some(true),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
             tty: Some(true),
             cmd: Some(vec![shell]),
+            working_dir: config.working_directory.clone(),
             ..Default::default()
         };
 
