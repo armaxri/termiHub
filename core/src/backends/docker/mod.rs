@@ -19,7 +19,7 @@ use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
-use crate::config::{ContainerRuntime, DockerConfig};
+use crate::config::{ContainerRuntime, DockerConfig, VolumeMount};
 use crate::connection::{
     Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SelectOption,
     SettingsField, SettingsGroup, SettingsSchema,
@@ -303,6 +303,26 @@ fn generate_container_name() -> String {
     format!("{CONTAINER_PREFIX}-{ts}-{pid}")
 }
 
+/// Build the `HostConfig.binds` strings for a set of [`VolumeMount`]s.
+///
+/// Each mount renders as `"<host_path>:<container_path>"`, with a trailing
+/// `:ro` appended for read-only mounts — the same syntax `docker run -v` and
+/// `podman run -v` accept. Used by the interactive connect path and by the
+/// directory-mount container spawn (#1372), so the bind format has one source
+/// of truth and is unit-testable without a running daemon.
+pub(crate) fn build_volume_binds(volumes: &[VolumeMount]) -> Vec<String> {
+    volumes
+        .iter()
+        .map(|v| {
+            let mut bind = format!("{}:{}", v.host_path, v.container_path);
+            if v.read_only {
+                bind.push_str(":ro");
+            }
+            bind
+        })
+        .collect()
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Docker {
     fn type_id(&self) -> &str {
@@ -556,17 +576,7 @@ impl ConnectionType for Docker {
             .collect();
 
         // Build volume binds.
-        let binds: Vec<String> = config
-            .volumes
-            .iter()
-            .map(|v| {
-                let mut bind = format!("{}:{}", v.host_path, v.container_path);
-                if v.read_only {
-                    bind.push_str(":ro");
-                }
-                bind
-            })
-            .collect();
+        let binds = build_volume_binds(&config.volumes);
 
         // Create container configuration.
         let container_config = Config {
@@ -610,13 +620,17 @@ impl ConnectionType for Docker {
 
         info!(container_id = %container_id, "Container started");
 
-        // Create an interactive exec instance with the shell.
+        // Create an interactive exec instance with the shell. When a working
+        // directory is configured, start the exec there so the shell opens
+        // `cd`'d into it — this is how a directory-mount container spawn (#1372)
+        // lands the user in the bind-mounted directory without echoing a `cd`.
         let exec_config = CreateExecOptions {
             attach_stdin: Some(true),
             attach_stdout: Some(true),
             attach_stderr: Some(true),
             tty: Some(true),
             cmd: Some(vec![shell]),
+            working_dir: config.working_directory.clone(),
             ..Default::default()
         };
 
@@ -1155,6 +1169,39 @@ mod tests {
             errors.iter().any(|e| e.field.contains("containerPath")),
             "expected containerPath error: {errors:?}"
         );
+    }
+
+    // --- Volume bind construction tests (#1372) ---
+
+    fn vol(host: &str, container: &str, read_only: bool) -> VolumeMount {
+        VolumeMount {
+            host_path: host.to_string(),
+            container_path: container.to_string(),
+            read_only,
+        }
+    }
+
+    #[test]
+    fn build_volume_binds_single_read_write() {
+        let binds = build_volume_binds(&[vol("/home/user/proj", "/workspace", false)]);
+        assert_eq!(binds, vec!["/home/user/proj:/workspace".to_string()]);
+    }
+
+    #[test]
+    fn build_volume_binds_read_only_appends_ro() {
+        let binds = build_volume_binds(&[vol("/data", "/mnt/data", true)]);
+        assert_eq!(binds, vec!["/data:/mnt/data:ro".to_string()]);
+    }
+
+    #[test]
+    fn build_volume_binds_multiple_preserve_order() {
+        let binds = build_volume_binds(&[vol("/a", "/x", false), vol("/b", "/y", true)]);
+        assert_eq!(binds, vec!["/a:/x".to_string(), "/b:/y:ro".to_string()]);
+    }
+
+    #[test]
+    fn build_volume_binds_empty_is_empty() {
+        assert!(build_volume_binds(&[]).is_empty());
     }
 
     // --- Settings parsing tests ---
