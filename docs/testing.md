@@ -995,6 +995,39 @@ settings UI lands; until then, seed `shellIntegration.entries` in `settings.json
    remain under `HKCU\Software\Classes\Directory\shell`,
    `…\Directory\Background\shell`, or `…\*\shell` (verify with `regedit`).
 
+### macOS app-level Services provider (#1409)
+
+Verifies the app-level **"Open in termiHub"** entry in the macOS **Services**
+menu is functional — i.e. it opens a session at the selected path rather than
+being an inert menu item. **macOS only** — the native Cocoa service provider is
+`#[cfg(target_os = "macos")]`-gated and needs a running GUI, so it cannot be
+automated (no WKWebView driver; see [ADR-5](#platform-support)). The app-level
+`NSServices` entry (`openInTermiHub`) is declared in `src-tauri/Info.plist`
+(#1369) and wired to `NSApp.servicesProvider` at startup (#1409). See PR #1449.
+
+Prerequisites: an **installed** `termiHub.app` bundle (a plain `cargo run`/dev
+build is not registered with Launch Services, so the OS will not surface its app
+Services). Build the bundle with `./scripts/build.sh`, then move
+`termiHub.app` into `/Applications` and launch it at least once.
+
+1. **Register with Launch Services.** After first launch, open **System
+   Settings → Keyboard → Keyboard Shortcuts → Services** (or right-click a
+   Finder item → **Services**) and confirm **"Open in termiHub"** is listed. If
+   it does not appear immediately, run
+   `/System/Library/CoreServices/pbs -flush` (or log out/in) and re-check.
+2. **Folder.** In Finder, **right-click a folder → Services → "Open in
+   termiHub"** → the running termiHub opens a new session at that folder.
+3. **File.** **Right-click a file → Services → "Open in termiHub"** → a session
+   opens at (or targeting) the selected file's path.
+4. **Multiple selection.** Select several items, invoke the Service → one
+   session opens per selected path.
+5. **No dead item.** Confirm the entry never does nothing: every invocation
+   results in a session (this is the regression the app-level entry previously
+   exhibited — it was declared but not backed by a provider).
+6. The per-entry **Automator Quick Action** bundles under
+   `~/Library/Services` (#1369) remain the primary path and continue to work
+   independently; both surfaces can coexist.
+
 ### Agent GitHub self-update (opt-in, #1355)
 
 Verifies the optional agent-side self-update check is gated behind
