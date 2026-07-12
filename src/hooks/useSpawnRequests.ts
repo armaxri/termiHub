@@ -12,9 +12,7 @@ import { frontendLog } from "@/utils/frontendLog";
  * other spawns (local / WSL / SSH) are owned by SI-2 and ignored here.
  */
 function isContainerSpawn(req: SpawnRequestPayload): boolean {
-  return (
-    (req.container_image?.trim() ?? "").length > 0 || (req.container_mount?.trim() ?? "").length > 0
-  );
+  return !!req.container_image?.trim() || !!req.container_mount?.trim();
 }
 
 /**

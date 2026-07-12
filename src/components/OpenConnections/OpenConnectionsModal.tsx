@@ -116,25 +116,22 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     .flatMap((leaf) => leaf.tabs)
     .filter((tab) => terminalConnecting[tab.id]);
 
-  // Every live tab id across all tab groups (the active group is the live
-  // rootPanel, the others their stored trees) — used to flag orphaned SFTP
-  // sessions whose owning tab no longer exists (#1241, orphan safety net).
-  const liveTabIds = new Set(
-    tabGroups
-      .flatMap((g) => getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel))
-      .flatMap((leaf) => leaf.tabs.map((t) => t.id))
+  // Every tab across all tab groups (the active group is the live rootPanel, the
+  // others their stored trees), walked once and reused below.
+  const allTabs = tabGroups.flatMap((g) =>
+    getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel).flatMap((leaf) => leaf.tabs)
   );
+
+  // Every live tab id — used to flag orphaned SFTP sessions whose owning tab no
+  // longer exists (#1241, orphan safety net).
+  const liveTabIds = new Set(allTabs.map((t) => t.id));
 
   // Session ids of spawned containers (#1446): tabs opened from an external
   // `termiHub spawn` with no saved connection id. They are backend-local
   // sessions, so they must be pulled OUT of "Local Sessions" and tracked in
   // their own "Spawned Containers" section.
   const spawnedSessionIds = new Set(
-    tabGroups
-      .flatMap((g) => getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel))
-      .flatMap((leaf) => leaf.tabs)
-      .filter((t) => t.spawned && t.sessionId)
-      .map((t) => t.sessionId as string)
+    allTabs.filter((t) => t.spawned && t.sessionId).map((t) => t.sessionId as string)
   );
 
   // One entry per live backend SFTP session, keyed by its UUID. Orphaned
@@ -310,19 +307,20 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     setLocalSessions((prev) => prev.filter((s) => s.id !== id));
   };
 
-  const handleKillAllLocal = async () => {
-    plainLocalSessions.forEach((s) => markSessionKilled(s.id));
-    await Promise.all(plainLocalSessions.map((s) => closeTerminal(s.id).catch(() => {})));
-    setLocalSessions((prev) => prev.filter((s) => spawnedSessionIds.has(s.id)));
+  // Kill a set of backend-local sessions at once, marking each kill intentional
+  // (#1121) and dropping the killed rows from the cache. Shared by the "Local
+  // Sessions" and "Spawned Containers" bulk actions (#1446).
+  const killSessions = async (sessions: LocalSessionInfo[]) => {
+    const ids = new Set(sessions.map((s) => s.id));
+    sessions.forEach((s) => markSessionKilled(s.id));
+    await Promise.all(sessions.map((s) => closeTerminal(s.id).catch(() => {})));
+    setLocalSessions((prev) => prev.filter((s) => !ids.has(s.id)));
   };
 
-  // Kill every spawned container at once (#1446). Mirrors the local-session
-  // kill: end the backend session and drop the cached rows.
-  const handleKillAllSpawned = async () => {
-    spawnedSessions.forEach((s) => markSessionKilled(s.id));
-    await Promise.all(spawnedSessions.map((s) => closeTerminal(s.id).catch(() => {})));
-    setLocalSessions((prev) => prev.filter((s) => !spawnedSessionIds.has(s.id)));
-  };
+  const handleKillAllLocal = () => killSessions(plainLocalSessions);
+
+  // Kill every spawned container at once (#1446).
+  const handleKillAllSpawned = () => killSessions(spawnedSessions);
 
   // Clear the cached native-session rows for an agent once its transport is gone
   // (both teardown intents drop the transport, so the "Sessions on <agent>"

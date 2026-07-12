@@ -108,12 +108,8 @@ describe("OpenConnectionsModal — Spawned Containers section", () => {
 
   it("does not double-list the spawned session under Local Sessions", async () => {
     await renderWithSpawnedTab();
-    // The plain local session still shows, the spawned one does not appear under
-    // Local Sessions (it is tracked in its own section instead).
-    const localSection = Array.from(document.querySelectorAll("[data-testid]")).find(
-      (el) => el.getAttribute("data-testid") === "open-connections-local-sessions-section"
-    );
-    // Fall back to scanning all rows: exactly one row mentions the spawned title.
+    // Exactly one row mentions the spawned container — it lives in its own
+    // section, not also under Local Sessions.
     const spawnedRows = Array.from(document.querySelectorAll(".oc-row")).filter((r) =>
       r.querySelector(".oc-row__title")?.textContent?.includes("Container: alpine:3")
     );
@@ -123,7 +119,6 @@ describe("OpenConnectionsModal — Spawned Containers section", () => {
       r.querySelector(".oc-row__title")?.textContent?.includes("My Shell")
     );
     expect(plainRows).toHaveLength(1);
-    void localSection;
   });
 
   it("kills a spawned container via close_terminal", async () => {
