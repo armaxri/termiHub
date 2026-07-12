@@ -23,7 +23,8 @@
 #   --skip-unit       Skip unit tests (run integration tests only)
 #   --with-fault      Include network fault injection tests (profile: fault)
 #   --with-stress     Include SFTP stress tests (profile: stress)
-#   --with-all        Include all profiles (fault + stress)
+#   --with-ftp        Include FTP file-browser tests (profile: ftp)
+#   --with-all        Include all profiles (fault + stress + ftp)
 #   --keep-infra      Keep Docker containers running after tests
 #   --help, -h        Show this help message
 #
@@ -42,6 +43,7 @@ SKIP_SERIAL=0
 SKIP_UNIT=0
 WITH_FAULT=0
 WITH_STRESS=0
+WITH_FTP=0
 KEEP_INFRA=0
 
 for arg in "$@"; do
@@ -50,7 +52,8 @@ for arg in "$@"; do
         --skip-unit)   SKIP_UNIT=1 ;;
         --with-fault)  WITH_FAULT=1 ;;
         --with-stress) WITH_STRESS=1 ;;
-        --with-all)    WITH_FAULT=1; WITH_STRESS=1 ;;
+        --with-ftp)    WITH_FTP=1 ;;
+        --with-all)    WITH_FAULT=1; WITH_STRESS=1; WITH_FTP=1 ;;
         --keep-infra)  KEEP_INFRA=1 ;;
         --help|-h)
             echo "Usage: ./scripts/test-system-linux.sh [OPTIONS]"
@@ -60,6 +63,7 @@ for arg in "$@"; do
             echo "  --skip-unit     Skip unit tests (integration only)"
             echo "  --with-fault    Include network fault injection tests"
             echo "  --with-stress   Include SFTP stress tests"
+            echo "  --with-ftp      Include FTP file-browser tests (profile: ftp)"
             echo "  --with-all      Include all test profiles"
             echo "  --keep-infra    Keep Docker containers after tests"
             echo "  --help, -h      Show this help message"
@@ -207,13 +211,17 @@ fi
 echo ""
 echo "=== Starting container test infrastructure ==="
 
-# Build compose args for profiles
-if [ "$WITH_FAULT" -eq 1 ] && [ "$WITH_STRESS" -eq 1 ]; then
-    COMPOSE_ARGS="--profile all"
-elif [ "$WITH_FAULT" -eq 1 ]; then
-    COMPOSE_ARGS="--profile fault"
-elif [ "$WITH_STRESS" -eq 1 ]; then
-    COMPOSE_ARGS="--profile stress"
+# Build compose args for optional profiles (additive, so several can combine and
+# teardown targets the same set). Default services (SSH/telnet) have no profile
+# and always start.
+if [ "$WITH_FAULT" -eq 1 ]; then
+    COMPOSE_ARGS="$COMPOSE_ARGS --profile fault"
+fi
+if [ "$WITH_STRESS" -eq 1 ]; then
+    COMPOSE_ARGS="$COMPOSE_ARGS --profile stress"
+fi
+if [ "$WITH_FTP" -eq 1 ]; then
+    COMPOSE_ARGS="$COMPOSE_ARGS --profile ftp"
 fi
 
 $CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d --build
@@ -244,6 +252,21 @@ while ! nc -z 127.0.0.1 2301 2>/dev/null; do
     fi
 done
 echo "  Telnet container ready."
+
+# Wait for the FTP control port (offset-aware) when the ftp profile is enabled.
+if [ "$WITH_FTP" -eq 1 ]; then
+    FTP_PORT="${TERMIHUB_TEST_FTP_PORT:-2401}"
+    WAITED=0
+    while ! nc -z 127.0.0.1 "$FTP_PORT" 2>/dev/null; do
+        sleep 1
+        WAITED=$((WAITED + 1))
+        if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+            echo "ERROR: FTP container did not start within ${MAX_WAIT}s."
+            exit 1
+        fi
+    done
+    echo "  FTP container ready (127.0.0.1:$FTP_PORT)."
+fi
 
 # ─── Set up virtual serial ports ────────────────────────────────────────────
 
@@ -306,6 +329,9 @@ echo "  Fault:      127.0.0.1:2209 (network fault proxy)"
 fi
 if [ "$WITH_STRESS" -eq 1 ]; then
 echo "  SFTP:       127.0.0.1:2210 (stress test container)"
+fi
+if [ "$WITH_FTP" -eq 1 ]; then
+echo "  FTP:        127.0.0.1:${TERMIHUB_TEST_FTP_PORT:-2401} (ftp-server container)"
 fi
 echo ""
 echo "==========================================="
@@ -402,6 +428,15 @@ if [ "$WITH_STRESS" -eq 1 ]; then
             echo "SFTP STRESS TESTS FAILED."
             TEST_EXIT=1
         fi
+    fi
+fi
+
+if [ "$WITH_FTP" -eq 1 ]; then
+    echo ""
+    echo "--- FTP file-browser tests (ftp profile) ---"
+    if ! cargo test -p termihub-core --all-features --test ftp_file_browser -- --nocapture; then
+        echo "FTP FILE-BROWSER TESTS FAILED."
+        TEST_EXIT=1
     fi
 fi
 

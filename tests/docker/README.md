@@ -210,9 +210,23 @@ curl -k --ssl-reqd ftp://ftpuser:ftppass@127.0.0.1:2401/pub/  # explicit FTPS
 curl -k ftps://ftpuser:ftppass@127.0.0.1:2402/pub/            # implicit FTPS
 ```
 
-The automated app-level integration tests land with the FTP backend sub-issues;
-until then the smoke test above (plus the manual "connect termiHub" step in
-[`docs/testing.md`](../../docs/testing.md)) is the verification path.
+The app-level Rust integration test for the FTP file browser lives at
+[`core/tests/ftp_file_browser.rs`](../../core/tests/ftp_file_browser.rs) (gated
+behind the `ftp` feature; skips cleanly when the fixture is not up). Run it
+directly against the fixture with:
+
+```bash
+docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
+cargo test -p termihub-core --features ftp --test ftp_file_browser -- --nocapture
+```
+
+Or via the orchestration scripts, which start the `ftp` profile and run the
+suite alongside the other Docker integration tests:
+
+```bash
+./scripts/test-system-linux.sh   --with-ftp    # or --with-all
+./scripts/test-system-windows.sh --with-ftp
+```
 
 ## Requirements
 
