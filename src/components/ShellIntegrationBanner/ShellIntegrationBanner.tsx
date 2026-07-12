@@ -4,18 +4,9 @@ import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import type { ShellIntegrationStatus } from "@/types/connection";
 import { Button, toast } from "@/components/ui";
-import {
-  getShellIntegrationStatus,
-  installShellIntegration,
-  saveShellIntegrationSettings,
-} from "@/services/api";
+import { getShellIntegrationStatus, installShellIntegration } from "@/services/api";
 import { defaultShellIntegrationSettings } from "@/components/Settings/shellIntegrationEntries";
-import {
-  INSTALL_TOAST,
-  currentShellIntegration,
-  syncRegistrationFacts,
-  writeShellIntegration,
-} from "@/components/Settings/shellIntegrationStore";
+import { INSTALL_TOAST, syncRegistrationFacts } from "@/components/Settings/shellIntegrationStore";
 import "./ShellIntegrationBanner.css";
 
 /**
@@ -27,6 +18,7 @@ import "./ShellIntegrationBanner.css";
  */
 export function ShellIntegrationBanner() {
   const storedSi = useAppStore((s) => s.settings.shellIntegration);
+  const updateShellIntegration = useAppStore((s) => s.updateShellIntegration);
   const si = storedSi ?? defaultShellIntegrationSettings();
   // The banner can never show once dismissed or registered, so it need not even
   // resolve the runtime status in the steady-state case.
@@ -43,16 +35,14 @@ export function ShellIntegrationBanner() {
   }, [eligible]);
 
   const persistDismissed = useCallback(async () => {
-    const prevSi = currentShellIntegration();
-    const nextSi = { ...prevSi, firstLaunchBannerDismissed: true };
-    writeShellIntegration(nextSi);
     try {
-      await saveShellIntegrationSettings(nextSi);
+      // The store action owns the optimistic write and rollback; it re-throws
+      // on failure, which the banner logs (no toast, matching prior behaviour).
+      await updateShellIntegration({ ...si, firstLaunchBannerDismissed: true });
     } catch (e) {
       frontendLog("shell_integration", `banner dismiss persist failed: ${String(e)}`);
-      writeShellIntegration(prevSi);
     }
-  }, []);
+  }, [si, updateShellIntegration]);
 
   const handleInstall = useCallback(
     () =>
