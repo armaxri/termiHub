@@ -46,13 +46,13 @@ import { formatBytes, formatRelativeTime } from "@/utils/formatters";
 import {
   sortEntries,
   filterEntries,
-  findTypeAheadIndex,
   type FileSortKey,
   type SortDirection,
 } from "@/utils/fileBrowserNav";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { baseNameSelectionEnd } from "@/utils/fileNameSelection";
 import { frontendLog } from "@/utils/frontendLog";
+import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { FileBrowserPathBar } from "./FileBrowserPathBar";
@@ -851,11 +851,6 @@ export function FileBrowser() {
     dir: "asc",
   });
   const [filterQuery, setFilterQuery] = useState("");
-  // Roving-tabindex focus index into `displayEntries` for keyboard navigation.
-  const [activeIndex, setActiveIndex] = useState(0);
-  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const rowRefCbs = useRef<Map<number, (el: HTMLButtonElement | null) => void>>(new Map());
-  const typeAhead = useRef<{ buffer: string; ts: number }>({ buffer: "", ts: 0 });
 
   // Sorted, then filtered — the single source of order for both the rendered
   // rows and keyboard navigation, so the two never disagree. Kept as two memos
@@ -869,23 +864,13 @@ export function FileBrowser() {
     [sortedEntries, filterQuery]
   );
 
-  // Stable per-index ref callback so rows don't detach/reattach every render.
-  const getRowRef = useCallback((index: number) => {
-    const cache = rowRefCbs.current;
-    let cb = cache.get(index);
-    if (!cb) {
-      cb = (el: HTMLButtonElement | null) => {
-        rowRefs.current[index] = el;
-      };
-      cache.set(index, cb);
-    }
-    return cb;
-  }, []);
-
-  // Keep the active index in range as the list length changes.
-  useEffect(() => {
-    setActiveIndex((i) => Math.min(Math.max(0, i), Math.max(0, displayEntries.length - 1)));
-  }, [displayEntries.length]);
+  // Roving-tabindex keyboard navigation over the displayed rows. The hook owns
+  // the active focus index, the type-ahead buffer, and the per-row ref wiring;
+  // selection/navigation semantics are supplied below via makeKeyDownHandler.
+  const { activeIndex, setActiveIndex, getRowRef, reset, makeKeyDownHandler } = useRovingListNav<
+    FileEntry,
+    HTMLButtonElement
+  >(displayEntries, (e) => e.name);
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -913,9 +898,9 @@ export function FileBrowser() {
   // selection, return roving focus to the top, and clear any active filter.
   const resetNavState = useCallback(() => {
     clearSelection();
-    setActiveIndex(0);
+    reset();
     setFilterQuery("");
-  }, [clearSelection]);
+  }, [clearSelection, reset]);
 
   const handleNavigatePath = useCallback(
     (path: string) => {
@@ -1074,95 +1059,42 @@ export function FileBrowser() {
         setLastClickedPath(entry.path);
       }
     },
-    [displayEntries, lastClickedPath]
+    [displayEntries, lastClickedPath, setActiveIndex]
   );
 
-  // Move the roving focus/selection to `index`. With `extend`, grows the
-  // selection from the anchor (last click) to `index`; otherwise selects just
-  // the target. Focus follows so keyboard and screen-reader users stay in sync.
-  const moveActive = useCallback(
-    (index: number, extend: boolean) => {
-      const entry = displayEntries[index];
-      if (!entry) return;
-      setActiveIndex(index);
-      rowRefs.current[index]?.focus();
-      if (extend && lastClickedPath) {
-        const anchorIdx = displayEntries.findIndex((fe) => fe.path === lastClickedPath);
-        if (anchorIdx >= 0) {
-          const [start, end] = anchorIdx < index ? [anchorIdx, index] : [index, anchorIdx];
-          setSelectedPaths(new Set(displayEntries.slice(start, end + 1).map((fe) => fe.path)));
-          return;
-        }
-      }
-      setSelectedPaths(new Set([entry.path]));
-      setLastClickedPath(entry.path);
-    },
-    [displayEntries, lastClickedPath]
-  );
-
-  const handleListKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      const entries = displayEntries;
-      const len = entries.length;
-      const key = e.key;
-
-      if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === "a") {
-        e.preventDefault();
-        setSelectedPaths(new Set(entries.map((fe) => fe.path)));
-        if (entries.length > 0) setLastClickedPath(entries[entries.length - 1].path);
-        return;
-      }
-      if (key === "Escape") {
-        clearSelection();
-        return;
-      }
-      if (key === "Backspace" || (e.altKey && key === "ArrowLeft")) {
-        e.preventDefault();
-        handleNavigateUp();
-        return;
-      }
-      if (len === 0) return;
-
-      if (key === "ArrowDown" || key === "ArrowUp") {
-        e.preventDefault();
-        const delta = key === "ArrowDown" ? 1 : -1;
-        moveActive(Math.min(len - 1, Math.max(0, activeIndex + delta)), e.shiftKey);
-        return;
-      }
-      if (key === "Home" || key === "End") {
-        e.preventDefault();
-        moveActive(key === "Home" ? 0 : len - 1, e.shiftKey);
-        return;
-      }
-      if (key === "Enter") {
-        e.preventDefault();
-        const entry = entries[activeIndex];
-        if (!entry) return;
-        if (entry.isDirectory) handleNavigate(entry);
-        else handleContextAction(entry, "edit");
-        return;
-      }
-      if (key === "F2") {
-        e.preventDefault();
-        const entry = entries[activeIndex];
-        if (entry) setRenamingPath(entry.path);
-        return;
-      }
-      // Type-ahead: a printable character with no command modifiers.
-      if (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        const now = Date.now();
-        const ta = typeAhead.current;
-        const fresh = now - ta.ts > 700;
-        ta.buffer = fresh ? key : ta.buffer + key;
-        ta.ts = now;
-        const idx = findTypeAheadIndex(entries, ta.buffer, activeIndex, ta.buffer.length === 1);
-        if (idx >= 0) moveActive(idx, false);
-      }
-    },
+  // Wire the roving-nav keydown handler to this browser's selection and
+  // navigation semantics. The hook owns focus movement and type-ahead; these
+  // callbacks apply selection changes (range/single/all/clear) and route
+  // Enter/F2/Backspace to the corresponding file-browser actions.
+  const handleListKeyDown = useMemo(
+    () =>
+      makeKeyDownHandler({
+        onActivate: (entry) => {
+          if (entry.isDirectory) handleNavigate(entry);
+          else handleContextAction(entry, "edit");
+        },
+        onNavigateUp: handleNavigateUp,
+        onRename: (entry) => setRenamingPath(entry.path),
+        onSelectAll: () => {
+          setSelectedPaths(new Set(displayEntries.map((fe) => fe.path)));
+          if (displayEntries.length > 0) {
+            setLastClickedPath(displayEntries[displayEntries.length - 1].path);
+          }
+        },
+        onClearSelection: clearSelection,
+        getAnchorIndex: () =>
+          lastClickedPath ? displayEntries.findIndex((fe) => fe.path === lastClickedPath) : -1,
+        onSelectRange: (start, end) =>
+          setSelectedPaths(new Set(displayEntries.slice(start, end + 1).map((fe) => fe.path))),
+        onSelectSingle: (entry) => {
+          setSelectedPaths(new Set([entry.path]));
+          setLastClickedPath(entry.path);
+        },
+      }),
     [
+      makeKeyDownHandler,
       displayEntries,
-      activeIndex,
-      moveActive,
+      lastClickedPath,
       clearSelection,
       handleNavigate,
       handleNavigateUp,

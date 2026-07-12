@@ -138,24 +138,25 @@ describe("filterEntries", () => {
 
 describe("findTypeAheadIndex", () => {
   const entries: FileEntry[] = [entry("alpha"), entry("apple"), entry("banana"), entry("cherry")];
+  const byName = (e: FileEntry) => e.name;
 
   it("finds the first match advancing past the current index", () => {
-    expect(findTypeAheadIndex(entries, "a", 0, true)).toBe(1);
+    expect(findTypeAheadIndex(entries, byName, "a", 0, true)).toBe(1);
   });
 
   it("stays on the current match when extending the buffer", () => {
-    expect(findTypeAheadIndex(entries, "ap", 1, false)).toBe(1);
+    expect(findTypeAheadIndex(entries, byName, "ap", 1, false)).toBe(1);
   });
 
   it("wraps around to the start", () => {
-    expect(findTypeAheadIndex(entries, "a", 1, true)).toBe(0);
+    expect(findTypeAheadIndex(entries, byName, "a", 1, true)).toBe(0);
   });
 
   it("returns -1 when nothing matches", () => {
-    expect(findTypeAheadIndex(entries, "z", 0, true)).toBe(-1);
+    expect(findTypeAheadIndex(entries, byName, "z", 0, true)).toBe(-1);
   });
 
   it("returns -1 for an empty buffer", () => {
-    expect(findTypeAheadIndex(entries, "", 0, true)).toBe(-1);
+    expect(findTypeAheadIndex(entries, byName, "", 0, true)).toBe(-1);
   });
 });

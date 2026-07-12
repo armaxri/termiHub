@@ -95,16 +95,21 @@ export function filterEntries(entries: FileEntry[], query: string): FileEntry[] 
 }
 
 /**
- * Find the index of the next entry whose name starts with `buffer`
+ * Find the index of the next entry whose label starts with `buffer`
  * (case-insensitive), searching circularly from `currentIndex`.
+ *
+ * Generic over the entry type: `getLabel` extracts the string to match against
+ * (a file's name, a tree node's label, …), so the same type-ahead logic drives
+ * any list view.
  *
  * When `advance` is true the search starts just after `currentIndex` (used for
  * repeated single-key presses that step through matches); when false it starts
  * at `currentIndex` (used while a multi-key type-ahead buffer is still growing).
  * Returns -1 when the buffer is empty or nothing matches.
  */
-export function findTypeAheadIndex(
-  entries: FileEntry[],
+export function findTypeAheadIndex<T>(
+  entries: T[],
+  getLabel: (entry: T) => string,
   buffer: string,
   currentIndex: number,
   advance: boolean
@@ -116,7 +121,7 @@ export function findTypeAheadIndex(
   const start = advance ? currentIndex + 1 : currentIndex;
   for (let i = 0; i < n; i++) {
     const idx = (start + i) % n;
-    if (entries[idx].name.toLowerCase().startsWith(needle)) return idx;
+    if (getLabel(entries[idx]).toLowerCase().startsWith(needle)) return idx;
   }
   return -1;
 }
