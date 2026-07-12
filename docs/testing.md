@@ -975,8 +975,7 @@ being an inert menu item. **macOS only** — the native Cocoa service provider i
 `#[cfg(target_os = "macos")]`-gated and needs a running GUI, so it cannot be
 automated (no WKWebView driver; see [ADR-5](#platform-support)). The app-level
 `NSServices` entry (`openInTermiHub`) is declared in `src-tauri/Info.plist`
-(#1369) and wired to `NSApp.servicesProvider` at startup (#1409). See PR for
-issue #1409.
+(#1369) and wired to `NSApp.servicesProvider` at startup (#1409). See PR #1449.
 
 Prerequisites: an **installed** `termiHub.app` bundle (a plain `cargo run`/dev
 build is not registered with Launch Services, so the OS will not surface its app
