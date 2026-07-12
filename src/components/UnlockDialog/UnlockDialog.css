@@ -9,3 +9,9 @@
   color: var(--color-error);
   margin: 0;
 }
+
+.unlock-dialog__forgot-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: var(--spacing-xs);
+}

@@ -14,6 +14,21 @@ function toggleBtn(): HTMLButtonElement {
   return container.querySelector(".password-input__toggle")!;
 }
 
+function capsWarning(): HTMLElement | null {
+  return container.querySelector(".password-input__caps-warning");
+}
+
+/**
+ * Dispatches a keyboard event whose `getModifierState("CapsLock")` reports
+ * `on`. React's synthetic event delegates `getModifierState` to the native
+ * event, so overriding it here drives the component's caps-lock detection.
+ */
+function keyEvent(type: "keydown" | "keyup", capsLock: boolean) {
+  const ev = new KeyboardEvent(type, { bubbles: true });
+  ev.getModifierState = () => capsLock;
+  act(() => input().dispatchEvent(ev));
+}
+
 describe("PasswordInput", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -90,5 +105,62 @@ describe("PasswordInput", () => {
     // tabIndex={-1} pulled the show/hide affordance out of the tab order, hiding
     // it from keyboard-only users (issue #1358).
     expect(toggleBtn().tabIndex).not.toBe(-1);
+  });
+
+  // --- #1360: caps-lock warning ---
+
+  it("does not show the caps-lock warning by default", () => {
+    act(() => {
+      root.render(<PasswordInput value="" onChange={() => {}} />);
+    });
+    expect(capsWarning()).toBeNull();
+  });
+
+  it("shows the caps-lock warning when Caps Lock is active during a keystroke", () => {
+    act(() => {
+      root.render(<PasswordInput value="" onChange={() => {}} />);
+    });
+    keyEvent("keydown", true);
+    expect(capsWarning()).not.toBeNull();
+    expect(capsWarning()!.textContent).toMatch(/caps lock/i);
+  });
+
+  it("uses an assertive live region so the warning is announced", () => {
+    act(() => {
+      root.render(<PasswordInput value="" onChange={() => {}} />);
+    });
+    keyEvent("keydown", true);
+    expect(capsWarning()!.getAttribute("role")).toBe("alert");
+    expect(capsWarning()!.getAttribute("aria-live")).toBe("assertive");
+  });
+
+  it("hides the caps-lock warning again once Caps Lock is released", () => {
+    act(() => {
+      root.render(<PasswordInput value="" onChange={() => {}} />);
+    });
+    keyEvent("keydown", true);
+    expect(capsWarning()).not.toBeNull();
+    keyEvent("keyup", false);
+    expect(capsWarning()).toBeNull();
+  });
+
+  it("clears the caps-lock warning when the field loses focus", () => {
+    act(() => {
+      root.render(<PasswordInput value="" onChange={() => {}} />);
+    });
+    keyEvent("keydown", true);
+    expect(capsWarning()).not.toBeNull();
+    // React delegates onBlur through the bubbling `focusout` event.
+    act(() => input().dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(capsWarning()).toBeNull();
+  });
+
+  it("still forwards onKeyDown while tracking caps-lock state", () => {
+    let seen = false;
+    act(() => {
+      root.render(<PasswordInput value="" onChange={() => {}} onKeyDown={() => (seen = true)} />);
+    });
+    keyEvent("keydown", true);
+    expect(seen).toBe(true);
   });
 });

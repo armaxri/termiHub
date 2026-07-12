@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { unlockCredentialStore, resetCredentialStore } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Modal, Button, toast } from "@/components/ui";
+import { Modal, Button, ConfirmDialog, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UnlockDialog.css";
 
@@ -26,6 +26,12 @@ function isCorruptStoreError(err: unknown): boolean {
  *
  * If the credentials file is corrupt (G8, #1144) the dialog surfaces a
  * "reset store" affordance instead of an endless "wrong password" loop.
+ *
+ * A user who simply *forgot* their master password is offered the same recovery
+ * without needing the file to be corrupt (#1360): the always-present "Forgot
+ * password?" affordance opens a destructive, clearly-worded confirm before
+ * wiping the store, so a forgotten password is a guarded reset rather than a
+ * dead-end.
  */
 export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
   const [password, setPassword] = useState("");
@@ -33,6 +39,7 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
   const [corrupt, setCorrupt] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -42,6 +49,7 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
       setCorrupt(false);
       setLoading(false);
       setResetting(false);
+      setConfirmReset(false);
     }
   }, [open]);
 
@@ -74,6 +82,7 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
     setResetting(true);
     try {
       await resetCredentialStore();
+      setConfirmReset(false);
       toast.success("Credential store reset — set a new master password to start over");
       onOpenChange(false);
     } catch (err) {
@@ -145,6 +154,34 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
           {error}
         </p>
       )}
+      {!corrupt && (
+        <div className="unlock-dialog__forgot-row">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setConfirmReset(true)}
+            data-testid="unlock-dialog-forgot"
+          >
+            Forgot password? Reset credential store…
+          </Button>
+        </div>
+      )}
+      <ConfirmDialog
+        open={confirmReset}
+        title="Reset credential store?"
+        message={
+          <p className="unlock-dialog__description">
+            This <strong>permanently deletes all saved credentials</strong> and cannot be undone.
+            You&apos;ll set a new master password and re-enter your credentials from scratch.
+          </p>
+        }
+        confirmLabel={resetting ? "Resetting…" : "Delete all credentials"}
+        cancelLabel="Keep credentials"
+        confirmVariant="danger"
+        onConfirm={handleReset}
+        onCancel={() => setConfirmReset(false)}
+        data-testid="unlock-dialog-reset-confirm"
+      />
     </Modal>
   );
 }

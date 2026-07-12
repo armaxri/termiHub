@@ -1250,6 +1250,23 @@ Migrated guided-manual suites so far:
 
 New irreducibly-manual checks should be written as guided-manual pytest tests. The legacy YAML runner below is being migrated into this flow incrementally (epic [#913](https://github.com/armaxri/termiHub/issues/913)).
 
+#### Caps Lock warning on password fields (PR #1465, #1360)
+
+The Caps Lock indicator depends on the OS keyboard modifier state, which the WebSocket
+harness cannot toggle, so verify it manually:
+
+1. Turn **Caps Lock ON**, then open any password field — the unlock dialog (relaunch
+   with a master-password store), the connect-time password prompt, or **Settings →
+   Security → Change Master Password**. Type a character.
+2. Confirm the amber **"Caps Lock is on"** warning appears directly beneath the field
+   (in all three consumers, since they share `PasswordInput`).
+3. Press **Caps Lock** again to turn it OFF while the field stays focused — the warning
+   must disappear.
+4. With Caps Lock ON and the warning showing, click elsewhere to blur the field — the
+   warning clears.
+5. (Accessibility) With a screen reader active, confirm the warning is announced when it
+   appears (it is an `role="alert"` / `aria-live="assertive"` region).
+
 #### SSH tunnel start/stop on macOS (manual carve-out, #933)
 
 The three **live** SSH tunnel tests in [`test_ssh_tunnels.py`](../tests/system/tests/test_ssh_tunnels.py) — `test_save_and_start_connects`, `test_start_then_stop`, `test_tunnel_runs_alongside_an_ssh_session` — **skip on macOS** and run only in the Linux integration-fixtures CI lane. Docker Desktop on macOS runs containers inside a Linux VM with no host networking, so the host-native app's russh local-forward to the published `ssh-tunnel-target` port does not drive the live tunnel to a running state the way it does under Linux Docker. The editor/list tests (TUNNEL-01..10) need no running tunnel and stay enabled on every platform. This mirrors the [`tauri-driver` macOS carve-out](#platform-support) (ADR-5).
