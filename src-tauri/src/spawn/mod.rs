@@ -17,18 +17,19 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(any(unix, windows)))]
 compile_error!("spawn IPC requires a Unix or Windows target");
 
-/// Tauri event name emitted (to the frontend) for each received
-/// [`SpawnRequest`], whether it arrives over the IPC rendezvous, as a
-/// self-handled pending request, or from the native macOS Services provider
-/// (#1409). Centralised so every producer stays in sync.
-pub const SPAWN_REQUEST_EVENT: &str = "spawn-request";
-
+pub mod container;
 pub mod ipc_client;
 pub mod ipc_server;
 pub mod registry;
 
 #[cfg(test)]
 mod tests;
+
+/// Tauri event name emitted (to the frontend) for each received
+/// [`SpawnRequest`], whether it arrives over the IPC rendezvous, as a
+/// self-handled pending request, or from the native macOS Services provider
+/// (#1409). Centralised so every producer stays in sync.
+pub const SPAWN_REQUEST_EVENT: &str = "spawn-request";
 
 /// A request to open a new session, originating from an external
 /// `termiHub spawn` invocation.
