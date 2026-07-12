@@ -6,7 +6,11 @@ import "./ui.css";
  * attributes, so any standard prop (`value`, `placeholder`, `onChange`, `type`,
  * …) works.
  */
-export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+/** Control size. `md` (default) is the standard 32px field; `sm` is a compact
+ * bordered field for dense rows (e.g. inline file-browser editors). */
+export type InputSize = "sm" | "md";
+
+export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "size"> {
   /** Render the error state (red border) and set `aria-invalid`. */
   error?: boolean;
   /**
@@ -16,6 +20,12 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
    * break the layout. Focus/keyboard behavior is unchanged.
    */
   inline?: boolean;
+  /**
+   * Control height. Defaults to `md` (the standard field). Use `sm` for the
+   * compact bordered variant in dense rows such as the inline file-browser
+   * New File / New Folder / rename editors.
+   */
+  size?: InputSize;
   /** Test hook forwarded to the DOM node. */
   "data-testid"?: string;
 }
@@ -28,15 +38,17 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
  *
  * The `inline` variant drops the border/background/height so the input blends
  * into a surrounding element (e.g. an inline rename affordance), inheriting its
- * font and color while keeping the primitive's focus/keyboard behavior.
+ * font and color while keeping the primitive's focus/keyboard behavior. The
+ * `sm` size keeps the bordered skin but shrinks it for dense rows.
  */
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { error = false, inline = false, type, className, ...rest },
+  { error = false, inline = false, size = "md", type, className, ...rest },
   ref
 ) {
   const classes = [
     "ui-input",
     inline ? "ui-input--inline" : "",
+    size === "sm" ? "ui-input--sm" : "",
     error ? "ui-input--error" : "",
     className ?? "",
   ]
