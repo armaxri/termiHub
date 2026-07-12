@@ -876,10 +876,13 @@ export function FileBrowser() {
   useEffect(() => {
     let cleanup: (() => void) | null = null;
     onVscodeEditComplete((remotePath, success, err) => {
+      const name = remotePath.split("/").pop() || remotePath;
       if (success) {
+        toast.success(`Saved "${name}" from VS Code`);
         refresh();
       } else {
-        console.error(`VS Code edit failed for ${remotePath}:`, err);
+        frontendLog("file_browser", `VS Code edit failed for ${remotePath}: ${err}`);
+        toast.error(`Failed to save "${name}" from VS Code: ${err}`);
       }
     }).then((fn) => {
       cleanup = fn;
@@ -950,9 +953,10 @@ export function FileBrowser() {
           void downloadFile(entry.path, entry.name);
           break;
         case "vscode":
-          openInVscode(entry.path).catch((err: unknown) =>
-            console.error("Open in VS Code failed:", err)
-          );
+          openInVscode(entry.path).catch((err: unknown) => {
+            frontendLog("file_browser", `Open in VS Code failed: ${err}`);
+            toast.error(`Failed to open "${entry.name}" in VS Code: ${err}`);
+          });
           break;
         case "copy":
           copyEntry([entry]);
