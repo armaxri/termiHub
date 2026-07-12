@@ -52,6 +52,22 @@ function renderWith(options: TerminalOptions, onChange = vi.fn()) {
   return onChange;
 }
 
+/** Drive a controlled input the way a real keystroke would. */
+function setValue(el: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function fieldInput(label: string): HTMLInputElement {
+  const el = Array.from(container.querySelectorAll(".settings-form__label")).find(
+    (l) => l.textContent === label
+  );
+  return el?.closest(".settings-form__field")?.querySelector("input") as HTMLInputElement;
+}
+
 describe("ConnectionTerminalSettings — scrollback buffer", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
@@ -128,5 +144,60 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
       ?.closest(".settings-form__field");
     const hint = field?.querySelector(".settings-form__hint");
     expect(hint?.textContent?.toLowerCase()).toContain("memory");
+  });
+
+  it("editing the scrollback buffer emits the parsed number (#1453)", () => {
+    const onChange = renderWith(emptyOptions);
+    setValue(fieldInput("Scrollback Buffer"), "30000");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ scrollbackBuffer: 30000 }));
+  });
+
+  it("clearing the scrollback buffer emits undefined (#1453)", () => {
+    const onChange = renderWith({ ...emptyOptions, scrollbackBuffer: 25000 });
+    setValue(fieldInput("Scrollback Buffer"), "");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ scrollbackBuffer: undefined }));
+  });
+});
+
+describe("ConnectionTerminalSettings — font size", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("renders the font size through the shared NumberInput primitive (#1453)", () => {
+    renderWith(emptyOptions);
+    expect(fieldInput("Font Size").classList.contains("ui-input")).toBe(true);
+    expect(fieldInput("Font Size").type).toBe("number");
+  });
+
+  it("shows a blank field when no per-connection override is set", () => {
+    renderWith(emptyOptions);
+    expect(fieldInput("Font Size").value).toBe("");
+  });
+
+  it("reflects the per-connection font size", () => {
+    renderWith({ ...emptyOptions, fontSize: 18 });
+    expect(fieldInput("Font Size").value).toBe("18");
+  });
+
+  it("editing the font size emits the parsed number (#1453)", () => {
+    const onChange = renderWith(emptyOptions);
+    setValue(fieldInput("Font Size"), "20");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: 20 }));
+  });
+
+  it("clearing the font size emits undefined (#1453)", () => {
+    const onChange = renderWith({ ...emptyOptions, fontSize: 16 });
+    setValue(fieldInput("Font Size"), "");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: undefined }));
   });
 });
