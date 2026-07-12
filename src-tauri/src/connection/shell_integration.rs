@@ -222,8 +222,10 @@ pub fn exe_path_matches(registered_exe_path: Option<&str>, current_exe_path: Opt
 
 /// A file manager detected on the host, reported by the status command.
 ///
-/// Detection itself is a **stub** in this issue — real per-OS detection lands
-/// with the Linux registration work (SI-7).
+/// Populated by `detect_file_managers` in the spawn registry: on Linux from the
+/// per-user file-manager directories / `$PATH` binaries (with the version from
+/// each manager's `--version` output), and on macOS/Windows from the native
+/// always-present manager (Finder / File Explorer).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedFileManager {
@@ -259,7 +261,8 @@ pub struct ShellIntegrationStatus {
     /// the recorded path stale as a matter of course; the UI can present this as
     /// expected rather than an error.
     pub portable: bool,
-    /// File managers detected on the host (STUB — empty until detection lands).
+    /// File managers detected on the host (Linux: Nautilus / Dolphin / Thunar
+    /// with versions where available; macOS/Windows: the native manager).
     pub detected_file_managers: Vec<DetectedFileManager>,
 }
 

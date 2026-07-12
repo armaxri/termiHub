@@ -59,9 +59,13 @@ pub fn register(settings: &mut ShellIntegrationSettings) -> anyhow::Result<()> {
 
 /// Detect the file managers installed on the host, for the status command.
 ///
-/// On Linux this probes the per-user file-manager directories and `$PATH`
-/// binaries for Nautilus, KDE (Dolphin) and Thunar. On other platforms it
-/// returns an empty list (their context-menu surfaces are not per-manager).
+/// * **Linux** probes the per-user file-manager directories and `$PATH`
+///   binaries for Nautilus, KDE (Dolphin) and Thunar, annotating each detected
+///   manager with the version reported by its `--version` output.
+/// * **macOS** and **Windows** report their single always-present native
+///   manager (Finder / File Explorer); neither exposes a queryable version, so
+///   `version` is `None`.
+/// * Other platforms return an empty list.
 pub fn detect_file_managers() -> Vec<DetectedFileManager> {
     #[cfg(target_os = "linux")]
     {
@@ -69,10 +73,71 @@ pub fn detect_file_managers() -> Vec<DetectedFileManager> {
             .map(|r| r.detect())
             .unwrap_or_default()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        vec![native_manager("finder", "Finder")]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        vec![native_manager("explorer", "File Explorer")]
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         Vec::new()
     }
+}
+
+/// A native, always-present OS file manager (macOS Finder / Windows File
+/// Explorer). These have no user-queryable version string, so `version` is
+/// `None`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn native_manager(id: &str, name: &str) -> DetectedFileManager {
+    DetectedFileManager {
+        id: id.to_string(),
+        name: name.to_string(),
+        detected: true,
+        version: None,
+    }
+}
+
+/// Extract the first whitespace-delimited token that looks like a version
+/// number (starts with an ASCII digit) from a `--version` output string,
+/// keeping only its leading run of digits and dots (so a `45.0-beta` token
+/// reduces to `45.0`). Returns `None` when no such token exists.
+///
+/// Pure and platform-independent so it is exhaustively unit-testable without
+/// invoking any binary.
+#[cfg(any(target_os = "linux", test))]
+fn first_version_token(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|token| {
+        if !token.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        let version: String = token
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        let version = version.trim_end_matches('.');
+        (!version.is_empty()).then(|| version.to_string())
+    })
+}
+
+/// Parse `nautilus --version` output (e.g. `GNOME nautilus 43.2` → `43.2`).
+#[cfg(any(target_os = "linux", test))]
+fn parse_nautilus_version(output: &str) -> Option<String> {
+    first_version_token(output)
+}
+
+/// Parse `dolphin --version` output (e.g. `dolphin 22.12.3` → `22.12.3`).
+#[cfg(any(target_os = "linux", test))]
+fn parse_dolphin_version(output: &str) -> Option<String> {
+    first_version_token(output)
+}
+
+/// Parse `thunar --version` output (e.g. `Thunar 4.18.4` → `4.18.4`).
+#[cfg(any(target_os = "linux", test))]
+fn parse_thunar_version(output: &str) -> Option<String> {
+    first_version_token(output)
 }
 
 #[cfg(test)]
@@ -1391,6 +1456,22 @@ mod linux {
     /// spawning the real `update-desktop-database` binary.
     type DesktopDbHook = Arc<dyn Fn(&Path) + Send + Sync>;
 
+    /// Run `<binary> --version` and return its version output, preferring
+    /// stdout but falling back to stderr (some tools print their banner there).
+    /// Best-effort: a missing or failing binary yields `None`.
+    fn query_version(binary: &str) -> Option<String> {
+        let output = std::process::Command::new(binary)
+            .arg("--version")
+            .output()
+            .ok()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.trim().is_empty() {
+            return Some(stdout.into_owned());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        (!stderr.trim().is_empty()).then(|| stderr.into_owned())
+    }
+
     /// Spawn `update-desktop-database <apps_dir>`, ignoring any failure (the
     /// tool is absent on minimal systems and the registration still works).
     fn run_update_desktop_database(apps_dir: &Path) {
@@ -1479,18 +1560,60 @@ mod linux {
         }
 
         /// Report the file managers detected on this host for the status command.
+        ///
+        /// A detected manager is annotated with the version parsed from its
+        /// `--version` output. Version probing only runs when `$PATH` probing is
+        /// enabled (i.e. not in tests), so directory-only detection never shells
+        /// out.
         pub fn detect(&self) -> Vec<DetectedFileManager> {
-            let mk = |id: &str, name: &str, detected: bool| DetectedFileManager {
+            vec![
+                self.detected_manager(
+                    "nautilus",
+                    "Nautilus",
+                    "nautilus",
+                    self.nautilus_detected(),
+                    super::parse_nautilus_version,
+                ),
+                self.detected_manager(
+                    "kde",
+                    "Dolphin",
+                    "dolphin",
+                    self.kde_detected(),
+                    super::parse_dolphin_version,
+                ),
+                self.detected_manager(
+                    "thunar",
+                    "Thunar",
+                    "thunar",
+                    self.thunar_detected(),
+                    super::parse_thunar_version,
+                ),
+            ]
+        }
+
+        /// Build a [`DetectedFileManager`], querying `binary --version` and
+        /// parsing it with `parse` when the manager is detected and `$PATH`
+        /// probing is enabled. Version detection is best-effort: a missing or
+        /// unparseable version simply yields `None`.
+        fn detected_manager(
+            &self,
+            id: &str,
+            name: &str,
+            binary: &str,
+            detected: bool,
+            parse: fn(&str) -> Option<String>,
+        ) -> DetectedFileManager {
+            let version = if detected && self.probe_path {
+                query_version(binary).as_deref().and_then(parse)
+            } else {
+                None
+            };
+            DetectedFileManager {
                 id: id.to_string(),
                 name: name.to_string(),
                 detected,
-                version: None,
-            };
-            vec![
-                mk("nautilus", "Nautilus", self.nautilus_detected()),
-                mk("kde", "Dolphin", self.kde_detected()),
-                mk("thunar", "Thunar", self.thunar_detected()),
-            ]
+                version,
+            }
         }
 
         // ── Install / uninstall ─────────────────────────────────────────

@@ -345,7 +345,11 @@ export interface ShellIntegrationStatus {
   stale: boolean;
   /** Whether the app runs in portable mode (where staleness is expected). */
   portable: boolean;
-  /** File managers detected on the host (empty until detection lands). */
+  /**
+   * File managers detected on the host. On Linux this lists Nautilus, Dolphin
+   * (KDE) and Thunar with their versions where available; on macOS/Windows the
+   * native manager (Finder / File Explorer).
+   */
   detectedFileManagers: DetectedFileManager[];
 }
 
