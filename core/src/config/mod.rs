@@ -1277,6 +1277,136 @@ mod tests {
     }
 
     #[test]
+    fn ftp_config_default() {
+        let cfg = FtpConfig::default();
+        assert!(cfg.host.is_empty());
+        assert_eq!(cfg.port, 21);
+        assert_eq!(cfg.tls_mode, FtpTlsMode::None);
+        assert!(!cfg.anonymous);
+        assert!(cfg.username.is_empty());
+        assert!(cfg.password.is_none());
+        assert_eq!(cfg.mode, FtpDataMode::Passive);
+        assert_eq!(cfg.transfer_type, FtpTransferType::Binary);
+        assert!(cfg.initial_directory.is_none());
+        assert_eq!(cfg.timeout_secs, 30);
+        assert_eq!(cfg.timeout(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn ftp_config_missing_fields_use_defaults() {
+        // Only host provided — port/tlsMode/anonymous/timeout fall back to defaults.
+        let json = r#"{"host": "ftp.example.com"}"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.host, "ftp.example.com");
+        assert_eq!(cfg.port, 21);
+        assert_eq!(cfg.tls_mode, FtpTlsMode::None);
+        assert!(!cfg.anonymous);
+        assert_eq!(cfg.mode, FtpDataMode::Passive);
+        assert_eq!(cfg.transfer_type, FtpTransferType::Binary);
+        assert_eq!(cfg.timeout_secs, 30);
+    }
+
+    #[test]
+    fn ftp_config_camel_case_fields() {
+        let json = r#"{
+            "host": "ftp.example.com",
+            "port": 990,
+            "tlsMode": "implicit",
+            "anonymous": false,
+            "username": "admin",
+            "password": "secret",
+            "mode": "active",
+            "transferType": "ascii",
+            "initialDirectory": "/pub",
+            "timeoutSecs": 45
+        }"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.port, 990);
+        assert_eq!(cfg.tls_mode, FtpTlsMode::Implicit);
+        assert_eq!(cfg.username, "admin");
+        assert_eq!(cfg.password.as_deref(), Some("secret"));
+        assert_eq!(cfg.mode, FtpDataMode::Active);
+        assert_eq!(cfg.transfer_type, FtpTransferType::Ascii);
+        assert_eq!(cfg.initial_directory.as_deref(), Some("/pub"));
+        assert_eq!(cfg.timeout_secs, 45);
+    }
+
+    #[test]
+    fn ftp_config_anonymous_parse() {
+        let json = r#"{"host": "ftp.example.com", "anonymous": true}"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.anonymous);
+        assert!(cfg.username.is_empty());
+    }
+
+    #[test]
+    fn ftp_tls_mode_serde_values() {
+        for (mode, expected) in [
+            (FtpTlsMode::None, "\"none\""),
+            (FtpTlsMode::Explicit, "\"explicit\""),
+            (FtpTlsMode::Implicit, "\"implicit\""),
+        ] {
+            let json = serde_json::to_string(&mode).unwrap();
+            assert_eq!(json, expected);
+            let back: FtpTlsMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, mode);
+        }
+    }
+
+    #[test]
+    fn ftp_config_roundtrip() {
+        let cfg = FtpConfig {
+            host: "ftp.example.com".into(),
+            port: 21,
+            tls_mode: FtpTlsMode::Explicit,
+            anonymous: false,
+            username: "admin".into(),
+            password: Some("pw".into()),
+            mode: FtpDataMode::Passive,
+            transfer_type: FtpTransferType::Binary,
+            initial_directory: Some("/pub".into()),
+            timeout_secs: 30,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"tlsMode\""));
+        assert!(json.contains("\"transferType\""));
+        assert!(json.contains("\"initialDirectory\""));
+        let back: FtpConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.host, "ftp.example.com");
+        assert_eq!(back.tls_mode, FtpTlsMode::Explicit);
+        assert_eq!(back.initial_directory.as_deref(), Some("/pub"));
+    }
+
+    #[test]
+    fn ftp_config_expand_replaces_placeholders() {
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_FTP_HOST", Some("10.0.0.9")),
+                ("TERMIHUB_TEST_FTP_USER", Some("deploy")),
+            ],
+            || {
+                let cfg = FtpConfig {
+                    host: "${TERMIHUB_TEST_FTP_HOST}".into(),
+                    username: "${TERMIHUB_TEST_FTP_USER}".into(),
+                    initial_directory: Some("~/uploads".into()),
+                    ..FtpConfig::default()
+                };
+                let expanded = cfg.expand();
+                assert_eq!(expanded.host, "10.0.0.9");
+                assert_eq!(expanded.username, "deploy");
+                assert!(
+                    !expanded
+                        .initial_directory
+                        .as_ref()
+                        .unwrap()
+                        .starts_with('~'),
+                    "tilde should be expanded in initial directory"
+                );
+            },
+        );
+    }
+
+    #[test]
     fn docker_config_missing_fields_use_defaults() {
         let json = r#"{"image": "nginx"}"#;
         let cfg: DockerConfig = serde_json::from_str(json).unwrap();

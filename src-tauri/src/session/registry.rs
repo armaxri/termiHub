@@ -86,10 +86,26 @@ mod tests {
         #[cfg(not(windows))]
         assert!(!registry.has_type("wsl"));
 
-        #[cfg(windows)]
-        assert_eq!(types.len(), 6);
-        #[cfg(not(windows))]
-        assert_eq!(types.len(), 5);
+        #[cfg(feature = "ftp")]
+        assert!(registry.has_type("ftp"));
+        #[cfg(not(feature = "ftp"))]
+        assert!(!registry.has_type("ftp"));
+
+        // 5 always-on backends (local/serial/ssh/telnet/docker), plus WSL on
+        // Windows and FTP when the `ftp` feature is enabled.
+        let expected = 5 + cfg!(windows) as usize + cfg!(feature = "ftp") as usize;
+        assert_eq!(types.len(), expected);
+    }
+
+    #[cfg(feature = "ftp")]
+    #[test]
+    fn registry_registers_ftp_backend() {
+        let registry = build_desktop_registry();
+        assert!(registry.has_type("ftp"));
+        let conn = registry
+            .create("ftp")
+            .expect("ftp backend should be registered");
+        assert_eq!(conn.type_id(), "ftp");
     }
 
     #[test]
