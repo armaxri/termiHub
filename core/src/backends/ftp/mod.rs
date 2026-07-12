@@ -9,6 +9,8 @@
 //! (see the FTP client concept); `write`/`resize` are no-ops because FTP has no
 //! terminal channel.
 
+mod listing_parser;
+
 use std::sync::Arc;
 
 use futures_rustls::rustls::crypto::aws_lc_rs;
