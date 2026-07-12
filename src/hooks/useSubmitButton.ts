@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  type FormEvent,
-  type MouseEvent,
-  type RefObject,
-} from "react";
+import { useCallback, useRef, type FormEvent, type MouseEvent, type RefObject } from "react";
 
 /** Props to spread onto the `<form>` element. */
 export interface SubmitFormProps {
@@ -78,11 +71,11 @@ export function useSubmitButton(
     [canSubmit]
   );
 
-  return useMemo(
-    () => ({
-      formProps: { onSubmit },
-      submitProps: { ref, type: "submit", disabled: !canSubmit, onClick },
-    }),
-    [onSubmit, canSubmit, onClick]
-  );
+  // Bundle identity is never used as a dependency — every caller immediately
+  // spreads these onto the form/button — so a plain literal is enough (the inner
+  // ref/onClick/onSubmit are already stable).
+  return {
+    formProps: { onSubmit },
+    submitProps: { ref, type: "submit", disabled: !canSubmit, onClick },
+  };
 }
