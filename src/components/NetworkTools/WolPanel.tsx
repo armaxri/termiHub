@@ -28,9 +28,10 @@ export function WolPanel() {
 
   const macRef = useAutofocusSelect<HTMLInputElement>();
 
+  const macError = useMemo(() => validateMac(mac), [mac]);
   const portError = validatePort(port);
   const broadcastError = validateHost(broadcast, "Broadcast address");
-  const canSend = !!mac.trim() && !portError && !broadcastError;
+  const canSend = !macError && !portError && !broadcastError;
   const [savedDevices, setSavedDevices] = useState<WolDevice[]>([]);
   const [history, setHistory] = useState<WolHistoryEntry[]>([]);
   const [sentMessage, setSentMessage] = useState<string | null>(null);
@@ -38,7 +39,6 @@ export function WolPanel() {
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
 
-  const macError = useMemo(() => validateMac(mac), [mac]);
   const canSaveDevice = saveName.trim().length > 0 && !macError;
 
   const loadDevices = useCallback(async () => {
@@ -156,17 +156,15 @@ export function WolPanel() {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>MAC Address</span>
-          <input
-            ref={macRef}
-            className="network-panel__input"
-            value={mac}
-            onChange={(e) => setMac(e.target.value)}
-            placeholder="AA:BB:CC:DD:EE:FF"
-            data-testid="wol-mac"
-          />
-        </label>
+        <NetworkTextField
+          label="MAC Address"
+          value={mac}
+          onChange={setMac}
+          error={macError}
+          inputRef={macRef}
+          placeholder="AA:BB:CC:DD:EE:FF"
+          data-testid="wol-mac"
+        />
         <NetworkTextField
           label="Broadcast"
           value={broadcast}

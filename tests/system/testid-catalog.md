@@ -153,6 +153,7 @@ Fixed strings — match exactly.
 | `dns-lookup-panel` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
 | `dns-record-type` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
 | `dns-run` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
+| `dns-server` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
 | `export-config-btn` | `src/components/Settings/PortableModeSettings.tsx` |
 | `export-confirm-password` | `src/components/ExportImport/ExportDialog.tsx` |
 | `export-dialog-title` | `src/components/ExportImport/ExportDialog.tsx` |
