@@ -103,7 +103,7 @@ import {
   detachPersistentTab as apiDetachPersistentTab,
   saveShellIntegrationSettings,
 } from "@/services/api";
-import type { ConnectionTypeInfo } from "@/services/api";
+import type { ConnectionTypeInfo, ContainerSpawn } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { EmbeddedServerConfig, ServerState as EmbeddedServerState } from "@/types/embeddedServer";
@@ -315,8 +315,16 @@ interface AppState {
     contentType?: TabContentType,
     terminalOptions?: TerminalOptions,
     sessionId?: string | null,
-    persistentConnectionId?: string
+    persistentConnectionId?: string,
+    spawned?: boolean
   ) => string;
+  /**
+   * Open a Docker session tab for a resolved external container spawn (#1446).
+   * Reuses the standard {@link addTab} open path with the spawn's Docker
+   * settings + tab title and marks the tab `spawned` (no saved connection id).
+   * Returns the created tab id.
+   */
+  openSpawnedContainer: (spawn: ContainerSpawn) => string;
 
   // Persistent connection sessions
   /** Live state of all persistent connection sessions, keyed by connectionId. */
@@ -1176,7 +1184,8 @@ function createTab(
   panelId: string,
   contentType: TabContentType = "terminal",
   sessionId: string | null = null,
-  persistentConnectionId?: string
+  persistentConnectionId?: string,
+  spawned?: boolean
 ): TerminalTab {
   tabCounter++;
   return {
@@ -1189,6 +1198,7 @@ function createTab(
     panelId,
     isActive: true,
     ...(persistentConnectionId ? { persistentConnectionId } : {}),
+    ...(spawned ? { spawned: true } : {}),
   };
 }
 
@@ -2017,7 +2027,8 @@ export const useAppStore = create<AppState>((set, get) => {
       contentType,
       terminalOptions,
       sessionId,
-      persistentConnectionId
+      persistentConnectionId,
+      spawned
     ) => {
       let createdTabId = "";
       set((state) => {
@@ -2036,7 +2047,8 @@ export const useAppStore = create<AppState>((set, get) => {
           targetPanelId,
           contentType,
           sessionId ?? null,
-          persistentConnectionId
+          persistentConnectionId,
+          spawned
         );
         createdTabId = newTab.id;
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
@@ -2070,6 +2082,19 @@ export const useAppStore = create<AppState>((set, get) => {
       });
       return createdTabId;
     },
+
+    openSpawnedContainer: (spawn) =>
+      get().addTab(
+        spawn.title,
+        "docker",
+        { type: "docker", config: spawn.settings },
+        undefined,
+        "terminal",
+        undefined,
+        undefined,
+        undefined,
+        true
+      ),
 
     openSettingsTab: () =>
       set((state) => {
