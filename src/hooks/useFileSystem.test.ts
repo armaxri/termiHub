@@ -322,6 +322,7 @@ describe("useFileSystem (SFTP) — transfer-error feedback (D2, #1143)", () => {
           size: 1,
           modified: "",
           permissions: null,
+          writable: null,
         },
       ],
       operation: "copy",

@@ -149,6 +149,8 @@ fn entry_from_metadata(name: String, path: String, metadata: &std::fs::Metadata)
         modified,
         // Unix permissions are not available via UNC paths on Windows.
         permissions: None,
+        // No permission info over UNC → writability is unknown.
+        writable: None,
     }
 }
 

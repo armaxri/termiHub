@@ -512,4 +512,12 @@ export interface FileEntry {
   size: number;
   modified: string;
   permissions: string | null;
+  /**
+   * Cheap, conservative writability hint derived from `permissions`:
+   * `false` only when no class may write, `true` when at least one may,
+   * `null` when unknown (permissions absent or the backend does not derive it,
+   * e.g. local/docker/agent browsers). The authoritative per-file answer comes
+   * from the `sftp_check_writable` command.
+   */
+  writable: boolean | null;
 }

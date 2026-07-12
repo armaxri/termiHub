@@ -646,6 +646,7 @@ pub fn run() {
             commands::files::sftp_close,
             commands::files::sftp_list_dir,
             commands::files::sftp_realpath,
+            commands::files::sftp_check_writable,
             commands::files::sftp_download,
             commands::files::sftp_upload,
             commands::files::sftp_cancel_transfer,

@@ -579,6 +579,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
             size: 5,
             modified: "",
             permissions: null,
+            writable: null,
           },
         ],
         operation: "copy",
@@ -610,6 +611,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       size: 10,
       modified: "",
       permissions: null,
+      writable: null,
     };
     useAppStore.getState().setFileClipboard({
       entries: [entry],
@@ -634,6 +636,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       size: 0,
       modified: "",
       permissions: null,
+      writable: null,
     };
     useAppStore.getState().setFileClipboard({
       entries: [entry],
@@ -658,6 +661,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       size: 10,
       modified: "",
       permissions: null,
+      writable: null,
     };
     useAppStore.getState().setFileClipboard({
       entries: [entry],
@@ -681,6 +685,7 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     size: 42,
     modified: "2026-01-01T00:00:00Z",
     permissions: null,
+    writable: null,
   };
   const dirEntry: FileEntry = {
     name: "projects",
@@ -689,6 +694,7 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     size: 0,
     modified: "2026-01-01T00:00:00Z",
     permissions: null,
+    writable: null,
   };
 
   beforeEach(() => {
@@ -863,6 +869,7 @@ describe("FileBrowser – Multi-file selection", () => {
       size: 10,
       modified: "",
       permissions: null,
+      writable: null,
     },
     {
       name: "beta.txt",
@@ -871,6 +878,7 @@ describe("FileBrowser – Multi-file selection", () => {
       size: 20,
       modified: "",
       permissions: null,
+      writable: null,
     },
     {
       name: "gamma.txt",
@@ -879,6 +887,7 @@ describe("FileBrowser – Multi-file selection", () => {
       size: 30,
       modified: "",
       permissions: null,
+      writable: null,
     },
   ];
 

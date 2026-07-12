@@ -137,6 +137,8 @@ fn entry_from_file(file: &FtpFile, dir: &str, with_perms: bool) -> FileEntry {
         size: file.size() as u64,
         modified: modified_iso(file),
         permissions: with_perms.then(|| perms_string(file)),
+        // Writability is derived only for the desktop SFTP browser (#1324).
+        writable: None,
     }
 }
 

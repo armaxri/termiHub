@@ -174,6 +174,7 @@ impl FileBrowser for FtpFileBrowser {
                 size: 0,
                 modified: String::new(),
                 permissions: None,
+                writable: None,
             });
         }
 

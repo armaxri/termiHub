@@ -47,6 +47,8 @@ pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
             size,
             modified,
             permissions,
+            // Writability is derived only for the desktop SFTP browser (#1324).
+            writable: None,
         });
     }
 
@@ -112,6 +114,8 @@ fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
         size: metadata.len(),
         modified,
         permissions,
+        // Writability is derived only for the desktop SFTP browser (#1324).
+        writable: None,
     })
 }
 

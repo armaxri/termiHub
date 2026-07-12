@@ -23,6 +23,12 @@ pub struct FileEntry {
     pub modified: String,
     /// Unix "rwxrwxrwx" format, `None` when not available.
     pub permissions: Option<String>,
+    /// Cheap, conservative writability hint derived from the permission string
+    /// (see [`utils::writable_from_permissions`]): `Some(false)` only when *no*
+    /// class may write, `Some(true)` when at least one may, `None` when unknown
+    /// (permissions absent or the backend does not derive it). The authoritative
+    /// answer for a specific file comes from an SFTP write-open probe.
+    pub writable: Option<bool>,
 }
 
 /// Trait for connection-scoped file operations.
