@@ -48,33 +48,33 @@ describe("OpenPortsPanel — Button migration", () => {
   });
 
   it("lists open ports when Refresh is clicked", async () => {
-    vi.mocked(networkOpenPorts).mockResolvedValueOnce([
+    // The panel auto-loads on mount (#1359); Refresh re-fetches the same list.
+    vi.mocked(networkOpenPorts).mockResolvedValue([
       { protocol: "TCP", localAddr: "0.0.0.0:22", pid: 100, process: "sshd" },
     ]);
     await act(async () => {
       root.render(<OpenPortsPanel />);
     });
+    await flush();
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="open-ports-refresh"]')!.click();
     });
     await flush();
 
-    expect(networkOpenPorts).toHaveBeenCalledTimes(1);
+    // Once on mount (auto-load) plus once for the click.
+    expect(networkOpenPorts).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("sshd");
   });
 
   it("shows the error inline when listing fails", async () => {
-    vi.mocked(networkOpenPorts).mockRejectedValueOnce(new Error("permission denied"));
+    vi.mocked(networkOpenPorts).mockRejectedValue(new Error("permission denied"));
     await act(async () => {
       root.render(<OpenPortsPanel />);
     });
-
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="open-ports-refresh"]')!.click();
-    });
     await flush();
 
+    // The auto-load surfaces the failure without needing a manual Refresh.
     expect(container.textContent).toContain("permission denied");
   });
 });
