@@ -9,6 +9,8 @@ pub enum CredentialType {
     Password,
     /// A passphrase protecting an SSH private key.
     KeyPassphrase,
+    /// A password used to elevate a save (e.g., `sudo` for an elevated write).
+    SudoPassword,
 }
 
 impl fmt::Display for CredentialType {
@@ -16,6 +18,7 @@ impl fmt::Display for CredentialType {
         match self {
             CredentialType::Password => write!(f, "password"),
             CredentialType::KeyPassphrase => write!(f, "key_passphrase"),
+            CredentialType::SudoPassword => write!(f, "sudo_password"),
         }
     }
 }
@@ -44,6 +47,7 @@ impl CredentialKey {
         let credential_type = match type_str {
             "password" => CredentialType::Password,
             "key_passphrase" => CredentialType::KeyPassphrase,
+            "sudo_password" => CredentialType::SudoPassword,
             _ => return None,
         };
         Some(Self::new(conn_id, credential_type))
@@ -145,6 +149,11 @@ mod tests {
     }
 
     #[test]
+    fn credential_type_display_sudo_password() {
+        assert_eq!(CredentialType::SudoPassword.to_string(), "sudo_password");
+    }
+
+    #[test]
     fn credential_key_new_constructs_correctly() {
         let key = CredentialKey::new("conn-abc123", CredentialType::Password);
         assert_eq!(key.connection_id, "conn-abc123");
@@ -175,6 +184,27 @@ mod tests {
         let key = CredentialKey::from_map_key("conn-abc123:key_passphrase").unwrap();
         assert_eq!(key.connection_id, "conn-abc123");
         assert_eq!(key.credential_type, CredentialType::KeyPassphrase);
+    }
+
+    #[test]
+    fn credential_key_display_sudo_password() {
+        let key = CredentialKey::new("conn-abc123", CredentialType::SudoPassword);
+        assert_eq!(key.to_string(), "conn-abc123:sudo_password");
+    }
+
+    #[test]
+    fn credential_key_from_map_key_sudo_password() {
+        let key = CredentialKey::from_map_key("conn-abc123:sudo_password").unwrap();
+        assert_eq!(key.connection_id, "conn-abc123");
+        assert_eq!(key.credential_type, CredentialType::SudoPassword);
+    }
+
+    #[test]
+    fn credential_key_sudo_password_round_trip() {
+        let key = CredentialKey::new("my-conn", CredentialType::SudoPassword);
+        let map_key = key.to_string();
+        let parsed = CredentialKey::from_map_key(&map_key).unwrap();
+        assert_eq!(parsed, key);
     }
 
     #[test]

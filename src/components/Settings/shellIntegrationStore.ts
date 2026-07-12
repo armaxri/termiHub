@@ -1,31 +1,25 @@
 import { useAppStore } from "@/store/appStore";
-import type { ShellIntegrationSettings, ShellIntegrationStatus } from "@/types/connection";
+import type { ShellIntegrationStatus } from "@/types/connection";
 import type { ToastPromiseMessages } from "@/components/ui";
 import { defaultShellIntegrationSettings } from "./shellIntegrationEntries";
 
-/** Read the current shell-integration settings from the store, with a default fallback. */
-export function currentShellIntegration(): ShellIntegrationSettings {
-  return useAppStore.getState().settings.shellIntegration ?? defaultShellIntegrationSettings();
-}
-
 /**
- * Write shell-integration settings into the store, keeping `settings` and
- * `savedSettings` in lockstep (mirrors `updateSettings`, but for the value
- * persisted out-of-band via the dedicated shell-integration command).
+ * Merge the registration facts from a refreshed status back into the store,
+ * keeping `settings` and `savedSettings` in lockstep. Unlike editing the
+ * shell-integration settings (which persists via `updateShellIntegration`), the
+ * install/uninstall commands have already persisted server-side — this only
+ * reflects the returned `registered` / `registeredExePath` facts into the store.
  */
-export function writeShellIntegration(nextSi: ShellIntegrationSettings): void {
+export function syncRegistrationFacts(status: ShellIntegrationStatus): void {
   useAppStore.setState((s) => {
+    const current = s.settings.shellIntegration ?? defaultShellIntegrationSettings();
+    const nextSi = {
+      ...current,
+      registered: status.registered,
+      registeredExePath: status.registeredExePath,
+    };
     const next = { ...s.settings, shellIntegration: nextSi };
     return { settings: next, savedSettings: next };
-  });
-}
-
-/** Merge the registration facts from a refreshed status back into the store. */
-export function syncRegistrationFacts(status: ShellIntegrationStatus): void {
-  writeShellIntegration({
-    ...currentShellIntegration(),
-    registered: status.registered,
-    registeredExePath: status.registeredExePath,
   });
 }
 

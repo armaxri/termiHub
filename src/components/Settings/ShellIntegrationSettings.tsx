@@ -17,7 +17,6 @@ import type { ToastPromiseMessages } from "@/components/ui";
 import {
   getShellIntegrationStatus,
   installShellIntegration,
-  saveShellIntegrationSettings,
   uninstallShellIntegration,
 } from "@/services/api";
 import {
@@ -28,13 +27,7 @@ import {
   reorderEntries,
   updateEntry,
 } from "./shellIntegrationEntries";
-import {
-  INSTALL_TOAST,
-  UNINSTALL_TOAST,
-  currentShellIntegration,
-  syncRegistrationFacts,
-  writeShellIntegration,
-} from "./shellIntegrationStore";
+import { INSTALL_TOAST, UNINSTALL_TOAST, syncRegistrationFacts } from "./shellIntegrationStore";
 import { ShellIntegrationEntryEditor } from "./ShellIntegrationEntryEditor";
 import "./ShellIntegrationSettings.css";
 
@@ -58,6 +51,7 @@ const LINUX_MANAGERS: {
 export function ShellIntegrationSettings() {
   const storedSi = useAppStore((s) => s.settings.shellIntegration);
   const connections = useAppStore((s) => s.connections);
+  const updateShellIntegration = useAppStore((s) => s.updateShellIntegration);
 
   const si = useMemo<ShellIntegrationSettingsType>(
     () => storedSi ?? defaultShellIntegrationSettings(),
@@ -78,18 +72,19 @@ export function ShellIntegrationSettings() {
   }, []);
 
   /** Persist an edited shell-integration settings value + refresh status. */
-  const persist = useCallback(async (nextSi: ShellIntegrationSettingsType) => {
-    const prevSi = currentShellIntegration();
-    writeShellIntegration(nextSi);
-    try {
-      setStatus(await saveShellIntegrationSettings(nextSi));
-    } catch (e) {
-      frontendLog("shell_integration", `save failed: ${String(e)}`);
-      toast.error("Failed to save shell integration settings", { description: String(e) });
-      // Roll the optimistic store write back to the last persisted value.
-      writeShellIntegration(prevSi);
-    }
-  }, []);
+  const persist = useCallback(
+    async (nextSi: ShellIntegrationSettingsType) => {
+      try {
+        // The store action owns the optimistic settings/savedSettings write and
+        // its rollback; it re-throws on failure so we can surface the toast.
+        setStatus(await updateShellIntegration(nextSi));
+      } catch (e) {
+        frontendLog("shell_integration", `save failed: ${String(e)}`);
+        toast.error("Failed to save shell integration settings", { description: String(e) });
+      }
+    },
+    [updateShellIntegration]
+  );
 
   /** Run a register/unregister action with toast feedback + store status sync. */
   const runRegistration = useCallback(
