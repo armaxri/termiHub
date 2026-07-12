@@ -139,6 +139,10 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     latencyMs: r.latencyMs != null ? `${r.latencyMs}ms` : "—",
   }));
 
+  // Live open-port tally so the running footer surfaces progress, not just the
+  // number of ports checked.
+  const liveOpen = useMemo(() => results.filter((r) => r.state === "open").length, [results]);
+
   return (
     <form className="network-panel" data-testid="port-scanner-panel" {...formProps}>
       <div className="network-panel__header">
@@ -244,7 +248,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
           summary
             ? `Scanned ${summary.total} ports in ${(summary.elapsedMs / 1000).toFixed(1)}s — ${summary.open} open, ${summary.closed} closed, ${summary.filtered} filtered${status === "canceled" ? " (scan canceled)" : ""}`
             : status === "running"
-              ? `Scanning… ${results.length} ports checked`
+              ? `Scanning… ${results.length} checked, ${liveOpen} open`
               : null
         }
       />

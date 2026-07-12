@@ -149,6 +149,7 @@ Fixed strings — match exactly.
 | `custom-grammar-register-error` | `src/components/Settings/CustomGrammarsSettings.tsx` |
 | `custom-grammars-settings` | `src/components/Settings/CustomGrammarsSettings.tsx` |
 | `develop-branch-badge` | `src/components/StatusBar/UpdateIndicator.tsx` |
+| `dns-cancel` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
 | `dns-hostname` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
 | `dns-lookup-panel` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
 | `dns-record-type` | `src/components/NetworkTools/DnsLookupPanel.tsx` |
