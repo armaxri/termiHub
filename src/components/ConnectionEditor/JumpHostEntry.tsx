@@ -2,7 +2,7 @@ import type { JumpHostConfig } from "@/types/connection";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Input, Select, SelectItem } from "@/components/ui";
+import { Input, NumberInput, Select, SelectItem } from "@/components/ui";
 
 interface JumpHostEntryProps {
   /** The hop being edited. */
@@ -112,14 +112,11 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
 
           <div className="settings-form__field">
             <span className="settings-form__label">Port</span>
-            <Input
-              type="number"
+            <NumberInput
               value={hop.port}
               min={1}
               max={65535}
-              onChange={(e) =>
-                onChange({ port: e.target.value === "" ? 22 : Number(e.target.value) })
-              }
+              onValueChange={(v) => onChange({ port: v })}
               data-testid={tid("port")}
             />
           </div>
@@ -174,17 +171,12 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
 
       <div className="settings-form__field">
         <span className="settings-form__label">Connect Timeout (s)</span>
-        <Input
-          type="number"
+        <NumberInput
           value={hop.connectTimeoutSecs ?? ""}
           min={1}
           max={300}
           placeholder="Default (20 s)"
-          onChange={(e) =>
-            onChange({
-              connectTimeoutSecs: e.target.value === "" ? undefined : Number(e.target.value),
-            })
-          }
+          onValueChange={(v) => onChange({ connectTimeoutSecs: v === "" ? undefined : v })}
           data-testid={tid("connect-timeout")}
         />
       </div>
