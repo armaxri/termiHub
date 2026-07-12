@@ -119,6 +119,39 @@ export async function createTerminal(
   return await createConnection(config.type, config.config, undefined, connectId);
 }
 
+/**
+ * A resolved directory-mount container spawn (#1372/#1446). Mirrors the Rust
+ * `ContainerSpawn`: the camelCase Docker backend `settings` to open the session
+ * with, a `"… (Spawned)"` tab `title`, and `spawned: true` so the frontend can
+ * badge and track it separately from configured Docker connections.
+ */
+export interface ContainerSpawn {
+  /** Docker backend settings (camelCase) for the spawned session. */
+  settings: Record<string, unknown>;
+  /** Display title carrying the "Spawned" marker for the tab badge. */
+  title: string;
+  /** Always `true` — distinguishes spawned containers from saved connections. */
+  spawned: boolean;
+}
+
+/**
+ * Resolve a directory-mount container spawn into Docker session settings
+ * (#1446). Given a spawn `location` (and optional image / mount overrides),
+ * returns the Docker settings + tab title used to open a "new container" tab
+ * with the target directory bind-mounted.
+ */
+export async function resolveContainerSpawn(
+  location: string,
+  containerImage?: string,
+  containerMount?: string
+): Promise<ContainerSpawn> {
+  return await invoke<ContainerSpawn>("resolve_container_spawn", {
+    location,
+    containerImage,
+    containerMount,
+  });
+}
+
 /** Send input data to a terminal session */
 export async function sendInput(sessionId: SessionId, data: string): Promise<void> {
   await invoke("send_input", { sessionId, data });
