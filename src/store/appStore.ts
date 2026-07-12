@@ -38,6 +38,8 @@ import {
   RecoveryWarning,
   PersistentRunState,
   PersistentSessionEntry,
+  ShellIntegrationSettings,
+  ShellIntegrationStatus,
 } from "@/types/connection";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import {
@@ -99,6 +101,7 @@ import {
   adoptPersistentSession as apiAdoptPersistentSession,
   closeTerminal as apiCloseTerminal,
   detachPersistentTab as apiDetachPersistentTab,
+  saveShellIntegrationSettings,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -515,6 +518,17 @@ interface AppState {
 
   loadFromBackend: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
+  /**
+   * Persist edited shell-integration settings through the dedicated
+   * `save_shell_integration_settings` command, keeping `settings` and
+   * `savedSettings` in lockstep (as {@link updateSettings} does for general
+   * settings). Optimistically writes `nextSi` into both, then on backend
+   * failure rolls both back to the previously-persisted shell-integration value
+   * and re-throws so the caller can surface the error. Resolves with the
+   * refreshed {@link ShellIntegrationStatus} reporting the recomputed
+   * registration / staleness state.
+   */
+  updateShellIntegration: (nextSi: ShellIntegrationSettings) => Promise<ShellIntegrationStatus>;
   reloadExternalConnections: () => Promise<void>;
   /** Reload connections from the backend using the versioned reload guard. */
   reloadConnectionsFromBackend: () => void;
@@ -2968,6 +2982,23 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    updateShellIntegration: async (nextSi) => {
+      // Capture the previously-persisted value for rollback. Both the optimistic
+      // write and the rollback merge into the CURRENT settings (read at call
+      // time), so a concurrent general-settings edit landing mid-persist is
+      // preserved rather than clobbered.
+      const prevSi = get().settings.shellIntegration;
+      const optimistic = { ...get().settings, shellIntegration: nextSi };
+      set({ settings: optimistic, savedSettings: optimistic });
+      try {
+        return await saveShellIntegrationSettings(nextSi);
+      } catch (err) {
+        const rolledBack = { ...get().settings, shellIntegration: prevSi };
+        set({ settings: rolledBack, savedSettings: rolledBack });
+        throw err;
+      }
+    },
+
     reloadExternalConnections: async () => {
       try {
         const externalConns = await apiReloadExternalConnections();
@@ -4744,7 +4775,12 @@ export const useAppStore = create<AppState>((set, get) => {
           ),
         }));
       } catch (err) {
-        console.error("Failed to delete embedded server:", err);
+        // Propagate the failure so the caller (EmbeddedServerSidebar) can show
+        // an error toast — #1427. The server is only removed from the store on
+        // success above, so state stays correct on failure. Mirrors
+        // saveEmbeddedServer / deleteTunnel.
+        frontendLog("embedded_server", `Failed to delete embedded server ${serverId}: ${err}`);
+        throw err;
       }
     },
 

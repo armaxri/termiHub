@@ -1,52 +1,55 @@
 //! Spawn IPC client: connects to the per-user rendezvous endpoint, sends one
 //! [`SpawnRequest`], and reads the [`SpawnResponse`] (#1364).
+//!
+//! The cross-platform transport (Unix socket / Windows named pipe) and NDJSON
+//! framing come from the shared [`termihub_core::ipc`] helper (#1386).
 
 use anyhow::Context;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use termihub_core::ipc;
+use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 
 use super::{SpawnEndpoint, SpawnRequest, SpawnResponse};
 
 /// Connect to `endpoint`, send `req`, and return the running instance's
 /// response. Fails fast if no instance is listening.
 pub async fn send(endpoint: &SpawnEndpoint, req: &SpawnRequest) -> anyhow::Result<SpawnResponse> {
-    #[cfg(unix)]
-    {
-        let stream = tokio::net::UnixStream::connect(endpoint.address())
-            .await
-            .context("connect spawn socket")?;
-        exchange(stream, req).await
-    }
-    #[cfg(windows)]
-    {
-        use tokio::net::windows::named_pipe::ClientOptions;
-        let stream = ClientOptions::new()
-            .open(endpoint.address())
-            .context("open spawn pipe")?;
-        exchange(stream, req).await
-    }
+    let (reader, writer) = ipc::connect(endpoint.address())
+        .await
+        .with_context(|| format!("connect spawn endpoint {endpoint}"))?;
+    exchange_halves(reader, writer, req).await
 }
 
-/// Perform the request/response exchange over an established stream. Generic so
-/// it is exercised in tests via an in-memory `tokio::io::duplex` pair on every
-/// platform.
+/// Perform the request/response exchange over a combined stream: split it and
+/// run the worker. A test-only convenience so the transport is exercised via an
+/// in-memory `tokio::io::duplex` pair on every platform; the production path
+/// calls [`exchange_halves`] directly with the connection's halves.
+#[cfg(test)]
 pub(crate) async fn exchange<S>(stream: S, req: &SpawnRequest) -> anyhow::Result<SpawnResponse>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-    let (reader, mut writer) = tokio::io::split(stream);
+    let (reader, writer) = tokio::io::split(stream);
+    exchange_halves(reader, writer, req).await
+}
 
-    let mut payload = serde_json::to_string(req).context("serialize spawn request")?;
-    payload.push('\n');
-    writer
-        .write_all(payload.as_bytes())
+/// Request/response exchange over already-split read/write halves.
+async fn exchange_halves<R, W>(
+    reader: R,
+    mut writer: W,
+    req: &SpawnRequest,
+) -> anyhow::Result<SpawnResponse>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let payload = serde_json::to_string(req).context("serialize spawn request")?;
+    ipc::write_line(&mut writer, &payload)
         .await
         .context("write spawn request")?;
-    writer.flush().await.context("flush spawn request")?;
 
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
+    ipc::read_line(&mut reader, &mut line)
         .await
         .context("read spawn response")?;
     serde_json::from_str(line.trim()).context("parse spawn response")

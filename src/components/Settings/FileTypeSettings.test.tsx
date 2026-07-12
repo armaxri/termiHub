@@ -107,6 +107,32 @@ describe("FileTypeSettings", () => {
     expect(query("file-type-remove-Jenkinsfile")).not.toBeNull();
   });
 
+  it("renders remove buttons as shared ghost Button primitives (not the bespoke shell)", () => {
+    act(() => {
+      useAppStore.setState({
+        settings: {
+          ...useAppStore.getState().settings,
+          fileLanguageMappings: { Jenkinsfile: "groovy" },
+        },
+      });
+    });
+    render();
+
+    const btn = query("file-type-remove-Jenkinsfile") as HTMLButtonElement;
+    expect(btn.classList.contains("ui-btn")).toBe(true);
+    expect(btn.classList.contains("ui-btn--ghost")).toBe(true);
+    expect(btn.classList.contains("settings-panel__file-remove")).toBe(false);
+  });
+
+  it("renders built-in copy buttons as shared ghost Button primitives (not the bespoke shell)", () => {
+    render();
+
+    const btn = query("file-type-copy-Dockerfile") as HTMLButtonElement;
+    expect(btn.classList.contains("ui-btn")).toBe(true);
+    expect(btn.classList.contains("ui-btn--ghost")).toBe(true);
+    expect(btn.classList.contains("settings-panel__file-remove")).toBe(false);
+  });
+
   it("removes a custom mapping when trash button is clicked", async () => {
     act(() => {
       useAppStore.setState({

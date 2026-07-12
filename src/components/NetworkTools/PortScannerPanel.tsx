@@ -13,7 +13,8 @@ import {
 import type { PortScanSummary } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { NetworkNumberField } from "./NetworkNumberField";
-import { validateIntRange } from "@/utils/fieldValidation";
+import { NetworkTextField } from "./NetworkTextField";
+import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
@@ -49,7 +50,9 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     max: 2000,
     label: "Concurrency",
   });
-  const canRun = !!host.trim() && !timeoutError && !concurrencyError;
+  const hostError = validateHost(host);
+  const portsError = ports.trim() ? null : "Enter at least one port";
+  const canRun = !hostError && !portsError && !timeoutError && !concurrencyError;
 
   // Warn before a very large scan. The estimate factors in the CIDR host-count
   // as well as the port count, so a small port list over a wide block still
@@ -176,27 +179,23 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
       </div>
 
       <div className="network-panel__form">
-        <label className="network-panel__field">
-          <span>Host / CIDR</span>
-          <input
-            ref={hostRef}
-            className="network-panel__input"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            placeholder="192.168.1.1, 10.0.0.0/24, example.com"
-            data-testid="port-scanner-host"
-          />
-        </label>
-        <label className="network-panel__field">
-          <span>Ports</span>
-          <input
-            className="network-panel__input"
-            value={ports}
-            onChange={(e) => setPorts(e.target.value)}
-            placeholder="22,80,443,8080-8090"
-            data-testid="port-scanner-ports"
-          />
-        </label>
+        <NetworkTextField
+          label="Host / CIDR"
+          value={host}
+          onChange={setHost}
+          error={hostError}
+          inputRef={hostRef}
+          placeholder="192.168.1.1, 10.0.0.0/24, example.com"
+          data-testid="port-scanner-host"
+        />
+        <NetworkTextField
+          label="Ports"
+          value={ports}
+          onChange={setPorts}
+          error={portsError}
+          placeholder="22,80,443,8080-8090"
+          data-testid="port-scanner-ports"
+        />
         <NetworkNumberField
           label="Timeout (ms)"
           value={timeoutMs}

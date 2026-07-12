@@ -1,6 +1,8 @@
 import { Play, Square, Pencil, Copy, Trash2, RotateCw, Info, AlertTriangle } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
-import { TunnelConfig, TunnelState } from "@/types/tunnel";
+import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
+import type { SidebarStatusTone } from "@/components/SidebarListItem";
+import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
 
@@ -35,6 +37,28 @@ function getPortMapping(tunnel: TunnelConfig): string {
   }
 }
 
+/** Map a tunnel status onto the shared status-dot tone. */
+function statusTone(status: TunnelStatus): SidebarStatusTone {
+  switch (status) {
+    case "connected":
+      return "success";
+    case "connecting":
+    case "reconnecting":
+      return "warning";
+    case "error":
+      return "error";
+    default:
+      return "neutral";
+  }
+}
+
+/**
+ * A single SSH tunnel entry in the Tunnels sidebar. Composes the shared
+ * {@link SidebarListItem} shell (status dot / badge / name / actions / details)
+ * so tunnel rows share one structure and token'd styling with the other
+ * management sidebars; only the stats / error / reconnecting detail lines stay
+ * tunnel-specific.
+ */
 export function TunnelListItem({
   tunnel,
   state,
@@ -63,23 +87,17 @@ export function TunnelListItem({
   };
 
   return (
-    <div
-      className={`tunnel-item${isError ? " tunnel-item--error" : ""}`}
-      data-testid={`tunnel-item-${tunnel.id}`}
+    <SidebarListItem
+      testId={`tunnel-item-${tunnel.id}`}
+      nameTestId={`tunnel-name-${tunnel.id}`}
+      name={tunnel.name}
+      error={isError}
       onDoubleClick={() => onEdit(tunnel.id)}
-    >
-      <div className="tunnel-item__header">
-        <span
-          className={`tunnel-item__status tunnel-item__status--${status}`}
-          data-testid={`tunnel-status-${tunnel.id}`}
-        />
-        <span className="tunnel-item__name" data-testid={`tunnel-name-${tunnel.id}`}>
-          {tunnel.name}
-        </span>
-        <span className="tunnel-item__type-badge" data-testid={`tunnel-type-${tunnel.id}`}>
-          {typeLabel}
-        </span>
-        <div className="tunnel-item__actions">
+      status={<SidebarStatusDot tone={statusTone(status)} testId={`tunnel-status-${tunnel.id}`} />}
+      badge={typeLabel}
+      badgeTestId={`tunnel-type-${tunnel.id}`}
+      actions={
+        <>
           {status === "connected" && (
             <Tooltip content="Reconnect (force)" side="top">
               <Button
@@ -208,31 +226,33 @@ export function TunnelListItem({
               }}
             />
           </Tooltip>
-        </div>
-      </div>
-      <div className="tunnel-item__details">
-        <span>{getPortMapping(tunnel)}</span>
-        <span>via {sshLabel}</span>
-        {isActive && state?.stats && (
-          <div className="tunnel-item__stats">
-            <span>↑ {formatBytes(state.stats.bytesSent)}</span>
-            <span>↓ {formatBytes(state.stats.bytesReceived)}</span>
-            <span>{state.stats.activeConnections} conn</span>
-          </div>
-        )}
-        {isError && lastError && (
-          <span className="tunnel-item__error" title={lastError}>
-            <AlertTriangle size={12} className="tunnel-item__error-icon" />
-            <span className="tunnel-item__error-text">{lastError}</span>
-          </span>
-        )}
-        {status === "reconnecting" && lastError && (
-          <span className="tunnel-item__reconnecting" title={lastError}>
-            <RotateCw size={12} className="tunnel-item__reconnecting-icon" />
-            <span className="tunnel-item__reconnecting-text">{lastError}</span>
-          </span>
-        )}
-      </div>
-    </div>
+        </>
+      }
+      details={
+        <>
+          <span>{getPortMapping(tunnel)}</span>
+          <span>via {sshLabel}</span>
+          {isActive && state?.stats && (
+            <div className="tunnel-item__stats">
+              <span>↑ {formatBytes(state.stats.bytesSent)}</span>
+              <span>↓ {formatBytes(state.stats.bytesReceived)}</span>
+              <span>{state.stats.activeConnections} conn</span>
+            </div>
+          )}
+          {isError && lastError && (
+            <span className="tunnel-item__error" title={lastError}>
+              <AlertTriangle size={12} className="tunnel-item__error-icon" />
+              <span className="tunnel-item__error-text">{lastError}</span>
+            </span>
+          )}
+          {status === "reconnecting" && lastError && (
+            <span className="tunnel-item__reconnecting" title={lastError}>
+              <RotateCw size={12} className="tunnel-item__reconnecting-icon" />
+              <span className="tunnel-item__reconnecting-text">{lastError}</span>
+            </span>
+          )}
+        </>
+      }
+    />
   );
 }
