@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use russh::ChannelMsg;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
@@ -227,32 +226,13 @@ impl SshMonitoringProviderImpl<SshTransport> {
 }
 
 /// Execute a command over an SSH session and return stdout as a string.
+///
+/// Thin wrapper over [`ssh_exec_with_stdin`](super::exec::ssh_exec_with_stdin)
+/// that runs with no stdin and keeps only stdout — the monitoring loop parses
+/// stdout and does not need the captured stderr or exit status.
 async fn ssh_exec(session: &SshSession, command: &str) -> Result<String, CoreError> {
-    let mut channel = session
-        .channel_open_session()
-        .await
-        .map_err(|e| CoreError::Other(format!("Channel open failed: {e}")))?;
-
-    channel
-        .exec(false, command)
-        .await
-        .map_err(|e| CoreError::Other(format!("Exec failed: {e}")))?;
-
-    let mut output = String::new();
-    loop {
-        match channel.wait().await {
-            Some(ChannelMsg::Data { ref data }) => {
-                if let Ok(s) = std::str::from_utf8(data) {
-                    output.push_str(s);
-                }
-            }
-            Some(ChannelMsg::ExitStatus { .. }) => {}
-            Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
-    }
-
-    Ok(output)
+    let output = super::exec::ssh_exec_with_stdin(session, command, "").await?;
+    Ok(output.stdout)
 }
 
 /// Run a single collect bounded by `timeout`.

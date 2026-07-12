@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod connector;
+pub mod exec;
 mod file_browser;
 pub mod handler;
 pub mod jump_host;
@@ -13,6 +14,8 @@ mod legacy_pem;
 mod monitoring;
 pub mod session_pool;
 pub mod x11;
+
+pub use self::exec::{ssh_exec_with_stdin, SshExecOutput};
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
