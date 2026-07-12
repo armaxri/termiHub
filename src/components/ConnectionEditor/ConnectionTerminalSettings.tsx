@@ -1,7 +1,7 @@
 import { useAppStore } from "@/store/appStore";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
-import { Input, Select, Toggle } from "@/components/ui";
+import { Input, NumberInput, Select, Toggle } from "@/components/ui";
 
 interface ConnectionTerminalSettingsProps {
   options: TerminalOptions;
@@ -44,15 +44,11 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <label className="settings-form__field">
         <span className="settings-form__label">Font Size</span>
-        <Input
-          type="number"
+        <NumberInput
           min={8}
           max={72}
           value={options.fontSize ?? ""}
-          onChange={(e) => {
-            const val = parseInt(e.target.value);
-            onChange({ ...options, fontSize: isNaN(val) ? undefined : val });
-          }}
+          onValueChange={(v) => onChange({ ...options, fontSize: v === "" ? undefined : v })}
           placeholder={`Use global default (${globalFontSize})`}
         />
         <span className="settings-form__hint">Leave empty to use the global setting.</span>
@@ -60,18 +56,13 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
 
       <label className="settings-form__field">
         <span className="settings-form__label">Scrollback Buffer</span>
-        <Input
-          type="number"
+        <NumberInput
           min={100}
           max={1000000}
           value={options.scrollbackBuffer ?? ""}
-          onChange={(e) => {
-            const val = parseInt(e.target.value);
-            onChange({
-              ...options,
-              scrollbackBuffer: isNaN(val) ? undefined : val,
-            });
-          }}
+          onValueChange={(v) =>
+            onChange({ ...options, scrollbackBuffer: v === "" ? undefined : v })
+          }
           placeholder={`Use global default (${globalScrollback})`}
         />
         <span className="settings-form__hint">

@@ -651,8 +651,11 @@
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
-.layout-size-input {
+/* Compact inline editor. Element+class specificity keeps it winning over the
+   shared `.ui-input` base that the NumberInput primitive applies. */
+input.layout-size-input {
   width: 40px;
+  height: auto;
   padding: 1px 2px;
   font-size: 9px;
   text-align: center;
@@ -665,6 +668,6 @@
   flex-shrink: 0;
 }
 
-.layout-size-input:focus {
+input.layout-size-input:focus {
   box-shadow: 0 0 0 1px var(--accent-color);
 }
