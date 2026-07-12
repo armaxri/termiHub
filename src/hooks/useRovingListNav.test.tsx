@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act, useState } from "react";
+import { act, useState } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useRovingListNav, RovingListNav, RovingListNavCallbacks } from "./useRovingListNav";
 
@@ -197,15 +197,41 @@ describe("useRovingListNav", () => {
     expect(cb.onClearSelection).toHaveBeenCalledTimes(1);
   });
 
-  it("type-ahead jumps to the next matching label", () => {
-    const cb = makeCallbacks();
-    render(ITEMS, cb);
+  it("type-ahead advances through successive matches of the same key", () => {
+    render(ITEMS, makeCallbacks());
     // From index 0 (alpha), typing "a" advances to the next "a" match: apple.
     press("a");
     expect(nav.activeIndex).toBe(1);
-    // Typing "b" (fresh single key) jumps to banana.
+  });
+
+  it("type-ahead jumps to a label starting with a fresh key", () => {
+    render(ITEMS, makeCallbacks());
     press("b");
     expect(nav.activeIndex).toBe(2);
+  });
+
+  it("resets the type-ahead buffer after the timeout window", () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1000);
+    render(ITEMS, makeCallbacks());
+    press("a"); // fresh buffer "a" → apple
+    expect(nav.activeIndex).toBe(1);
+    now.mockReturnValue(1000 + 800); // > 700ms later → buffer resets
+    press("b"); // fresh buffer "b" → banana
+    expect(nav.activeIndex).toBe(2);
+    now.mockRestore();
+  });
+
+  it("accumulates multi-key type-ahead within the timeout window", () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1000);
+    render(ITEMS, makeCallbacks());
+    press("b"); // fresh "b" → banana (index 2)
+    expect(nav.activeIndex).toBe(2);
+    now.mockReturnValue(1100); // within window → buffer becomes "ba"
+    press("a"); // "ba" still matches banana; must NOT reset and wrap to alpha
+    expect(nav.activeIndex).toBe(2);
+    now.mockRestore();
   });
 
   it("does not treat modifier-key combos as type-ahead", () => {
