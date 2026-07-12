@@ -1047,6 +1047,31 @@ settings UI lands; until then, seed `shellIntegration.entries` in `settings.json
    remain under `HKCU\Software\Classes\Directory\shell`,
    `…\Directory\Background\shell`, or `…\*\shell` (verify with `regedit`).
 
+### Linux file-manager detection in Shell Integration settings (#1397)
+
+Verifies that the Shell Integration settings report the file managers actually
+installed on the host, with versions. **Linux only** — detection shells out to
+each manager's `--version` and reads the per-user file-manager directories,
+which are `#[cfg(target_os = "linux")]`-gated and depend on the live environment,
+so they cannot be validated from macOS CI. The pure version parsers are unit
+tested on every platform; these steps confirm the live probe. See PR for #1397.
+
+Prerequisites: a Linux build of termiHub on a desktop with at least one of
+Nautilus, Dolphin (KDE) or Thunar installed (`nautilus --version` /
+`dolphin --version` / `thunar --version` should print a version at a shell).
+
+1. Open **Settings → Shell Integration**. Under **Linux — File Manager
+   Integrations**, each of Nautilus / KDE service menu / Thunar shows either
+   "— detected: `<Name> <version>`" (e.g. "detected: Nautilus 43.2") for an
+   installed manager, or "— not detected" for an absent one.
+2. Cross-check the shown version against the manager's own `--version` output —
+   they must match.
+3. On a host with **none** of the three installed, all three rows read
+   "— not detected" (the previous behavior was an always-empty list, so nothing
+   was annotated at all).
+4. Install or remove a manager (e.g. `apt install thunar`), reopen the settings
+   panel, and confirm the detected/not-detected state updates accordingly.
+
 ### macOS app-level Services provider (#1409)
 
 Verifies the app-level **"Open in termiHub"** entry in the macOS **Services**

@@ -8,7 +8,7 @@ import {
   DynamicForwardConfig,
 } from "@/types/tunnel";
 import { TunnelEditorMeta } from "@/types/terminal";
-import { Button, Input, Select, Field, Toggle, toast } from "@/components/ui";
+import { Button, Input, NumberInput, Select, Field, Toggle, toast } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { frontendLog } from "@/utils/frontendLog";
@@ -96,7 +96,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     [tunnelType.type]
   );
 
-  const updateConfig = useCallback((field: string, value: string | number) => {
+  const updateConfig = useCallback((field: string, value: string | number | "") => {
     setTunnelType((prev) => {
       switch (prev.type) {
         case "local":
@@ -108,17 +108,6 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       }
     });
   }, []);
-
-  // Store the raw numeric value (0 for blank) so out-of-range/blank ports are
-  // caught by validation instead of the previous `parseInt(...) || 0` which
-  // silently coerced them to 0 and let an invalid tunnel save.
-  const updatePort = useCallback(
-    (field: string, raw: string) => {
-      const n = parseInt(raw, 10);
-      updateConfig(field, Number.isNaN(n) ? 0 : n);
-    },
-    [updateConfig]
-  );
 
   // Inline validation of the forwarding host/port fields. Blocks Save while any
   // visible field is invalid. `tunnelType` is a fresh object on every edit, so
@@ -281,11 +270,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 className="tunnel-editor__port-field"
                 error={errors.localPort}
               >
-                <Input
+                <NumberInput
                   id={`tunnel-local-port-${tabId}`}
-                  type="number"
                   value={tunnelType.config.localPort}
-                  onChange={(e) => updatePort("localPort", e.target.value)}
+                  onValueChange={(v) => updateConfig("localPort", v)}
                   error={!!errors.localPort}
                   data-testid="tunnel-editor-local-port"
                 />
@@ -313,11 +301,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 className="tunnel-editor__port-field"
                 error={errors.remotePort}
               >
-                <Input
+                <NumberInput
                   id={`tunnel-remote-port-${tabId}`}
-                  type="number"
                   value={tunnelType.config.remotePort}
-                  onChange={(e) => updatePort("remotePort", e.target.value)}
+                  onValueChange={(v) => updateConfig("remotePort", v)}
                   error={!!errors.remotePort}
                   data-testid="tunnel-editor-remote-port"
                 />
@@ -350,11 +337,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 className="tunnel-editor__port-field"
                 error={errors.remotePort}
               >
-                <Input
+                <NumberInput
                   id={`tunnel-r-remote-port-${tabId}`}
-                  type="number"
                   value={tunnelType.config.remotePort}
-                  onChange={(e) => updatePort("remotePort", e.target.value)}
+                  onValueChange={(v) => updateConfig("remotePort", v)}
                   error={!!errors.remotePort}
                   data-testid="tunnel-editor-remote-port"
                 />
@@ -381,11 +367,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 className="tunnel-editor__port-field"
                 error={errors.localPort}
               >
-                <Input
+                <NumberInput
                   id={`tunnel-r-local-port-${tabId}`}
-                  type="number"
                   value={tunnelType.config.localPort}
-                  onChange={(e) => updatePort("localPort", e.target.value)}
+                  onValueChange={(v) => updateConfig("localPort", v)}
                   error={!!errors.localPort}
                   data-testid="tunnel-editor-local-port"
                 />
@@ -417,11 +402,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 className="tunnel-editor__port-field"
                 error={errors.localPort}
               >
-                <Input
+                <NumberInput
                   id={`tunnel-d-local-port-${tabId}`}
-                  type="number"
                   value={tunnelType.config.localPort}
-                  onChange={(e) => updatePort("localPort", e.target.value)}
+                  onValueChange={(v) => updateConfig("localPort", v)}
                   error={!!errors.localPort}
                   data-testid="tunnel-editor-local-port"
                 />

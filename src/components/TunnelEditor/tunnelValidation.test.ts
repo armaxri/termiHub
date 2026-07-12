@@ -26,6 +26,12 @@ describe("validateTunnelType", () => {
     expect(errors.localPort).toBe("Local port must be between 1 and 65535");
   });
 
+  it("rejects a blank ('') port as required (#1444)", () => {
+    const { valid, errors } = validateTunnelType(local({ localPort: "" }));
+    expect(valid).toBe(false);
+    expect(errors.localPort).toBe("Local port is required");
+  });
+
   it("rejects a port above 65535", () => {
     const { valid, errors } = validateTunnelType(local({ remotePort: 70000 }));
     expect(valid).toBe(false);

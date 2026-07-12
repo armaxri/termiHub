@@ -5,7 +5,7 @@ import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { listSerialPorts } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button, Input, Select, Toggle } from "@/components/ui";
+import { Button, Input, NumberInput, Select, Toggle } from "@/components/ui";
 
 interface DynamicFieldProps {
   field: SettingsField;
@@ -178,13 +178,9 @@ function NumberField({
   return (
     <>
       <FieldLabel field={field} />
-      <Input
-        type="number"
+      <NumberInput
         value={value != null ? Number(value) : ""}
-        onChange={(e) => {
-          const v = e.target.value === "" ? undefined : Number(e.target.value);
-          onChange(v);
-        }}
+        onValueChange={(v) => onChange(v === "" ? undefined : v)}
         min={fieldType.min}
         max={fieldType.max}
         placeholder={field.placeholder}
@@ -293,13 +289,9 @@ function PortField({ field, value, onChange }: FieldProps) {
   return (
     <>
       <FieldLabel field={field} />
-      <Input
-        type="number"
+      <NumberInput
         value={value != null ? Number(value) : ""}
-        onChange={(e) => {
-          const v = e.target.value === "" ? undefined : Number(e.target.value);
-          onChange(v);
-        }}
+        onValueChange={(v) => onChange(v === "" ? undefined : v)}
         min={1}
         max={65535}
         placeholder={field.placeholder}

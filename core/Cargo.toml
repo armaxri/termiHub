@@ -98,6 +98,7 @@ wsl = ["dep:portable-pty", "dep:tracing"]
 ftp = [
     "dep:suppaftp",
     "dep:futures-rustls",
+    "futures-util/io",
     "dep:webpki-roots",
     "dep:tracing",
 ]
