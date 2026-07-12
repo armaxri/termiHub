@@ -338,6 +338,40 @@ mod tests {
     }
 
     #[test]
+    fn sudo_password_round_trip_and_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+
+        // Set up the master password store
+        mgr.with_master_password_store(|s| s.setup("test-pw"))
+            .unwrap()
+            .unwrap();
+
+        // store -> get -> remove of a SudoPassword credential
+        let sudo_key = CredentialKey::new("conn-sudo", CredentialType::SudoPassword);
+        mgr.set(&sudo_key, "elevated-secret").unwrap();
+        assert_eq!(
+            mgr.get(&sudo_key).unwrap(),
+            Some("elevated-secret".to_string())
+        );
+        mgr.remove(&sudo_key).unwrap();
+        assert_eq!(mgr.get(&sudo_key).unwrap(), None);
+
+        // remove_all_for_connection clears SudoPassword alongside Password/KeyPassphrase
+        let pw_key = CredentialKey::new("conn-sudo", CredentialType::Password);
+        let kp_key = CredentialKey::new("conn-sudo", CredentialType::KeyPassphrase);
+        mgr.set(&pw_key, "pass").unwrap();
+        mgr.set(&kp_key, "phrase").unwrap();
+        mgr.set(&sudo_key, "elevated-secret").unwrap();
+
+        mgr.remove_all_for_connection("conn-sudo").unwrap();
+
+        assert_eq!(mgr.get(&pw_key).unwrap(), None);
+        assert_eq!(mgr.get(&kp_key).unwrap(), None);
+        assert_eq!(mgr.get(&sudo_key).unwrap(), None);
+    }
+
+    #[test]
     fn get_on_locked_store_returns_error() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
