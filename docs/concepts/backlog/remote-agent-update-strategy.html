@@ -367,6 +367,34 @@
           If Host A updates the agent, Host B's active sessions are silently killed mid-use.
         </p>
 
+        <h3>Topology reality (corrected)</h3>
+        <p>
+          An earlier draft of this concept assumed
+          <em>one shared agent process that knows all connected clients</em>. That is not how the
+          code works, and the correction is load-bearing for every coordination feature below. The
+          desktop opens a <strong>russh exec channel per desktop</strong> and runs
+          <code>termihub-agent --stdio</code>
+          (<code>src-tauri/src/terminal/agent_manager.rs</code>), so there is
+          <strong>one agent OS process per desktop→agent channel</strong>, and that process serves
+          <strong>exactly one client</strong>. Two desktops connecting to the same host do not share
+          a running agent process — they share only the deployed binary on disk and the layer of
+          detached session <strong>daemons</strong> (<code>termihub-agent --daemon &lt;id&gt;</code
+          >) that outlive each agent worker and replay a ring buffer on re-attach.
+        </p>
+        <p>
+          The topology decision (spike SI-1, resolved in
+          <a href="../../architecture.md">ADR-11</a>) is therefore: each agent process owns a
+          <strong>per-process <code>ConnectionRegistry</code></strong>
+          (<code>agent/src/client_registry.rs</code>) recording its single client, and cross-client
+          coordination (<code>agent.list_connections</code>, the update broadcast) is built on the
+          already-shared <strong>daemon layer</strong> — <em>not</em> by adding a new host-side
+          coordinator process, and <em>not</em> by switching the transport to the
+          <code>--listen</code> TCP shared server (which would open a network port on every host and
+          still serve one client at a time). Where the approaches below say "broadcast to all
+          connected clients" or "the agent tracks connected client identities", read that as the
+          daemon-layer coordination substrate rather than a single all-knowing process.
+        </p>
+
         <h3>Goals</h3>
         <ul>
           <li>Prevent silent session termination when one host updates a shared agent</li>
@@ -381,9 +409,17 @@
             Side-by-side versioned agents running on the same host (see trade-off analysis below)
           </li>
           <li>Automatic rollback after a bad update</li>
-          <li>Windows or macOS agent targets (currently Linux-only)</li>
           <li>Enterprise MDM / centralised fleet management</li>
         </ul>
+        <p>
+          <strong>Platform matrix (corrected):</strong> an earlier draft listed Windows and macOS
+          agents as a non-goal ("currently Linux-only"). That is out of date — Windows agent parity
+          shipped in epic #771 and CI builds and publishes macOS and Windows agent binaries
+          alongside Linux. This feature therefore targets the real
+          <strong>3-platform matrix (Linux · macOS · Windows)</strong>; the coordination substrate
+          it builds on (detached daemons over a unix domain socket / Windows named pipe) already
+          works on all three.
+        </p>
       </section>
 
       <!-- ── UI Interface ───────────────────────────────────────────── -->
@@ -1419,11 +1455,18 @@ flowchart TD
     Ok(ListConnectionsResult { connections: clients })
 }</code></pre>
         <p>
-          <code>SessionRegistry</code> (or a new <code>ConnectionRegistry</code>) tracks each
-          connected client's metadata received during <code>initialize</code>:
+          The <code>ConnectionRegistry</code> (shipped in <code>agent/src/client_registry.rs</code>,
+          SI-1 / #1346) tracks the connected client's metadata received during
+          <code>initialize</code>. It is populated in
+          <code>handler/dispatch.rs::register_initialize</code> and cleared on disconnect by the
+          transport loops (<code>io/stdio.rs</code>, <code>io/tcp.rs</code>). Because of the
+          per-process topology (see <a href="#overview">Topology reality</a>), the registry holds
+          exactly one client in <code>--stdio</code> mode; the type is nonetheless shaped for many
+          clients so the same API serves the <code>--listen</code> path and the daemon-layer
+          coordination that <code>agent.list_connections</code> will build on:
         </p>
         <pre><code>pub struct ConnectedClient {
-    pub client_id: String,
+    pub client_id: String,       // agent-assigned per connection
     pub client: String,          // "termihub-desktop"
     pub client_version: String,
     pub connected_since: DateTime&lt;Utc&gt;,
@@ -1542,14 +1585,14 @@ pub struct UpdatePendingNotification {
           </li>
         </ul>
         <p>
-          Binary integrity verification (implemented in #1350): a SHA-256 checksum is published
-          as a release asset next to <em>every</em> agent artifact on all three platforms
+          Binary integrity verification (implemented in #1350): a SHA-256 checksum is published as a
+          release asset next to <em>every</em> agent artifact on all three platforms
           (<code>termihub-agent-linux-x64.sha256</code>,
           <code>termihub-agent-macos-arm64.sha256</code>,
           <code>termihub-agent-windows-x64.exe.sha256</code>, …). The desktop verifies the binary
           against its sidecar on the resolve chain (cache → bundled → download) before deploy,
-          redeploy, or exec-replace — a mismatched or tampered binary is rejected with a clear
-          error and never installed or executed.
+          redeploy, or exec-replace — a mismatched or tampered binary is rejected with a clear error
+          and never installed or executed.
         </p>
 
         <h3>Config / State Schema</h3>
@@ -1590,8 +1633,11 @@ pub struct UpdatePendingNotification {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (concept not yet implemented) ·
-          <strong>Status:</strong> diverged (not implemented — backlog feature)
+          <strong>Last synced:</strong> 2026-07-12 (SI-1 / #1346) ·
+          <strong>Status:</strong> partially implemented — the topology model and per-process
+          <code>ConnectionRegistry</code> are in code; the update RPCs, UI, and update logic remain
+          backlog. A full <code>/sync-concept remote-agent-update-strategy</code> pass is warranted
+          as later sub-issues land.
         </p>
 
         <h3>Open divergences</h3>
@@ -1609,8 +1655,11 @@ pub struct UpdatePendingNotification {
             <tbody>
               <tr>
                 <td>1</td>
-                <td>Entire feature (per concept)</td>
-                <td>Not implemented — backlog</td>
+                <td>
+                  Update RPCs / notifications, sidebar badge + chip, update dialogs, deferred-update
+                  daemon flow, SHA-256 integrity (Approaches 1–4, Phases 1–3)
+                </td>
+                <td>Not implemented — backlog (sub-issues #1347, #1349, #1350)</td>
                 <td>Missing</td>
                 <td>Implement per <code>concept</code> order, then re-sync</td>
               </tr>
@@ -1630,9 +1679,14 @@ pub struct UpdatePendingNotification {
             </thead>
             <tbody>
               <tr>
+                <td>2026-07-12</td>
                 <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>
+                  Topology corrected to the real one-process-per-<code>--stdio</code>-channel model
+                  and the 3-platform matrix; per-process <code>ConnectionRegistry</code> shipped in
+                  <code>agent/src/client_registry.rs</code> (SI-1, #1346). Decision recorded in
+                  <a href="../../architecture.md">ADR-11</a>.
+                </td>
               </tr>
             </tbody>
           </table>

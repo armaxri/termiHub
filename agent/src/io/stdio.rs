@@ -59,14 +59,19 @@ pub async fn run_stdio_loop(
 
     info!("Stdio transport loop started, waiting for input");
 
-    run_transport_loop(
+    let loop_result = run_transport_loop(
         &mut reader,
         &mut stdout,
         &handler,
         &mut notification_rx,
         shutdown,
     )
-    .await?;
+    .await;
+
+    // The single client for this process has disconnected — clear it from the
+    // registry before propagating any transport error.
+    handler.deregister_client();
+    loop_result?;
 
     // Graceful shutdown: stop monitoring and close all sessions
     info!("Shutting down — stopping monitoring and closing all sessions");
