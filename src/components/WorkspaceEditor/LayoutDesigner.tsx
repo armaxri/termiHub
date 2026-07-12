@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { SplitSquareHorizontal, SplitSquareVertical, Plus, X, RotateCcw } from "lucide-react";
-import { Tooltip } from "@/components/ui";
+import { NumberInput, Tooltip } from "@/components/ui";
 import { WorkspaceLayoutNode, WorkspaceSplitNode, WorkspaceTabDef } from "@/types/workspace";
 import {
   getWorkspaceLeaves,
@@ -261,18 +261,18 @@ interface SizeBadgeProps {
 
 function SizeBadge({ size, isCustom, splitNode, childIndex, onUpdateSizes }: SizeBadgeProps) {
   const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState("");
+  const [editValue, setEditValue] = useState<number | "">("");
 
   const handleStartEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setEditValue(Math.round(size).toString());
+    setEditValue(Math.round(size));
     setEditing(true);
   };
 
   const handleCommit = () => {
     setEditing(false);
-    const newSize = parseFloat(editValue);
-    if (isNaN(newSize) || newSize < 10) return;
+    if (editValue === "" || editValue < 10) return;
+    const newSize = editValue;
 
     const count = splitNode.children.length;
     const currentSizes = splitNode.sizes ?? Array(count).fill(100 / count);
@@ -301,13 +301,12 @@ function SizeBadge({ size, isCustom, splitNode, childIndex, onUpdateSizes }: Siz
 
   if (editing) {
     return (
-      <input
+      <NumberInput
         className="layout-size-input"
-        type="number"
         min={10}
         max={90}
         value={editValue}
-        onChange={(e) => setEditValue(e.target.value)}
+        onValueChange={setEditValue}
         onBlur={handleCommit}
         onKeyDown={handleKeyDown}
         autoFocus

@@ -1,5 +1,5 @@
 import { AppSettings } from "@/types/connection";
-import { Select } from "@/components/ui";
+import { NumberInput, Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 
@@ -57,15 +57,11 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       )}
       {show("fontSize") && (
         <SettingsField label="Font Size" hint="Terminal font size in pixels (8–32).">
-          <input
-            type="number"
+          <NumberInput
             min={8}
             max={32}
-            value={settings.fontSize ?? 14}
-            onChange={(e) => {
-              const val = parseInt(e.target.value);
-              onChange({ ...settings, fontSize: isNaN(val) ? undefined : val });
-            }}
+            value={settings.fontSize ?? ""}
+            onValueChange={(v) => onChange({ ...settings, fontSize: v === "" ? undefined : v })}
           />
         </SettingsField>
       )}
@@ -74,16 +70,12 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           label="Line Height"
           hint="Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters."
         >
-          <input
-            type="number"
+          <NumberInput
             min={0.8}
             max={2.0}
             step={0.1}
-            value={settings.lineHeight ?? 1.0}
-            onChange={(e) => {
-              const val = parseFloat(e.target.value);
-              onChange({ ...settings, lineHeight: isNaN(val) ? undefined : val });
-            }}
+            value={settings.lineHeight ?? ""}
+            onValueChange={(v) => onChange({ ...settings, lineHeight: v === "" ? undefined : v })}
           />
         </SettingsField>
       )}

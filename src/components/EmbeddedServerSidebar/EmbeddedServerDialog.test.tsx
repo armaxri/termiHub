@@ -137,4 +137,63 @@ describe("EmbeddedServerDialog", () => {
     // And the bind host must NOT have committed to 0.0.0.0 until confirmed.
     expect(bind.getAttribute("data-value")).toBe("127.0.0.1");
   });
+
+  it("renders the port as a token'd number input defaulting to the protocol port", () => {
+    render(<EmbeddedServerDialog {...baseProps} />);
+    const port = document.querySelector('[data-testid="server-dialog-port"]') as HTMLInputElement;
+    expect(port.type).toBe("number");
+    expect(port.classList.contains("ui-input")).toBe(true);
+    expect(port.value).toBe("8080");
+  });
+
+  it("editing the port carries the new number into the saved config", async () => {
+    const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
+    render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
+      "Firmware"
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement,
+      "/srv/fw"
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-port"]') as HTMLInputElement,
+      "9000"
+    );
+
+    await act(async () => {
+      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSave.mock.calls[0][0]).toMatchObject({ port: 9000 });
+  });
+
+  it("clearing the port keeps it blank and blocks Save (#1453)", () => {
+    render(<EmbeddedServerDialog {...baseProps} />);
+
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
+      "Firmware"
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement,
+      "/srv/fw"
+    );
+
+    const saveBtn = document.querySelector(
+      '[data-testid="server-dialog-save"]'
+    ) as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+
+    const port = document.querySelector('[data-testid="server-dialog-port"]') as HTMLInputElement;
+    typeInto(port, "");
+    // The cleared field stays blank rather than snapping back to the old port,
+    // and the invalid (missing) port blocks Save.
+    expect(port.value).toBe("");
+    expect(saveBtn.disabled).toBe(true);
+  });
 });

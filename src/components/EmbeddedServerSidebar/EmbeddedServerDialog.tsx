@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
-import { Modal, Button, Input, Select } from "@/components/ui";
+import { Modal, Button, Input, NumberInput, Select } from "@/components/ui";
 import {
   EmbeddedServerConfig,
   NetworkInterface,
@@ -23,8 +23,15 @@ interface Props {
   onSave: (config: EmbeddedServerConfig) => boolean | Promise<boolean>;
 }
 
+/**
+ * Editing shape of {@link EmbeddedServerConfig}. `port` widens to `number | ""`
+ * so a cleared port field reads blank (and blocks Save) instead of silently
+ * snapping back to the previous value; it is narrowed back to a number on save.
+ */
+type ServerFormState = Omit<EmbeddedServerConfig, "port"> & { port: number | "" };
+
 /** Blank default config used when creating a new server. */
-function defaultConfig(): EmbeddedServerConfig {
+function defaultConfig(): ServerFormState {
   return {
     id: "",
     name: "",
@@ -43,7 +50,7 @@ function defaultConfig(): EmbeddedServerConfig {
  * Create / edit dialog for an embedded server configuration.
  */
 export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Props) {
-  const [form, setForm] = useState<EmbeddedServerConfig>(defaultConfig());
+  const [form, setForm] = useState<ServerFormState>(defaultConfig());
   const [lanWarning, setLanWarning] = useState(false);
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([
     { name: "Loopback", addr: "127.0.0.1" },
@@ -62,7 +69,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     }
   }, [open, config]);
 
-  const set = <K extends keyof EmbeddedServerConfig>(key: K, value: EmbeddedServerConfig[K]) =>
+  const set = <K extends keyof ServerFormState>(key: K, value: ServerFormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   const handleProtocolChange = (type: ServerType) => {
@@ -93,10 +100,10 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
   };
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || !form.rootDirectory.trim()) return;
+    if (!form.name.trim() || !form.rootDirectory.trim() || form.port === "") return;
     // Close only when the save actually succeeded; on failure the dialog stays
     // open (the sidebar surfaces the error via toast) so the user can retry.
-    const saved = await onSave(form);
+    const saved = await onSave({ ...form, port: form.port });
     if (saved) onOpenChange(false);
   };
 
@@ -152,7 +159,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
             <Button
               variant="primary"
               onClick={handleSubmit}
-              disabled={!form.name.trim() || !form.rootDirectory.trim()}
+              disabled={!form.name.trim() || !form.rootDirectory.trim() || form.port === ""}
               data-testid="server-dialog-save"
             >
               Save
@@ -226,13 +233,12 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
               </label>
               <label className="server-dialog__label server-dialog__label--inline">
                 Port
-                <Input
+                <NumberInput
                   className="server-dialog__input--port"
-                  type="number"
                   min={1}
                   max={65535}
                   value={form.port}
-                  onChange={(e) => set("port", parseInt(e.target.value, 10) || form.port)}
+                  onValueChange={(v) => set("port", v)}
                   data-testid="server-dialog-port"
                 />
               </label>

@@ -38,6 +38,15 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
+/** Drive a controlled input the way a real keystroke would. */
+function setValue(el: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 describe("LayoutDesigner", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -223,5 +232,53 @@ describe("LayoutDesigner", () => {
     const resultLeaf = lastLayout! as unknown as WorkspaceLeafNode;
     expect(resultLeaf.tabs).toHaveLength(1);
     expect(resultLeaf.tabs[0].connectionRef).toBe("b");
+  });
+
+  it("edits a panel size through the shared NumberInput and commits on blur (#1453)", () => {
+    let lastLayout: WorkspaceLayoutNode | null = null;
+    const onChange = vi.fn((l: WorkspaceLayoutNode) => {
+      lastLayout = l;
+    });
+    const layout = hsplit(leaf(tab("a")), leaf(tab("b")));
+    act(() => {
+      root.render(withTooltip(<LayoutDesigner layout={layout} onChange={onChange} />));
+    });
+
+    act(() => {
+      query("layout-size-badge")?.click();
+    });
+    const input = query("layout-size-input") as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.type).toBe("number");
+    expect(input.classList.contains("ui-input")).toBe(true);
+
+    setValue(input, "70");
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(lastLayout!.type).toBe("split");
+    const split = lastLayout! as unknown as { sizes?: number[] };
+    expect(split.sizes?.[0]).toBe(70);
+  });
+
+  it("committing a blank size does not change the layout (#1453)", () => {
+    const onChange = vi.fn();
+    const layout = hsplit(leaf(tab("a")), leaf(tab("b")));
+    act(() => {
+      root.render(withTooltip(<LayoutDesigner layout={layout} onChange={onChange} />));
+    });
+
+    act(() => {
+      query("layout-size-badge")?.click();
+    });
+    const input = query("layout-size-input") as HTMLInputElement;
+    setValue(input, "");
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 import { AppSettings } from "@/types/connection";
 import { LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
-import { Select, Toggle } from "@/components/ui";
+import { NumberInput, Select, Toggle } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 
@@ -56,15 +56,13 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
           label="Scrollback Buffer"
           hint="Number of lines kept in the terminal scrollback (100–1 000 000). Larger values consume more memory — roughly 1–2 MB per 10 000 lines of typical output."
         >
-          <input
-            type="number"
+          <NumberInput
             min={100}
             max={1000000}
-            value={settings.scrollbackBuffer ?? 10000}
-            onChange={(e) => {
-              const val = parseInt(e.target.value);
-              onChange({ ...settings, scrollbackBuffer: isNaN(val) ? undefined : val });
-            }}
+            value={settings.scrollbackBuffer ?? ""}
+            onValueChange={(v) =>
+              onChange({ ...settings, scrollbackBuffer: v === "" ? undefined : v })
+            }
           />
         </SettingsField>
       )}

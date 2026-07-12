@@ -7,8 +7,9 @@
  * a hint when the agent is not connected.
  */
 
+import { useEffect, useState } from "react";
 import { AgentCapabilities, AgentSettings } from "@/types/connection";
-import { Input, Select, Toggle } from "@/components/ui";
+import { Input, NumberInput, Select, Toggle } from "@/components/ui";
 
 const LOG_LEVELS = ["error", "warn", "info", "debug", "trace"] as const;
 
@@ -32,6 +33,25 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
   const update = <K extends keyof AgentSettings>(key: K, value: AgentSettings[K]) => {
     onChange({ ...settings, [key]: value });
+  };
+
+  // The persisted buffer size is a required `number`, but the field must be
+  // able to read blank while the user retypes a value. Track the editable
+  // `number | ""` locally and only persist an in-range number — a blank or
+  // out-of-range entry leaves the last valid value untouched rather than
+  // silently coercing to a default.
+  const [scrollbackMb, setScrollbackMb] = useState<number | "">(
+    settings.persistentScrollbackBufferSizeMb
+  );
+  useEffect(() => {
+    setScrollbackMb(settings.persistentScrollbackBufferSizeMb);
+  }, [settings.persistentScrollbackBufferSizeMb]);
+
+  const handleScrollbackChange = (value: number | "") => {
+    setScrollbackMb(value);
+    if (value !== "" && value >= 1 && value <= 64) {
+      update("persistentScrollbackBufferSizeMb", value);
+    }
   };
 
   return (
@@ -134,18 +154,12 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
 
         <label className="settings-form__field">
           <span className="settings-form__label">Persistent Scrollback Buffer</span>
-          <Input
-            type="number"
+          <NumberInput
             min={1}
             max={64}
             step={1}
-            value={settings.persistentScrollbackBufferSizeMb}
-            onChange={(e) =>
-              update(
-                "persistentScrollbackBufferSizeMb",
-                Math.min(64, Math.max(1, parseInt(e.target.value, 10) || 1))
-              )
-            }
+            value={scrollbackMb}
+            onValueChange={handleScrollbackChange}
           />
           <span className="settings-form__hint">
             Size of the ring buffer kept on the agent for persistent sessions (1–64 MiB). Changes
