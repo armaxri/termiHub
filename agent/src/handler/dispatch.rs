@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
+use crate::client_registry::ConnectionRegistry;
 use crate::files::local::LocalFileBackend;
 use crate::files::{FileBackend, FileError};
 use crate::monitoring::MonitoringManagerApi;
@@ -59,6 +60,14 @@ struct HandlerState {
     initialized: bool,
     start_time: Instant,
     agent_settings: AgentSettings,
+    /// Registry of clients connected to this agent process. Shared with
+    /// [`AgentHandler::client_registry`]; populated on `initialize`, cleared on
+    /// disconnect via [`AgentHandler::deregister_client`]. Additive to the
+    /// existing single-client `agent_settings` behavior.
+    client_registry: Arc<ConnectionRegistry>,
+    /// Agent-assigned id for this connection's client, generated once in
+    /// [`AgentHandler::new`] so `initialize` and disconnect agree on the key.
+    client_id: String,
     /// Shared with [`AgentHandler::shutdown_flag`] so the transport loop can
     /// detect shutdown without re-locking the mutex after every request.
     shutdown_flag: Arc<AtomicBool>,
@@ -75,6 +84,15 @@ struct HandlerState {
 pub struct AgentHandler {
     module: RpcModule<Mutex<HandlerState>>,
     pub shutdown_flag: Arc<AtomicBool>,
+    /// Registry of clients connected to this agent process (one per `--stdio`
+    /// worker; sequential clients per `--listen` connection). Shared with
+    /// [`HandlerState`] so `initialize` populates it and the transport loop can
+    /// query / clear it on disconnect.
+    client_registry: Arc<ConnectionRegistry>,
+    /// Agent-assigned id for this connection's client, matching the key used in
+    /// `initialize` so [`deregister_client`](Self::deregister_client) removes
+    /// the right entry.
+    client_id: String,
 }
 
 impl AgentHandler {
@@ -84,6 +102,8 @@ impl AgentHandler {
         monitoring_manager: Arc<dyn MonitoringManagerApi>,
     ) -> anyhow::Result<Self> {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let client_registry = Arc::new(ConnectionRegistry::new());
+        let client_id = uuid::Uuid::new_v4().to_string();
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -92,6 +112,8 @@ impl AgentHandler {
             initialized: false,
             start_time: Instant::now(),
             agent_settings: AgentSettings::default(),
+            client_registry: client_registry.clone(),
+            client_id: client_id.clone(),
             shutdown_flag: shutdown_flag.clone(),
         });
 
@@ -102,7 +124,28 @@ impl AgentHandler {
         Ok(AgentHandler {
             module,
             shutdown_flag,
+            client_registry,
+            client_id,
         })
+    }
+
+    /// Shared registry of the clients connected to this agent process.
+    ///
+    /// In `--stdio` mode there is one [`AgentHandler`] per process, so this is
+    /// the process-wide view; in `--listen` mode each connection has its own
+    /// handler and registry.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn client_registry(&self) -> Arc<ConnectionRegistry> {
+        self.client_registry.clone()
+    }
+
+    /// Remove this handler's client from the registry.
+    ///
+    /// Called by the transport loops (`io/stdio.rs`, `io/tcp.rs`) once the
+    /// connection ends, so a disconnected client no longer appears as connected.
+    /// A no-op if `initialize` never populated the entry.
+    pub fn deregister_client(&self) {
+        self.client_registry.remove(&self.client_id);
     }
 
     /// Process a raw JSON-RPC request string and return the response string.
@@ -303,6 +346,13 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             let mut s = ctx.lock().await;
             s.initialized = true;
             s.agent_settings = p.agent_settings.clone();
+            // Record the connected client (additive to the single-client
+            // settings above). One entry per agent process in `--stdio` mode.
+            s.client_registry.register(
+                s.client_id.clone(),
+                p.client.clone(),
+                p.client_version.clone(),
+            );
             let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
                 s.session_manager.clone(),
@@ -1388,6 +1438,54 @@ mod tests {
         let handler = make_handler();
         let result = dispatch(&handler, "initialize", json!({}), 1).await;
         assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    // ── ConnectionRegistry integration ─────────────────────────────
+    //
+    // Proves a client appears in / disappears from the per-process registry
+    // across the real `initialize` (connect) and `deregister_client`
+    // (disconnect) paths. The agent is a binary crate with no `[lib]` target,
+    // so `tests/` integration tests can only spawn the process; this handler-
+    // level test is the in-crate integration proof (a `--stdio` process is one
+    // client).
+
+    #[tokio::test]
+    async fn registry_empty_before_initialize() {
+        let handler = make_handler();
+        assert!(
+            handler.client_registry().is_empty(),
+            "registry must be empty before initialize"
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_registers_client_in_registry() {
+        let handler = make_handler();
+        assert!(handler.client_registry().is_empty());
+
+        init_handler(&handler).await;
+
+        let clients = handler.client_registry().list();
+        assert_eq!(clients.len(), 1, "one client after initialize");
+        // Metadata is parsed from the `initialize` payload (see `init_params`).
+        assert_eq!(clients[0].client, "test");
+        assert_eq!(clients[0].client_version, "0.1.0");
+        assert!(!clients[0].client_id.is_empty(), "client_id assigned");
+    }
+
+    #[tokio::test]
+    async fn deregister_client_removes_from_registry_on_disconnect() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+        assert_eq!(handler.client_registry().len(), 1);
+
+        // Simulates the transport loop calling deregister on disconnect.
+        handler.deregister_client();
+
+        assert!(
+            handler.client_registry().is_empty(),
+            "registry must be empty after the client disconnects"
+        );
     }
 
     // ── Not-initialized gate ───────────────────────────────────────

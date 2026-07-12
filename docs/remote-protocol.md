@@ -95,6 +95,14 @@ The remote session management protocol enables the termiHub desktop app to manag
 | **Session Manager**  | Creates/destroys PTY and serial sessions, manages attach/detach                                  |
 | **SQLite DB**        | Persists session metadata so sessions survive agent restarts                                     |
 
+### Connection Topology & Client Tracking
+
+The desktop opens **one SSH exec channel per connection** and runs `termihub-agent --stdio`, so there is **one agent process per desktop→agent channel**, and that process serves **exactly one client**. Two desktops connecting to the same host do **not** share a running agent process — they run independent `--stdio` workers and share only the deployed binary on disk and the layer of detached **session daemons** (`termihub-agent --daemon <id>`) that outlive each worker. (The alternative `--listen` TCP mode shares a `SessionManager` across connections but still serves one client at a time; the desktop does not use it.)
+
+Because a process knows exactly one client, each agent process keeps a **per-process `ConnectionRegistry`** (`agent/src/client_registry.rs`) that records the connected client from the `initialize` request — its `client`, `client_version`, an agent-assigned `client_id`, and `connected_since`. The entry is added on `initialize` and removed when the transport connection drops. This is the in-process foundation for the coordinated remote-agent update strategy (epic #1345); cross-client coordination is built on the shared daemon layer rather than a single all-knowing process (see [ADR-11](architecture.md#adr-11-per-process-agent-connection-tracking-multi-host-model)).
+
+This topology and the tracking model are identical across the **3-platform agent matrix (Linux · macOS · Windows)**; only the daemon's internal transport differs (unix domain socket vs Windows named pipe, see [Platform Notes](#platform-notes-windows)).
+
 ---
 
 ## Transport Layer
@@ -325,6 +333,8 @@ Handshake that establishes the protocol version and exchanges capabilities.
 | `protocol_version` | `string` | Requested protocol version |
 | `client`           | `string` | Client identifier          |
 | `client_version`   | `string` | Client application version |
+
+On a successful `initialize`, the agent records the client (`client`, `client_version`, an agent-assigned `client_id`, and a `connected_since` timestamp) in its per-process `ConnectionRegistry` and clears it when the connection drops (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Because each `--stdio` process serves one client, the registry holds exactly one entry in the SSH-tunnelled deployment.
 
 | Result Field                           | Type                   | Description                                  |
 | -------------------------------------- | ---------------------- | -------------------------------------------- |
