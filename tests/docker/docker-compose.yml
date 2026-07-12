@@ -40,6 +40,20 @@ services:
       timeout: 3s
       retries: 5
 
+  # SFTP-only SSH (ForceCommand internal-sftp — no usable exec/shell channel)
+  ssh-sftp-only:
+    build: ./ssh-sftp-only
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-sftp-only
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_SFTP_ONLY_PORT:-2211}:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Legacy SSH (OpenSSH 7.x / Ubuntu 18.04) for compatibility
   ssh-legacy:
     build:
