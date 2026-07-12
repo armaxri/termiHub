@@ -295,10 +295,8 @@ mod tests {
 
     #[tokio::test]
     async fn defaults_exit_status_to_zero_when_unreported() {
-        let mut ch = MockChannel::with_events(vec![
-            ExecEvent::Stdout(bytes("done")),
-            ExecEvent::Closed,
-        ]);
+        let mut ch =
+            MockChannel::with_events(vec![ExecEvent::Stdout(bytes("done")), ExecEvent::Closed]);
 
         let out = run_exec(&mut ch, "echo done", "").await.expect("ok");
 

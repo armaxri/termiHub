@@ -121,7 +121,9 @@ async fn exec_capability_probe_false_for_sftp_only_connection() {
     // what `has_exec_capability` keys off.
     let out = ssh_exec_with_stdin(&session, &format!("echo {EXEC_PROBE_MARKER}"), "").await;
 
-    let marker_present = out.map(|o| o.stdout.contains(EXEC_PROBE_MARKER)).unwrap_or(false);
+    let marker_present = out
+        .map(|o| o.stdout.contains(EXEC_PROBE_MARKER))
+        .unwrap_or(false);
     assert!(
         !marker_present,
         "an SFTP-only connection must not echo the probe marker (no usable exec channel)"
