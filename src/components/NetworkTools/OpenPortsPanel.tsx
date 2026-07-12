@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, Field, Input, Select } from "@/components/ui";
 import { networkOpenPorts } from "@/services/networkApi";
@@ -33,6 +33,14 @@ export function OpenPortsPanel() {
       throw err; // keep the async Button in its error path (no false success flash)
     }
   }, []);
+
+  // Auto-load listening ports on mount so the panel opens populated; Refresh
+  // remains for an explicit re-fetch. The handler throws to keep the Refresh
+  // Button's error path, so swallow that here (the error is already surfaced
+  // inline via setError).
+  useEffect(() => {
+    void handleRefresh().catch(() => {});
+  }, [handleRefresh]);
 
   const filtered = ports.filter((p) => {
     if (protocolFilter !== "All" && p.protocol !== protocolFilter) return false;

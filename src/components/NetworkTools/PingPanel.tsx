@@ -12,6 +12,7 @@ import {
 } from "@/services/networkApi";
 import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
+import { deriveLivePingStats } from "./pingStats";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -161,6 +162,11 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
 
   const latencyPoints = results.map((r) => r.latencyMs ?? null);
 
+  // While running, show stats derived live from the replies received so far; on
+  // completion the backend's authoritative closing stats take over.
+  const liveStats = status === "running" ? deriveLivePingStats(results) : null;
+  const displayStats = stats ?? liveStats;
+
   return (
     <form className="network-panel" data-testid="ping-panel" {...formProps}>
       <div className="network-panel__header">
@@ -259,21 +265,21 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         </div>
       )}
 
-      {(stats || status === "running") && (
+      {displayStats && (
         <div className="network-panel__stats" data-testid="ping-stats">
-          {stats && (
-            <>
-              <span>
-                Sent: {stats.sent} · Received: {stats.received} · Loss:{" "}
-                {stats.lossPercent.toFixed(1)}%
-              </span>
-              <span>
-                RTT: min={stats.minMs.toFixed(0)}ms avg={stats.avgMs.toFixed(0)}ms max=
-                {stats.maxMs.toFixed(0)}ms jitter={stats.jitterMs.toFixed(0)}ms
-              </span>
-            </>
-          )}
-          {status === "running" && <span>{results.length} replies received…</span>}
+          <span>
+            Sent: {displayStats.sent} · Received: {displayStats.received} · Loss:{" "}
+            {displayStats.lossPercent.toFixed(1)}%
+          </span>
+          <span>
+            RTT: min={displayStats.minMs.toFixed(0)}ms avg={displayStats.avgMs.toFixed(0)}ms max=
+            {displayStats.maxMs.toFixed(0)}ms jitter={displayStats.jitterMs.toFixed(0)}ms
+          </span>
+        </div>
+      )}
+      {status === "running" && !displayStats && (
+        <div className="network-panel__stats" data-testid="ping-stats">
+          <span>Waiting for first reply…</span>
         </div>
       )}
     </form>

@@ -79,10 +79,15 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
     rtt3: h.rttMs[2] != null ? `${h.rttMs[2].toFixed(1)}ms` : "—",
   }));
 
+  // Average the last hop's *valid* round-trips only. When the final hop never
+  // answered (all `null`) there is no meaningful average — keep it `null` so the
+  // footer omits it rather than rendering "avg NaNms" (or a misleading 0ms).
   const lastHop = hops[hops.length - 1];
+  const lastValidRtts = lastHop?.rttMs.filter((r): r is number => r != null) ?? [];
   const avgRtt =
-    lastHop?.rttMs.filter((r): r is number => r != null).reduce((a, b) => a + b, 0) /
-    (lastHop?.rttMs.filter((r): r is number => r != null).length || 1);
+    lastValidRtts.length > 0
+      ? lastValidRtts.reduce((a, b) => a + b, 0) / lastValidRtts.length
+      : null;
 
   return (
     <form className="network-panel" data-testid="traceroute-panel" {...formProps}>
@@ -154,12 +159,15 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
       <DiagnosticResultsTable
         columns={columns}
         rows={formattedRows}
+        footerTestId="traceroute-footer"
         footer={
           status === "completed"
-            ? `Trace complete: ${hops.length} hops, avg ${avgRtt.toFixed(0)}ms`
-            : status === "running"
-              ? `Tracing… hop ${hops.length}`
-              : null
+            ? `Trace complete: ${hops.length} hops${avgRtt != null ? `, avg ${avgRtt.toFixed(0)}ms` : ""}`
+            : status === "canceled"
+              ? `Trace canceled: ${hops.length} hops`
+              : status === "running"
+                ? `Tracing… hop ${hops.length}`
+                : null
         }
       />
     </form>
