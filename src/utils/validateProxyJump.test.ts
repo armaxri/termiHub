@@ -37,6 +37,25 @@ describe("validateProxyJump", () => {
     expect(errors).toContain("Jump host: username is required.");
   });
 
+  it("flags a blank inline port as required (#1444)", () => {
+    const { errors } = validateProxyJump([hop({ port: "" })]);
+    expect(errors).toContain("Jump host: port is required.");
+  });
+
+  it("flags an out-of-range inline port (#1444)", () => {
+    const { errors } = validateProxyJump([hop({ port: 70000 })]);
+    expect(errors).toContain("Jump host: port must be between 1 and 65535.");
+  });
+
+  it("does not require a port for a saved-connection reference (#1444)", () => {
+    const ctx = { connections: [sshConn("Work/bastion")] };
+    const { errors } = validateProxyJump(
+      [{ connectionId: "Work/bastion", host: "", port: "", username: "", authMethod: "" }],
+      ctx
+    );
+    expect(errors).toEqual([]);
+  });
+
   it("labels errors per hop number when there are multiple hops", () => {
     const { errors } = validateProxyJump([hop(), hop({ host: "" })]);
     expect(errors).toContain("Hop 2: host is required.");

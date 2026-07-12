@@ -173,6 +173,20 @@ describe("JumpHostSection", () => {
     expect(onChange).toHaveBeenCalledWith([{ ...HOP, host: "edge.example.com" }]);
   });
 
+  it("editing the port merges the parsed number into the hop (#1444)", () => {
+    const onChange = vi.fn();
+    render([HOP], onChange);
+    setValue(query("jump-host-port-0") as HTMLInputElement, "2200");
+    expect(onChange).toHaveBeenCalledWith([{ ...HOP, port: 2200 }]);
+  });
+
+  it("clearing the port keeps it blank instead of coercing to a default (#1444)", () => {
+    const onChange = vi.fn();
+    render([HOP], onChange);
+    setValue(query("jump-host-port-0") as HTMLInputElement, "");
+    expect(onChange).toHaveBeenCalledWith([{ ...HOP, port: "" }]);
+  });
+
   it("shows the password field for password auth and hides the key path", () => {
     render([{ ...HOP, authMethod: "password" }], vi.fn());
     expect(query("jump-host-password-0")).toBeTruthy();
