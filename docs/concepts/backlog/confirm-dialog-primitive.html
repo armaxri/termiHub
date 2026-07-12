@@ -1,0 +1,799 @@
+<!doctype html>
+<!--
+  Single-file concept — ConfirmDialog primitive for confirm/warn modals.
+  Design-only (GitHub issue #1391, follow-up to #1348). No production code here.
+  Prose uses concept.css; mockups reuse the real mockup.css class names + lucide icons.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ConfirmDialog primitive (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Only the symbols used below. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <line x1="10" x2="10" y1="11" y2="17" />
+        <line x1="14" x2="14" y1="11" y2="17" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-save" viewBox="0 0 24 24">
+        <path
+          d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
+        />
+        <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+        <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>ConfirmDialog Primitive</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/1391">#1391</a> (follow-up to
+            <a href="https://github.com/armaxri/termiHub/issues/1348">#1348</a>)</span
+          >
+          <span><code>docs/concepts/backlog/confirm-dialog-primitive.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          termiHub already has a shared <code>Modal</code> primitive (a token-styled skin over
+          Radix Dialog), but the <em>Cancel / confirm-action</em> shape built on top of it is
+          hand-rolled at every call site. Each one re-declares the same footer:
+          a secondary <strong>Cancel</strong> on the left, a primary/danger confirm on the right,
+          wires <code>onOpenChange</code> back to a cancel handler, and hand-assigns
+          <code>-cancel</code> / <code>-confirm</code> test ids. Because the shape is copy-pasted,
+          the details drift — button order, which variant the confirm uses, whether ESC/scrim
+          maps to cancel, and the test-id naming are all slightly different from one modal to the
+          next.
+        </p>
+        <p>
+          This concept introduces a single <code>ConfirmDialog</code> primitive in
+          <code>src/components/ui/</code> that owns the confirm/warn/danger modal shape once:
+          the footer layout, the button order and variants, the cancel wiring, the async confirm
+          lifecycle, and a consistent test-id scheme derived from one base id. Call sites pass
+          intent (<code>title</code>, <code>message</code>, <code>variant</code>,
+          <code>confirmLabel</code>, <code>onConfirm</code>/<code>onCancel</code>) instead of
+          re-assembling the shell. It also adds an <em>optional</em> "don't warn again"
+          affordance so warn-style dialogs can offer suppression without each panel re-inventing
+          it (a natural fit for the Port Scanner large-scan warning from #1348).
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            One <code>ConfirmDialog</code> primitive that composes <code>Modal</code> +
+            <code>Button</code> — never a new dialog shell or <code>__btn</code>.
+          </li>
+          <li>
+            Consistent footer: Cancel (secondary, left) + confirm (right), with the confirm
+            variant driven by a single <code>variant</code> prop (<code>default</code> /
+            <code>warn</code> / <code>danger</code>).
+          </li>
+          <li>
+            One base <code>data-testid</code> deriving stable <code>-cancel</code> /
+            <code>-confirm</code> hooks, so tests stop hard-coding per-site strings.
+          </li>
+          <li>
+            Async confirm support (the confirm <code>Button</code> drives its idle → pending →
+            success/error lifecycle) so long-running confirms give feedback per the design
+            system's "every action gives feedback" rule.
+          </li>
+          <li>
+            An optional <em>don't warn again</em> checkbox for warn-style dialogs, with the
+            suppression decision surfaced to the caller (the caller owns persistence).
+          </li>
+          <li>Migrate the three known call sites onto it (see the migration table below).</li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Not a replacement for <code>Modal</code>. Content-rich modals (forms, multi-field
+            editors) keep using <code>Modal</code> directly; <code>ConfirmDialog</code> is the
+            <em>confirm shape</em> on top of it.
+          </li>
+          <li>
+            No global "confirm()" imperative API in this pass — <code>ConfirmDialog</code> stays a
+            controlled React component (<code>open</code> + handlers). An imperative
+            <code>useConfirm()</code> helper is noted as possible future work, not built here.
+          </li>
+          <li>
+            No new persistence subsystem for "don't warn again" — the primitive only reports the
+            checkbox state; where a preference is stored is the call site's concern.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          Visually a <code>ConfirmDialog</code> <em>is</em> a <code>Modal</code>: the same overlay
+          scrim + blur, the same centered card with a title row (and the built-in close
+          <svg class="li"><use href="#i-x" /></svg> button), a body, and a footer of
+          <code>Button</code>s. The only fixed rules it adds are footer composition and the
+          <code>variant</code>-driven accent. The mockups below use the real app chrome classes
+          (<code>.menu</code>, <code>.menu__title</code>, <code>.menu__row</code>,
+          <code>.menu__footer</code>, <code>.btn</code>) to model the dialog card as it renders
+          over the app.
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — danger confirm over the file browser</h3>
+          <div class="mockup-note">
+            The <code>variant="danger"</code> shape: a destructive delete confirmation centered
+            over the app. Confirm is a <code>danger</code> Button on the right; Cancel is
+            secondary on the left. This is exactly today's <code>ConfirmDeleteDialog</code>.
+          </div>
+          <div class="app" style="height: 340px; position: relative">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Files</span></div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item">deploy.log</div>
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    old-backup.tar.gz
+                  </div>
+                  <div class="connection-tree__item">notes.md</div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">user@host $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">SFTP · connected</span>
+              </div>
+            </div>
+            <!-- Overlaid ConfirmDialog (danger) -->
+            <div
+              style="
+                position: absolute;
+                inset: 0;
+                background: var(--overlay-bg, rgba(0, 0, 0, 0.5));
+                display: grid;
+                place-items: center;
+              "
+            >
+              <div class="menu" style="width: 340px" data-testid="confirm-delete-dialog">
+                <div
+                  class="menu__title"
+                  style="display: flex; align-items: center; gap: 8px; justify-content: space-between"
+                >
+                  <span style="display: inline-flex; align-items: center; gap: 8px">
+                    <svg class="li" style="color: var(--color-danger, #e5534b)">
+                      <use href="#i-alert" />
+                    </svg>
+                    Confirm Delete
+                  </span>
+                  <button
+                    class="btn btn--link"
+                    aria-label="Close"
+                    style="padding: 0; color: var(--text-secondary)"
+                  >
+                    <svg class="li"><use href="#i-x" /></svg>
+                  </button>
+                </div>
+                <div class="menu__row" style="display: block; color: var(--text-secondary)">
+                  Delete <strong style="color: var(--text-primary)">old-backup.tar.gz</strong>?
+                  This cannot be undone.
+                </div>
+                <div class="menu__footer" style="justify-content: flex-end">
+                  <button class="btn" data-testid="confirm-delete-cancel">Cancel</button>
+                  <button
+                    class="btn"
+                    data-testid="confirm-delete-confirm"
+                    style="
+                      background: var(--color-danger, #e5534b);
+                      border-color: var(--color-danger, #e5534b);
+                      color: #fff;
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 6px;
+                    "
+                  >
+                    <svg class="li"><use href="#i-trash" /></svg> Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> <code>variant="danger"</code> tints the title icon
+                and renders the confirm as a <code>danger</code> Button.
+              </li>
+              <li>
+                <span class="callout">B</span> Cancel (secondary) is always left of the confirm;
+                ESC, scrim click, and the <svg class="li"><use href="#i-x" /></svg> all route to
+                <code>onCancel</code>.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — the three variants side by side</h3>
+          <div class="mockup-note">
+            Left: <code>variant="warn"</code> (Port Scanner large-scan warning) with the optional
+            <em>don't warn again</em> checkbox. Middle: <code>variant="default"</code> wrapping a
+            body slot (WoL save form). Right: <code>variant="danger"</code> (delete).
+          </div>
+          <div style="display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start">
+            <!-- warn + don't-warn-again -->
+            <div class="menu" style="width: 320px" data-testid="port-scan-warn-modal">
+              <div class="menu__title" style="display: flex; align-items: center; gap: 8px">
+                <svg class="li" style="color: var(--color-warning, #d4a843)">
+                  <use href="#i-alert" />
+                </svg>
+                Large scan
+              </div>
+              <div class="menu__row" style="display: block; color: var(--text-secondary)">
+                This scan will probe about
+                <strong style="color: var(--text-primary)">65,536</strong> host/port combinations
+                and may take several minutes. Continue?
+              </div>
+              <div class="menu__row" style="gap: 8px">
+                <span class="check"><svg class="li"><use href="#i-check" /></svg></span>
+                <span style="color: var(--text-secondary)">Don't warn me again</span>
+              </div>
+              <div class="menu__footer" style="justify-content: flex-end">
+                <button class="btn" data-testid="port-scan-warn-cancel">Cancel</button>
+                <button class="btn btn--primary" data-testid="port-scan-warn-confirm">
+                  Start scan
+                </button>
+              </div>
+            </div>
+
+            <!-- default + body slot (WoL form) -->
+            <div class="menu" style="width: 320px" data-testid="wol-save-modal">
+              <div class="menu__title" style="display: flex; align-items: center; gap: 8px">
+                <svg class="li"><use href="#i-save" /></svg> Save Wake-on-LAN Device
+              </div>
+              <div class="menu__row" style="display: block">
+                <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 4px">
+                  Device name
+                </div>
+                <div
+                  style="
+                    border: 1px solid var(--border-primary);
+                    border-radius: var(--radius-sm);
+                    padding: 6px 8px;
+                    color: var(--text-secondary);
+                  "
+                >
+                  Office NAS
+                </div>
+              </div>
+              <div class="menu__footer" style="justify-content: flex-end">
+                <button class="btn" data-testid="wol-save-cancel">Cancel</button>
+                <button class="btn btn--primary" data-testid="wol-save-confirm">Save</button>
+              </div>
+            </div>
+
+            <!-- danger (compact) -->
+            <div class="menu" style="width: 300px" data-testid="confirm-delete-dialog">
+              <div class="menu__title" style="display: flex; align-items: center; gap: 8px">
+                <svg class="li" style="color: var(--color-danger, #e5534b)">
+                  <use href="#i-alert" />
+                </svg>
+                Confirm Delete
+              </div>
+              <div class="menu__row" style="display: block; color: var(--text-secondary)">
+                Delete <strong style="color: var(--text-primary)">old-backup.tar.gz</strong>?
+              </div>
+              <div class="menu__footer" style="justify-content: flex-end">
+                <button class="btn" data-testid="confirm-delete-cancel">Cancel</button>
+                <button
+                  class="btn"
+                  data-testid="confirm-delete-confirm"
+                  style="
+                    background: var(--color-danger, #e5534b);
+                    border-color: var(--color-danger, #e5534b);
+                    color: #fff;
+                  "
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> <code>warn</code> and <code>danger</code> add a
+                tinted <svg class="li"><use href="#i-alert" /></svg> title icon
+                (<code>--color-warning</code> / <code>--color-danger</code>); <code>default</code>
+                shows no icon (or a caller-supplied one, e.g. save).
+              </li>
+              <li>
+                <span class="callout">B</span> The <em>don't warn again</em> row only appears when
+                the caller opts in via <code>dontWarnAgain</code>. Its state is reported back on
+                confirm; the caller persists it.
+              </li>
+              <li>
+                <span class="callout">C</span> The middle card shows the <code>body</code>/children
+                slot: a caller-owned form replaces the plain <code>message</code>. Only the footer
+                shape is shared.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Anatomy &amp; fixed rules</h3>
+        <ul>
+          <li>
+            <strong>Body</strong> — a caller passes either a plain <code>message</code> (string /
+            node, the common case) <em>or</em> arbitrary <code>children</code> (a body slot for a
+            form, as WoL needs). If both are given, <code>children</code> wins and
+            <code>message</code> is ignored.
+          </li>
+          <li>
+            <strong>Footer</strong> — always exactly two Buttons in a fixed order: Cancel
+            (<code>secondary</code>) then confirm. The confirm variant follows <code>variant</code>:
+            <code>default</code>/<code>warn</code> → <code>primary</code>, <code>danger</code> →
+            <code>danger</code>. Labels default to "Cancel" / "Confirm" and are overridable via
+            <code>cancelLabel</code> / <code>confirmLabel</code>.
+          </li>
+          <li>
+            <strong>Cancel wiring</strong> — <code>onCancel</code> fires for every non-confirm exit:
+            the Cancel button, the close <svg class="li"><use href="#i-x" /></svg>, ESC, and scrim
+            click (all funnelled through <code>Modal.onOpenChange(false)</code>). Call sites stop
+            re-deriving this.
+          </li>
+          <li>
+            <strong>Test ids</strong> — one base <code>data-testid</code> (e.g.
+            <code>confirm-delete-dialog</code>) is forwarded to the Modal content; the primitive
+            derives <code>&lt;base&gt;-cancel</code> and <code>&lt;base&gt;-confirm</code> on the
+            two buttons. Existing tests that query <code>port-scan-warn-confirm</code>,
+            <code>wol-save-cancel</code>, etc. keep working unchanged.
+          </li>
+        </ul>
+
+        <h3>Async confirm &amp; disabled confirm</h3>
+        <ul>
+          <li>
+            If <code>onConfirm</code> returns a <code>Promise</code>, the confirm Button enters its
+            pending state (spinner, disabled) and flashes success — no silent action. The dialog
+            closes when the promise resolves (caller decides via its own state, or the primitive
+            can auto-close on resolve — see Implementation). On rejection the Button returns to idle
+            and surfaces the error (<code>confirmErrorToast</code>, defaulting to Button's own
+            <code>errorToast=true</code>; WoL passes <code>false</code> to report the error itself).
+          </li>
+          <li>
+            <code>confirmDisabled</code> gates the confirm button (WoL keeps it disabled until the
+            device name is non-empty and the MAC is valid).
+          </li>
+        </ul>
+
+        <h3>"Don't warn again" suppression</h3>
+        <p>
+          Warn-style dialogs (like the large-scan warning) can opt into a suppression checkbox by
+          passing a <code>dontWarnAgain</code> descriptor (label + controlled
+          <code>checked</code>/<code>onChange</code>, or an uncontrolled "report on confirm"
+          form). The primitive renders the checkbox row above the footer and includes the final
+          checkbox state in the confirm callback. The <strong>call site owns persistence and the
+          gate</strong>: before opening the dialog it checks its stored preference; if the user
+          previously chose "don't warn again", the action runs immediately and the dialog never
+          opens. See the suppression flowchart below.
+        </p>
+
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>Double-confirm</strong> — while an async confirm is pending, the confirm Button
+            is disabled (Button lifecycle), so a second click can't re-fire the action.
+          </li>
+          <li>
+            <strong>Cancel during pending</strong> — Cancel/ESC remain live during a pending
+            confirm; whether that aborts is caller-defined (the primitive just calls
+            <code>onCancel</code>). Default guidance: keep Cancel enabled but let the in-flight
+            action settle.
+          </li>
+          <li>
+            <strong>Body-slot forms</strong> — Enter-to-confirm inside a form field is the caller's
+            responsibility (as WoL already does), since only the caller knows when the form is
+            valid.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Dialog lifecycle: open → confirm/cancel → closed</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: caller sets open=true
+    Open --> Closed: Cancel / ESC / scrim / X  →  onCancel()
+    Open --> Confirming: click Confirm (async onConfirm)
+    Confirming --> Closed: promise resolves  →  success flash, close
+    Confirming --> Open: promise rejects  →  error toast, stay open
+    Open --> Closed: click Confirm (sync onConfirm)
+    Closed --> [*]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">"Don't warn again" suppression path</span>
+          <pre class="mermaid">
+flowchart TD
+    A[User triggers a warn-guarded action] --> B{Suppressed?<br/>caller checks stored pref}
+    B -- yes --> R[Run action immediately<br/>no dialog]
+    B -- no --> D[Open ConfirmDialog<br/>variant=warn]
+    D --> C{User choice}
+    C -- Cancel / ESC --> X[Abort · onCancel]
+    C -- Confirm --> E{Don't warn again<br/>checked?}
+    E -- yes --> P[Caller persists suppression]
+    E -- no --> Q[Leave pref unchanged]
+    P --> R
+    Q --> R
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Async confirm sequence (e.g. WoL save)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant CD as ConfirmDialog
+    participant B as Confirm Button
+    participant H as onConfirm handler
+    U->>CD: click Confirm
+    CD->>B: enter pending (spinner, disabled)
+    CD->>H: await onConfirm()
+    alt success
+        H-->>CD: resolve
+        B-->>U: success flash
+        CD->>CD: close (onCancel not called)
+    else failure
+        H-->>CD: reject
+        B-->>U: error toast (unless confirmErrorToast=false)
+        CD->>CD: stay open
+    end
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Built entirely from existing primitives — <code>Modal</code>
+          (<code>src/components/ui/Modal.tsx</code>) and <code>Button</code>
+          (<code>src/components/ui/Button.tsx</code>). No new dependency, no new CSS shell; only
+          token'd classes already in <code>ui.css</code>. Exported from
+          <code>src/components/ui/index.ts</code> alongside the other primitives.
+        </p>
+
+        <h3>Proposed prop interface</h3>
+        <div class="table-wrap">
+          <pre style="white-space: pre; overflow-x: auto">
+<code>export type ConfirmVariant = "default" | "warn" | "danger";
+
+export interface DontWarnAgain {
+  /** Checkbox label. Defaults to "Don't warn me again". */
+  label?: string;
+  /** Controlled checked state (optional — uncontrolled if omitted). */
+  checked?: boolean;
+  /** Fires when the checkbox toggles. */
+  onChange?: (checked: boolean) =&gt; void;
+}
+
+export interface ConfirmDialogProps {
+  /** Controlled open state. */
+  open: boolean;
+  /** Heading text. */
+  title: React.ReactNode;
+  /** Plain body text (the common case). Ignored if `children` is given. */
+  message?: React.ReactNode;
+  /** Body slot for richer content (forms, lists). Overrides `message`. */
+  children?: React.ReactNode;
+  /** Confirm button label. Defaults to "Confirm". */
+  confirmLabel?: string;
+  /** Cancel button label. Defaults to "Cancel". */
+  cancelLabel?: string;
+  /** Accent + confirm-button variant. Defaults to "default". */
+  variant?: ConfirmVariant;
+  /** Optional leading title icon (defaults per-variant: warn/danger → alert). */
+  icon?: React.ReactNode;
+  /** Confirm handler. Returning a Promise drives the Button async lifecycle. */
+  onConfirm: () =&gt; void | Promise&lt;void&gt;;
+  /** Called for every non-confirm exit (Cancel / ESC / scrim / X). */
+  onCancel: () =&gt; void;
+  /** Disable the confirm button (e.g. invalid form). */
+  confirmDisabled?: boolean;
+  /** Forwarded to the confirm Button's `errorToast`. Defaults to true. */
+  confirmErrorToast?: boolean;
+  /** Opt-in "don't warn again" checkbox (warn dialogs). */
+  dontWarnAgain?: DontWarnAgain;
+  /** Base test id; derives `${base}-cancel` and `${base}-confirm`. */
+  "data-testid"?: string;
+}</code>
+          </pre>
+        </div>
+
+        <h3>Files touched</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/components/ui/ConfirmDialog.tsx</code></td>
+                <td>
+                  <strong>New</strong> — the primitive: wraps <code>Modal</code>, renders the
+                  fixed two-Button footer, maps <code>variant</code> → confirm Button variant +
+                  title icon, funnels every non-confirm exit to <code>onCancel</code>, derives
+                  test ids, and renders the optional <em>don't warn again</em> checkbox.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/ui/index.ts</code></td>
+                <td><strong>Edit</strong> — export <code>ConfirmDialog</code> + its types.</td>
+              </tr>
+              <tr>
+                <td><code>src/components/ui/ui.css</code></td>
+                <td>
+                  <strong>Edit (if needed)</strong> — a token'd checkbox-row class for the "don't
+                  warn again" affordance, only if no existing checkbox primitive fits.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/Sidebar/ConfirmDeleteDialog.tsx</code></td>
+                <td>
+                  <strong>Refactor</strong> — reduce to a thin wrapper over
+                  <code>ConfirmDialog</code> (<code>variant="danger"</code>), or inline it at its
+                  call sites. Keep the <code>confirm-delete-*</code> test ids.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/NetworkTools/PortScannerPanel.tsx</code></td>
+                <td>
+                  <strong>Refactor</strong> — replace the hand-rolled large-scan
+                  <code>Modal</code> with <code>ConfirmDialog</code> (<code>variant="warn"</code>),
+                  adopting <code>dontWarnAgain</code> to suppress future warnings.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/NetworkTools/WolPanel.tsx</code></td>
+                <td>
+                  <strong>Refactor</strong> — replace the save <code>Modal</code> with
+                  <code>ConfirmDialog</code> (<code>variant="default"</code>), moving the form
+                  fields into the <code>children</code> slot and keeping
+                  <code>confirmDisabled</code> + <code>confirmErrorToast={false}</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/ui/ConfirmDialog.test.tsx</code></td>
+                <td>
+                  <strong>New</strong> — unit tests: footer order, variant → confirm variant,
+                  every exit calls <code>onCancel</code>, derived test ids, async confirm
+                  pending/success/error, and the "don't warn again" report.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Migration map (call site → new API)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Call site</th>
+                <th>Today</th>
+                <th><code>ConfirmDialog</code> props</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ConfirmDeleteDialog.tsx</code> (file browser delete)</td>
+                <td>
+                  <code>Modal</code> + secondary Cancel + <code>danger</code> Delete; base id
+                  <code>confirm-delete-dialog</code>.
+                </td>
+                <td>
+                  <code>variant="danger"</code>, <code>title="Confirm Delete"</code>,
+                  <code>confirmLabel="Delete"</code>, <code>message={message}</code>,
+                  <code>onConfirm</code>, <code>onCancel</code>,
+                  <code>data-testid="confirm-delete-dialog"</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>Port Scanner large-scan warning (#1348)</td>
+                <td>
+                  <code>Modal</code> + secondary Cancel + <code>primary</code> "Start scan"; base
+                  id <code>port-scan-warn-modal</code>; no suppression today.
+                </td>
+                <td>
+                  <code>variant="warn"</code>, <code>title="Large scan"</code>,
+                  <code>confirmLabel="Start scan"</code>, <code>message={estimateText}</code>,
+                  <code>onConfirm={handleConfirmLargeScan}</code>,
+                  <code>onCancel={() =&gt; setWarnOpen(false)}</code>,
+                  <code>dontWarnAgain={{ ... }}</code> (new),
+                  <code>data-testid="port-scan-warn-modal"</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>WoL "Save device" modal (footer only)</td>
+                <td>
+                  <code>Modal</code> + secondary Cancel + <code>primary</code> "Save"
+                  (<code>disabled={!canSaveDevice}</code>, <code>errorToast={false}</code>); body
+                  is a name/MAC form; base id <code>wol-save-modal</code>.
+                </td>
+                <td>
+                  <code>variant="default"</code>, <code>title="Save Wake-on-LAN Device"</code>,
+                  <code>confirmLabel="Save"</code>, <code>icon={&lt;Save/&gt;}</code>, form fields
+                  as <code>children</code>, <code>confirmDisabled={!canSaveDevice}</code>,
+                  <code>confirmErrorToast={false}</code>,
+                  <code>onConfirm={handleConfirmSave}</code>, <code>onCancel</code>,
+                  <code>data-testid="wol-save-modal"</code>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The WoL case is deliberately the <em>weakest</em> fit — it is a form, not a pure confirm —
+          so it only consolidates the footer + cancel wiring + test-id scheme via the
+          <code>children</code> slot. If the body slot proves awkward there in implementation, WoL
+          may stay on raw <code>Modal</code>; the two pure-confirm sites
+          (<code>ConfirmDeleteDialog</code>, Port Scanner) are the primary win. That trade-off is a
+          decision for the implementation PR, which must match this concept (concept is
+          authoritative).
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept confirm-dialog-primitive</code>. Records the last
+            commit at which the concept and code were reconciled, plus open divergences. The
+            concept is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td><code>ConfirmDialog</code> primitive in <code>src/components/ui/</code></td>
+                <td>Does not exist; confirm shape hand-rolled per call site</td>
+                <td>Missing</td>
+                <td>Implement per this concept, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Three call sites migrated onto <code>ConfirmDialog</code></td>
+                <td>
+                  <code>ConfirmDeleteDialog.tsx</code>, Port Scanner + WoL modals each build on raw
+                  <code>Modal</code>
+                </td>
+                <td>Missing</td>
+                <td>Migrate during implementation; preserve existing test ids</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>"Don't warn again" affordance on the large-scan warning</td>
+                <td>Port Scanner warning has no suppression option</td>
+                <td>Missing</td>
+                <td>Add via <code>dontWarnAgain</code> + a caller-owned stored preference</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
