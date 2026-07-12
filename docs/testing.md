@@ -843,8 +843,8 @@ tab → "Spawned" badge → separate Open Connections tracking → confirmation 
 is covered by unit tests (`src/hooks/useSpawnRequests.test.ts`,
 `src/components/Terminal/Tab.spawned-badge.test.tsx`,
 `src/components/OpenConnections/OpenConnectionsModal.spawned.test.tsx`). A live
-end-to-end run needs Docker + a built app, so the full path is manual. See the
-PR that closes #1446.
+end-to-end run needs Docker + a built app (PR #1464), so the full path below is
+manual.
 
 **Container spawn from the CLI opens a bind-mounted Spawned tab.**
 
