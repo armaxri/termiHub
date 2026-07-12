@@ -154,6 +154,92 @@ fn uninstall() -> anyhow::Result<()> {
     anyhow::bail!(UNSUPPORTED_MESSAGE)
 }
 
+/// Unit tests pinning the exact behavior of the file-scope helpers shared by
+/// all three OS `Registrar`s. These run on every platform (they touch none of
+/// the `#[cfg]`-gated OS arms), so the byte-for-byte output each OS arm relies
+/// on is verified even where that arm is compiled out.
+#[cfg(test)]
+mod shared_helper_tests {
+    use super::*;
+
+    #[test]
+    fn spawn_command_line_formats_exe_id_and_location_token() {
+        // Linux desktop / KDE / Thunar: bare `%f` placeholder, no quoting.
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --location %f"#
+        );
+        // macOS: the already-quoted `"$@"` token is passed through verbatim.
+        assert_eq!(
+            spawn_command_line("/Applications/termiHub", "open", r#""$@""#),
+            r#""/Applications/termiHub" spawn --entry-id open --location "$@""#
+        );
+        // Windows: the caller pre-quotes the `%1` / `%V` placeholder.
+        assert_eq!(
+            spawn_command_line(r"C:\termiHub.exe", "open", "\"%1\""),
+            r#""C:\termiHub.exe" spawn --entry-id open --location "%1""#
+        );
+    }
+
+    #[test]
+    fn id_slug_windows_style_uses_underscore_without_trim_or_fallback() {
+        // Windows `entry_key_name`: non-alnum → `_`, lowercased, no trimming,
+        // and an all-non-alnum / empty id keeps an empty slug.
+        assert_eq!(id_slug("Open.Session", '_', false, ""), "open_session");
+        assert_eq!(id_slug(".git", '_', false, ""), "_git");
+        assert_eq!(id_slug("a b", '_', false, ""), "a_b");
+        assert_eq!(id_slug("", '_', false, ""), "");
+        assert_eq!(id_slug("...", '_', false, ""), "___");
+    }
+
+    #[test]
+    fn id_slug_linux_style_uses_hyphen_with_trim_and_fallback() {
+        // Linux `slug`: non-alnum → `-`, lowercased, trimmed, empty → `entry`.
+        assert_eq!(id_slug("Open.Session", '-', true, "entry"), "open-session");
+        assert_eq!(id_slug("-a-", '-', true, "entry"), "a");
+        assert_eq!(id_slug("...", '-', true, "entry"), "entry");
+        assert_eq!(id_slug("", '-', true, "entry"), "entry");
+    }
+
+    #[test]
+    fn sanitize_display_name_replaces_configured_chars_and_trims() {
+        // macOS `bundle_dir_name` set includes the colon; Linux
+        // `nautilus_script_name` set does not.
+        assert_eq!(
+            sanitize_display_name("Open / Here", &['/', '\\', ':']),
+            "Open - Here"
+        );
+        assert_eq!(sanitize_display_name("a:b", &['/', '\\', ':']), "a-b");
+        assert_eq!(sanitize_display_name("a:b", &['/', '\\']), "a:b");
+        // Surrounding whitespace is trimmed; an all-whitespace name is empty so
+        // the caller can substitute its own fallback.
+        assert_eq!(sanitize_display_name("  Name  ", &['/', '\\']), "Name");
+        assert_eq!(sanitize_display_name("   ", &['/', '\\']), "");
+    }
+
+    #[test]
+    fn file_contains_marker_detects_marker_and_tolerates_missing_file() {
+        let dir = std::env::temp_dir().join(format!("termihub-marker-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp marker dir");
+
+        let present = dir.join("present.txt");
+        std::fs::write(&present, "first line\nMARKER-XYZ\nlast line\n").expect("write present");
+        let absent = dir.join("absent.txt");
+        std::fs::write(&absent, "nothing to see here\n").expect("write absent");
+
+        assert!(file_contains_marker(&present, "MARKER-XYZ"));
+        assert!(!file_contains_marker(&absent, "MARKER-XYZ"));
+        // A missing/unreadable file is simply "not ours".
+        assert!(!file_contains_marker(
+            &dir.join("missing.txt"),
+            "MARKER-XYZ"
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// macOS Finder Quick Action / Services registration (#1369).
 ///
 /// Each configured [`ShellEntry`] is written as a self-contained Automator
