@@ -219,6 +219,13 @@ export interface TerminalTab {
    * rather than terminating it.
    */
   persistentConnectionId?: string;
+  /**
+   * Set when this tab was opened from an external spawn (`termiHub spawn …`,
+   * #1446) as a "new container". Spawned containers have no saved connection id;
+   * this flag drives the tab's "Spawned" badge and the separate grouping in the
+   * Open Connections panel.
+   */
+  spawned?: boolean;
 }
 
 /**
