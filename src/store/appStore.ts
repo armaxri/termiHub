@@ -3045,9 +3045,12 @@ export const useAppStore = create<AppState>((set, get) => {
         // Persist the toggled folder
         const toggled = folders.find((f) => f.id === folderId);
         if (toggled) {
-          persistFolder(toggled).catch((err) =>
-            console.error("Failed to persist folder toggle:", err)
-          );
+          persistFolder(toggled).catch((err) => {
+            console.error("Failed to persist folder toggle:", err);
+            toast.error(
+              `Failed to save folder state: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
         }
         return { folders };
       });
@@ -3129,9 +3132,17 @@ export const useAppStore = create<AppState>((set, get) => {
       Promise.all(toDelete.map((c) => removeConnection(c.id, c.sourceFile)))
         .then(() => {
           frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed, reloading`);
+          toast.success(
+            `Deleted ${toDelete.length} ${toDelete.length === 1 ? "connection" : "connections"}`
+          );
           return applyConnectionReload();
         })
-        .catch((err) => console.error("Failed to persist bulk connection deletion:", err));
+        .catch((err) => {
+          console.error("Failed to persist bulk connection deletion:", err);
+          toast.error(
+            `Failed to delete connections: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     addFolder: (folder) => {
@@ -3139,7 +3150,12 @@ export const useAppStore = create<AppState>((set, get) => {
       frontendLog("connection_sync", `addFolder: persisting ${folder.id}`);
       persistFolder(folder)
         .then(() => applyConnectionReload())
-        .catch((err) => console.error("Failed to persist new folder:", err));
+        .catch((err) => {
+          console.error("Failed to persist new folder:", err);
+          toast.error(
+            `Failed to create folder ${folder.name}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     deleteFolder: (folderId) => {
@@ -3160,7 +3176,12 @@ export const useAppStore = create<AppState>((set, get) => {
       frontendLog("connection_sync", `deleteFolder: removing ${folderId}`);
       removeFolder(folderId)
         .then(() => applyConnectionReload())
-        .catch((err) => console.error("Failed to persist folder deletion:", err));
+        .catch((err) => {
+          console.error("Failed to persist folder deletion:", err);
+          toast.error(
+            `Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     duplicateConnection: (connectionId) => {
@@ -3176,7 +3197,12 @@ export const useAppStore = create<AppState>((set, get) => {
       frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
       persistConnection(stripPassword(duplicate))
         .then(() => applyConnectionReload())
-        .catch((err) => console.error("Failed to persist duplicated connection:", err));
+        .catch((err) => {
+          console.error("Failed to persist duplicated connection:", err);
+          toast.error(
+            `Failed to duplicate ${original.name}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     moveConnectionToFile: async (connectionId, targetSource) => {
@@ -3191,6 +3217,9 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
       } catch (err) {
         console.error("Failed to move connection to file:", err);
+        toast.error(
+          `Failed to move ${conn.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -3207,7 +3236,12 @@ export const useAppStore = create<AppState>((set, get) => {
         frontendLog("connection_sync", `moveConnectionToFolder: persisting ${connectionId}`);
         persistConnection(stripPassword(moved))
           .then(() => applyConnectionReload())
-          .catch((err) => console.error("Failed to persist connection move:", err));
+          .catch((err) => {
+            console.error("Failed to persist connection move:", err);
+            toast.error(
+              `Failed to move ${moved.name}: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
       }
     },
 
@@ -3227,7 +3261,12 @@ export const useAppStore = create<AppState>((set, get) => {
       );
       Promise.all(moved.map((conn) => persistConnection(stripPassword(conn))))
         .then(() => applyConnectionReload())
-        .catch((err) => console.error("Failed to persist bulk connection move:", err));
+        .catch((err) => {
+          console.error("Failed to persist bulk connection move:", err);
+          toast.error(
+            `Failed to move connections: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
 
     // File browser / SFTP
@@ -3895,7 +3934,12 @@ export const useAppStore = create<AppState>((set, get) => {
         name: agent.name,
         config: agent.config,
         agentSettings: agent.agentSettings,
-      }).catch((err) => console.error("Failed to persist new agent:", err));
+      }).catch((err) => {
+        console.error("Failed to persist new agent:", err);
+        toast.error(
+          `Failed to save agent ${agent.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     updateRemoteAgent: (agent) => {
@@ -3907,7 +3951,12 @@ export const useAppStore = create<AppState>((set, get) => {
         name: agent.name,
         config: agent.config,
         agentSettings: agent.agentSettings,
-      }).catch((err) => console.error("Failed to persist agent update:", err));
+      }).catch((err) => {
+        console.error("Failed to persist agent update:", err);
+        toast.error(
+          `Failed to save agent ${agent.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     reorderRemoteAgents: (oldIndex, newIndex) => {
@@ -3918,9 +3967,12 @@ export const useAppStore = create<AppState>((set, get) => {
         return { remoteAgents: agents };
       });
       const agentIds = get().remoteAgents.map((a) => a.id);
-      persistAgentOrder(agentIds).catch((err) =>
-        console.error("Failed to persist agent reorder:", err)
-      );
+      persistAgentOrder(agentIds).catch((err) => {
+        console.error("Failed to persist agent reorder:", err);
+        toast.error(
+          `Failed to save agent order: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     deleteRemoteAgent: (agentId) => {
@@ -3942,7 +3994,12 @@ export const useAppStore = create<AppState>((set, get) => {
           Object.entries(s.agentFolders).filter(([k]) => k !== agentId)
         ),
       }));
-      removeAgent(agentId).catch((err) => console.error("Failed to persist agent deletion:", err));
+      removeAgent(agentId).catch((err) => {
+        console.error("Failed to persist agent deletion:", err);
+        toast.error(
+          `Failed to delete agent ${agent?.name ?? ""}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     toggleRemoteAgent: (agentId) => {
@@ -3997,6 +4054,9 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiDisconnectAgent(agentId);
       } catch (err) {
         console.error(`Failed to disconnect agent ${agentId}:`, err);
+        toast.error(
+          `Failed to disconnect agent: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
       set((s) => ({
         remoteAgents: s.remoteAgents.map((a) =>
@@ -4088,6 +4148,9 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
       } catch (err) {
         console.error(`Failed to refresh agent sessions for ${agentId}:`, err);
+        toast.error(
+          `Failed to load agent sessions: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -4105,6 +4168,9 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
       } catch (err) {
         console.error(`Failed to save agent definition on ${agentId}:`, err);
+        toast.error(
+          `Failed to save connection: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -4135,6 +4201,9 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
       } catch (err) {
         console.error(`Failed to delete agent definition on ${agentId}:`, err);
+        toast.error(
+          `Failed to delete connection: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -4151,6 +4220,9 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
       } catch (err) {
         console.error(`Failed to update agent definition on ${agentId}:`, err);
+        toast.error(
+          `Failed to update connection: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -4223,6 +4295,7 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
       } catch (err) {
         console.error(`Failed to delete agent folder on ${agentId}:`, err);
+        toast.error(`Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
 
@@ -4890,8 +4963,12 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiDuplicateWorkspace(workspaceId);
         await get().loadWorkspaces();
+        toast.success("Duplicated workspace");
       } catch (err) {
         console.error("Failed to duplicate workspace:", err);
+        toast.error(
+          `Failed to duplicate workspace: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -5188,6 +5265,11 @@ export const useAppStore = create<AppState>((set, get) => {
         });
       } catch (err) {
         console.error("Failed to save last session:", err);
+        // Auto-save fires on every layout change (debounced); use a stable id so
+        // repeated failures collapse into a single, replaceable toast.
+        toast.error(`Failed to save session: ${err instanceof Error ? err.message : String(err)}`, {
+          id: "last-session-save-error",
+        });
       }
     },
 
@@ -5283,6 +5365,9 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiClearLastSession();
       } catch (err) {
         console.error("Failed to clear last session:", err);
+        toast.error(
+          `Failed to clear saved session: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
