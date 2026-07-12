@@ -37,8 +37,9 @@ fn current_status(manager: &ConnectionManager) -> ShellIntegrationStatus {
 /// Combines the persisted settings with runtime facts: whether the integration
 /// is registered, whether the executable path recorded at registration still
 /// matches the current executable (staleness), whether the app runs in portable
-/// mode (where staleness is expected), and the detected file managers (stubbed
-/// empty until per-OS detection lands).
+/// mode (where staleness is expected), and the file managers detected on the
+/// host (Linux: Nautilus / Dolphin / Thunar with versions; macOS/Windows: the
+/// native manager).
 #[tauri::command]
 pub fn get_shell_integration_status(
     manager: State<'_, ConnectionManager>,

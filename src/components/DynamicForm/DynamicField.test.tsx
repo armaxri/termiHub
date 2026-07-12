@@ -140,20 +140,49 @@ describe("DynamicField", () => {
     });
   });
 
+  /** Set an input's value the React-controlled way (native setter + input event). */
+  function setNumber(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
   describe("number field", () => {
+    const numberField: SettingsField = {
+      key: "timeout",
+      label: "Timeout",
+      fieldType: { type: "number", min: 0, max: 300 },
+      required: false,
+    };
+
     it("renders number input with min/max", () => {
-      const field: SettingsField = {
-        key: "timeout",
-        label: "Timeout",
-        fieldType: { type: "number", min: 0, max: 300 },
-        required: false,
-      };
-      renderField(field, 30, vi.fn());
+      renderField(numberField, 30, vi.fn());
       const input = query("field-timeout") as HTMLInputElement;
       expect(input.type).toBe("number");
       expect(input.min).toBe("0");
       expect(input.max).toBe("300");
       expect(input.valueAsNumber).toBe(30);
+    });
+
+    it("renders a blank box when the value is undefined (#1444)", () => {
+      renderField(numberField, undefined, vi.fn());
+      expect((query("field-timeout") as HTMLInputElement).value).toBe("");
+    });
+
+    it("emits a parsed number when a value is typed (#1444)", () => {
+      const onChange = vi.fn();
+      renderField(numberField, 30, onChange);
+      setNumber(query("field-timeout") as HTMLInputElement, "120");
+      expect(onChange).toHaveBeenCalledWith(120);
+    });
+
+    it("clears to undefined (not 0) when the input is emptied (#1444)", () => {
+      const onChange = vi.fn();
+      renderField(numberField, 30, onChange);
+      setNumber(query("field-timeout") as HTMLInputElement, "");
+      expect(onChange).toHaveBeenCalledWith(undefined);
     });
   });
 
@@ -263,6 +292,19 @@ describe("DynamicField", () => {
       expect(input.min).toBe("1");
       expect(input.max).toBe("65535");
       expect(input.valueAsNumber).toBe(22);
+    });
+
+    it("clears to undefined (not 0) when the input is emptied (#1444)", () => {
+      const field: SettingsField = {
+        key: "port",
+        label: "Port",
+        fieldType: { type: "port" },
+        required: true,
+      };
+      const onChange = vi.fn();
+      renderField(field, 22, onChange);
+      setNumber(query("field-port") as HTMLInputElement, "");
+      expect(onChange).toHaveBeenCalledWith(undefined);
     });
   });
 

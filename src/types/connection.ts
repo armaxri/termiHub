@@ -83,7 +83,12 @@ export interface JumpHostConfig {
   /** Reference to a saved SSH connection (reserved; resolved by a later phase). */
   connectionId?: string;
   host: string;
-  port: number;
+  /**
+   * SSH port. While editing, a cleared field is `""` (the shared `number | ""`
+   * blank-value convention, #1444) which `validateProxyJump` flags as required
+   * rather than coercing to a default; a persisted hop always holds a number.
+   */
+  port: number | "";
   username: string;
   /** "key" | "password" | "agent". */
   authMethod: string;
@@ -345,7 +350,11 @@ export interface ShellIntegrationStatus {
   stale: boolean;
   /** Whether the app runs in portable mode (where staleness is expected). */
   portable: boolean;
-  /** File managers detected on the host (empty until detection lands). */
+  /**
+   * File managers detected on the host. On Linux this lists Nautilus, Dolphin
+   * (KDE) and Thunar with their versions where available; on macOS/Windows the
+   * native manager (Finder / File Explorer).
+   */
   detectedFileManagers: DetectedFileManager[];
 }
 
