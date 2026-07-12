@@ -43,6 +43,7 @@ function makeEntry(name: string): FileEntry {
     size: 0,
     modified: "",
     permissions: null,
+    writable: null,
   };
 }
 

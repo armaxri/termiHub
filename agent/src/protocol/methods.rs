@@ -1068,6 +1068,7 @@ mod tests {
             size: 1024,
             modified: "2026-02-20T10:00:00Z".to_string(),
             permissions: Some("rw-r--r--".to_string()),
+            writable: None,
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert_eq!(v["name"], "readme.md");
@@ -1087,6 +1088,7 @@ mod tests {
             size: 0,
             modified: String::new(),
             permissions: None,
+            writable: None,
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert!(v["permissions"].is_null());
@@ -1115,6 +1117,7 @@ mod tests {
                 size: 4096,
                 modified: "2026-01-01T00:00:00Z".to_string(),
                 permissions: Some("rwxr-xr-x".to_string()),
+                writable: None,
             }],
         };
         let v = serde_json::to_value(&result).unwrap();
@@ -1184,6 +1187,7 @@ mod tests {
             size: 4096,
             modified: "2026-02-20T10:00:00Z".to_string(),
             permissions: Some("rwxr-xr-x".to_string()),
+            writable: None,
         };
         let v = serde_json::to_value(&result).unwrap();
         assert_eq!(v["isDirectory"], true);

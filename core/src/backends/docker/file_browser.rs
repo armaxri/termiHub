@@ -293,6 +293,8 @@ fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, 
             size,
             modified,
             permissions,
+            // Writability is derived only for the desktop SFTP browser (#1324).
+            writable: None,
         });
     }
 
@@ -325,6 +327,8 @@ fn parse_stat_output(output: &str, path: &str) -> Result<FileEntry, FileError> {
         size,
         modified: chrono_from_epoch(mtime),
         permissions: Some(format_permissions(mode)),
+        // Writability is derived only for the desktop SFTP browser (#1324).
+        writable: None,
     })
 }
 

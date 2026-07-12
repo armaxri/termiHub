@@ -61,6 +61,29 @@ pub fn format_permissions(perm: u32) -> String {
     s
 }
 
+/// Derive writability from a 9-char Unix mode string (`rwxrwxrwx`).
+///
+/// This is the **cheap, conservative** layer of read-only detection: a file is
+/// considered writable if *any* class (owner/group/other) carries a write bit,
+/// because `russh-sftp` exposes no uid/gid to know which class applies to the
+/// connecting user. It therefore only catches the case where *nobody* may write
+/// (e.g. `r--r--r--`); the owner-mismatch case (a `rw-r--r--` file owned by
+/// another user) is caught by the authoritative write-open probe instead.
+///
+/// Expects the 9-char form produced by [`format_permissions`] (no leading type
+/// char). Returns:
+/// - `Some(true)`  — a write bit is set in at least one class,
+/// - `Some(false)` — all three write positions are present but unset,
+/// - `None`        — the string is empty/absent or too short to interpret.
+pub fn writable_from_permissions(perms: &str) -> Option<bool> {
+    let bytes = perms.as_bytes();
+    // Owner/group/other write bits sit at indices 1, 4, 7 of `rwxrwxrwx`.
+    if bytes.len() < 9 {
+        return None;
+    }
+    Some(bytes[1] == b'w' || bytes[4] == b'w' || bytes[7] == b'w')
+}
+
 /// Normalize path separators to forward slashes for cross-platform consistency.
 ///
 /// On Windows, backslashes are replaced with forward slashes so the frontend
@@ -140,6 +163,43 @@ mod tests {
     #[test]
     fn format_permissions_777() {
         assert_eq!(format_permissions(0o777), "rwxrwxrwx");
+    }
+
+    #[test]
+    fn writable_from_permissions_read_only() {
+        // `-r--r--r--` collapses to the 9-char form `r--r--r--`: no write bit.
+        assert_eq!(writable_from_permissions("r--r--r--"), Some(false));
+    }
+
+    #[test]
+    fn writable_from_permissions_all_writable() {
+        assert_eq!(writable_from_permissions("rw-rw-rw-"), Some(true));
+    }
+
+    #[test]
+    fn writable_from_permissions_owner_only_writable() {
+        // Owner has write, group/other do not — writable via ANY class.
+        assert_eq!(writable_from_permissions("rw-r--r--"), Some(true));
+    }
+
+    #[test]
+    fn writable_from_permissions_owner_rwx() {
+        assert_eq!(writable_from_permissions("rwx------"), Some(true));
+    }
+
+    #[test]
+    fn writable_from_permissions_read_execute_only() {
+        assert_eq!(writable_from_permissions("r-xr-xr-x"), Some(false));
+    }
+
+    #[test]
+    fn writable_from_permissions_empty_is_none() {
+        assert_eq!(writable_from_permissions(""), None);
+    }
+
+    #[test]
+    fn writable_from_permissions_group_only_writable() {
+        assert_eq!(writable_from_permissions("r--rw-r--"), Some(true));
     }
 
     #[test]

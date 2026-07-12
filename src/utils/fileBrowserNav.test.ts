@@ -15,6 +15,7 @@ function entry(name: string, over: Partial<FileEntry> = {}): FileEntry {
     size: 0,
     modified: "2026-01-01T00:00:00Z",
     permissions: null,
+    writable: null,
     ...over,
   };
 }

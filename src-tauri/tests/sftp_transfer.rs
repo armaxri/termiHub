@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use termihub_core::config::SshConfig;
-use termihub_lib::files::sftp::{lock_session, SftpManager, SftpSession};
+use termihub_lib::files::sftp::{lock_session, SftpManager, SftpSession, Writability};
 use termihub_lib::files::transfer::{
     run_download, ProgressSink, TransferContext, TransferDirection, TransferPhase,
     TransferProgress, TransferRegistry,
@@ -194,6 +194,63 @@ async fn cancel_mid_transfer_cleans_up_partial_file() {
 /// (a dropped entry returns false).
 fn registry_contains(registry: &TransferRegistry, id: &str) -> bool {
     registry.cancel(id)
+}
+
+/// The write-open probe classifies a user-owned file as writable and a
+/// root-owned `/etc` file as read-only — the owner-mismatch case the cheap
+/// permission hint cannot catch (issue #1324). Never modifies either file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn check_writable_distinguishes_owner_from_root_owned() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    let (_manager, session) = connect().await;
+
+    // A file the connecting user owns: create it fresh under $HOME, probe it,
+    // then clean up. The probe must never truncate it.
+    let user_path = format!(
+        "/home/testuser/termihub-writable-{}.txt",
+        uuid::Uuid::new_v4()
+    );
+    let user_writable = {
+        let session = session.clone();
+        let user_path = user_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let guard = lock_session(&session)?;
+            guard.write_file_content(&user_path, "probe-content")?;
+            let writability = guard.check_writable(&user_path);
+            // Content must survive the probe unchanged (no truncate/write).
+            let content = guard.read_file_content(&user_path)?;
+            let _ = guard.remove_file(&user_path);
+            writability.map(|w| (w, content))
+        })
+        .await
+        .expect("join")
+        .expect("probe on a user-owned file should not error")
+    };
+    assert_eq!(
+        user_writable.0,
+        Writability::Writable,
+        "a file owned by the connecting user must probe as writable"
+    );
+    assert_eq!(
+        user_writable.1, "probe-content",
+        "the write-open probe must not modify the file's contents"
+    );
+
+    // A root-owned file the user cannot write (mode 644, owned by root).
+    let root_writability = {
+        let session = session.clone();
+        tokio::task::spawn_blocking(move || lock_session(&session)?.check_writable("/etc/hostname"))
+            .await
+            .expect("join")
+            .expect("probe on a root-owned file should not error")
+    };
+    assert_eq!(
+        root_writability,
+        Writability::ReadOnly,
+        "a root-owned /etc file must probe as read-only for a non-root user"
+    );
 }
 
 /// Concurrent-transfer-while-browsing liveness: a `list_dir` on the browsing

@@ -1,14 +1,19 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use russh_sftp::client::error::Error as RusshSftpError;
 use russh_sftp::client::SftpSession as RusshSftp;
+use russh_sftp::protocol::{OpenFlags, StatusCode};
+use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::backends::ssh::{ssh_exec_with_stdin, SshExecOutput};
 use termihub_core::errors::FileError;
-use termihub_core::files::utils::{chrono_from_epoch, format_permissions};
+use termihub_core::files::utils::{
+    chrono_from_epoch, format_permissions, writable_from_permissions,
+};
 use termihub_core::files::{FileBackend, FileEntry};
 
 use crate::terminal::backend::SshConfig;
@@ -61,6 +66,38 @@ const EXEC_PROBE_MARKER: &str = "termihub_exec_probe_ok";
 /// reported as not capable.
 fn exec_probe_indicates_capability(output: &SshExecOutput) -> bool {
     output.exit_status == 0 && output.stdout.contains(EXEC_PROBE_MARKER)
+}
+
+/// Authoritative writability of a specific remote file, as decided by an SFTP
+/// write-open probe (see [`SftpSession::check_writable`]).
+///
+/// Unlike the cheap permission-string hint on [`FileEntry`], this reflects the
+/// connecting user's *actual* ability to open the file for writing — it catches
+/// the owner-mismatch case (e.g. a `rw-r--r--` file owned by another user).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Writability {
+    /// The file could be opened for writing.
+    Writable,
+    /// The server denied the write-open with `PERMISSION_DENIED`.
+    ReadOnly,
+    /// The probe could not conclude (any other error) — treat as writable by the
+    /// caller (attempt the write) so a false negative never blocks a save.
+    Unknown,
+}
+
+/// Classify a failed write-open probe into a [`Writability`].
+///
+/// A `PERMISSION_DENIED` status is the authoritative "read-only" signal; every
+/// other error (missing file, transport hiccup, unsupported op, …) is
+/// inconclusive and maps to [`Writability::Unknown`] rather than a hard failure.
+fn classify_write_open_error(err: &RusshSftpError) -> Writability {
+    match err {
+        RusshSftpError::Status(status) if status.status_code == StatusCode::PermissionDenied => {
+            Writability::ReadOnly
+        }
+        _ => Writability::Unknown,
+    }
 }
 
 /// SFTP session backed by a dedicated SSH connection.
@@ -172,6 +209,8 @@ impl SftpSession {
                     }
                     let meta = entry.metadata();
                     let full_path = format!("{}/{}", path.trim_end_matches('/'), name);
+                    let permissions = meta.permissions.map(format_permissions);
+                    let writable = permissions.as_deref().and_then(writable_from_permissions);
                     result.push(FileEntry {
                         name,
                         path: full_path,
@@ -181,7 +220,8 @@ impl SftpSession {
                             .mtime
                             .map(|t| chrono_from_epoch(t as u64))
                             .unwrap_or_default(),
-                        permissions: meta.permissions.map(format_permissions),
+                        permissions,
+                        writable,
                     });
                 }
                 Ok::<Vec<FileEntry>, TerminalError>(result)
@@ -343,6 +383,8 @@ impl SftpSession {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
 
+                let permissions = meta.permissions.map(format_permissions);
+                let writable = permissions.as_deref().and_then(writable_from_permissions);
                 Ok::<FileEntry, TerminalError>(FileEntry {
                     name,
                     path,
@@ -352,8 +394,50 @@ impl SftpSession {
                         .mtime
                         .map(|t| chrono_from_epoch(t as u64))
                         .unwrap_or_default(),
-                    permissions: meta.permissions.map(format_permissions),
+                    permissions,
+                    writable,
                 })
+            })
+        })
+    }
+
+    /// Authoritatively probe whether the connecting user can write `remote_path`.
+    ///
+    /// Opens the **existing** file for writing with `OpenFlags::WRITE` only — no
+    /// `CREATE`, no `TRUNCATE`, no `APPEND` — so the file's contents are never
+    /// modified; the handle is immediately shut down. This catches the
+    /// owner-mismatch case the cheap permission hint cannot (a `rw-r--r--` file
+    /// owned by another user). Never returns a hard error for the ambiguous case:
+    /// a `PERMISSION_DENIED` maps to [`Writability::ReadOnly`], any other error
+    /// to [`Writability::Unknown`] (logged, not propagated).
+    pub fn check_writable(&self, remote_path: &str) -> Result<Writability, TerminalError> {
+        let remote_path = remote_path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                match self
+                    .sftp
+                    .open_with_flags(&remote_path, OpenFlags::WRITE)
+                    .await
+                {
+                    Ok(mut file) => {
+                        // Wrote nothing; close the handle so the server releases it.
+                        if let Err(e) = file.shutdown().await {
+                            warn!(error = %e, "SFTP write probe: closing probe handle failed");
+                        }
+                        debug!("SFTP write probe: writable");
+                        Ok(Writability::Writable)
+                    }
+                    Err(e) => {
+                        let writability = classify_write_open_error(&e);
+                        match writability {
+                            Writability::ReadOnly => {
+                                debug!("SFTP write probe: read-only (permission denied)")
+                            }
+                            _ => warn!(error = %e, "SFTP write probe: inconclusive, treating as unknown"),
+                        }
+                        Ok(writability)
+                    }
+                }
             })
         })
     }
@@ -641,6 +725,56 @@ mod tests {
     fn exec_probe_false_on_nonzero_exit() {
         let output = probe_output(&format!("{EXEC_PROBE_MARKER}\n"), 1);
         assert!(!exec_probe_indicates_capability(&output));
+    }
+
+    /// Build a synthetic SFTP status error for the given status code.
+    fn status_error(code: StatusCode) -> RusshSftpError {
+        RusshSftpError::Status(russh_sftp::protocol::Status {
+            id: 0,
+            status_code: code,
+            error_message: String::new(),
+            language_tag: String::new(),
+        })
+    }
+
+    /// A `PERMISSION_DENIED` write-open is the authoritative read-only signal.
+    #[test]
+    fn classify_permission_denied_is_read_only() {
+        let err = status_error(StatusCode::PermissionDenied);
+        assert_eq!(classify_write_open_error(&err), Writability::ReadOnly);
+    }
+
+    /// Any other status (e.g. missing file) is inconclusive → Unknown.
+    #[test]
+    fn classify_other_status_is_unknown() {
+        let err = status_error(StatusCode::NoSuchFile);
+        assert_eq!(classify_write_open_error(&err), Writability::Unknown);
+        let err = status_error(StatusCode::Failure);
+        assert_eq!(classify_write_open_error(&err), Writability::Unknown);
+    }
+
+    /// Non-status errors (transport/protocol) are also inconclusive → Unknown.
+    #[test]
+    fn classify_non_status_error_is_unknown() {
+        let err = RusshSftpError::Timeout;
+        assert_eq!(classify_write_open_error(&err), Writability::Unknown);
+    }
+
+    /// `Writability` serializes as camelCase strings for the frontend.
+    #[test]
+    fn writability_serializes_camel_case() {
+        assert_eq!(
+            serde_json::to_value(Writability::ReadOnly).unwrap(),
+            serde_json::json!("readOnly")
+        );
+        assert_eq!(
+            serde_json::to_value(Writability::Writable).unwrap(),
+            serde_json::json!("writable")
+        );
+        assert_eq!(
+            serde_json::to_value(Writability::Unknown).unwrap(),
+            serde_json::json!("unknown")
+        );
     }
 
     /// The lock helper must map a poisoned mutex to a recoverable

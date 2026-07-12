@@ -115,6 +115,8 @@ impl FileBrowser for SftpFileBrowser {
                     .map(|t| chrono_from_epoch(t as u64))
                     .unwrap_or_default(),
                 permissions: meta.permissions.map(format_permissions),
+                // Writability is derived only for the desktop SFTP browser (#1324).
+                writable: None,
             });
         }
         Ok(result)
@@ -252,6 +254,8 @@ impl FileBrowser for SftpFileBrowser {
                 .map(|t| chrono_from_epoch(t as u64))
                 .unwrap_or_default(),
             permissions: meta.permissions.map(format_permissions),
+            // Writability is derived only for the desktop SFTP browser (#1324).
+            writable: None,
         })
     }
 }

@@ -4,7 +4,7 @@ use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
 use crate::connection::manager::ConnectionManager;
-use crate::files::sftp::{lock_session, SftpManager};
+use crate::files::sftp::{lock_session, SftpManager, Writability};
 use crate::files::transfer::{self, TransferContext, TransferDirection, TransferRegistry};
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
@@ -72,6 +72,26 @@ pub async fn sftp_realpath(
     debug!(session_id, path, "SFTP realpath");
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || lock_session(&session)?.realpath(&path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+}
+
+/// Authoritatively check whether a remote file is writable by the connecting
+/// user, via a non-destructive SFTP write-open probe (issue #1324).
+///
+/// Returns [`Writability::Writable`] / [`Writability::ReadOnly`] /
+/// [`Writability::Unknown`]; the probe never modifies the file and never errors
+/// out for the ambiguous case (that maps to `Unknown`). This catches the
+/// owner-mismatch case the cheap `FileEntry.writable` hint cannot.
+#[tauri::command]
+pub async fn sftp_check_writable(
+    session_id: String,
+    remote_path: String,
+    manager: State<'_, SftpManager>,
+) -> Result<Writability, TerminalError> {
+    debug!(session_id, "SFTP check writable");
+    let session = manager.get_session(&session_id)?;
+    tokio::task::spawn_blocking(move || lock_session(&session)?.check_writable(&remote_path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }

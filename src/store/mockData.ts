@@ -83,6 +83,7 @@ export const MOCK_FILES: FileEntry[] = [
     size: 4096,
     modified: "2026-02-01T10:00:00Z",
     permissions: null,
+    writable: null,
   },
   {
     name: "projects",
@@ -91,6 +92,7 @@ export const MOCK_FILES: FileEntry[] = [
     size: 4096,
     modified: "2026-02-05T14:30:00Z",
     permissions: null,
+    writable: null,
   },
   {
     name: "scripts",
@@ -99,6 +101,7 @@ export const MOCK_FILES: FileEntry[] = [
     size: 4096,
     modified: "2026-01-20T08:00:00Z",
     permissions: null,
+    writable: null,
   },
   {
     name: ".bashrc",
@@ -107,6 +110,7 @@ export const MOCK_FILES: FileEntry[] = [
     size: 3526,
     modified: "2026-01-15T12:00:00Z",
     permissions: null,
+    writable: null,
   },
   {
     name: "build.sh",
@@ -115,6 +119,7 @@ export const MOCK_FILES: FileEntry[] = [
     size: 1024,
     modified: "2026-02-08T16:45:00Z",
     permissions: null,
+    writable: null,
   },
   {
     name: "README.md",
@@ -123,6 +128,7 @@ export const MOCK_FILES: FileEntry[] = [
     size: 2048,
     modified: "2026-02-07T09:15:00Z",
     permissions: null,
+    writable: null,
   },
   {
     name: "config.json",
@@ -131,5 +137,6 @@ export const MOCK_FILES: FileEntry[] = [
     size: 512,
     modified: "2026-02-06T11:30:00Z",
     permissions: null,
+    writable: null,
   },
 ];
