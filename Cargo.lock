@@ -7274,6 +7274,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "vte",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
