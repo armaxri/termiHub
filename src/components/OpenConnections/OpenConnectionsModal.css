@@ -141,6 +141,11 @@
   color: var(--text-secondary);
 }
 
+.oc-row__badge--spawned {
+  background: color-mix(in srgb, var(--color-info) 18%, transparent);
+  color: var(--color-info);
+}
+
 /* Transfer row (issue 1247): the icon + Cancel button flank a stacked body that
    holds the file name, an inline progress bar, and a byte/percentage meta line. */
 .oc-transfer {

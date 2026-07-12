@@ -98,6 +98,18 @@
   top: -3px;
 }
 
+.tab__spawned-badge {
+  flex-shrink: 0;
+  margin-left: var(--spacing-xs);
+  padding: 0 var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.4;
+  border-radius: var(--radius-full);
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 18%, transparent);
+}
+
 .tab__dirty-dot {
   display: inline-block;
   width: 8px;
