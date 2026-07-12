@@ -436,6 +436,104 @@ impl Default for TelnetConfig {
     }
 }
 
+/// TLS negotiation mode for an FTP connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FtpTlsMode {
+    /// Plain FTP — no encryption (credentials and data sent in cleartext).
+    #[default]
+    None,
+    /// Explicit FTPS — connect plain, then upgrade via `AUTH TLS` (STARTTLS).
+    Explicit,
+    /// Implicit FTPS — TLS handshake immediately on connect (legacy, port 990).
+    Implicit,
+}
+
+/// FTP data-channel mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FtpDataMode {
+    /// Passive mode (default, firewall-friendly): client opens the data channel.
+    #[default]
+    Passive,
+    /// Active mode: server connects back to the client for the data channel.
+    Active,
+}
+
+/// FTP transfer representation type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FtpTransferType {
+    /// Binary / image mode — bytes transferred verbatim (default).
+    #[default]
+    Binary,
+    /// ASCII mode — line-ending translation between hosts.
+    Ascii,
+}
+
+/// FTP / FTPS session configuration.
+///
+/// Desktop-only connection config for the `ftp` backend. File listing and
+/// transfers are layered on later; this struct carries the connect-time
+/// settings (server, TLS, auth, data mode).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FtpConfig {
+    /// Hostname or IP address of the FTP server.
+    pub host: String,
+    /// Control-channel port (21 for plain/explicit, 990 for implicit FTPS).
+    #[serde(default = "default_ftp_port")]
+    pub port: u16,
+    /// TLS negotiation mode.
+    #[serde(default)]
+    pub tls_mode: FtpTlsMode,
+    /// Whether to log in anonymously (username `anonymous`).
+    #[serde(default)]
+    pub anonymous: bool,
+    /// Login username (ignored when [`anonymous`](Self::anonymous) is set).
+    #[serde(default)]
+    pub username: String,
+    /// Login password (ignored when [`anonymous`](Self::anonymous) is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Data-channel mode (passive/active).
+    #[serde(default)]
+    pub mode: FtpDataMode,
+    /// Transfer representation type (binary/ascii).
+    #[serde(default)]
+    pub transfer_type: FtpTransferType,
+    /// Directory to change into after login (`CWD`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_directory: Option<String>,
+    /// Connect timeout in seconds.
+    #[serde(default = "default_ftp_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl Default for FtpConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: default_ftp_port(),
+            tls_mode: FtpTlsMode::default(),
+            anonymous: false,
+            username: String::new(),
+            password: None,
+            mode: FtpDataMode::default(),
+            transfer_type: FtpTransferType::default(),
+            initial_directory: None,
+            timeout_secs: default_ftp_timeout_secs(),
+        }
+    }
+}
+
+impl FtpConfig {
+    /// Connect timeout as a [`Duration`].
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout_secs)
+    }
+}
+
 // --- Expand methods ---
 
 impl ShellConfig {
@@ -470,6 +568,17 @@ impl SerialConfig {
     /// Return a copy with all `${VAR}` placeholders and `~` expanded.
     pub fn expand(mut self) -> Self {
         self.port = expand_config_value(&self.port);
+        self
+    }
+}
+
+impl FtpConfig {
+    /// Return a copy with all `${VAR}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.host = expand_config_value(&self.host);
+        self.username = expand_config_value(&self.username);
+        self.password = self.password.map(|s| expand_config_value(&s));
+        self.initial_directory = self.initial_directory.map(|s| expand_config_value(&s));
         self
     }
 }
@@ -544,6 +653,14 @@ fn default_ssh_port() -> u16 {
 
 fn default_telnet_port() -> u16 {
     23
+}
+
+fn default_ftp_port() -> u16 {
+    21
+}
+
+fn default_ftp_timeout_secs() -> u64 {
+    30
 }
 
 #[cfg(test)]

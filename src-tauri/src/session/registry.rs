@@ -63,6 +63,15 @@ pub fn build_desktop_registry() -> ConnectionTypeRegistry {
         Box::new(|| Box::new(termihub_core::backends::wsl::Wsl::new())),
     );
 
+    // FTP / FTPS (gated behind the `ftp` feature; enabled by default)
+    #[cfg(feature = "ftp")]
+    registry.register(
+        "ftp",
+        "FTP",
+        "network",
+        Box::new(|| Box::new(termihub_core::backends::ftp::Ftp::new())),
+    );
+
     registry
 }
 
