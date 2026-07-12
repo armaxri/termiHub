@@ -115,6 +115,10 @@ pub async fn run_tcp_listener(
                     Err(e) => warn!("Client {} error: {}", peer, e),
                 }
 
+                // Clear this client from the registry now that its connection
+                // has ended (the handler is per-connection in listen mode).
+                handler.deregister_client();
+
                 // Detach all sessions so they remain alive for the next client
                 session_manager.detach_all().await;
             }

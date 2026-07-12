@@ -1,3 +1,4 @@
+mod client_registry;
 mod daemon;
 mod files;
 mod handler;
