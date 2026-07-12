@@ -500,8 +500,10 @@ Fixed strings — match exactly.
 | `tunnel-type-local` | `src/components/TunnelEditor/TunnelEditor.tsx` |
 | `tunnel-type-remote` | `src/components/TunnelEditor/TunnelEditor.tsx` |
 | `unlock-dialog-error` | `src/components/UnlockDialog/UnlockDialog.tsx` |
+| `unlock-dialog-forgot` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-input` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-reset` | `src/components/UnlockDialog/UnlockDialog.tsx` |
+| `unlock-dialog-reset-confirm` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-skip` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unlock-dialog-unlock` | `src/components/UnlockDialog/UnlockDialog.tsx` |
 | `unsaved-changes-cancel` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
@@ -732,6 +734,7 @@ where the component is used, not at the `data-testid` site.
 | expression | source |
 | ---------- | ------ |
 | `{badgeTestId}` | `src/components/SidebarListItem/SidebarListItem.tsx` |
+| `{capsTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{confirmTestId}` | `src/components/OpenConnections/OpenConnectionsModal.tsx`, `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `{dataTestId}` | `src/components/PasswordInput/PasswordInput.tsx` |
 | `{dontAskAgain["data-testid"] ?? "confirm-dialog-dont-ask-again"}` | `src/components/ui/ConfirmDialog.tsx` |

@@ -114,9 +114,25 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     setChangePasswordError("");
   }, []);
 
+  /**
+   * Begins a storage-mode switch. Switching *away* from an existing master-password
+   * store touches encrypted data (it must be decrypted to migrate/discard), so when
+   * that store is locked this routes through the shared unlock flow first — the same
+   * gate the change-password flow uses (audit G4) — and only opens the confirm once
+   * the unlock succeeds. Without this gate the destructive switch would proceed against
+   * a locked store with no password check.
+   */
   const handleModeSelect = useCallback(
-    (mode: CredentialStorageMode) => {
+    async (mode: CredentialStorageMode) => {
       if (mode === currentMode) return;
+      if (
+        currentMode === "master_password" &&
+        mode !== "master_password" &&
+        credentialStoreStatus?.status === "locked"
+      ) {
+        const unlocked = await requestUnlock();
+        if (!unlocked) return;
+      }
       resetSwitchDialogs();
       if (mode === "master_password") {
         setMasterPasswordSetup(true);
@@ -125,7 +141,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
         setConfirmSwitch(mode);
       }
     },
-    [currentMode, resetSwitchDialogs]
+    [currentMode, credentialStoreStatus?.status, requestUnlock, resetSwitchDialogs]
   );
 
   const handleConfirmSwitch = useCallback(async () => {
@@ -259,7 +275,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 key={option.value}
                 className={`settings-panel__radio-option${currentMode === option.value ? " settings-panel__radio-option--active" : ""}`}
                 data-testid={option.testId}
-                onClick={() => handleModeSelect(option.value)}
+                onClick={() => void handleModeSelect(option.value)}
                 aria-pressed={currentMode === option.value}
                 disabled={switching}
               >
@@ -327,7 +343,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               </h4>
               <p className="settings-panel__inline-dialog-text">
                 {confirmSwitch === "none"
-                  ? "Existing credentials will be removed and no longer stored."
+                  ? "This permanently deletes all saved credentials and cannot be undone. You'll be prompted for passwords each time you connect."
                   : "Existing credentials will be migrated to the OS credential store."}
               </p>
               {passwordError && (
