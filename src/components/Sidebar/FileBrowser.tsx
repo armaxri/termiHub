@@ -350,8 +350,8 @@ function RenameRow({
     <div className="file-browser__row-wrapper file-browser__row-wrapper--renaming">
       <div className="file-browser__row file-browser__row--renaming">
         <FileEntryIcon entry={entry} />
-        <input
-          className="file-browser__new-dir-input"
+        <Input
+          size="sm"
           defaultValue={entry.name}
           autoFocus
           spellCheck={false}
@@ -1521,8 +1521,8 @@ export function FileBrowser() {
 
       {newFileName !== null && (
         <div className="file-browser__new-dir">
-          <input
-            className="file-browser__new-dir-input"
+          <Input
+            size="sm"
             placeholder="File name"
             value={newFileName}
             onChange={(e) => setNewFileName(e.target.value)}
@@ -1548,8 +1548,8 @@ export function FileBrowser() {
 
       {newDirName !== null && (
         <div className="file-browser__new-dir">
-          <input
-            className="file-browser__new-dir-input"
+          <Input
+            size="sm"
             placeholder="Folder name"
             value={newDirName}
             onChange={(e) => setNewDirName(e.target.value)}

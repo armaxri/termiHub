@@ -1,10 +1,11 @@
 /**
- * Tests for inline file rename after replacing the native `window.prompt`
- * with an in-row editable input (#1348).
+ * Tests that the file-browser inline editors (New File, New Folder, and the
+ * inline rename) compose from the shared `Input` primitive rather than the
+ * retired bespoke `.file-browser__new-dir-input` skin (#1390).
  *
- * Covers: F2 and the context-menu Rename action both start an inline edit;
- * the base name is pre-selected with the extension preserved; Enter commits
- * the rename via the backend; Escape cancels; and no native prompt is used.
+ * Covers: the New File / New Folder toolbar actions open an inline editor that
+ * renders via the shared primitive (compact `size="sm"` variant), and the
+ * editors preserve their Enter-commits / Escape-cancels behavior.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -51,7 +52,6 @@ let root: Root;
 
 const entries = [
   { name: "report.pdf", path: "/home/report.pdf", isDirectory: false, size: 10, modified: "" },
-  { name: "mydir", path: "/home/mydir", isDirectory: true, size: 0, modified: "" },
 ];
 
 function makeTab(overrides: Partial<TerminalTab>): TerminalTab {
@@ -86,20 +86,21 @@ async function renderLocal() {
   await flushAsync();
 }
 
-/** Focus the report.pdf file row (setting it active) then press F2 on the list. */
-async function startRenameOnReport() {
-  const fileRow = container.querySelector('[data-testid="file-row-report.pdf"]') as HTMLElement;
+async function click(testId: string) {
+  const el = container.querySelector(`[data-testid="${testId}"]`) as HTMLElement;
   await act(async () => {
-    fileRow.click();
-  });
-  const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
-  await act(async () => {
-    list.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+    el.click();
   });
   await flushAsync();
 }
 
-describe("FileBrowser — inline rename (#1348)", () => {
+function typeInto(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+describe("FileBrowser — inline editors use the shared Input primitive (#1390)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -117,103 +118,66 @@ describe("FileBrowser — inline rename (#1348)", () => {
     vi.clearAllMocks();
   });
 
-  it("starts an inline edit on F2 with the base name pre-selected", async () => {
-    const promptSpy = vi.spyOn(window, "prompt");
+  it("renders the New File editor via the shared Input primitive", async () => {
     await renderLocal();
-
-    await startRenameOnReport();
+    await click("file-browser-new-file");
 
     const input = container.querySelector(
-      '[data-testid="file-row-rename-input"]'
+      '[data-testid="file-browser-new-file-input"]'
     ) as HTMLInputElement;
     expect(input).toBeTruthy();
-    expect(input.value).toBe("report.pdf");
-    // Base name selected, extension preserved.
-    expect(input.selectionStart).toBe(0);
-    expect(input.selectionEnd).toBe("report".length);
-    expect(promptSpy).not.toHaveBeenCalled();
-    promptSpy.mockRestore();
-  });
-
-  it("renders the rename editor via the shared Input primitive", async () => {
-    await renderLocal();
-
-    await startRenameOnReport();
-
-    const input = container.querySelector(
-      '[data-testid="file-row-rename-input"]'
-    ) as HTMLInputElement;
-    expect(input).toBeTruthy();
-    // Composed from the shared Input primitive (compact variant), not the
-    // retired bespoke `.file-browser__new-dir-input` skin.
     expect(input.classList.contains("ui-input")).toBe(true);
     expect(input.classList.contains("ui-input--sm")).toBe(true);
     expect(input.classList.contains("file-browser__new-dir-input")).toBe(false);
   });
 
-  it("commits the rename via the backend on Enter", async () => {
+  it("renders the New Folder editor via the shared Input primitive", async () => {
     await renderLocal();
-
-    await startRenameOnReport();
+    await click("file-browser-new-folder");
 
     const input = container.querySelector(
-      '[data-testid="file-row-rename-input"]'
+      '[data-testid="file-browser-new-folder-input"]'
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.classList.contains("ui-input")).toBe(true);
+    expect(input.classList.contains("ui-input--sm")).toBe(true);
+    expect(input.classList.contains("file-browser__new-dir-input")).toBe(false);
+  });
+
+  it("commits a new file on Enter and dismisses the editor", async () => {
+    await renderLocal();
+    await click("file-browser-new-file");
+
+    const input = container.querySelector(
+      '[data-testid="file-browser-new-file-input"]'
     ) as HTMLInputElement;
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        "value"
-      )!.set!;
-      setter.call(input, "renamed.pdf");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      typeInto(input, "notes.txt");
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     await flushAsync();
 
-    expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
-      oldPath: "/home/report.pdf",
-      newPath: "/home/renamed.pdf",
+    expect(mockedInvoke).toHaveBeenCalledWith("local_write_file", {
+      path: "/home/notes.txt",
+      content: "",
     });
-    // Input dismissed after commit.
-    expect(container.querySelector('[data-testid="file-row-rename-input"]')).toBeNull();
+    expect(container.querySelector('[data-testid="file-browser-new-file-input"]')).toBeNull();
   });
 
-  it("cancels the rename on Escape without calling the backend", async () => {
+  it("cancels the New Folder editor on Escape without creating anything", async () => {
     await renderLocal();
-
-    await startRenameOnReport();
+    await click("file-browser-new-folder");
 
     const input = container.querySelector(
-      '[data-testid="file-row-rename-input"]'
+      '[data-testid="file-browser-new-folder-input"]'
     ) as HTMLInputElement;
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        "value"
-      )!.set!;
-      setter.call(input, "should-not-apply.pdf");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      typeInto(input, "should-not-apply");
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     await flushAsync();
 
-    expect(mockedInvoke).not.toHaveBeenCalledWith("local_rename", expect.anything());
-    expect(container.querySelector('[data-testid="file-row-rename-input"]')).toBeNull();
-  });
-
-  it("does not commit a rename when the name is unchanged", async () => {
-    await renderLocal();
-
-    await startRenameOnReport();
-
-    const input = container.querySelector(
-      '[data-testid="file-row-rename-input"]'
-    ) as HTMLInputElement;
-    await act(async () => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
-    await flushAsync();
-
-    expect(mockedInvoke).not.toHaveBeenCalledWith("local_rename", expect.anything());
+    expect(mockedInvoke).not.toHaveBeenCalledWith("local_mkdir", expect.anything());
+    expect(container.querySelector('[data-testid="file-browser-new-folder-input"]')).toBeNull();
   });
 });

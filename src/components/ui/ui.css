@@ -168,6 +168,18 @@
   cursor: not-allowed;
 }
 
+/*
+ * Compact bordered variant: keeps the standard skin (border, background, focus
+ * ring) but shrinks the height, font, radius, and padding for dense rows such
+ * as the inline file-browser New File / New Folder / rename editors.
+ */
+.ui-input--sm {
+  height: var(--control-height-sm);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--spacing-xs);
+  font-size: var(--font-size-sm);
+}
+
 .ui-input--error {
   border-color: var(--color-error);
 }
