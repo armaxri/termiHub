@@ -23,6 +23,7 @@ use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
 
 use crate::connection::config::AgentSettings;
+use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
 use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
@@ -197,6 +198,11 @@ struct AgentConnection {
     /// Stored for future protocol negotiation.
     #[allow(dead_code)]
     protocol_version: String,
+    /// Agent-assigned id for this desktop's own client connection (from the
+    /// `initialize` result). Lets [`list_connections`](AgentConnectionManager::list_connections)
+    /// exclude this desktop from the connected-host update guard (#1349). Empty
+    /// when the agent predates protocol 0.3.0 and did not report one.
+    client_id: String,
 }
 
 /// Abstract interface over an agent connection manager.
@@ -239,6 +245,14 @@ pub trait AgentRpcClient: Send + Sync + 'static {
 
     /// Gracefully shut down a remote agent and disconnect.
     fn shutdown_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<u32, TerminalError>;
+
+    /// List the hosts connected to the agent other than this desktop (#1349).
+    ///
+    /// Default returns an empty list so mock clients need not implement it; the
+    /// production [`AgentConnectionManager`] queries `agent.list_connections`.
+    fn list_connections(&self, _agent_id: &str) -> Result<Vec<ConnectedHost>, TerminalError> {
+        Ok(Vec::new())
+    }
 
     /// Send a JSON-RPC request to an agent and wait for the response.
     fn send_request(
@@ -635,7 +649,7 @@ impl AgentConnectionManager {
             const MAX_PRE_INIT_MESSAGES: u32 = 1000;
             let mut skipped: u32 = 0;
             let mut line_buf = String::new();
-            let (capabilities, agent_version, protocol_version) = loop {
+            let (capabilities, agent_version, protocol_version, client_id) = loop {
                 let resp_line =
                     match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
                         Some(line) => line,
@@ -677,9 +691,16 @@ impl AgentConnectionManager {
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown")
                             .to_string();
+                        // Agent-assigned id for this connection (protocol 0.3.0+);
+                        // empty against older agents that don't report one.
+                        let client_id = result
+                            .get("client_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
                         // Copy agent_version into capabilities so the UI can read it.
                         capabilities.agent_version = agent_version.clone();
-                        break (capabilities, agent_version, protocol_version);
+                        break (capabilities, agent_version, protocol_version, client_id);
                     }
                     jsonrpc::HandshakeOutcome::Rejected(message) => {
                         emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
@@ -737,6 +758,7 @@ impl AgentConnectionManager {
                 capabilities,
                 agent_version,
                 protocol_version,
+                client_id,
                 command_tx,
                 alive,
             ))
@@ -746,8 +768,9 @@ impl AgentConnectionManager {
         // spawned, so no backend `disconnected` is emitted from there — emit it
         // here so the agent returns to `disconnected` (single writer, G1 #1235).
         // Other error paths already emit `disconnected` inline before returning.
-        let (capabilities, agent_version, protocol_version, command_tx, alive) = match result {
-            Ok(v) => v,
+        let (capabilities, agent_version, protocol_version, client_id, command_tx, alive) =
+            match result {
+                Ok(v) => v,
             Err(e) => {
                 if cancel_token.is_cancelled() {
                     emit_agent_state(&self.app_handle, agent_id, "disconnected");
@@ -772,6 +795,7 @@ impl AgentConnectionManager {
                 capabilities,
                 agent_version,
                 protocol_version,
+                client_id,
             },
         );
 
@@ -837,6 +861,60 @@ impl AgentConnectionManager {
         let _ = self.disconnect_agent(agent_id);
 
         Ok(detached)
+    }
+
+    /// List the hosts connected to the agent **other than this desktop**.
+    ///
+    /// Sends `agent.list_connections`, then drops this desktop's own client
+    /// (matched by the `client_id` captured at `initialize`) so the result is
+    /// exactly the "other hosts" the connected-host update guard (#1349) cares
+    /// about. Best-effort: because the agent runs one process per `--stdio`
+    /// channel, the snapshot normally holds only this desktop, so the result is
+    /// usually empty; other hosts surface only when the agent process is shared
+    /// (`--listen`) or a future coordination layer aggregates clients.
+    pub fn list_connections(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<ConnectedHost>, TerminalError> {
+        let own_client_id = {
+            let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+            agents.get(agent_id).map(|c| c.client_id.clone())
+        };
+
+        let result = self.send_request(agent_id, "agent.list_connections", serde_json::json!({}))?;
+        let connections = result["connections"].as_array().cloned().unwrap_or_default();
+
+        let own_client_id = own_client_id.unwrap_or_default();
+        let hosts = connections
+            .into_iter()
+            .filter_map(|c| {
+                let client_id = c.get("client_id")?.as_str()?.to_string();
+                // Exclude this desktop's own entry (never warn about ourselves).
+                if !own_client_id.is_empty() && client_id == own_client_id {
+                    return None;
+                }
+                Some(ConnectedHost {
+                    client_id,
+                    client: c
+                        .get("client")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    client_version: c
+                        .get("client_version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    connected_since: c
+                        .get("connected_since")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                })
+            })
+            .collect();
+
+        Ok(hosts)
     }
 
     /// Send a JSON-RPC request to an agent and wait for the response.
@@ -1241,6 +1319,10 @@ impl AgentRpcClient for AgentConnectionManager {
         AgentConnectionManager::shutdown_agent(self, agent_id, reason)
     }
 
+    fn list_connections(&self, agent_id: &str) -> Result<Vec<ConnectedHost>, TerminalError> {
+        AgentConnectionManager::list_connections(self, agent_id)
+    }
+
     fn send_request(
         &self,
         agent_id: &str,
@@ -1412,7 +1494,7 @@ impl AgentRpcClient for AgentConnectionManager {
 /// Build the `initialize` JSON-RPC params including agent runtime settings and external files.
 fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
     serde_json::json!({
-        "protocolVersion": "0.2.0",
+        "protocolVersion": "0.3.0",
         "client": "termihub-desktop",
         "clientVersion": "0.1.0",
         "agentSettings": settings,
@@ -2518,6 +2600,7 @@ mod tests {
             },
             agent_version: String::new(),
             protocol_version: String::new(),
+            client_id: String::new(),
         }
     }
 

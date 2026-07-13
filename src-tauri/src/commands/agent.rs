@@ -459,6 +459,11 @@ pub async fn deploy_agent(
 }
 
 /// Update the agent: shut down the running instance, then deploy a new binary.
+///
+/// Runs the connected-host guard first: if other hosts are connected to the
+/// agent, returns [`AgentDeployResult::OtherHostsConnected`] without touching
+/// the remote so the desktop can warn the user (#1349). Confirming routes to
+/// [`update_agent_force`].
 #[tauri::command]
 pub async fn update_agent(
     agent_id: String,
@@ -466,6 +471,54 @@ pub async fn update_agent(
     deploy_config: AgentDeployConfig,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    cancellation: State<'_, AgentDeployCancellation>,
+) -> Result<AgentDeployResult, String> {
+    run_update_agent(
+        false,
+        agent_id,
+        config,
+        deploy_config,
+        app_handle,
+        agent_manager.inner().clone(),
+        cancellation,
+    )
+    .await
+}
+
+/// Force an agent update, bypassing the connected-host guard.
+///
+/// Called after the user confirms in the Update dialog that other connected
+/// hosts may be hard-cut (#1349). Otherwise identical to [`update_agent`].
+#[tauri::command]
+pub async fn update_agent_force(
+    agent_id: String,
+    config: RemoteAgentConfig,
+    deploy_config: AgentDeployConfig,
+    app_handle: tauri::AppHandle,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    cancellation: State<'_, AgentDeployCancellation>,
+) -> Result<AgentDeployResult, String> {
+    run_update_agent(
+        true,
+        agent_id,
+        config,
+        deploy_config,
+        app_handle,
+        agent_manager.inner().clone(),
+        cancellation,
+    )
+    .await
+}
+
+/// Shared body for [`update_agent`] / [`update_agent_force`]. `force` skips the
+/// connected-host guard.
+async fn run_update_agent(
+    force: bool,
+    agent_id: String,
+    config: RemoteAgentConfig,
+    deploy_config: AgentDeployConfig,
+    app_handle: tauri::AppHandle,
+    manager: Arc<dyn AgentRpcClient>,
     cancellation: State<'_, AgentDeployCancellation>,
 ) -> Result<AgentDeployResult, String> {
     // Route to the update path for the configured strategy. Only the immediate
@@ -485,10 +538,12 @@ pub async fn update_agent(
         agent_id,
         host = %config.host,
         strategy = ?effective,
+        force,
         "Updating agent on remote host"
     );
-    let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
+    let list_manager = manager.clone();
+    let list_aid = agent_id.clone();
     let token = cancellation.register(&agent_id);
     let registry = cancellation.inner().clone();
     let complete_id = agent_id.clone();
@@ -500,6 +555,8 @@ pub async fn update_agent(
             &deploy_config,
             &app_handle,
             Some(&token),
+            force,
+            || list_manager.list_connections(&list_aid),
             || manager.shutdown_agent(&aid, Some("update")),
         )
         .map_err(|e| e.to_string());
