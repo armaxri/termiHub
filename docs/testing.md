@@ -1171,7 +1171,7 @@ incompatible = error/red, updating = accent/blue.
 ### File editor read-only badge + banner (#1325)
 
 Verifies a read-only remote (SFTP) file surfaces its state in the editor.
-Detection only — no elevated save is offered. See PR for #1325.
+Detection only — no elevated save is offered. See PR #1486 (#1325).
 
 1. On a remote (SSH/SFTP) connection, browse to a file the connecting user
    **cannot** write (e.g. a root-owned `/etc/…` file, or `chmod 400`/`chown` a
