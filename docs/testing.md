@@ -1714,3 +1714,31 @@ On a Linux desktop (run steps for whichever managers you have installed):
    removed: the XDG `.desktop`, the Nautilus script, the KDE service menu, and
    termiHub's Thunar action — while any **foreign** Thunar actions in `uca.xml`
    and unrelated Nautilus scripts remain untouched.
+
+### Sudo-elevated remote save over SFTP (#1328)
+
+Verifies the `sftp_write_file_content_elevated` backend command: a temp upload
+followed by an in-place `sudo -S` rewrite over the exec channel, with typed
+outcomes and guaranteed temp cleanup. The command composition, injection
+neutralization, and sudo error classification are covered by unit tests
+(`cargo test -p termihub --lib files::sftp`); exercising it against a real host
+with `sudo` is manual. See PR for #1328.
+
+On a real host where your SSH user has `sudo` rights (e.g. a Raspberry Pi):
+
+1. Open an SFTP session to the host and pick a **root-owned** file the user
+   cannot write directly (e.g. `/etc/nginx/nginx.conf` or a `root:root`,
+   `-rw-r--r--` file). Change a line and trigger the elevated save
+   (`sftpWriteFileContentElevated`) with the **correct** sudo password.
+2. Confirm the result is `success`, the file's contents are updated, and its
+   owner/mode are **unchanged** (`ls -l` still shows the original `root:root`
+   and permission bits — `cat >` rewrote in place, it did not replace the file).
+   Confirm no `/tmp/termihub-*` file remains (`ls /tmp/termihub-*` → none).
+3. Repeat with a **wrong** password → the result is `incorrectPassword` (safe to
+   re-prompt), the file is unchanged, and no `/tmp/termihub-*` temp is left
+   behind.
+4. On a host where the user is **not** in the sudoers file (or `sudo` is not
+   installed) → the result is `other` with a descriptive message, the file is
+   unchanged, and no temp file remains.
+5. Inspect the LogViewer / backend logs during all of the above and confirm the
+   **sudo password never appears** in any log line.
