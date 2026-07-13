@@ -136,17 +136,21 @@ export interface ContainerSpawn {
 
 /**
  * Resolve a directory-mount container spawn into Docker session settings
- * (#1446). Given a spawn `location` (and optional image / mount overrides),
- * returns the Docker settings + tab title used to open a "new container" tab
- * with the target directory bind-mounted.
+ * (#1446/#1447). Given a spawn `location` (and optional triggering `entryId` +
+ * image / mount overrides), returns the Docker settings + tab title used to open
+ * a "new container" tab with the target directory bind-mounted. When no explicit
+ * image / mount is given, the backend honors the saved per-entry preference of
+ * the entry addressed by `entryId` before falling back to the built-in defaults.
  */
 export async function resolveContainerSpawn(
   location: string,
+  entryId?: string,
   containerImage?: string,
   containerMount?: string
 ): Promise<ContainerSpawn> {
   return await invoke<ContainerSpawn>("resolve_container_spawn", {
     location,
+    entryId,
     containerImage,
     containerMount,
   });
