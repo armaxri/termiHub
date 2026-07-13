@@ -777,6 +777,155 @@ mod tests {
         );
     }
 
+    // --- Elevated (sudo) save: command composition + classification (#1328) ---
+
+    /// The termiHub-generated temp path has the expected `/tmp/termihub-<uuid>`
+    /// shape (a v4 UUID suffix), so no user text ever forms the temp name.
+    #[test]
+    fn elevated_temp_path_has_expected_shape() {
+        let path = elevated_temp_path();
+        let suffix = path
+            .strip_prefix("/tmp/termihub-")
+            .expect("temp path must be under /tmp with the termihub- prefix");
+        // The suffix must parse as a UUID (36 chars, hyphenated hex).
+        uuid::Uuid::parse_str(suffix).expect("temp suffix must be a valid UUID");
+        // Two calls must differ (fresh UUID each time).
+        assert_ne!(path, elevated_temp_path());
+    }
+
+    /// The sudo command embeds the fixed script literal and passes both paths as
+    /// positional argv (`$1` = temp, `$2` = dest) — never interpolated into the
+    /// script body — with `sudo -S -p ''` reading the password from stdin.
+    #[test]
+    fn build_sudo_write_command_uses_fixed_script_and_argv() {
+        let cmd = build_sudo_write_command("/tmp/termihub-abc", "/etc/hosts")
+            .expect("clean paths must quote successfully");
+        assert!(
+            cmd.starts_with("sudo -S -p '' /bin/sh -c 'cat \"$1\" > \"$2\" && rm -f \"$1\"' sh "),
+            "command must lead with sudo + the fixed single-quoted script literal, got: {cmd}"
+        );
+        // The paths follow the script as separate argv words.
+        assert!(cmd.ends_with(" /tmp/termihub-abc /etc/hosts"), "got: {cmd}");
+        // `mv` must never be used — `cat >` preserves owner/mode/ACLs.
+        assert!(!cmd.contains("mv "), "must use `cat >`, not `mv`");
+    }
+
+    /// A malicious destination path (spaces, quotes, shell metacharacters,
+    /// command substitution) is single-quoted so it cannot break out of the
+    /// command and inject a second command.
+    #[test]
+    fn build_sudo_write_command_neutralizes_injection_in_dest() {
+        let evil = "/etc/foo'; rm -rf / #";
+        let cmd = build_sudo_write_command("/tmp/termihub-xyz", evil)
+            .expect("even a hostile path must quote successfully");
+        // The dangerous `rm -rf /` must remain inside a quoted literal — it must
+        // NOT appear as a bare, shell-active token. shlex wraps the whole word
+        // in single quotes and escapes the embedded quote as '\''.
+        assert!(
+            cmd.contains("'/etc/foo'\\''; rm -rf / #'"),
+            "hostile dest must be single-quote escaped, got: {cmd}"
+        );
+        // The script body is still the untouched fixed literal.
+        assert!(cmd.contains("/bin/sh -c 'cat \"$1\" > \"$2\" && rm -f \"$1\"'"));
+        // A backtick/`$()` substitution path is likewise contained.
+        let sub = build_sudo_write_command("/tmp/termihub-1", "/x/$(reboot)")
+            .expect("must quote");
+        assert!(sub.contains("'/x/$(reboot)'"), "got: {sub}");
+    }
+
+    /// The failure-cleanup command removes exactly the temp file, quoted.
+    #[test]
+    fn build_cleanup_command_removes_quoted_temp() {
+        let cmd = build_cleanup_command("/tmp/termihub-abc").expect("clean path quotes");
+        assert_eq!(cmd, "rm -f /tmp/termihub-abc");
+        // A temp name is termiHub-generated so it never contains metachars, but
+        // the builder still quotes defensively.
+        let cmd = build_cleanup_command("/tmp/te mp").expect("quotes");
+        assert_eq!(cmd, "rm -f '/tmp/te mp'");
+    }
+
+    /// A zero exit status is an unconditional success.
+    #[test]
+    fn classify_success_on_zero_exit() {
+        assert_eq!(
+            classify_sudo_result("", 0),
+            ElevatedWriteResult::Success
+        );
+        // Even stray stderr noise with exit 0 is success.
+        assert_eq!(
+            classify_sudo_result("some warning\n", 0),
+            ElevatedWriteResult::Success
+        );
+    }
+
+    /// sudo's wrong-password convention ("Sorry, try again." /
+    /// "N incorrect password attempts") maps to the re-promptable variant.
+    #[test]
+    fn classify_incorrect_password_from_sudo_stderr() {
+        for stderr in [
+            "Sorry, try again.\n",
+            "[sudo] password for alice: \nSorry, try again.\nsudo: 1 incorrect password attempt\n",
+            "sudo: 3 incorrect password attempts\n",
+            "sudo: no password was provided\n",
+            "sudo: a password is required\n",
+        ] {
+            assert_eq!(
+                classify_sudo_result(stderr, 1),
+                ElevatedWriteResult::IncorrectPassword,
+                "stderr should classify as IncorrectPassword: {stderr:?}"
+            );
+        }
+    }
+
+    /// sudo-not-permitted, missing sudo, requiretty, and write errors all map to
+    /// `Other` carrying a message (never mistaken for a wrong password).
+    #[test]
+    fn classify_other_for_non_password_failures() {
+        let cases = [
+            "alice is not in the sudoers file.  This incident will be reported.\n",
+            "sudo: command not found\n",
+            "sudo: sorry, you must have a tty to run sudo\n",
+            "/bin/sh: 1: cannot create /etc/hosts: Permission denied\n",
+        ];
+        for stderr in cases {
+            match classify_sudo_result(stderr, 1) {
+                ElevatedWriteResult::Other(msg) => {
+                    assert!(!msg.is_empty(), "Other message must be populated: {stderr:?}");
+                }
+                other => panic!("expected Other for {stderr:?}, got {other:?}"),
+            }
+        }
+    }
+
+    /// A non-zero exit with empty stderr still classifies as `Other` with a
+    /// non-empty fallback message (so the UI never shows a blank error).
+    #[test]
+    fn classify_other_with_fallback_when_stderr_empty() {
+        match classify_sudo_result("   \n", 127) {
+            ElevatedWriteResult::Other(msg) => assert!(msg.contains("127")),
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    /// `ElevatedWriteResult` serializes to an adjacently-tagged JSON shape the
+    /// frontend can switch on: `{kind}` for unit variants, `{kind, message}`
+    /// for `Other`.
+    #[test]
+    fn elevated_write_result_serializes_for_frontend() {
+        assert_eq!(
+            serde_json::to_value(ElevatedWriteResult::Success).unwrap(),
+            serde_json::json!({ "kind": "success" })
+        );
+        assert_eq!(
+            serde_json::to_value(ElevatedWriteResult::IncorrectPassword).unwrap(),
+            serde_json::json!({ "kind": "incorrectPassword" })
+        );
+        assert_eq!(
+            serde_json::to_value(ElevatedWriteResult::Other("boom".to_string())).unwrap(),
+            serde_json::json!({ "kind": "other", "message": "boom" })
+        );
+    }
+
     /// The lock helper must map a poisoned mutex to a recoverable
     /// `TerminalError` instead of panicking (audit GAP C1, #1143).
     #[test]
