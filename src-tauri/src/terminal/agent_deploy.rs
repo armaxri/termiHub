@@ -409,6 +409,10 @@ pub fn deploy_agent(
 /// `shutdown_fn` is called to send `agent.shutdown` to the running agent
 /// before deploying. Both are closures so we don't need a direct dependency
 /// on `AgentConnectionManager` here.
+// The deploy context (id/config/app handle/cancel), the guard toggle, and the
+// two injected closures are all distinct inputs; bundling them into a struct
+// would only obscure the call site.
+#[allow(clippy::too_many_arguments)]
 pub fn update_agent<L, F>(
     agent_id: &str,
     config: &RemoteAgentConfig,
