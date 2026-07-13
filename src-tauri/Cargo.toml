@@ -44,6 +44,10 @@ russh = { workspace = true }
 russh-sftp = { workspace = true }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
+# POSIX shell-word quoting for the elevated-save exec command: the untrusted
+# remote destination path is quoted with `shlex::try_quote` so it can never
+# break out of the sudo shell command (#1328).
+shlex = "1"
 base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
