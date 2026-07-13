@@ -28,14 +28,14 @@ use crate::protocol::methods::{
     AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
     Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
     ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
-    FilesListParams, FilesListResult, FilesMkdirParams,
-    FilesReadParams, FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams,
-    FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
-    InitializeParams, InitializeResult, MonitoringSubscribeParams, MonitoringUnsubscribeParams,
-    NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams,
-    NetworkWolParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult,
-    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
+    FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
+    FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
+    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
+    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
+    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
+    SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult, SessionInputParams,
+    SessionListEntry, SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{SessionCreateError, SessionManagerApi, MAX_SESSIONS};
@@ -353,8 +353,11 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             // Record the connected client (additive to the single-client
             // settings above). One entry per agent process in `--stdio` mode.
             let client_id = s.client_id.clone();
-            s.client_registry
-                .register(client_id.clone(), p.client.clone(), p.client_version.clone());
+            s.client_registry.register(
+                client_id.clone(),
+                p.client.clone(),
+                p.client_version.clone(),
+            );
             let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
                 s.session_manager.clone(),

@@ -771,13 +771,13 @@ impl AgentConnectionManager {
         let (capabilities, agent_version, protocol_version, client_id, command_tx, alive) =
             match result {
                 Ok(v) => v,
-            Err(e) => {
-                if cancel_token.is_cancelled() {
-                    emit_agent_state(&self.app_handle, agent_id, "disconnected");
+                Err(e) => {
+                    if cancel_token.is_cancelled() {
+                        emit_agent_state(&self.app_handle, agent_id, "disconnected");
+                    }
+                    return Err(e);
                 }
-                return Err(e);
-            }
-        };
+            };
 
         emit_agent_state(&self.app_handle, agent_id, "connected");
 
@@ -872,17 +872,18 @@ impl AgentConnectionManager {
     /// channel, the snapshot normally holds only this desktop, so the result is
     /// usually empty; other hosts surface only when the agent process is shared
     /// (`--listen`) or a future coordination layer aggregates clients.
-    pub fn list_connections(
-        &self,
-        agent_id: &str,
-    ) -> Result<Vec<ConnectedHost>, TerminalError> {
+    pub fn list_connections(&self, agent_id: &str) -> Result<Vec<ConnectedHost>, TerminalError> {
         let own_client_id = {
             let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
             agents.get(agent_id).map(|c| c.client_id.clone())
         };
 
-        let result = self.send_request(agent_id, "agent.list_connections", serde_json::json!({}))?;
-        let connections = result["connections"].as_array().cloned().unwrap_or_default();
+        let result =
+            self.send_request(agent_id, "agent.list_connections", serde_json::json!({}))?;
+        let connections = result["connections"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
 
         let own_client_id = own_client_id.unwrap_or_default();
         let hosts = connections
