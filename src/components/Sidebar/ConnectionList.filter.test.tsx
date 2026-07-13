@@ -156,14 +156,9 @@ describe("ConnectionList — filter/search", () => {
     typeInto(input, "web");
     keydown(input, "Enter");
 
-    expect(addTab).toHaveBeenCalledWith(
-      "web-server",
-      "local",
-      expect.anything(),
-      undefined,
-      undefined,
-      undefined
-    );
+    expect(addTab).toHaveBeenCalledWith("web-server", "local", expect.anything(), {
+      terminalOptions: undefined,
+    });
   });
 
   it("Escape clears the query and restores all connections", () => {

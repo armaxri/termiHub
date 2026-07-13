@@ -136,6 +136,13 @@ pub struct SessionInfo {
     /// Set when the session is a remote proxy; identifies the agent it runs on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// `true` when the session was opened via the CLI/context-menu spawn path
+    /// (#1446, #1466) — a container with no saved connection id. Recorded on the
+    /// session itself so the Open Connections panel groups it under "Spawned
+    /// Containers" from this authoritative backend marker, surviving a tab close
+    /// (whereas the frontend `spawned` tab flag is lost once the tab is gone).
+    #[serde(default)]
+    pub spawned: bool,
 }
 
 /// Internal session entry held by the manager.
@@ -255,6 +262,10 @@ impl SessionManager {
     /// to the specified agent. Otherwise, creates a local connection from
     /// the registry.
     ///
+    /// `spawned` marks the session as opened via the CLI/context-menu spawn path
+    /// (#1446, #1466) so the Open Connections panel groups it under "Spawned
+    /// Containers" from this backend marker rather than the frontend tab flag.
+    ///
     /// Returns the session ID on success.
     pub async fn create_connection<E: EventEmitter>(
         &self,
@@ -262,6 +273,7 @@ impl SessionManager {
         settings: serde_json::Value,
         agent_id: Option<&str>,
         connect_id: Option<&str>,
+        spawned: bool,
         emitter: E,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
@@ -336,6 +348,7 @@ impl SessionManager {
             connection_type: type_id.to_string(),
             alive: true,
             agent_id: agent_id.map(|s| s.to_string()),
+            spawned,
         };
 
         // Store session.
@@ -836,7 +849,7 @@ impl SessionManager {
         }
 
         let session_id = self
-            .create_connection(type_id, settings, agent_id, None, emitter.clone())
+            .create_connection(type_id, settings, agent_id, None, false, emitter.clone())
             .await?;
 
         // Capture the agent-side remote session ID so that attach_persistent_tab
@@ -1042,6 +1055,7 @@ impl SessionManager {
                                     connection_type: "remote".to_string(),
                                     alive: true,
                                     agent_id: Some(agent_id),
+                                    spawned: false,
                                 },
                                 remote_session_id: Some(remote_sid),
                                 line_ending: LineEnding::default(),
@@ -1283,6 +1297,7 @@ impl SessionManager {
                     connection_type: "mock".to_string(),
                     alive: true,
                     agent_id: None,
+                    spawned: false,
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),
@@ -1499,6 +1514,7 @@ mod tests {
                     connection_type: "mock".to_string(),
                     alive: true,
                     agent_id: None,
+                    spawned: false,
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),
@@ -2196,6 +2212,7 @@ mod tests {
                     serde_json::json!({}),
                     None,
                     Some("c1"),
+                    false,
                     MockEventEmitter::new(),
                 )
                 .await
@@ -2219,6 +2236,62 @@ mod tests {
         assert!(result.is_err(), "a cancelled connect must return an error");
         // The RAII guard cleared the entry, so a second cancel finds nothing.
         assert!(!manager.cancel_connecting("c1"));
+    }
+
+    /// A session opened via the spawn path is recorded with `spawned=true` in
+    /// the registry and surfaces the flag on its `SessionInfo`, while a normal
+    /// local session is recorded with `spawned=false` (#1466). This backend
+    /// marker is the source of truth the Open Connections panel groups from, so
+    /// a spawned container stays under "Spawned Containers" even after its tab
+    /// (the previous frontend-only marker) is closed.
+    #[tokio::test]
+    async fn spawn_path_marks_session_spawned_in_registry() {
+        let manager = make_test_manager();
+
+        let spawned_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                None,
+                true,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("spawned session should open");
+
+        let plain_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                None,
+                false,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("plain session should open");
+
+        let sessions = manager.list_sessions().await;
+        let spawned = sessions
+            .iter()
+            .find(|s| s.id == spawned_id)
+            .expect("spawned session listed");
+        let plain = sessions
+            .iter()
+            .find(|s| s.id == plain_id)
+            .expect("plain session listed");
+
+        assert!(spawned.spawned, "spawn-path session must be marked spawned");
+        assert!(
+            !plain.spawned,
+            "a normal local session must not be marked spawned"
+        );
+
+        // The marker must be serialized (camelCase `spawned`) so the frontend
+        // `LocalSessionInfo` mirror can group from it.
+        let json = serde_json::to_value(spawned).expect("serialize SessionInfo");
+        assert_eq!(json["spawned"], serde_json::json!(true));
     }
 
     // ── Persistent session tests ──────────────────────────────────────

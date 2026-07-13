@@ -861,9 +861,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             title: name.trim(),
           },
         },
-        undefined,
-        undefined,
-        terminalOptions
+        { terminalOptions }
       );
       closeThisTab();
       return;
@@ -974,7 +972,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       }
     }
 
-    addTab(saved.name, saved.config.type, config, undefined, undefined, saved.terminalOptions);
+    addTab(saved.name, saved.config.type, config, { terminalOptions: saved.terminalOptions });
     closeThisTab();
   }, [
     isAgentDefinitionMode,

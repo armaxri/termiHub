@@ -447,7 +447,7 @@ describe("useKeyboardShortcuts", () => {
   describe("context-aware routing (scope gate)", () => {
     /** Add a tab of the given content type and make it the active tab/panel. */
     function addActiveTab(contentType: "terminal" | "editor"): void {
-      const id = useAppStore.getState().addTab("Tab", "local", undefined, undefined, contentType);
+      const id = useAppStore.getState().addTab("Tab", "local", undefined, { contentType });
       const panel = getAllLeaves(useAppStore.getState().rootPanel).find((p) =>
         p.tabs.some((t) => t.id === id)
       )!;

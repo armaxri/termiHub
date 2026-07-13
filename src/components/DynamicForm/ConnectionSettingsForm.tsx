@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import type { SettingsSchema } from "@/types/schema";
 import { isFieldVisible } from "@/utils/schemaDefaults";
 import { parseHostPort } from "@/utils/parseHostPort";
+import { ftpPortForTlsMode } from "@/utils/ftpSecurity";
 import { settingsSchemaToZod } from "./settingsSchemaToZod";
 import { DynamicField } from "./DynamicField";
 
@@ -61,6 +62,13 @@ export function ConnectionSettingsForm({
     [schema]
   );
 
+  // Whether this schema is FTP-shaped (has both a `tlsMode` select and a `port`
+  // field) — gates the TLS-mode → port auto-adjust special-case below.
+  const hasTlsAndPort = useMemo(
+    () => hasPortField && schema.groups.some((g) => g.fields.some((f) => f.key === "tlsMode")),
+    [schema, hasPortField]
+  );
+
   // Auto-extract `host:port` typed into the Host field on blur (PR #195 / #895).
   // `192.168.0.2:2222` → host `192.168.0.2` + port `2222`; `[::1]:22` → IPv6
   // host + port; a bare host or bare IPv6 is left untouched.
@@ -106,6 +114,26 @@ export function ConnectionSettingsForm({
 
   // Live form values used for visibleWhen evaluation.
   const watchedValues = useWatch({ control });
+
+  // Port auto-adjust special-case (FTP): the schema `Condition` is `equals`-only
+  // and cannot mutate a value, so when the user switches TLS Mode we snap the
+  // control port to the mode's default (990 for implicit FTPS, 21 otherwise) —
+  // but only when it still sits on a standard port, preserving a custom one.
+  const tlsMode = watchedValues?.tlsMode as string | undefined;
+  const prevTlsMode = useRef(tlsMode);
+  useEffect(() => {
+    const previous = prevTlsMode.current;
+    prevTlsMode.current = tlsMode;
+    if (!hasTlsAndPort || previous === undefined || tlsMode === previous) return;
+    const currentPort = watchedValues?.port as number | undefined;
+    const nextPort = ftpPortForTlsMode(tlsMode, currentPort);
+    if (nextPort !== null) {
+      setValue("port", nextPort, { shouldValidate: true, shouldDirty: true });
+    }
+    // Only react to a TLS-mode change; `watchedValues.port` is read as a live
+    // snapshot and intentionally excluded to avoid re-running on port edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tlsMode, hasTlsAndPort, setValue]);
 
   // Overall validity + per-field error map for currently-visible fields. We run
   // the zod schema directly against the watched values (rather than reading
@@ -157,26 +185,34 @@ export function ConnectionSettingsForm({
             data-testid={`form-group-${group.key}`}
           >
             <h3 className="settings-panel__category-title">{group.label}</h3>
-            {visibleFields.map((field) => (
-              <Controller
-                key={field.key}
-                name={field.key}
-                control={control}
-                render={({ field: rhfField, fieldState }) => (
-                  <DynamicField
-                    field={field}
-                    value={rhfField.value}
-                    onChange={rhfField.onChange}
-                    onBlur={() => handleFieldBlur(field.key, rhfField.value)}
-                    error={fieldState.error?.message}
-                    credentialSaved={
-                      credentialSavedHint && field.fieldType.type === "password" && !rhfField.value
-                    }
-                    availablePorts={availablePorts}
-                  />
-                )}
-              />
-            ))}
+            {visibleFields.map((field) =>
+              // Display-only notice fields carry no value, so they render
+              // standalone rather than through a react-hook-form Controller.
+              field.fieldType.type === "notice" ? (
+                <DynamicField key={field.key} field={field} value={undefined} onChange={() => {}} />
+              ) : (
+                <Controller
+                  key={field.key}
+                  name={field.key}
+                  control={control}
+                  render={({ field: rhfField, fieldState }) => (
+                    <DynamicField
+                      field={field}
+                      value={rhfField.value}
+                      onChange={rhfField.onChange}
+                      onBlur={() => handleFieldBlur(field.key, rhfField.value)}
+                      error={fieldState.error?.message}
+                      credentialSaved={
+                        credentialSavedHint &&
+                        field.fieldType.type === "password" &&
+                        !rhfField.value
+                      }
+                      availablePorts={availablePorts}
+                    />
+                  )}
+                />
+              )
+            )}
           </div>
         );
       })}

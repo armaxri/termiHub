@@ -393,6 +393,7 @@ function TerminalHost() {
           existingSessionId={tab.sessionId}
           initialCommand={tab.initialCommand}
           persistentConnectionId={tab.persistentConnectionId}
+          spawned={tab.spawned}
         />
       ))}
     </>

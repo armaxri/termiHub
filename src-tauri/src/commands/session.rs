@@ -23,17 +23,29 @@ use crate::utils::shell_detect;
 /// For local connections, pass `type_id` (e.g., "local", "ssh", "serial")
 /// and `settings` (JSON matching the type's settings schema). For remote
 /// (agent-mediated) connections, also pass `agent_id`.
+///
+/// `spawned` marks the session as opened via the CLI/context-menu spawn path
+/// (#1446, #1466) — a container with no saved connection id. It is recorded on
+/// the backend session so the Open Connections panel groups it under "Spawned
+/// Containers" from this authoritative marker, which survives the tab close that
+/// would otherwise strip the frontend-only `spawned` tab flag. Defaults to
+/// `false` when the frontend omits it (normal local/agent connections).
+// Tauri command: the argument list is the IPC surface (typed params + injected
+// State), so it cannot be collapsed into a struct without losing the command
+// binding — the arity lint does not apply here.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_connection(
     type_id: String,
     mut settings: Value,
     agent_id: Option<String>,
     connect_id: Option<String>,
+    spawned: Option<bool>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
-    info!(type_id, agent_id = ?agent_id, "Creating connection");
+    info!(type_id, agent_id = ?agent_id, spawned = ?spawned, "Creating connection");
     // Expand any saved-connection jump-host references to inline hops before the
     // settings reach core (which only connects with inline hops) — #940.
     conn_manager
@@ -45,6 +57,7 @@ pub async fn create_connection(
             settings,
             agent_id.as_deref(),
             connect_id.as_deref(),
+            spawned.unwrap_or(false),
             app_handle,
         )
         .await

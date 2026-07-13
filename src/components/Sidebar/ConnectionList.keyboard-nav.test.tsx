@@ -140,14 +140,9 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
     act(() => item1.focus());
     keydown(item1, "Enter");
 
-    expect(addTab).toHaveBeenCalledWith(
-      "Connection conn-1",
-      "local",
-      expect.anything(),
-      undefined,
-      undefined,
-      undefined
-    );
+    expect(addTab).toHaveBeenCalledWith("Connection conn-1", "local", expect.anything(), {
+      terminalOptions: undefined,
+    });
   });
 
   it("folder rows expose aria-expanded and ArrowRight expands a collapsed folder", () => {
