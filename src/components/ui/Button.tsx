@@ -145,8 +145,14 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   // Native form-submit bridge (#1469). Only a type="submit" Button with an
   // onClick owns the bridge: without an onClick it stays a plain native submit
   // control, and binding here would recurse via the node.click() below.
+  //
+  // Depend on onClick *presence*, not identity: the listener never reads the
+  // handler (it only re-dispatches a click, which routes through the live
+  // onClick prop), so re-attaching on every fresh inline-closure identity — i.e.
+  // per keystroke in a controlled form — would be pure churn.
+  const hasOnClick = !!onClick;
   useEffect(() => {
-    if (!isSubmit || !onClick) return;
+    if (!isSubmit || !hasOnClick) return;
     const node = innerRef.current;
     const form = node?.form;
     if (!node || !form) return;
@@ -163,7 +169,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
     form.addEventListener("submit", handleFormSubmit);
     return () => form.removeEventListener("submit", handleFormSubmit);
-  }, [isSubmit, onClick]);
+  }, [isSubmit, hasOnClick]);
 
   // Icon-only buttons carry no visible label, so an accessible name is
   // mandatory. Surface a misuse (no aria-label / aria-labelledby / title) in the
