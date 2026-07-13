@@ -11,11 +11,20 @@ use tokio::sync::Mutex;
 
 use crate::config::SshConfig;
 use crate::errors::FileError;
-use crate::files::utils::{chrono_from_epoch, format_permissions};
+use crate::files::utils::{chrono_from_epoch, format_permissions, writable_from_permissions};
 use crate::files::{FileBrowser, FileEntry};
 
 use super::handler::SshSession;
 use super::jump_host::{connect_target, GatewayHold};
+
+/// Derive the [`FileEntry::writable`] hint from an optional 9-char permission
+/// string, mirroring the desktop SFTP browser (#1324, #1482).
+///
+/// Returns `None` when no permission string is available; otherwise defers to
+/// [`writable_from_permissions`] (the cheap, conservative layer).
+fn writable_hint(permissions: Option<&str>) -> Option<bool> {
+    permissions.and_then(writable_from_permissions)
+}
 
 /// State of a connected SFTP session.
 struct SftpState {
@@ -105,6 +114,8 @@ impl FileBrowser for SftpFileBrowser {
             }
             let meta = entry.metadata();
             let full_path = format!("{}/{}", path.trim_end_matches('/'), name);
+            let permissions = meta.permissions.map(format_permissions);
+            let writable = writable_hint(permissions.as_deref());
             result.push(FileEntry {
                 name,
                 path: full_path,
@@ -114,9 +125,8 @@ impl FileBrowser for SftpFileBrowser {
                     .mtime
                     .map(|t| chrono_from_epoch(t as u64))
                     .unwrap_or_default(),
-                permissions: meta.permissions.map(format_permissions),
-                // Writability is derived only for the desktop SFTP browser (#1324).
-                writable: None,
+                permissions,
+                writable,
             });
         }
         Ok(result)
@@ -244,6 +254,8 @@ impl FileBrowser for SftpFileBrowser {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
+        let permissions = meta.permissions.map(format_permissions);
+        let writable = writable_hint(permissions.as_deref());
         Ok(FileEntry {
             name,
             path: path.to_string(),
@@ -253,9 +265,8 @@ impl FileBrowser for SftpFileBrowser {
                 .mtime
                 .map(|t| chrono_from_epoch(t as u64))
                 .unwrap_or_default(),
-            permissions: meta.permissions.map(format_permissions),
-            // Writability is derived only for the desktop SFTP browser (#1324).
-            writable: None,
+            permissions,
+            writable,
         })
     }
 }

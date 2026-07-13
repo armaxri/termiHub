@@ -20,7 +20,7 @@
 
 use suppaftp::list::{File as FtpFile, PosixPexQuery};
 
-use crate::files::utils::{chrono_from_epoch, format_permissions};
+use crate::files::utils::{chrono_from_epoch, format_permissions, writable_from_permissions};
 use crate::files::FileEntry;
 
 /// Decode raw listing bytes as UTF-8, falling back to Latin-1 (ISO-8859-1).
@@ -94,6 +94,7 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         _ => return None,
     };
 
+    let writable = writable_from_permissions(&permissions);
     Some(FileEntry {
         name: name.to_string(),
         path: join_path(dir, name),
@@ -101,6 +102,7 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         size,
         modified,
         permissions: Some(permissions),
+        writable,
     })
 }
 
@@ -206,15 +208,18 @@ fn join_path(dir: &str, name: &str) -> String {
 /// `with_perms` controls whether a permission string is attached: POSIX and
 /// MLSD lines carry meaningful permissions, whereas DOS listings do not.
 fn entry_from_file(file: &FtpFile, dir: &str, with_perms: bool) -> FileEntry {
+    // POSIX/MLSD lines carry a permission string we can derive writability from;
+    // DOS lines carry none, so `writable` stays `None` there.
+    let permissions = with_perms.then(|| perms_string(file));
+    let writable = permissions.as_deref().and_then(writable_from_permissions);
     FileEntry {
         name: file.name().to_string(),
         path: join_path(dir, file.name()),
         is_directory: file.is_directory(),
         size: file.size() as u64,
         modified: modified_iso(file),
-        permissions: with_perms.then(|| perms_string(file)),
-        // Writability is derived only for the desktop SFTP browser (#1324).
-        writable: None,
+        permissions,
+        writable,
     }
 }
 
