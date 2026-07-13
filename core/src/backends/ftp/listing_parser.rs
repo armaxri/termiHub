@@ -20,7 +20,7 @@
 
 use suppaftp::list::{File as FtpFile, PosixPexQuery};
 
-use crate::files::utils::{chrono_from_epoch, format_permissions};
+use crate::files::utils::{chrono_from_epoch, format_permissions, writable_from_permissions};
 use crate::files::FileEntry;
 
 /// Decode raw listing bytes as UTF-8, falling back to Latin-1 (ISO-8859-1).
@@ -94,6 +94,7 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         _ => return None,
     };
 
+    let writable = writable_from_permissions(&permissions);
     Some(FileEntry {
         name: name.to_string(),
         path: join_path(dir, name),
@@ -101,6 +102,7 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         size,
         modified,
         permissions: Some(permissions),
+        writable,
     })
 }
 
@@ -206,15 +208,18 @@ fn join_path(dir: &str, name: &str) -> String {
 /// `with_perms` controls whether a permission string is attached: POSIX and
 /// MLSD lines carry meaningful permissions, whereas DOS listings do not.
 fn entry_from_file(file: &FtpFile, dir: &str, with_perms: bool) -> FileEntry {
+    // POSIX/MLSD lines carry a permission string we can derive writability from;
+    // DOS lines carry none, so `writable` stays `None` there.
+    let permissions = with_perms.then(|| perms_string(file));
+    let writable = permissions.as_deref().and_then(writable_from_permissions);
     FileEntry {
         name: file.name().to_string(),
         path: join_path(dir, file.name()),
         is_directory: file.is_directory(),
         size: file.size() as u64,
         modified: modified_iso(file),
-        permissions: with_perms.then(|| perms_string(file)),
-        // Writability is derived only for the desktop SFTP browser (#1324).
-        writable: None,
+        permissions,
+        writable,
     }
 }
 
@@ -234,6 +239,8 @@ mod tests {
         modified: &'static str,
         /// Expected permission string, or `None`.
         perms: Option<&'static str>,
+        /// Expected writability hint derived from `perms`.
+        writable: Option<bool>,
     }
 
     const DIR: &str = "/pub";
@@ -256,6 +263,7 @@ mod tests {
                     case.perms,
                     "permissions for {expected}"
                 );
+                assert_eq!(e.writable, case.writable, "writable for {expected}");
             }
         }
     }
@@ -271,6 +279,7 @@ mod tests {
                 size: 4096,
                 modified: "2018-11-05T00:00:00Z",
                 perms: Some("rwxrwxr-x"),
+                writable: Some(true),
             },
             // Regular file.
             Case {
@@ -280,6 +289,7 @@ mod tests {
                 size: 1337,
                 modified: "2018-03-18T00:00:00Z",
                 perms: Some("rw-r--r--"),
+                writable: Some(true),
             },
             // Name containing spaces.
             Case {
@@ -289,6 +299,7 @@ mod tests {
                 size: 1234567,
                 modified: "2000-01-01T00:00:00Z",
                 perms: Some("r--r--r--"),
+                writable: Some(false),
             },
             // Symlink: the "-> target" suffix is stripped from the name and the
             // entry is not a directory.
@@ -299,6 +310,7 @@ mod tests {
                 size: 7,
                 modified: "2018-11-05T00:00:00Z",
                 perms: Some("rwxrwxrwx"),
+                writable: Some(true),
             },
             // "total" summary line and junk are skipped.
             Case {
@@ -308,6 +320,7 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+                writable: None,
             },
             Case {
                 line: b"this is not a listing line",
@@ -316,6 +329,7 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+                writable: None,
             },
         ];
         for case in &cases {
@@ -334,6 +348,7 @@ mod tests {
                 size: 0,
                 modified: "2014-04-08T15:09:00Z",
                 perms: None,
+                writable: None,
             },
             // Regular file with a size.
             Case {
@@ -343,6 +358,7 @@ mod tests {
                 size: 8192,
                 modified: "2014-04-08T15:09:00Z",
                 perms: None,
+                writable: None,
             },
             // Malformed date → skipped.
             Case {
@@ -352,6 +368,7 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+                writable: None,
             },
         ];
         for case in &cases {
@@ -370,6 +387,7 @@ mod tests {
                 size: 8192,
                 modified: "2018-11-05T16:32:48Z",
                 perms: Some("rwxrwxrwx"),
+                writable: Some(true),
             },
             // Directory.
             Case {
@@ -379,6 +397,7 @@ mod tests {
                 size: 4096,
                 modified: "2018-11-05T16:32:48Z",
                 perms: Some("rwxrwxrwx"),
+                writable: Some(true),
             },
             // File carrying an explicit unix.mode fact.
             Case {
@@ -388,6 +407,17 @@ mod tests {
                 size: 4096,
                 modified: "2018-11-05T16:32:48Z",
                 perms: Some("rw-r--r--"),
+                writable: Some(true),
+            },
+            // Read-only file (unix.mode=444) → no class may write.
+            Case {
+                line: b"type=file;size=4096;modify=20181105163248;unix.mode=444; readonly.bin",
+                name: Some("readonly.bin"),
+                is_dir: false,
+                size: 4096,
+                modified: "2018-11-05T16:32:48Z",
+                perms: Some("r--r--r--"),
+                writable: Some(false),
             },
             // Symlink (type=link) → not a directory.
             Case {
@@ -397,6 +427,7 @@ mod tests {
                 size: 0,
                 modified: "2018-11-05T16:32:48Z",
                 perms: Some("rwxrwxrwx"),
+                writable: Some(true),
             },
             // Unknown type → malformed, skipped.
             Case {
@@ -406,6 +437,7 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+                writable: None,
             },
             // Empty line → skipped.
             Case {
@@ -415,6 +447,7 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+                writable: None,
             },
         ];
         for case in &cases {
@@ -437,6 +470,7 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+                writable: None,
             },
             // Parent entry (pdir) → skipped like `..`.
             Case {
@@ -446,6 +480,7 @@ mod tests {
                 size: 0,
                 modified: "",
                 perms: None,
+                writable: None,
             },
             // Directory with a four-digit UNIX.mode.
             Case {
@@ -455,6 +490,7 @@ mod tests {
                 size: 0,
                 modified: "2026-07-12T22:07:26Z",
                 perms: Some("rwxr-xr-x"),
+                writable: Some(true),
             },
             // Regular file with size + four-digit UNIX.mode.
             Case {
@@ -464,6 +500,7 @@ mod tests {
                 size: 61,
                 modified: "2026-07-12T22:07:26Z",
                 perms: Some("rw-r--r--"),
+                writable: Some(true),
             },
             // MLST (single-entry) echoes the full pathname as the name; it must
             // be reduced to the base name (DIR here is the entry's parent).
@@ -474,6 +511,7 @@ mod tests {
                 size: 61,
                 modified: "2026-07-12T22:07:26Z",
                 perms: Some("rw-r--r--"),
+                writable: Some(true),
             },
         ];
         for case in &cases {
