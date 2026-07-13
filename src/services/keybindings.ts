@@ -452,6 +452,18 @@ export function getDefaultBindings(): KeyBinding[] {
 }
 
 /**
+ * Get the human-readable accelerator string for an action (e.g. `"Cmd+,"` or
+ * `"F1"`), reflecting the effective binding — user override or platform default.
+ * Returns `null` when the action has no binding. This is the single source of
+ * truth for rendering accelerators inline (e.g. on menu rows), so it stays in
+ * sync with what the shortcuts overlay displays.
+ */
+export function getActionAccelerator(action: string): string | null {
+  const combo = getEffectiveCombo(action);
+  return combo ? serializeBinding(combo) : null;
+}
+
+/**
  * Get the scope of an action — where it is allowed to fire relative to the
  * active tab. Unknown or unannotated actions default to `"global"` so existing
  * behavior is preserved.
