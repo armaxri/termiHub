@@ -609,14 +609,9 @@ export function ConnectionList() {
         // Password auth always needs a credential; key auth only when encrypted.
         const needsCredential = authMethod === "password" || (authMethod === "key" && keyEncrypted);
         if (!needsCredential) {
-          addTab(
-            connection.name,
-            connection.config.type,
-            config,
-            undefined,
-            undefined,
-            connection.terminalOptions
-          );
+          addTab(connection.name, connection.config.type, config, {
+            terminalOptions: connection.terminalOptions,
+          });
           return;
         }
 
@@ -627,14 +622,9 @@ export function ConnectionList() {
         // synthetic) connection id and would miss, forcing a redundant prompt
         // even though the password is already known.
         if (typeof cfg.password === "string" && cfg.password.length > 0) {
-          addTab(
-            connection.name,
-            connection.config.type,
-            config,
-            undefined,
-            undefined,
-            connection.terminalOptions
-          );
+          addTab(connection.name, connection.config.type, config, {
+            terminalOptions: connection.terminalOptions,
+          });
           return;
         }
 
@@ -661,15 +651,10 @@ export function ConnectionList() {
           try {
             const sessionId = await createTerminal(preConfig);
             // Stored credential worked — open tab with existing session
-            addTab(
-              connection.name,
-              connection.config.type,
-              preConfig,
-              undefined,
-              undefined,
-              connection.terminalOptions,
-              sessionId
-            );
+            addTab(connection.name, connection.config.type, preConfig, {
+              terminalOptions: connection.terminalOptions,
+              sessionId,
+            });
             return;
           } catch (err) {
             const errStr = String(err);
@@ -681,14 +666,9 @@ export function ConnectionList() {
               await removeCredential(connection.id, resolution.credentialType).catch(() => {});
             } else {
               // Non-auth failure — let the Terminal component handle the error
-              addTab(
-                connection.name,
-                connection.config.type,
-                config,
-                undefined,
-                undefined,
-                connection.terminalOptions
-              );
+              addTab(connection.name, connection.config.type, config, {
+                terminalOptions: connection.terminalOptions,
+              });
               return;
             }
           }
@@ -725,14 +705,9 @@ export function ConnectionList() {
         }
       }
 
-      addTab(
-        connection.name,
-        connection.config.type,
-        config,
-        undefined,
-        undefined,
-        connection.terminalOptions
-      );
+      addTab(connection.name, connection.config.type, config, {
+        terminalOptions: connection.terminalOptions,
+      });
     },
     [addTab, requestPassword]
   );

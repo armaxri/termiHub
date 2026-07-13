@@ -29,9 +29,9 @@ export function showReopenToast(payload: ReopenTabPayload | null): void {
     action: {
       label: "Reopen",
       onClick: () =>
-        useAppStore
-          .getState()
-          .addTab(payload.title, payload.connectionType, payload.config, undefined, "terminal"),
+        useAppStore.getState().addTab(payload.title, payload.connectionType, payload.config, {
+          contentType: "terminal",
+        }),
     },
   });
 }

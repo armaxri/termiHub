@@ -987,9 +987,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
             definitionId: def.id,
           },
         },
-        undefined,
-        undefined,
-        def.terminalOptions
+        { terminalOptions: def.terminalOptions }
       );
     },
     [agent.id, addTab]

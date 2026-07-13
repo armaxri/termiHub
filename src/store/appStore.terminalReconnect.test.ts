@@ -92,11 +92,11 @@ function makePersistentTab(oldSessionId: string | null): string {
         title: "Persistent Shell",
       },
     },
-    undefined,
-    "terminal",
-    undefined,
-    oldSessionId,
-    CONNECTION_ID
+    {
+      contentType: "terminal",
+      sessionId: oldSessionId,
+      persistentConnectionId: CONNECTION_ID,
+    }
   );
 }
 

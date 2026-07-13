@@ -17,7 +17,7 @@ export function useTerminal() {
       config?: ConnectionConfig,
       panelId?: string
     ) => {
-      addTab(title, connectionType, config, panelId);
+      addTab(title, connectionType, config, { panelId });
     },
     [addTab]
   );

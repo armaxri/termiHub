@@ -247,10 +247,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
             enableX11Forwarding: false,
           },
         },
-        undefined,
-        "terminal",
-        undefined,
-        result.sessionId
+        { contentType: "terminal", sessionId: result.sessionId }
       );
 
       setPhase({ kind: "running", step: "connect", message: "Setup started…" });
