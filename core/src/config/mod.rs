@@ -508,6 +508,12 @@ pub struct FtpConfig {
     /// Connect timeout in seconds.
     #[serde(default = "default_ftp_timeout_secs")]
     pub timeout_secs: u64,
+    /// When set, the plain-FTP insecure-connection warning is suppressed for
+    /// this connection (the user checked "Don't warn again for this
+    /// connection"). Set implicitly by the connect-time warning modal, not by
+    /// the settings form, so it has no corresponding schema field.
+    #[serde(default)]
+    pub suppress_security_warning: bool,
 }
 
 impl Default for FtpConfig {
@@ -523,6 +529,7 @@ impl Default for FtpConfig {
             transfer_type: FtpTransferType::default(),
             initial_directory: None,
             timeout_secs: default_ftp_timeout_secs(),
+            suppress_security_warning: false,
         }
     }
 }
@@ -1483,6 +1490,7 @@ mod tests {
             transfer_type: FtpTransferType::Binary,
             initial_directory: Some("/pub".into()),
             timeout_secs: 30,
+            suppress_security_warning: false,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(json.contains("\"tlsMode\""));

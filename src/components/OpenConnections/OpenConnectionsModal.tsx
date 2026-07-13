@@ -126,11 +126,12 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // longer exists (#1241, orphan safety net).
   const liveTabIds = new Set(allTabs.map((t) => t.id));
 
-  // Session ids of spawned containers (#1446): tabs opened from an external
-  // `termiHub spawn` with no saved connection id. They are backend-local
-  // sessions, so they must be pulled OUT of "Local Sessions" and tracked in
-  // their own "Spawned Containers" section.
-  const spawnedSessionIds = new Set(
+  // Session ids of spawned containers whose tab is still live (#1446): tabs
+  // opened from an external `termiHub spawn` with no saved connection id. This
+  // is now a FALLBACK for sessions predating the backend marker (#1466) — the
+  // authoritative source is `LocalSessionInfo.spawned`, recorded on the session
+  // itself so grouping survives the tab close that strips this flag.
+  const spawnedTabSessionIds = new Set(
     allTabs.filter((t) => t.spawned && t.sessionId).map((t) => t.sessionId as string)
   );
 
@@ -154,10 +155,15 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [loading, setLoading] = useState(false);
 
   // Split backend-local sessions: spawned containers get their own section, the
-  // rest stay under "Local Sessions" (#1446). Keeps spawned containers tracked
-  // separately from configured connections and avoids double-listing.
-  const spawnedSessions = localSessions.filter((s) => spawnedSessionIds.has(s.id));
-  const plainLocalSessions = localSessions.filter((s) => !spawnedSessionIds.has(s.id));
+  // rest stay under "Local Sessions" (#1446). A session is spawned when the
+  // backend marker says so (`s.spawned`, #1466 — authoritative, survives a tab
+  // close so orphans stay visible + killable here) OR, as a fallback for
+  // sessions predating the marker, when a live spawned tab still owns it. Keeps
+  // spawned containers tracked separately from configured connections and avoids
+  // double-listing.
+  const isSpawned = (s: LocalSessionInfo) => s.spawned === true || spawnedTabSessionIds.has(s.id);
+  const spawnedSessions = localSessions.filter(isSpawned);
+  const plainLocalSessions = localSessions.filter((s) => !isSpawned(s));
 
   const connectedAgents = remoteAgents.filter((a) => a.connectionState === "connected");
 

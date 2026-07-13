@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { HelpCircle, Plus, X } from "lucide-react";
+import { HelpCircle, Info, Plus, TriangleAlert, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { listSerialPorts } from "@/services/api";
@@ -45,6 +45,12 @@ export function DynamicField({
   credentialSaved,
   availablePorts,
 }: DynamicFieldProps) {
+  // Display-only callout: render the standalone banner without the label /
+  // hint / error scaffolding used by input fields.
+  if (field.fieldType.type === "notice") {
+    return <NoticeField field={field} severity={field.fieldType.severity} />;
+  }
+
   return (
     <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
       {renderFieldInput(field, field.fieldType, value, onChange, availablePorts, onBlur)}
@@ -109,7 +115,29 @@ function renderFieldInput(
       return (
         <ObjectListField field={field} value={value} onChange={onChange} fieldType={fieldType} />
       );
+    case "notice":
+      // Notice fields are handled up-front in DynamicField and never reach here.
+      return null;
   }
+}
+
+/**
+ * Display-only informational or warning callout, rendered from a field's
+ * `description`. Used e.g. for the plain-FTP insecure-connection warning, which
+ * the schema shows only while `tlsMode === "none"` via `visibleWhen`.
+ */
+function NoticeField({ field, severity }: { field: SettingsField; severity: "info" | "warning" }) {
+  const Icon = severity === "warning" ? TriangleAlert : Info;
+  return (
+    <div
+      className={`settings-form__notice settings-form__notice--${severity}`}
+      role="note"
+      data-testid={`field-${field.key}`}
+    >
+      <Icon size={14} aria-hidden="true" />
+      <span>{field.description}</span>
+    </div>
+  );
 }
 
 // --- Individual field type components ---

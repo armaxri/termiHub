@@ -233,6 +233,7 @@ Fixed strings — match exactly.
 | `inline-folder-cancel` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-confirm` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-name-input` | `src/components/Sidebar/InlineFolderInput.tsx` |
+| `insecure-ftp-warning` | `src/components/Sidebar/ConnectionList.tsx` |
 | `jump-host-add-hop` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `jump-host-enabled` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `jump-host-errors` | `src/components/ConnectionEditor/JumpHostSection.tsx` |

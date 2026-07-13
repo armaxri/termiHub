@@ -102,6 +102,7 @@ describe("api service", () => {
         settings: { host: "pi.local", port: 22 },
         agentId: null,
         connectId: null,
+        spawned: false,
       });
       expect(result).toBe("session-456");
     });
@@ -116,6 +117,7 @@ describe("api service", () => {
         settings: { shell: "bash" },
         agentId: "agent-1",
         connectId: null,
+        spawned: false,
       });
       expect(result).toBe("session-789");
     });
@@ -130,6 +132,7 @@ describe("api service", () => {
         settings: { host: "h" },
         agentId: null,
         connectId: "tab-7",
+        spawned: false,
       });
     });
 
@@ -144,6 +147,22 @@ describe("api service", () => {
         settings: { host: "h" },
         agentId: null,
         connectId: "tab-9",
+        spawned: false,
+      });
+    });
+
+    it("createTerminal forwards spawned to create_connection (#1466)", async () => {
+      mockedInvoke.mockResolvedValue("session-spawn");
+      const config = { type: "docker", config: { image: "alpine:3" } };
+
+      await createTerminal(config, "tab-s", true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "docker",
+        settings: { image: "alpine:3" },
+        agentId: null,
+        connectId: "tab-s",
+        spawned: true,
       });
     });
 
@@ -179,6 +198,7 @@ describe("api service", () => {
         settings: { shell: "bash" },
         agentId: null,
         connectId: null,
+        spawned: false,
       });
       expect(result).toBe("session-123");
     });
@@ -202,6 +222,7 @@ describe("api service", () => {
         settings: { shell: "/bin/bash", persistent: false },
         agentId: "agent-1",
         connectId: null,
+        spawned: false,
       });
       expect(result).toBe("session-remote");
     });

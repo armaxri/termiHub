@@ -208,6 +208,8 @@ fn validate_field_type(
                 });
             }
         }
+        // Display-only callout: no value to validate.
+        FieldType::Notice { .. } => {}
     }
 }
 

@@ -25,8 +25,8 @@ use tracing::{debug, info};
 
 use crate::config::{FtpConfig, FtpDataMode, FtpTlsMode, FtpTransferType};
 use crate::connection::{
-    Capabilities, Condition, ConnectionType, FieldType, OutputReceiver, SelectOption,
-    SettingsField, SettingsGroup, SettingsSchema,
+    Capabilities, Condition, ConnectionType, FieldType, NoticeSeverity, OutputReceiver,
+    SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -207,29 +207,51 @@ fn server_group() -> SettingsGroup {
     }
 }
 
-/// Security group: TLS mode.
+/// Security group: TLS mode + an insecure-FTP warning shown only for plain FTP.
 fn security_group() -> SettingsGroup {
     SettingsGroup {
         key: "security".to_string(),
         label: "Security".to_string(),
-        fields: vec![SettingsField {
-            required: true,
-            default: Some(serde_json::json!("none")),
-            description: Some(
-                "Plain FTP sends credentials in cleartext — prefer FTPS when available".to_string(),
-            ),
-            ..base_field(
-                "tlsMode",
-                "TLS Mode",
-                FieldType::Select {
-                    options: vec![
-                        opt("none", "None (plain FTP)"),
-                        opt("explicit", "Explicit (STARTTLS)"),
-                        opt("implicit", "Implicit"),
-                    ],
-                },
-            )
-        }],
+        fields: vec![
+            SettingsField {
+                required: true,
+                default: Some(serde_json::json!("none")),
+                description: Some(
+                    "Plain FTP sends credentials in cleartext — prefer FTPS when available"
+                        .to_string(),
+                ),
+                ..base_field(
+                    "tlsMode",
+                    "TLS Mode",
+                    FieldType::Select {
+                        options: vec![
+                            opt("none", "None (plain FTP)"),
+                            opt("explicit", "Explicit (STARTTLS)"),
+                            opt("implicit", "Implicit"),
+                        ],
+                    },
+                )
+            },
+            // Display-only callout: only visible while TLS Mode is "none".
+            SettingsField {
+                description: Some(
+                    "Plain FTP transmits credentials and data in cleartext. \
+                     Use FTPS if the server supports it."
+                        .to_string(),
+                ),
+                visible_when: Some(Condition {
+                    field: "tlsMode".to_string(),
+                    equals: serde_json::json!("none"),
+                }),
+                ..base_field(
+                    "tlsWarning",
+                    "",
+                    FieldType::Notice {
+                        severity: NoticeSeverity::Warning,
+                    },
+                )
+            },
+        ],
     }
 }
 
@@ -499,6 +521,48 @@ mod tests {
             }
             other => panic!("tlsMode should be a select, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn schema_has_tls_warning_notice_only_for_plain_ftp() {
+        // The inline insecure-FTP warning is a display-only notice field that is
+        // conditionally visible only while TLS Mode is "none". Assert against the
+        // serialized schema so the test does not depend on the internal enum.
+        let schema = Ftp::new().settings_schema();
+        let field = find_field(&schema, "tlsWarning");
+        assert!(
+            matches!(field.field_type, FieldType::Notice { .. }),
+            "tlsWarning should be a notice field"
+        );
+        let cond = field
+            .visible_when
+            .as_ref()
+            .expect("tlsWarning should be conditionally visible");
+        assert_eq!(cond.field, "tlsMode");
+        assert_eq!(cond.equals, serde_json::json!("none"));
+        // The warning message is carried in the field description.
+        assert!(field
+            .description
+            .as_ref()
+            .is_some_and(|d| d.to_lowercase().contains("cleartext")));
+    }
+
+    #[test]
+    fn config_defaults_suppress_security_warning_to_false() {
+        // Round-trips through JSON without referencing the field name directly,
+        // so this test stays valid even as the struct evolves.
+        let json = serde_json::to_value(FtpConfig::default()).unwrap();
+        assert_eq!(json["suppressSecurityWarning"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn config_deserializes_suppress_security_warning() {
+        let cfg: FtpConfig = serde_json::from_value(serde_json::json!({
+            "host": "ftp.example.com",
+            "suppressSecurityWarning": true,
+        }))
+        .unwrap();
+        assert!(cfg.suppress_security_warning);
     }
 
     #[test]

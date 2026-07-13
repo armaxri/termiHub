@@ -43,7 +43,8 @@ import {
 import { frontendLog } from "@/utils/frontendLog";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Tooltip, Input } from "@/components/ui";
+import { Tooltip, Input, ConfirmDialog } from "@/components/ui";
+import { shouldShowInsecureFtpWarning } from "@/utils/ftpSecurity";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useSectionResize } from "@/hooks/useSectionResize";
@@ -498,6 +499,7 @@ export function ConnectionList() {
   const experimental = useExperimentalFeatures();
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const addTab = useAppStore((s) => s.addTab);
+  const updateConnection = useAppStore((s) => s.updateConnection);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
@@ -579,7 +581,13 @@ export function ConnectionList() {
     HTMLButtonElement
   >(treeNodes, getNodeLabel);
 
-  const handleConnect = useCallback(
+  // The plain-FTP connection awaiting the user's decision in the insecure-
+  // connection warning modal, or null when the modal is closed. The modal is
+  // shown before any control connection is opened (see `handleConnect`).
+  const [insecureFtpConnection, setInsecureFtpConnection] = useState<SavedConnection | null>(null);
+  const [insecureFtpDontWarn, setInsecureFtpDontWarn] = useState(false);
+
+  const performConnect = useCallback(
     async (connection: SavedConnection) => {
       let config = connection.config;
       const cfg = config.config as unknown as Record<string, unknown>;
@@ -728,6 +736,44 @@ export function ConnectionList() {
     },
     [addTab, requestPassword]
   );
+
+  // Connect entry point: for a plain-FTP connection that has not been suppressed,
+  // surface the insecure-connection warning modal *before* the control
+  // connection opens; every other connection proceeds immediately.
+  const handleConnect = useCallback(
+    async (connection: SavedConnection) => {
+      if (shouldShowInsecureFtpWarning(connection.config)) {
+        setInsecureFtpDontWarn(false);
+        setInsecureFtpConnection(connection);
+        return;
+      }
+      await performConnect(connection);
+    },
+    [performConnect]
+  );
+
+  // "Connect Anyway": optionally persist the per-connection suppression, then
+  // proceed with the connect. Password is never written to connections.json —
+  // `updateConnection` strips it before persisting.
+  const handleInsecureFtpConfirm = useCallback(() => {
+    const connection = insecureFtpConnection;
+    setInsecureFtpConnection(null);
+    if (!connection) return;
+    if (insecureFtpDontWarn) {
+      updateConnection({
+        ...connection,
+        config: {
+          ...connection.config,
+          config: { ...connection.config.config, suppressSecurityWarning: true },
+        },
+      });
+    }
+    void performConnect(connection);
+  }, [insecureFtpConnection, insecureFtpDontWarn, updateConnection, performConnect]);
+
+  const handleInsecureFtpCancel = useCallback(() => {
+    setInsecureFtpConnection(null);
+  }, []);
 
   // While a search filter is active, folders are force-expanded by the render
   // logic and their stored `isExpanded` is ignored (#1378). Suppress folder
@@ -1396,6 +1442,30 @@ export function ConnectionList() {
         message={deleteConfirm?.message ?? ""}
         onConfirm={() => deleteConfirm?.onConfirm()}
         onCancel={() => setDeleteConfirm(null)}
+      />
+      <ConfirmDialog
+        open={insecureFtpConnection !== null}
+        title="Insecure Connection"
+        message={
+          <>
+            <p>
+              Plain FTP transmits your username, password, and all data in cleartext. Anyone on the
+              network path can intercept your credentials and files.
+            </p>
+            <p>Consider using FTPS (FTP over TLS) if the server supports it.</p>
+          </>
+        }
+        confirmLabel="Connect Anyway"
+        cancelLabel="Cancel"
+        confirmVariant="primary"
+        dontAskAgain={{
+          checked: insecureFtpDontWarn,
+          onChange: setInsecureFtpDontWarn,
+          label: "Don't warn again for this connection",
+        }}
+        onConfirm={handleInsecureFtpConfirm}
+        onCancel={handleInsecureFtpCancel}
+        data-testid="insecure-ftp-warning"
       />
     </div>
   );

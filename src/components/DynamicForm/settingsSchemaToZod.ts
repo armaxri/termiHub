@@ -58,6 +58,10 @@ function fieldToZod(field: SettingsField): z.ZodTypeAny {
     case "objectList":
       return z.array(z.record(z.string(), z.unknown())).optional();
 
+    case "notice":
+      // Display-only callout — carries no value, so it never affects validity.
+      return z.unknown().optional();
+
     default:
       return z.unknown();
   }

@@ -124,6 +124,27 @@ pub enum FieldType {
         /// Fields for each object in the list.
         fields: Vec<SettingsField>,
     },
+    /// Display-only informational or warning callout (no input, no stored value).
+    ///
+    /// Rendered as a highlighted banner using the field's `description` as the
+    /// message. Combine with [`SettingsField::visible_when`] to show the notice
+    /// only in a given state (e.g. a plain-FTP warning shown only when
+    /// `tlsMode == "none"`). Because it carries no value, it is skipped by
+    /// validation and never contributes to the settings JSON.
+    Notice {
+        /// Visual severity, controlling the callout's color and icon.
+        severity: NoticeSeverity,
+    },
+}
+
+/// Severity of a [`FieldType::Notice`] callout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoticeSeverity {
+    /// Neutral informational note.
+    Info,
+    /// Cautionary warning (e.g. insecure configuration).
+    Warning,
 }
 
 /// An option in a [`FieldType::Select`] dropdown.

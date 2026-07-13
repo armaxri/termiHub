@@ -778,6 +778,41 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### FTP insecure-connection warning & editor behaviors (#1338)
+
+Verifies the plaintext-FTP warning modal, the schema-conditional editor fields,
+and the TLS-mode → port auto-adjust. See PR #1338.
+
+**Editor — conditional fields.**
+
+1. Create a new connection and set Type to **FTP**.
+2. With TLS Mode = **None**, confirm the inline **cleartext warning callout**
+   appears in the Security section.
+3. Switch TLS Mode to **Explicit** or **Implicit** → the warning callout
+   disappears.
+4. Toggle **Use anonymous login** on → Username and Password rows hide; toggle
+   it off → they reappear.
+
+**Editor — port auto-adjust.**
+
+1. On a fresh FTP connection (Port shows 21), switch TLS Mode to **Implicit** →
+   Port becomes **990**. Switch back to **None**/**Explicit** → Port becomes
+   **21**.
+2. Type a custom Port (e.g. **2121**), then switch TLS Mode → the custom port is
+   **preserved** (not overwritten).
+
+**Connect — insecure warning modal.**
+
+1. Save a plain-FTP connection (TLS Mode = None) and connect (double-click).
+   Before any connection is attempted, the **Insecure Connection** modal appears.
+2. Click **Cancel** → nothing connects.
+3. Connect again, then click **Connect Anyway** → the connection proceeds and no
+   flag is persisted (the modal reappears on the next connect).
+4. Connect again, tick **Don't warn again for this connection**, then **Connect
+   Anyway** → the connection proceeds. Reconnect → the modal is **not** shown.
+5. Connect an **FTPS** (explicit or implicit) connection → the modal is **never**
+   shown.
+
 ### Agent binary SHA-256 checksums (release dry-run, #1350)
 
 Verifies that every published agent binary has a matching `*.sha256` asset and
@@ -880,6 +915,28 @@ manual.
 7. (Boundary) Run `termiHub spawn --location ~/tmp/spawn` with **no**
    `--container-image`. Confirm no tab opens (non-container spawns are SI-2; the
    request is ignored, logged in the LogViewer under `frontend::spawn`).
+
+### Spawned container grouping survives tab close (#1466)
+
+See PR #1495. The spawned origin is now recorded on the backend session
+registry (`SessionInfo.spawned` → `LocalSessionInfo.spawned`), not only on the
+frontend tab, so the **Open Connections** panel groups **Spawned Containers**
+from the authoritative backend marker. This keeps an orphaned spawned container
+(tab closed, backend session leaked) visible and killable in its own section
+instead of silently falling back into **Local Sessions**. Requires Docker/Podman.
+
+1. Spawn a container (CLI `termiHub spawn --location <dir>` / context-menu "new
+   container", or any flow that opens a spawned Docker tab). Confirm the tab
+   carries the **Spawned** badge.
+2. Open **Open Connections** (Settings wheel → Open Connections). Confirm the
+   container appears under **Spawned Containers** (not **Local Sessions**), with a
+   `spawned` badge, and is not double-listed.
+3. **Close the spawned tab** but leave the container's backend session running
+   (e.g. the container keeps running / the session leaks). Re-open **Open
+   Connections**.
+4. Confirm the container is **still listed under Spawned Containers** — it must
+   NOT have moved into **Local Sessions** — and that its **Kill** button (and the
+   section **Kill All**) still terminates it. After killing, the row disappears.
 
 ### Native-dialog → Modal migration (#1348)
 
@@ -1750,3 +1807,31 @@ On a Linux desktop (run steps for whichever managers you have installed):
    removed: the XDG `.desktop`, the Nautilus script, the KDE service menu, and
    termiHub's Thunar action — while any **foreign** Thunar actions in `uca.xml`
    and unrelated Nautilus scripts remain untouched.
+
+### Sudo-elevated remote save over SFTP (#1328)
+
+Verifies the `sftp_write_file_content_elevated` backend command: a temp upload
+followed by an in-place `sudo -S` rewrite over the exec channel, with typed
+outcomes and guaranteed temp cleanup. The command composition, injection
+neutralization, and sudo error classification are covered by unit tests
+(`cargo test -p termihub --lib files::sftp`); exercising it against a real host
+with `sudo` is manual. See PR for #1328.
+
+On a real host where your SSH user has `sudo` rights (e.g. a Raspberry Pi):
+
+1. Open an SFTP session to the host and pick a **root-owned** file the user
+   cannot write directly (e.g. `/etc/nginx/nginx.conf` or a `root:root`,
+   `-rw-r--r--` file). Change a line and trigger the elevated save
+   (`sftpWriteFileContentElevated`) with the **correct** sudo password.
+2. Confirm the result is `success`, the file's contents are updated, and its
+   owner/mode are **unchanged** (`ls -l` still shows the original `root:root`
+   and permission bits — `cat >` rewrote in place, it did not replace the file).
+   Confirm no `/tmp/termihub-*` file remains (`ls /tmp/termihub-*` → none).
+3. Repeat with a **wrong** password → the result is `incorrectPassword` (safe to
+   re-prompt), the file is unchanged, and no `/tmp/termihub-*` temp is left
+   behind.
+4. On a host where the user is **not** in the sudoers file (or `sudo` is not
+   installed) → the result is `other` with a descriptive message, the file is
+   unchanged, and no temp file remains.
+5. Inspect the LogViewer / backend logs during all of the above and confirm the
+   **sudo password never appears** in any log line.
