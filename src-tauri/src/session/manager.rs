@@ -2221,6 +2221,62 @@ mod tests {
         assert!(!manager.cancel_connecting("c1"));
     }
 
+    /// A session opened via the spawn path is recorded with `spawned=true` in
+    /// the registry and surfaces the flag on its `SessionInfo`, while a normal
+    /// local session is recorded with `spawned=false` (#1466). This backend
+    /// marker is the source of truth the Open Connections panel groups from, so
+    /// a spawned container stays under "Spawned Containers" even after its tab
+    /// (the previous frontend-only marker) is closed.
+    #[tokio::test]
+    async fn spawn_path_marks_session_spawned_in_registry() {
+        let manager = make_test_manager();
+
+        let spawned_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                None,
+                true,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("spawned session should open");
+
+        let plain_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                None,
+                false,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("plain session should open");
+
+        let sessions = manager.list_sessions().await;
+        let spawned = sessions
+            .iter()
+            .find(|s| s.id == spawned_id)
+            .expect("spawned session listed");
+        let plain = sessions
+            .iter()
+            .find(|s| s.id == plain_id)
+            .expect("plain session listed");
+
+        assert!(spawned.spawned, "spawn-path session must be marked spawned");
+        assert!(
+            !plain.spawned,
+            "a normal local session must not be marked spawned"
+        );
+
+        // The marker must be serialized (camelCase `spawned`) so the frontend
+        // `LocalSessionInfo` mirror can group from it.
+        let json = serde_json::to_value(spawned).expect("serialize SessionInfo");
+        assert_eq!(json["spawned"], serde_json::json!(true));
+    }
+
     // ── Persistent session tests ──────────────────────────────────────
 
     #[tokio::test]
