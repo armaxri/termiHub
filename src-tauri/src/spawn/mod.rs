@@ -31,12 +31,53 @@ mod tests;
 /// (#1409). Centralised so every producer stays in sync.
 pub const SPAWN_REQUEST_EVENT: &str = "spawn-request";
 
+/// Explicit discriminator for the kind of session a [`SpawnRequest`] targets
+/// (#1465).
+///
+/// Consumers branch on this authoritative field instead of inferring intent
+/// from which optional fields happen to be set. Pre-#1465 payloads carry no
+/// `kind`; serde fills [`SpawnKind::Auto`], which downstream consumers resolve
+/// by falling back to the legacy presence-based inference (a spawn is a
+/// container iff it carries a `container_image`/`container_mount`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnKind {
+    /// A "new container" spawn (Docker/Podman image + optional mount).
+    Container,
+    /// A local-shell spawn (owned by the SI-2 open path).
+    Local,
+    /// A WSL spawn (owned by the SI-2 open path).
+    Wsl,
+    /// An SSH spawn (owned by the SI-2 open path).
+    Ssh,
+    /// Kind not explicitly stated — resolve via presence-based inference. The
+    /// default for older payloads and for CLI invocations that carry no
+    /// discriminating flags.
+    #[default]
+    Auto,
+}
+
+impl SpawnKind {
+    /// Parse a wire/CLI token (`container|local|wsl|ssh|auto`) into a kind.
+    /// Returns `None` for unrecognised tokens so callers can degrade gracefully.
+    fn from_wire(token: &str) -> Option<Self> {
+        match token {
+            "container" => Some(Self::Container),
+            "local" => Some(Self::Local),
+            "wsl" => Some(Self::Wsl),
+            "ssh" => Some(Self::Ssh),
+            "auto" => Some(Self::Auto),
+            _ => None,
+        }
+    }
+}
+
 /// A request to open a new session, originating from an external
 /// `termiHub spawn` invocation.
 ///
-/// All fields are optional so partially-specified requests round-trip cleanly;
-/// resolution of the effective connection type happens downstream (out of scope
-/// for #1364).
+/// Aside from [`SpawnRequest::kind`], all fields are optional so
+/// partially-specified requests round-trip cleanly; resolution of the effective
+/// connection type happens downstream (out of scope for #1364).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnRequest {
     /// Filesystem path (folder or file) the session should open at.
@@ -60,6 +101,12 @@ pub struct SpawnRequest {
     /// Mount target path inside the container (default resolved downstream).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_mount: Option<String>,
+    /// Explicit spawn-kind discriminator (#1465). Defaults to
+    /// [`SpawnKind::Auto`] so pre-#1465 payloads (which omit the field)
+    /// round-trip and downstream consumers can fall back to presence-based
+    /// inference.
+    #[serde(default)]
+    pub kind: SpawnKind,
 }
 
 /// Outcome status returned by the running instance for a [`SpawnRequest`].
@@ -153,6 +200,18 @@ pub fn parse_spawn_args(args: &[String]) -> SpawnRequest {
                 req.pick = true;
                 None
             }
+            "--kind" => {
+                // Consume the value here (inline `--kind=x` or the next arg) and
+                // classify it; unknown tokens leave the default (`Auto`) intact.
+                let value = inline.clone().or_else(|| {
+                    i += 1;
+                    args.get(i).cloned()
+                });
+                if let Some(kind) = value.as_deref().and_then(SpawnKind::from_wire) {
+                    req.kind = kind;
+                }
+                None
+            }
             "--location" => Some(&mut req.location),
             "--entry-id" => Some(&mut req.entry_id),
             "--connection" => Some(&mut req.connection),
@@ -168,6 +227,13 @@ pub fn parse_spawn_args(args: &[String]) -> SpawnRequest {
             });
         }
         i += 1;
+    }
+    // With no explicit `--kind`, a container image/mount authoritatively marks a
+    // container spawn; everything else stays `Auto` for downstream resolution.
+    if matches!(req.kind, SpawnKind::Auto)
+        && (req.container_image.is_some() || req.container_mount.is_some())
+    {
+        req.kind = SpawnKind::Container;
     }
     req
 }

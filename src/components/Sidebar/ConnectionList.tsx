@@ -483,6 +483,7 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
+  const [agentFilterQuery, setAgentFilterQuery] = useState("");
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
   const [draggingAgentName, setDraggingAgentName] = useState<string | null>(null);
   const [draggingAgentDef, setDraggingAgentDef] = useState<AgentDefinitionInfo | null>(null);
@@ -1337,6 +1338,38 @@ export function ConnectionList() {
                 </div>
               </div>
               {!remoteAgentsCollapsed && (
+                <div className="connection-list__filter">
+                  <Search size={14} className="connection-list__filter-icon" aria-hidden="true" />
+                  <Input
+                    className="connection-list__filter-input"
+                    value={agentFilterQuery}
+                    onChange={(e) => setAgentFilterQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setAgentFilterQuery("");
+                      }
+                    }}
+                    placeholder="Filter agent connections…"
+                    aria-label="Filter agent connections"
+                    data-testid="agent-filter-input"
+                  />
+                  {agentFilterQuery && (
+                    <Tooltip content="Clear filter" side="top">
+                      <button
+                        type="button"
+                        className="connection-list__filter-clear"
+                        onClick={() => setAgentFilterQuery("")}
+                        aria-label="Clear agent filter"
+                        data-testid="agent-filter-clear"
+                      >
+                        <X size={14} />
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
+              )}
+              {!remoteAgentsCollapsed && (
                 <SortableContext
                   items={remoteAgents.map((a) => a.id)}
                   strategy={verticalListSortingStrategy}
@@ -1356,6 +1389,7 @@ export function ConnectionList() {
                         )}
                         <AgentNode
                           agent={agent}
+                          filterQuery={agentFilterQuery}
                           style={innerIdx >= 0 ? { flex: innerFlexValues[innerIdx] } : undefined}
                           sectionRef={(el) => {
                             if (innerIdx >= 0) innerSectionRefs.current[innerIdx] = el;

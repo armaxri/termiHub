@@ -6,6 +6,8 @@ import { useAppStore } from "@/store/appStore";
 import { Button, toast, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
+import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import type { WorkspaceSummary } from "@/types/workspace";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
@@ -138,6 +140,21 @@ export function WorkspaceSidebar() {
   const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
   const activeGroupName = activeGroup?.name ?? "Main";
 
+  // Roving-tabindex keyboard navigation over the flat workspace list, matching
+  // the Connections tree's arrow-key + Enter model. Enter launches the focused
+  // workspace (the same action as double-click), unless a launch is in flight.
+  const handleActivate = useCallback(
+    (workspace: WorkspaceSummary) => {
+      if (launchingWorkspaceId === null) handleLaunch(workspace.id);
+    },
+    [launchingWorkspaceId, handleLaunch]
+  );
+  const nav = useFlatRovingNav<WorkspaceSummary, HTMLDivElement>(
+    workspaces,
+    (workspace) => workspace.name,
+    handleActivate
+  );
+
   return (
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
       <div className="workspace-sidebar__actions">
@@ -194,18 +211,29 @@ export function WorkspaceSidebar() {
           <span>Click &quot;+ New Workspace&quot; to create one.</span>
         </div>
       ) : (
-        <div className="workspace-sidebar__list" data-testid="workspace-list">
-          {workspaces.map((workspace) => (
-            <WorkspaceListItem
-              key={workspace.id}
-              workspace={workspace}
-              onLaunch={handleLaunch}
-              onEdit={handleEdit}
-              onDuplicate={handleDuplicate}
-              onDelete={handleDelete}
-              launchDisabled={launchingWorkspaceId !== null}
-            />
-          ))}
+        <div
+          className="workspace-sidebar__list"
+          data-testid="workspace-list"
+          role="tree"
+          aria-label="Workspaces"
+          onKeyDown={nav.onKeyDown}
+        >
+          {workspaces.map((workspace, index) => {
+            const { ref, ...itemProps } = nav.getItemProps(index);
+            return (
+              <WorkspaceListItem
+                key={workspace.id}
+                workspace={workspace}
+                onLaunch={handleLaunch}
+                onEdit={handleEdit}
+                onDuplicate={handleDuplicate}
+                onDelete={handleDelete}
+                launchDisabled={launchingWorkspaceId !== null}
+                rowRef={ref}
+                rowProps={itemProps}
+              />
+            );
+          })}
         </div>
       )}
       {showSaveDialog && (

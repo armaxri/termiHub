@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
 import { Button, Tooltip, toast, Field, Input, NumberInput, Select } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useSubmitButton } from "@/hooks/useSubmitButton";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
@@ -224,10 +223,6 @@ export function HttpMonitorPanel() {
     [loadMonitors, clearActiveMonitor]
   );
 
-  // Enter and click share one gate and one async Button lifecycle (#1414). A
-  // monitor is either running (activeMonitorId set → Stop shown) or invalid.
-  const { formProps, submitProps } = useSubmitButton(!activeMonitorId && canStart, handleStart);
-
   // Tear the listener down on unmount.
   useEffect(() => stopListening, [stopListening]);
 
@@ -244,7 +239,7 @@ export function HttpMonitorPanel() {
       : null;
 
   return (
-    <form className="network-panel" data-testid="http-monitor-panel" {...formProps}>
+    <form className="network-panel" data-testid="http-monitor-panel">
       <div className="network-panel__header">
         <span className="network-panel__title">HTTP Monitor</span>
         <div className="network-panel__actions">
@@ -276,7 +271,9 @@ export function HttpMonitorPanel() {
               icon={<Play size={14} />}
               pendingLabel="Starting…"
               errorToast={false}
-              {...submitProps}
+              type="submit"
+              disabled={!canStart}
+              onClick={handleStart}
               data-testid="http-monitor-start"
             >
               Start

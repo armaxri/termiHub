@@ -33,6 +33,8 @@ Fixed strings — match exactly.
 | `agent-external-file-row` | `src/components/ConnectionEditor/AgentExternalFilesSettings.tsx` |
 | `agent-external-file-toggle` | `src/components/ConnectionEditor/AgentExternalFilesSettings.tsx` |
 | `agent-external-files` | `src/components/ConnectionEditor/AgentExternalFilesSettings.tsx` |
+| `agent-filter-clear` | `src/components/Sidebar/ConnectionList.tsx` |
+| `agent-filter-input` | `src/components/Sidebar/ConnectionList.tsx` |
 | `agent-setup-arch-select` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-binary-path` | `src/components/Sidebar/AgentSetupDialog.tsx` |
 | `agent-setup-branch-name` | `src/components/Sidebar/AgentSetupDialog.tsx` |
