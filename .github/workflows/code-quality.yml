@@ -55,19 +55,39 @@ jobs:
       - name: Run Clippy (linter)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      # Guards #868: the Docker-dependent integration tests in core/tests/ are
+      # Guards #868 + #1499: builds termihub-core with individual opt-in features
+      # *in isolation*, which the --all-features jobs above cannot do because
+      # feature unification always compiles everything together.
+      #
+      # #868: the Docker-dependent integration tests in core/tests/ are
       # feature-gated (#![cfg(feature = "ssh")], etc.) so a plain
-      # `cargo test -p termihub-core` compiles to a no-op instead of erroring.
-      # Every other Rust job runs --all-features, where cargo feature unification
-      # would hide a newly-added un-gated test file — this check would not. The
-      # ssh / telnet partial builds also verify the gates resolve correctly
-      # (telnet.rs needs both ssh and telnet). Compile-only (--no-run): the tests
-      # themselves need Docker fixtures and run in the integration lane.
-      - name: Core compiles without --all-features (guards #868)
+      # `cargo test -p termihub-core` compiles to a no-op instead of erroring; a
+      # newly-added un-gated test file would be hidden under --all-features but
+      # caught here. The per-feature builds also verify the gates resolve
+      # correctly (telnet.rs needs both ssh and telnet).
+      #
+      # #1499: opt-in feature code (e.g. `ftp`, which gates core/src/backends/ftp/)
+      # must compile on the offending PR. This isolation build additionally catches
+      # gate bugs that --all-features masks — code reachable under `ftp` that
+      # accidentally leans on a symbol only present when another feature is on.
+      # (The #1324/#1456 regression — an MLSD FileEntry construction missing the
+      # new `writable` field, E0063 — fails here.)
+      #
+      # Compile-only (--no-run): these tests need Docker fixtures and run in the
+      # integration lane.
+      - name: Core compiles with each opt-in feature in isolation (guards #868, #1499)
         run: |
           cargo test -p termihub-core --no-run
           cargo test -p termihub-core --no-run --features ssh
           cargo test -p termihub-core --no-run --features telnet
+          cargo test -p termihub-core --no-run --features ftp
+
+      # Clippy the opt-in `ftp` feature in isolation. The --all-features clippy
+      # above lints ftp code with every other feature also on; this lints the
+      # ftp-only feature set so a lint (or compile) break specific to that path
+      # can't merge undetected (#1499).
+      - name: Clippy ftp feature in isolation (guards #1499)
+        run: cargo clippy -p termihub-core --features ftp --all-targets -- -D warnings
 
       # Prebuilt binary download (~seconds) instead of `cargo install cargo-audit`,
       # which compiles from source (~3 min) on a cold cache.
