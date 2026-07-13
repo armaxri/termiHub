@@ -14,6 +14,7 @@ import {
   Activity,
   RefreshCw,
   Info,
+  Keyboard,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -23,6 +24,7 @@ import { useAppStore, SidebarView } from "@/store/appStore";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
 import { Tooltip } from "@/components/ui";
+import { getActionAccelerator } from "@/services/keybindings";
 import { ActivityBarItem } from "./ActivityBarItem";
 import "./ActivityBar.css";
 
@@ -31,6 +33,23 @@ interface ActivityBarItemDef {
   icon: typeof Network;
   label: string;
   experimental?: boolean;
+}
+
+interface MenuAcceleratorProps {
+  /** Keybinding action id whose effective accelerator should be shown. */
+  action: string;
+}
+
+/**
+ * Renders an action's effective accelerator, right-aligned within a settings
+ * menu row (e.g. "Settings  ⌘,"). Renders nothing when the action has no
+ * binding. Uses {@link getActionAccelerator} so the label stays in sync with
+ * the shortcuts overlay and any user override.
+ */
+function MenuAccelerator({ action }: MenuAcceleratorProps) {
+  const accelerator = getActionAccelerator(action);
+  if (!accelerator) return null;
+  return <span className="settings-menu__item-accelerator">{accelerator}</span>;
 }
 
 const REQUIRED_ITEMS: ActivityBarItemDef[] = [
@@ -59,6 +78,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const openLogViewerTab = useAppStore((s) => s.openLogViewerTab);
   const openOverlayView = useAppStore((s) => s.openOverlayView);
+  const setShortcutsOverlayOpen = useAppStore((s) => s.setShortcutsOverlayOpen);
   const activityBarPosition = useAppStore((s) => s.layoutConfig.activityBarPosition);
   const hiddenActivityBarViews = useAppStore(
     (s) => s.layoutConfig.hiddenActivityBarViews ?? EMPTY_HIDDEN_VIEWS
@@ -148,6 +168,16 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   >
                     <Settings size={14} />
                     Settings
+                    <MenuAccelerator action="open-settings" />
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="settings-menu__item"
+                    onSelect={() => setShortcutsOverlayOpen(true)}
+                    data-testid="settings-menu-shortcuts"
+                  >
+                    <Keyboard size={14} />
+                    Keyboard Shortcuts
+                    <MenuAccelerator action="show-shortcuts" />
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
                     className="settings-menu__item"
