@@ -195,6 +195,30 @@ export interface FileClipboard {
   terminalSessionId?: string | null;
 }
 
+/**
+ * Optional settings for {@link AppState.addTab}. Every field is optional — omit
+ * the whole object (or any individual field) to accept the documented defaults.
+ * Collapsing these trailing flags into one object keeps call sites from having
+ * to thread placeholder `undefined`s to reach a later argument (#1467).
+ */
+export interface AddTabOptions {
+  /** Panel to add the tab to. Defaults to the active panel (or first leaf). */
+  panelId?: string;
+  /** Tab content kind. Defaults to `"terminal"`. */
+  contentType?: TabContentType;
+  /** Per-tab terminal appearance/behavior overrides. */
+  terminalOptions?: TerminalOptions;
+  /** Pre-existing backend session id to attach to. Defaults to `null`. */
+  sessionId?: string | null;
+  /** Persistent-connection id this tab is attached to, if any. */
+  persistentConnectionId?: string;
+  /**
+   * Marks the tab as an externally spawned session with no saved connection
+   * (#1446). Defaults to `false`.
+   */
+  spawned?: boolean;
+}
+
 /** Return a new Record with `key` removed. */
 function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
   const { [key]: _, ...rest } = rec;
@@ -307,16 +331,19 @@ interface AppState {
   // Panels & Tabs
   rootPanel: PanelNode;
   activePanelId: string | null;
+  /**
+   * Open a new tab and make it active.
+   * @param title Tab title.
+   * @param connectionType Connection type key (e.g. `"local"`, `"ssh"`, `"remote-session"`).
+   * @param config Connection config; defaults to a local shell when omitted.
+   * @param options Optional tab settings — see {@link AddTabOptions}.
+   * @returns The id of the created tab.
+   */
   addTab: (
     title: string,
     connectionType: string,
     config?: ConnectionConfig,
-    panelId?: string,
-    contentType?: TabContentType,
-    terminalOptions?: TerminalOptions,
-    sessionId?: string | null,
-    persistentConnectionId?: string,
-    spawned?: boolean
+    options?: AddTabOptions
   ) => string;
   /**
    * Open a Docker session tab for a resolved external container spawn (#1446).
@@ -1665,16 +1692,13 @@ export const useAppStore = create<AppState>((set, get) => {
       const entry = get().persistentSessions[connectionId];
       const conn = get().connections.find((c) => c.id === connectionId);
       if (!conn || !entry?.sessionId) return;
-      const tabId = get().addTab(
-        conn.name,
-        conn.config.type,
-        conn.config,
+      const tabId = get().addTab(conn.name, conn.config.type, conn.config, {
         panelId,
-        "terminal",
-        conn.terminalOptions,
-        entry.sessionId,
-        connectionId
-      );
+        contentType: "terminal",
+        terminalOptions: conn.terminalOptions,
+        sessionId: entry.sessionId,
+        persistentConnectionId: connectionId,
+      });
       try {
         await apiAttachPersistentTab(connectionId, tabId);
         set((state) => {
@@ -1809,11 +1833,13 @@ export const useAppStore = create<AppState>((set, get) => {
             title: def.name,
           },
         },
-        panelId,
-        "terminal",
-        def.terminalOptions,
-        entry.sessionId,
-        connectionId
+        {
+          panelId,
+          contentType: "terminal",
+          terminalOptions: def.terminalOptions,
+          sessionId: entry.sessionId,
+          persistentConnectionId: connectionId,
+        }
       );
       // Resolve the actual panel the tab landed in so we can close it on failure.
       const actualPanelId = findLeafByTab(get().rootPanel, tabId)?.id;
@@ -2019,17 +2045,9 @@ export const useAppStore = create<AppState>((set, get) => {
       if (sessionId) get().settleRestoreTab(tabId, "connected");
     },
 
-    addTab: (
-      title,
-      connectionType,
-      config,
-      panelId,
-      contentType,
-      terminalOptions,
-      sessionId,
-      persistentConnectionId,
-      spawned
-    ) => {
+    addTab: (title, connectionType, config, options) => {
+      const { panelId, contentType, terminalOptions, sessionId, persistentConnectionId, spawned } =
+        options ?? {};
       let createdTabId = "";
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
@@ -2088,12 +2106,7 @@ export const useAppStore = create<AppState>((set, get) => {
         spawn.title,
         "docker",
         { type: "docker", config: spawn.settings },
-        undefined,
-        "terminal",
-        undefined,
-        undefined,
-        undefined,
-        true
+        { contentType: "terminal", spawned: true }
       ),
 
     openSettingsTab: () =>

@@ -94,10 +94,7 @@ describe("appStore", () => {
             enableX11Forwarding: false,
           },
         },
-        undefined,
-        "terminal",
-        undefined,
-        "existing-session-123"
+        { contentType: "terminal", sessionId: "existing-session-123" }
       );
 
       const state = useAppStore.getState();
