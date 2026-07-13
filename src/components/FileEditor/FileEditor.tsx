@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Save, Loader2, AlertCircle, Globe, FileEdit, X } from "lucide-react";
+import { Save, Loader2, AlertCircle, Globe, FileEdit, Lock, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
@@ -17,6 +17,7 @@ import {
   sftpReadFileContent,
   sftpWriteFileContent,
   sftpHasExecCapability,
+  sftpCheckWritable,
 } from "@/services/api";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { frontendLog } from "@/utils/frontendLog";
@@ -106,6 +107,16 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // future privilege-elevated ("save with sudo") writes, which need a shell to
   // run `sudo`. `false` for local files and SFTP-only connections.
   const [execCapable, setExecCapable] = useState(false);
+
+  // Authoritative writability of the remote file, from a non-destructive SFTP
+  // write-open probe (#1324/#1325): `false` = read-only (server denied the
+  // write-open), `true` = writable, `"unknown"` = probe inconclusive. Only
+  // `false` surfaces the read-only badge/banner; `true`/`"unknown"` leave the
+  // direct-save path untouched. Local files stay `"unknown"` (never probed).
+  const [writable, setWritable] = useState<boolean | "unknown">("unknown");
+  // Whether the user has dismissed the read-only notice banner. The badge is a
+  // persistent state indicator; only the banner is dismissible.
+  const [readonlyBannerDismissed, setReadonlyBannerDismissed] = useState(false);
 
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -208,6 +219,41 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       cancelled = true;
     };
   }, [meta.isRemote, meta.sftpSessionId]);
+
+  // Probe the connecting user's actual write access to this remote file, in
+  // parallel with the content read (it never blocks the load; a failure just
+  // degrades to "unknown" so no badge is shown). Only a definitive read-only
+  // result surfaces the badge/banner — detection only, no elevated save. (#1325)
+  useEffect(() => {
+    let cancelled = false;
+    setReadonlyBannerDismissed(false);
+    if (!meta.isRemote || !meta.sftpSessionId || meta.scratch) {
+      setWritable("unknown");
+      return;
+    }
+    const sessionId = meta.sftpSessionId;
+    const filePath = meta.filePath;
+    sftpCheckWritable(sessionId, filePath)
+      .then((result) => {
+        if (cancelled) return;
+        const mapped = result === "readOnly" ? false : result === "writable" ? true : "unknown";
+        setWritable(mapped);
+        frontendLog("file_editor", `writability for ${filePath}: ${result}`);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setWritable("unknown");
+        frontendLog(
+          "file_editor",
+          `writability probe failed for ${filePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [meta.isRemote, meta.sftpSessionId, meta.filePath, meta.scratch]);
 
   // An unsaved scratch buffer has no on-disk copy, so it is always considered
   // dirty (closing it would lose the captured content) until saved via Save As.
@@ -443,6 +489,20 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
               Remote
             </span>
           )}
+          {writable === false && (
+            <span
+              className="file-editor__remote-badge file-editor__readonly-badge"
+              data-testid="file-editor-readonly-badge"
+              title={
+                meta.permissions
+                  ? `Read-only (${meta.permissions})`
+                  : "Read-only — you don't have write access to this file"
+              }
+            >
+              <Lock size={12} />
+              Read-only
+            </span>
+          )}
           {isUnsavedScratch && (
             <span className="file-editor__remote-badge" data-testid="file-editor-scratch-badge">
               <FileEdit size={12} />
@@ -467,6 +527,29 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
           {isUnsavedScratch ? "Save As..." : "Save"}
         </Button>
       </div>
+      {writable === false && !readonlyBannerDismissed && (
+        <div
+          className="file-editor__readonly-banner"
+          role="status"
+          data-testid="file-editor-readonly-banner"
+        >
+          <Lock size={14} />
+          <span className="file-editor__readonly-banner-text">
+            This file is read-only — you don&apos;t have permission to write to it. Saving directly
+            will fail; a read-only fallback (save a copy) will be offered in a later update.
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<X size={14} />}
+            onClick={() => setReadonlyBannerDismissed(true)}
+            title="Dismiss"
+            aria-label="Dismiss read-only notice"
+            data-testid="file-editor-readonly-banner-dismiss"
+          />
+        </div>
+      )}
       {saveError && (
         <div className="file-editor__save-error" role="alert" data-testid="file-editor-save-error">
           <AlertCircle size={14} />

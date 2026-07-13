@@ -174,3 +174,93 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
     expect(unlisten).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useSpawnRequests — kind discriminator (#1465)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    emit = undefined;
+    resolveContainerSpawn.mockReset();
+    resolveContainerSpawn.mockResolvedValue(SAMPLE_SPAWN);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  async function mountHook(): Promise<void> {
+    function Harness() {
+      useSpawnRequests();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  it("routes an explicit container kind to the resolver", async () => {
+    await mountHook();
+
+    await act(async () => {
+      emit!(containerRequest({ kind: "container" }));
+      await Promise.resolve();
+    });
+
+    expect(resolveContainerSpawn).toHaveBeenCalledWith("/home/user/app", "alpine:3", "/workspace");
+  });
+
+  it("ignores an explicit local/WSL/SSH kind even when container fields are present", async () => {
+    await mountHook();
+
+    // Container fields present but the authoritative kind says local → SI-2's
+    // job, not ours. The explicit discriminator wins over field presence.
+    await act(async () => {
+      emit!(containerRequest({ kind: "local" }));
+      await Promise.resolve();
+    });
+
+    expect(resolveContainerSpawn).not.toHaveBeenCalled();
+    expect(allTabs().some((t) => t.spawned)).toBe(false);
+  });
+
+  it("falls back to presence inference for an auto kind (container)", async () => {
+    await mountHook();
+
+    await act(async () => {
+      emit!(containerRequest({ kind: "auto" }));
+      await Promise.resolve();
+    });
+
+    expect(resolveContainerSpawn).toHaveBeenCalledWith("/home/user/app", "alpine:3", "/workspace");
+  });
+
+  it("falls back to presence inference for an auto kind (non-container)", async () => {
+    await mountHook();
+
+    await act(async () => {
+      emit!({ location: "/home/user/app", kind: "auto" });
+      await Promise.resolve();
+    });
+
+    expect(resolveContainerSpawn).not.toHaveBeenCalled();
+    expect(allTabs().some((t) => t.spawned)).toBe(false);
+  });
+
+  it("unsubscribes on unmount", async () => {
+    await mountHook();
+    act(() => root.unmount());
+    // Re-create the root so afterEach's unmount is a no-op.
+    root = createRoot(container);
+    expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+});

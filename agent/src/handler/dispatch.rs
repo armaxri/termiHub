@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use jsonrpsee::core::server::RpcModule;
@@ -371,7 +371,15 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 .await;
         }
 
-        let docker_available = detect_docker_available();
+        let docker_available = detect_docker_available().await;
+        // Only enumerate images when the daemon already answered the probe
+        // quickly — this keeps `initialize` from blocking on `docker images`
+        // when Docker is unresponsive.
+        let available_docker_images = if docker_available {
+            detect_docker_images()
+        } else {
+            Vec::new()
+        };
         let connection_types = session_manager.registry().available_types();
 
         Ok::<_, ErrorObjectOwned>(
@@ -384,7 +392,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                     available_shells: detect_available_shells(),
                     available_serial_ports: termihub_core::session::serial::list_serial_ports(),
                     docker_available,
-                    available_docker_images: detect_docker_images(),
+                    available_docker_images,
                     monitoring_supported: detect_monitoring_supported(),
                 },
             })
@@ -1299,14 +1307,68 @@ fn detect_available_shells() -> Vec<String> {
         .collect()
 }
 
-fn detect_docker_available() -> bool {
-    std::process::Command::new("docker")
-        .args(["info"])
+/// Default hard timeout for the Docker availability probe. Kept short so a
+/// hung or unresponsive Docker daemon cannot stall the `initialize` handler.
+const DOCKER_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Environment variable to override [`DOCKER_PROBE_TIMEOUT`] (milliseconds).
+const DOCKER_PROBE_TIMEOUT_ENV: &str = "TERMIHUB_DOCKER_PROBE_TIMEOUT_MS";
+
+/// Resolve the Docker probe timeout, honouring the env override when present.
+fn docker_probe_timeout() -> Duration {
+    std::env::var(DOCKER_PROBE_TIMEOUT_ENV)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(DOCKER_PROBE_TIMEOUT)
+}
+
+/// Probe whether Docker is usable by running `<program> info`.
+///
+/// The `program`/`timeout` seam keeps this injectable so tests can point at a
+/// shim binary without depending on a real Docker installation. Any spawn
+/// failure or non-zero exit reports "unavailable" — Docker container spawning
+/// is simply disabled, never a hard error that could fail `initialize`.
+async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(["info"])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        // Kill the probe child if this future is dropped (e.g. on timeout) so
+        // a hung `docker info` cannot linger.
+        .kill_on_drop(true);
+
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            debug!("docker availability probe: failed to spawn '{program}': {e}");
+            return false;
+        }
+    };
+
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => status.success(),
+        Ok(Err(e)) => {
+            debug!("docker availability probe: wait failed: {e}");
+            false
+        }
+        Err(_) => {
+            // Timed out — the Docker daemon is unresponsive. Kill the child and
+            // treat Docker as unavailable rather than blocking `initialize`.
+            let _ = child.start_kill();
+            warn!(
+                "docker availability probe timed out after {timeout:?}; treating Docker as unavailable"
+            );
+            false
+        }
+    }
+}
+
+/// Detect whether Docker is available, time-bounded so an unresponsive daemon
+/// cannot block agent `initialize`.
+async fn detect_docker_available() -> bool {
+    probe_docker_available("docker", docker_probe_timeout()).await
 }
 
 fn detect_docker_images() -> Vec<String> {
@@ -1339,6 +1401,65 @@ mod tests {
     use super::*;
     use crate::session::manager::SessionManager;
     use serde_json::json;
+
+    // ── Docker availability probe tests ────────────────────────────
+
+    /// Write an executable shim script under a unique temp path and return it.
+    #[cfg(unix)]
+    fn write_shim(body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path =
+            std::env::temp_dir().join(format!("termihub-docker-shim-{}.sh", uuid::Uuid::new_v4()));
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write shim");
+        let mut perms = std::fs::metadata(&path).expect("stat shim").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod shim");
+        path
+    }
+
+    /// A Docker binary that never responds must not stall the probe: it has to
+    /// return within the configured timeout and report "unavailable".
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_docker_available_times_out_on_hang() {
+        let shim = write_shim("sleep 30");
+        let start = Instant::now();
+        let available =
+            probe_docker_available(shim.to_str().unwrap(), Duration::from_millis(200)).await;
+        let elapsed = start.elapsed();
+
+        assert!(!available, "hanging docker binary must report unavailable");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "probe must be time-bounded, took {elapsed:?}"
+        );
+        let _ = std::fs::remove_file(&shim);
+    }
+
+    /// A responsive Docker binary that exits 0 reports "available" promptly.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_docker_available_reports_available_on_success() {
+        let shim = write_shim("exit 0");
+        let available =
+            probe_docker_available(shim.to_str().unwrap(), Duration::from_secs(2)).await;
+        assert!(available, "successful docker probe must report available");
+        let _ = std::fs::remove_file(&shim);
+    }
+
+    /// A missing Docker binary (spawn failure) reports "unavailable" promptly.
+    #[tokio::test]
+    async fn probe_docker_available_reports_unavailable_when_not_installed() {
+        let missing = format!("termihub-nonexistent-docker-{}", uuid::Uuid::new_v4());
+        let start = Instant::now();
+        let available = probe_docker_available(&missing, Duration::from_secs(2)).await;
+        assert!(!available, "missing docker binary must report unavailable");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "spawn failure must return promptly"
+        );
+    }
 
     // ── Test helpers ───────────────────────────────────────────────
 
