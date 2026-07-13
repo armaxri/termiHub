@@ -117,6 +117,48 @@ describe("appStore", () => {
     });
   });
 
+  describe("addTab with options object", () => {
+    it("applies contentType, sessionId and persistentConnectionId from the options object", () => {
+      const { addTab, activePanelId } = useAppStore.getState();
+      addTab(
+        "Persistent Shell",
+        "ssh",
+        { type: "ssh", config: { host: "pi.local" } },
+        {
+          contentType: "terminal",
+          sessionId: "session-abc",
+          persistentConnectionId: "conn-42",
+        }
+      );
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
+      expect(leaf.tabs).toHaveLength(1);
+      expect(leaf.tabs[0].contentType).toBe("terminal");
+      expect(leaf.tabs[0].sessionId).toBe("session-abc");
+      expect(leaf.tabs[0].persistentConnectionId).toBe("conn-42");
+    });
+
+    it("marks the tab spawned when options.spawned is true", () => {
+      const { addTab, activePanelId } = useAppStore.getState();
+      addTab("Spawned", "docker", { type: "docker", config: {} }, { spawned: true });
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
+      expect(leaf.tabs[0].spawned).toBe(true);
+    });
+
+    it("defaults spawned to falsy and sessionId to null when options are omitted", () => {
+      const { addTab, activePanelId } = useAppStore.getState();
+      addTab("Plain", "local");
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
+      expect(leaf.tabs[0].spawned).toBeFalsy();
+      expect(leaf.tabs[0].sessionId).toBeNull();
+    });
+  });
+
   describe("closeTab", () => {
     it("removes tab and selects next tab", () => {
       const { addTab } = useAppStore.getState();
