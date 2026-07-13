@@ -881,6 +881,28 @@ manual.
    `--container-image`. Confirm no tab opens (non-container spawns are SI-2; the
    request is ignored, logged in the LogViewer under `frontend::spawn`).
 
+### Spawned container grouping survives tab close (#1466)
+
+See PR #1495. The spawned origin is now recorded on the backend session
+registry (`SessionInfo.spawned` → `LocalSessionInfo.spawned`), not only on the
+frontend tab, so the **Open Connections** panel groups **Spawned Containers**
+from the authoritative backend marker. This keeps an orphaned spawned container
+(tab closed, backend session leaked) visible and killable in its own section
+instead of silently falling back into **Local Sessions**. Requires Docker/Podman.
+
+1. Spawn a container (CLI `termiHub spawn --location <dir>` / context-menu "new
+   container", or any flow that opens a spawned Docker tab). Confirm the tab
+   carries the **Spawned** badge.
+2. Open **Open Connections** (Settings wheel → Open Connections). Confirm the
+   container appears under **Spawned Containers** (not **Local Sessions**), with a
+   `spawned` badge, and is not double-listed.
+3. **Close the spawned tab** but leave the container's backend session running
+   (e.g. the container keeps running / the session leaks). Re-open **Open
+   Connections**.
+4. Confirm the container is **still listed under Spawned Containers** — it must
+   NOT have moved into **Local Sessions** — and that its **Kill** button (and the
+   section **Kill All**) still terminates it. After killing, the row disappears.
+
 ### Native-dialog → Modal migration (#1348)
 
 Verifies the three flows that previously used native `window.prompt` /
