@@ -131,7 +131,7 @@ export function TunnelSidebar() {
                 onDuplicate={handleDuplicate}
                 onDelete={handleDelete}
                 rowRef={ref}
-                rowProps={{ ...itemProps, role: "treeitem", "aria-level": 1 }}
+                rowProps={itemProps}
               />
             );
           })}

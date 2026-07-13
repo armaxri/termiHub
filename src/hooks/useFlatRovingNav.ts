@@ -13,6 +13,10 @@ export interface FlatRovingItemProps<E extends HTMLElement> {
   tabIndex: number;
   /** Sync the roving active index when the row gains DOM focus (Tab/click). */
   onFocus: () => void;
+  /** Tree row semantics — the list container carries `role="tree"`. */
+  role: "treeitem";
+  /** Flat list, so every row is a top-level tree node. */
+  "aria-level": number;
 }
 
 /** Public surface of {@link useFlatRovingNav}. */
@@ -75,6 +79,8 @@ export function useFlatRovingNav<T, E extends HTMLElement = HTMLElement>(
       ref: getRowRef(index),
       tabIndex: index === activeIndex ? 0 : -1,
       onFocus: () => setActiveIndex(index),
+      role: "treeitem",
+      "aria-level": 1,
     }),
     [getRowRef, activeIndex, setActiveIndex]
   );

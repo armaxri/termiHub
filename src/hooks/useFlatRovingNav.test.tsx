@@ -26,14 +26,7 @@ function Harness({ items, onActivate }: { items: Item[]; onActivate: (item: Item
       {items.map((item, index) => {
         const { ref, ...props } = nav.getItemProps(index);
         return (
-          <button
-            key={item.name}
-            ref={ref}
-            role="treeitem"
-            aria-level={1}
-            data-testid={`row-${item.name}`}
-            {...props}
-          >
+          <button key={item.name} ref={ref} data-testid={`row-${item.name}`} {...props}>
             {item.name}
           </button>
         );

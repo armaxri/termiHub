@@ -230,7 +230,7 @@ export function WorkspaceSidebar() {
                 onDelete={handleDelete}
                 launchDisabled={launchingWorkspaceId !== null}
                 rowRef={ref}
-                rowProps={{ ...itemProps, role: "treeitem", "aria-level": 1 }}
+                rowProps={itemProps}
               />
             );
           })}
