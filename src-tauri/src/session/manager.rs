@@ -136,6 +136,13 @@ pub struct SessionInfo {
     /// Set when the session is a remote proxy; identifies the agent it runs on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// `true` when the session was opened via the CLI/context-menu spawn path
+    /// (#1446, #1466) — a container with no saved connection id. Recorded on the
+    /// session itself so the Open Connections panel groups it under "Spawned
+    /// Containers" from this authoritative backend marker, surviving a tab close
+    /// (whereas the frontend `spawned` tab flag is lost once the tab is gone).
+    #[serde(default)]
+    pub spawned: bool,
 }
 
 /// Internal session entry held by the manager.
@@ -255,6 +262,10 @@ impl SessionManager {
     /// to the specified agent. Otherwise, creates a local connection from
     /// the registry.
     ///
+    /// `spawned` marks the session as opened via the CLI/context-menu spawn path
+    /// (#1446, #1466) so the Open Connections panel groups it under "Spawned
+    /// Containers" from this backend marker rather than the frontend tab flag.
+    ///
     /// Returns the session ID on success.
     pub async fn create_connection<E: EventEmitter>(
         &self,
@@ -262,6 +273,7 @@ impl SessionManager {
         settings: serde_json::Value,
         agent_id: Option<&str>,
         connect_id: Option<&str>,
+        spawned: bool,
         emitter: E,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
@@ -336,6 +348,7 @@ impl SessionManager {
             connection_type: type_id.to_string(),
             alive: true,
             agent_id: agent_id.map(|s| s.to_string()),
+            spawned,
         };
 
         // Store session.
@@ -836,7 +849,7 @@ impl SessionManager {
         }
 
         let session_id = self
-            .create_connection(type_id, settings, agent_id, None, emitter.clone())
+            .create_connection(type_id, settings, agent_id, None, false, emitter.clone())
             .await?;
 
         // Capture the agent-side remote session ID so that attach_persistent_tab
@@ -1042,6 +1055,7 @@ impl SessionManager {
                                     connection_type: "remote".to_string(),
                                     alive: true,
                                     agent_id: Some(agent_id),
+                                    spawned: false,
                                 },
                                 remote_session_id: Some(remote_sid),
                                 line_ending: LineEnding::default(),
@@ -1283,6 +1297,7 @@ impl SessionManager {
                     connection_type: "mock".to_string(),
                     alive: true,
                     agent_id: None,
+                    spawned: false,
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),
@@ -1499,6 +1514,7 @@ mod tests {
                     connection_type: "mock".to_string(),
                     alive: true,
                     agent_id: None,
+                    spawned: false,
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),
@@ -2196,6 +2212,7 @@ mod tests {
                     serde_json::json!({}),
                     None,
                     Some("c1"),
+                    false,
                     MockEventEmitter::new(),
                 )
                 .await

@@ -219,6 +219,13 @@ interface TerminalProps {
   initialCommand?: string;
   /** When set, closing this tab detaches from the persistent session instead of killing it. */
   persistentConnectionId?: string;
+  /**
+   * `true` when this tab was opened via the CLI/context-menu spawn path (#1446,
+   * #1466). Forwarded to the backend on connect so the spawned origin is
+   * recorded on the session registry — the source of truth the Open Connections
+   * panel groups "Spawned Containers" from, surviving this tab's close.
+   */
+  spawned?: boolean;
 }
 
 /**
@@ -233,6 +240,7 @@ export function Terminal({
   existingSessionId,
   initialCommand,
   persistentConnectionId,
+  spawned,
 }: TerminalProps) {
   const retryCount = useAppStore((s) => s.terminalRetryCounters[tabId] ?? 0);
   const terminalElRef = useRef<HTMLDivElement | null>(null);
@@ -467,7 +475,7 @@ export function Terminal({
               // attempt's token instead of its own (#1125).
               connectInFlightRef.current.add(connectId);
               try {
-                resolved = await createTerminal(sessionConfig, connectId);
+                resolved = await createTerminal(sessionConfig, connectId, spawned);
               } finally {
                 connectInFlightRef.current.delete(connectId);
               }
