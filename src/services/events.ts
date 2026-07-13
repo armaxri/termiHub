@@ -567,9 +567,19 @@ export async function onXServerProgress(
 }
 
 /**
+ * Explicit spawn-kind discriminator (#1465). Mirrors the Rust `SpawnKind`
+ * (snake_case wire tokens). Consumers branch on this authoritative field rather
+ * than inferring intent from which optional fields are set. Pre-#1465 payloads
+ * omit it and are treated as `"auto"`, resolved by falling back to
+ * presence-based inference.
+ */
+export type SpawnKind = "container" | "local" | "wsl" | "ssh" | "auto";
+
+/**
  * Payload of a `spawn-request` event (#1364). Emitted by the backend IPC
  * rendezvous when an external `termiHub spawn …` invocation reaches the running
- * instance. Fields mirror the Rust `SpawnRequest` (snake_case, all optional).
+ * instance. Fields mirror the Rust `SpawnRequest` (snake_case; all optional
+ * except `kind`, which defaults to `"auto"` on the wire).
  */
 export interface SpawnRequestPayload {
   /** Filesystem path (folder or file) the session should open at. */
@@ -586,6 +596,11 @@ export interface SpawnRequestPayload {
   container_image?: string;
   /** Mount target path inside the container. */
   container_mount?: string;
+  /**
+   * Explicit spawn-kind discriminator (#1465). Absent on pre-#1465 payloads,
+   * where it is treated as `"auto"` and resolved by presence-based inference.
+   */
+  kind?: SpawnKind;
 }
 
 /**
