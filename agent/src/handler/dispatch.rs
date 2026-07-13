@@ -1329,12 +1329,14 @@ fn docker_probe_timeout() -> Duration {
 /// shim binary without depending on a real Docker installation. Any spawn
 /// failure or non-zero exit reports "unavailable" — Docker container spawning
 /// is simply disabled, never a hard error that could fail `initialize`.
-async fn probe_docker_available(program: &str, _timeout: Duration) -> bool {
+async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(["info"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        // Kill the probe child if this future is dropped (e.g. on timeout) so
+        // a hung `docker info` cannot linger.
         .kill_on_drop(true);
 
     let mut child = match cmd.spawn() {
@@ -1345,10 +1347,19 @@ async fn probe_docker_available(program: &str, _timeout: Duration) -> bool {
         }
     };
 
-    match child.wait().await {
-        Ok(status) => status.success(),
-        Err(e) => {
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => status.success(),
+        Ok(Err(e)) => {
             debug!("docker availability probe: wait failed: {e}");
+            false
+        }
+        Err(_) => {
+            // Timed out — the Docker daemon is unresponsive. Kill the child and
+            // treat Docker as unavailable rather than blocking `initialize`.
+            let _ = child.start_kill();
+            warn!(
+                "docker availability probe timed out after {timeout:?}; treating Docker as unavailable"
+            );
             false
         }
     }
@@ -1398,10 +1409,8 @@ mod tests {
     fn write_shim(body: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = std::env::temp_dir().join(format!(
-            "termihub-docker-shim-{}.sh",
-            uuid::Uuid::new_v4()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("termihub-docker-shim-{}.sh", uuid::Uuid::new_v4()));
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write shim");
         let mut perms = std::fs::metadata(&path).expect("stat shim").permissions();
         perms.set_mode(0o755);
