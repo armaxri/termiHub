@@ -1,3 +1,4 @@
+import type React from "react";
 import { Play, Square, Pencil, Copy, Trash2, RotateCw, Info, AlertTriangle } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
@@ -23,6 +24,10 @@ interface TunnelListItemProps {
   onEdit: (tunnelId: string) => void;
   onDuplicate: (tunnelId: string) => void;
   onDelete: (tunnelId: string) => void;
+  /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
+  rowRef?: (el: HTMLDivElement | null) => void;
+  /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
+  rowProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
 /** Get the port mapping display string for a tunnel. */
@@ -69,6 +74,8 @@ export function TunnelListItem({
   onEdit,
   onDuplicate,
   onDelete,
+  rowRef,
+  rowProps,
 }: TunnelListItemProps) {
   const status = state?.status ?? "disconnected";
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
@@ -88,6 +95,8 @@ export function TunnelListItem({
 
   return (
     <SidebarListItem
+      ref={rowRef}
+      {...rowProps}
       testId={`tunnel-item-${tunnel.id}`}
       nameTestId={`tunnel-name-${tunnel.id}`}
       name={tunnel.name}

@@ -3,7 +3,8 @@ import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
-import type { TunnelStatus } from "@/types/tunnel";
+import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import { TunnelListItem } from "./TunnelListItem";
 import "./TunnelSidebar.css";
 
@@ -79,6 +80,16 @@ export function TunnelSidebar() {
 
   const cancelDelete = useCallback(() => setPendingDelete(null), []);
 
+  // Roving-tabindex keyboard navigation over the flat tunnel list, matching the
+  // Connections tree's arrow-key + Enter model. Enter edits the focused tunnel
+  // (the same action as double-click).
+  const handleActivate = useCallback((tunnel: TunnelConfig) => handleEdit(tunnel.id), [handleEdit]);
+  const nav = useFlatRovingNav<TunnelConfig, HTMLDivElement>(
+    tunnels,
+    (tunnel) => tunnel.name,
+    handleActivate
+  );
+
   return (
     <div className="tunnel-sidebar" data-testid="tunnel-sidebar">
       <div className="tunnel-sidebar__actions">
@@ -98,21 +109,32 @@ export function TunnelSidebar() {
           <span>Click &quot;+ New Tunnel&quot; to create one.</span>
         </div>
       ) : (
-        <div className="tunnel-sidebar__list" data-testid="tunnel-list">
-          {tunnels.map((tunnel) => (
-            <TunnelListItem
-              key={tunnel.id}
-              tunnel={tunnel}
-              state={tunnelStates[tunnel.id]}
-              connections={connections}
-              onStart={startTunnel}
-              onStop={stopTunnel}
-              onReconnect={reconnectTunnel}
-              onEdit={handleEdit}
-              onDuplicate={handleDuplicate}
-              onDelete={handleDelete}
-            />
-          ))}
+        <div
+          className="tunnel-sidebar__list"
+          data-testid="tunnel-list"
+          role="tree"
+          aria-label="SSH tunnels"
+          onKeyDown={nav.onKeyDown}
+        >
+          {tunnels.map((tunnel, index) => {
+            const { ref, ...itemProps } = nav.getItemProps(index);
+            return (
+              <TunnelListItem
+                key={tunnel.id}
+                tunnel={tunnel}
+                state={tunnelStates[tunnel.id]}
+                connections={connections}
+                onStart={startTunnel}
+                onStop={stopTunnel}
+                onReconnect={reconnectTunnel}
+                onEdit={handleEdit}
+                onDuplicate={handleDuplicate}
+                onDelete={handleDelete}
+                rowRef={ref}
+                rowProps={{ ...itemProps, role: "treeitem", "aria-level": 1 }}
+              />
+            );
+          })}
         </div>
       )}
       <ConfirmDeleteDialog
