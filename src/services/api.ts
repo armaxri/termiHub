@@ -42,18 +42,26 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
   return await invoke<ConnectionTypeInfo[]>("get_connection_types");
 }
 
-/** Create a new connection session (type-agnostic). */
+/**
+ * Create a new connection session (type-agnostic).
+ *
+ * `spawned` marks a CLI/context-menu spawn session (#1446, #1466) so the backend
+ * records it on the session registry — the source of truth the Open Connections
+ * panel groups "Spawned Containers" from, surviving a tab close.
+ */
 export async function createConnection(
   typeId: string,
   settings: Record<string, unknown>,
   agentId?: string,
-  connectId?: string
+  connectId?: string,
+  spawned?: boolean
 ): Promise<SessionId> {
   return await invoke<string>("create_connection", {
     typeId,
     settings,
     agentId: agentId ?? null,
     connectId: connectId ?? null,
+    spawned: spawned ?? false,
   });
 }
 
@@ -104,10 +112,16 @@ export async function cancelConnectionPathProbe(probeId: string): Promise<boolea
  * `${tabId}:${retryCount}`), not the bare tab id: overlapping retry/reconnect
  * attempts for the same tab must not share an id, or a stale attempt's cancel
  * would abort a newer in-flight connect (#1125).
+ *
+ * `spawned` marks a CLI/context-menu spawn session (#1446, #1466) so the backend
+ * records the spawned origin on the session registry (the Open Connections panel
+ * groups from it, surviving a tab close). Spawn sessions are never
+ * `remote-session`, so the flag only applies to the local path.
  */
 export async function createTerminal(
   config: ConnectionConfig,
-  connectId?: string
+  connectId?: string,
+  spawned?: boolean
 ): Promise<SessionId> {
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
@@ -117,7 +131,7 @@ export async function createTerminal(
     };
     return await createConnection(sessionType, rest, agentId, connectId);
   }
-  return await createConnection(config.type, config.config, undefined, connectId);
+  return await createConnection(config.type, config.config, undefined, connectId, spawned);
 }
 
 /**
@@ -274,6 +288,15 @@ export interface LocalSessionInfo {
   connectionType: string;
   alive: boolean;
   agentId?: string;
+  /**
+   * `true` when the session was opened via the CLI/context-menu spawn path
+   * (#1446, #1466) — a container with no saved connection id. This is the
+   * authoritative backend marker the Open Connections panel groups from, so a
+   * spawned container stays under "Spawned Containers" even after its owning
+   * tab (and the frontend-only `spawned` tab flag) is gone. Absent for
+   * sessions created before this field existed → treated as `false`.
+   */
+  spawned?: boolean;
 }
 
 /** List all active local sessions (includes remote proxy sessions). */

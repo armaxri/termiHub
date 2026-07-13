@@ -178,6 +178,7 @@ where
         settings,
         None,
         None,
+        false,
         app_handle.clone(),
     ))?;
 
