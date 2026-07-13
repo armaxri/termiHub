@@ -20,7 +20,7 @@
 
 use suppaftp::list::{File as FtpFile, PosixPexQuery};
 
-use crate::files::utils::{chrono_from_epoch, format_permissions};
+use crate::files::utils::{chrono_from_epoch, format_permissions, writable_from_permissions};
 use crate::files::FileEntry;
 
 /// Decode raw listing bytes as UTF-8, falling back to Latin-1 (ISO-8859-1).
@@ -94,6 +94,7 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         _ => return None,
     };
 
+    let writable = writable_from_permissions(&permissions);
     Some(FileEntry {
         name: name.to_string(),
         path: join_path(dir, name),
@@ -101,6 +102,7 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         size,
         modified,
         permissions: Some(permissions),
+        writable,
     })
 }
 
