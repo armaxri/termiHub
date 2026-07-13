@@ -26,8 +26,9 @@ use crate::network;
 use crate::protocol::errors;
 use crate::protocol::methods::{
     AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
-    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionTypesResult,
-    ConnectionUpdateParams, FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams,
+    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
+    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
+    FilesListParams, FilesListResult, FilesMkdirParams,
     FilesReadParams, FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams,
     FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
     InitializeParams, InitializeResult, MonitoringSubscribeParams, MonitoringUnsubscribeParams,
@@ -42,7 +43,9 @@ use crate::session::manager::{SessionCreateError, SessionManagerApi, MAX_SESSION
 /// The agent's protocol version.
 ///
 /// Bumped to 0.2.0 for the connection.* protocol migration (#360).
-const AGENT_PROTOCOL_VERSION: &str = "0.2.0";
+/// Bumped to 0.3.0 for the additive `agent.list_connections` RPC and the
+/// `client_id` field in the `initialize` result (#1349).
+const AGENT_PROTOCOL_VERSION: &str = "0.3.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -315,6 +318,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_health_check(module)?;
     register_agent_shutdown(module)?;
     register_agent_settings_update(module)?;
+    register_agent_list_connections(module)?;
     Ok(())
 }
 
@@ -342,22 +346,21 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             ));
         }
 
-        let (session_manager, connection_store, buffer_size) = {
+        let (session_manager, connection_store, buffer_size, client_id) = {
             let mut s = ctx.lock().await;
             s.initialized = true;
             s.agent_settings = p.agent_settings.clone();
             // Record the connected client (additive to the single-client
             // settings above). One entry per agent process in `--stdio` mode.
-            s.client_registry.register(
-                s.client_id.clone(),
-                p.client.clone(),
-                p.client_version.clone(),
-            );
+            let client_id = s.client_id.clone();
+            s.client_registry
+                .register(client_id.clone(), p.client.clone(), p.client_version.clone());
             let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
                 s.session_manager.clone(),
                 s.connection_store.clone(),
                 buffer_size,
+                client_id,
             )
         };
 
@@ -386,6 +389,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             serde_json::to_value(InitializeResult {
                 protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
                 agent_version: env!("CARGO_PKG_VERSION").to_string(),
+                client_id,
                 capabilities: Capabilities {
                     connection_types,
                     max_sessions: MAX_SESSIONS,
@@ -1267,6 +1271,47 @@ fn register_agent_settings_update(
     Ok(())
 }
 
+// ── agent.list_connections ─────────────────────────────────────────
+
+fn register_agent_list_connections(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method("agent.list_connections", |_params, ctx, _ext| async move {
+        // Read-only: snapshot the per-process client registry. Requires
+        // `initialize` first so the caller is already recorded.
+        let registry = {
+            let s = ctx.lock().await;
+            if !s.initialized {
+                return Err(not_initialized());
+            }
+            s.client_registry.clone()
+        };
+
+        // Full snapshot including the caller. Because of the per-process
+        // topology (one agent process per `--stdio` channel), in production
+        // this holds exactly the requesting desktop; the desktop-side update
+        // guard excludes its own `client_id` (from `initialize`) so a lone
+        // client is not mistaken for an "other host". A shared `--listen`
+        // process, or a future daemon-coordination layer, would surface the
+        // additional clients here.
+        let connections: Vec<ConnectionInfo> = registry
+            .list()
+            .into_iter()
+            .map(|c| ConnectionInfo {
+                client_id: c.client_id,
+                client: c.client,
+                client_version: c.client_version,
+                connected_since: c.connected_since.to_rfc3339(),
+            })
+            .collect();
+
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(ConnectionListResult { connections }).unwrap(),
+        )
+    })?;
+    Ok(())
+}
+
 // ── Capability detection ───────────────────────────────────────────
 
 /// Well-known shell paths to probe on the host system.
@@ -1609,6 +1654,61 @@ mod tests {
         );
     }
 
+    // ── agent.list_connections ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn initialize_returns_client_id() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        let client_id = result["result"]["client_id"].as_str();
+        assert!(
+            client_id.is_some_and(|id| !id.is_empty()),
+            "initialize must return a non-empty client_id, got {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_connections_reports_initialized_client() {
+        let handler = make_handler();
+        let init = dispatch(&handler, "initialize", init_params(), 1).await;
+        let own_id = init["result"]["client_id"].as_str().unwrap().to_string();
+
+        let result = dispatch(&handler, "agent.list_connections", json!({}), 2).await;
+        let conns = result["result"]["connections"]
+            .as_array()
+            .expect("connections should be an array");
+
+        assert_eq!(conns.len(), 1, "one client after initialize: {result}");
+        assert_eq!(conns[0]["client_id"].as_str(), Some(own_id.as_str()));
+        assert_eq!(conns[0]["client"].as_str(), Some("test"));
+        assert_eq!(conns[0]["client_version"].as_str(), Some("0.1.0"));
+        assert!(
+            conns[0]["connected_since"].as_str().is_some(),
+            "connected_since should be an ISO 8601 string"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_connections_requires_initialization() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "agent.list_connections", json!({}), 1).await;
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn list_connections_empty_after_disconnect() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+        handler.deregister_client();
+
+        let result = dispatch(&handler, "agent.list_connections", json!({}), 2).await;
+        let conns = result["result"]["connections"].as_array().unwrap();
+        assert!(
+            conns.is_empty(),
+            "registry must be empty once the client disconnects: {result}"
+        );
+    }
+
     // ── Not-initialized gate ───────────────────────────────────────
 
     #[tokio::test]
@@ -1622,6 +1722,7 @@ mod tests {
             "health.check",
             "connections.list",
             "connections.create",
+            "agent.list_connections",
         ] {
             let result = dispatch(&handler, method, json!({}), 1).await;
             assert_eq!(
