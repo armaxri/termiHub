@@ -814,6 +814,21 @@ that the desktop rejects a tampered binary before install. See PR #1350.
 4. Delete the tampered cache entry; the next deploy re-downloads, re-verifies,
    and succeeds.
 
+### Keyboard-shortcuts menu discoverability (#1353)
+
+Verifies the shortcuts reference is reachable from a visible menu and that
+Settings-menu rows show their accelerators. The menu item and accelerator
+rendering are covered by unit tests; this manual check confirms the accelerator
+strings render correctly per platform and reflect a user rebinding. See PR #1487.
+
+1. Open the Settings wheel menu in the Activity Bar.
+2. Confirm a **Keyboard Shortcuts** row appears with its accelerator on the
+   right (`Cmd+K Cmd+S` on macOS, `F1` on Windows/Linux), and the **Settings**
+   row shows `Cmd+,` / `Ctrl+,`.
+3. Click **Keyboard Shortcuts** → the keyboard-shortcuts overlay opens.
+4. In Settings, rebind "Open Settings" to a different combo, then reopen the
+   Settings menu → the Settings row accelerator reflects the new binding.
+
 ### Docker/Podman directory-mount container spawn — Podman variant (#1372)
 
 The Docker path is covered by the `docker_spawn` integration test
