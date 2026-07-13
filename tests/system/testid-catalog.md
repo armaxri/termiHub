@@ -391,6 +391,7 @@ Fixed strings — match exactly.
 | `settings-menu-import` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-open` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-open-connections` | `src/components/ActivityBar/ActivityBar.tsx` |
+| `settings-menu-shortcuts` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-updates` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-provide-x-server` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-restore-last-session` | `src/components/Settings/GeneralSettings.tsx` |
