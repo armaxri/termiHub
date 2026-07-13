@@ -4,7 +4,7 @@ use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
 use crate::connection::manager::ConnectionManager;
-use crate::files::sftp::{lock_session, SftpManager, Writability};
+use crate::files::sftp::{lock_session, ElevatedWriteResult, SftpManager, Writability};
 use crate::files::transfer::{self, TransferContext, TransferDirection, TransferRegistry};
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
@@ -357,6 +357,32 @@ pub async fn sftp_write_file_content(
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
         lock_session(&session)?.write_file_content(&remote_path, &content)
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+}
+
+/// Write a string to a remote file with `sudo`-elevated privileges (#1328).
+///
+/// Uploads the buffer to a termiHub-generated temp path via SFTP, then rewrites
+/// the destination in place via `sudo -S` over the exec channel with the
+/// password supplied on stdin. Returns a typed [`ElevatedWriteResult`]
+/// (`success` / `incorrectPassword` / `other`) rather than erroring on an
+/// authorization failure, so the caller can re-prompt. The temp file is always
+/// cleaned up, and the password is never logged.
+#[tauri::command]
+pub async fn sftp_write_file_content_elevated(
+    session_id: String,
+    remote_path: String,
+    content: String,
+    sudo_password: String,
+    manager: State<'_, SftpManager>,
+) -> Result<ElevatedWriteResult, TerminalError> {
+    // Do not log `sudo_password`.
+    debug!(session_id, remote_path, "SFTP elevated write");
+    let session = manager.get_session(&session_id)?;
+    tokio::task::spawn_blocking(move || {
+        lock_session(&session)?.write_file_content_elevated(&remote_path, &content, &sudo_password)
     })
     .await
     .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?

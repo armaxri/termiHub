@@ -795,6 +795,42 @@ export async function sftpWriteFileContent(
 }
 
 /**
+ * Outcome of a privilege-elevated (`sudo`) remote write.
+ *
+ * - `success` — the destination was rewritten with root privileges.
+ * - `incorrectPassword` — the sudo password was rejected; safe to re-prompt.
+ * - `other` — any other failure (sudo missing, not in sudoers, requiretty, a
+ *   write error), with a `message` suitable for display.
+ */
+export type ElevatedWriteResult =
+  | { kind: "success" }
+  | { kind: "incorrectPassword" }
+  | { kind: "other"; message: string };
+
+/**
+ * Write a string to a remote file with `sudo`-elevated privileges.
+ *
+ * Uploads the buffer to a temp path via SFTP, then rewrites the destination in
+ * place via `sudo -S` over the SSH exec channel (password on stdin). Returns a
+ * typed {@link ElevatedWriteResult} rather than throwing on an authorization
+ * failure, so the caller can re-prompt on `incorrectPassword`. The temp file is
+ * always cleaned up and the password is never logged on the backend.
+ */
+export async function sftpWriteFileContentElevated(
+  sessionId: string,
+  remotePath: string,
+  content: string,
+  sudoPassword: string
+): Promise<ElevatedWriteResult> {
+  return await invoke<ElevatedWriteResult>("sftp_write_file_content_elevated", {
+    sessionId,
+    remotePath,
+    content,
+    sudoPassword,
+  });
+}
+
+/**
  * Report whether the SFTP session's SSH connection can open an exec channel
  * (i.e. run remote commands such as `sudo`).
  *
