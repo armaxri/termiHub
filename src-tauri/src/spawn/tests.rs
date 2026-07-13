@@ -8,8 +8,8 @@
 use std::sync::{Arc, Mutex};
 
 use super::{
-    classify_command, parse_spawn_args, Command, SpawnEndpoint, SpawnHandler, SpawnRequest,
-    SpawnResponse, SpawnStatus,
+    classify_command, parse_spawn_args, Command, SpawnEndpoint, SpawnHandler, SpawnKind,
+    SpawnRequest, SpawnResponse, SpawnStatus,
 };
 use super::{ipc_client, ipc_server};
 
@@ -22,6 +22,7 @@ fn full_request() -> SpawnRequest {
         pick: true,
         container_image: Some("ubuntu:22.04".to_string()),
         container_mount: Some("/workspace".to_string()),
+        kind: SpawnKind::Container,
     }
 }
 
@@ -65,6 +66,56 @@ fn spawn_response_round_trip() {
     assert_eq!(back.message.as_deref(), Some("boom"));
 }
 
+// ── spawn-kind discriminator (#1465) ─────────────────────────────────────
+
+#[test]
+fn spawn_kind_serializes_snake_case() {
+    let cases = [
+        (SpawnKind::Container, "\"container\""),
+        (SpawnKind::Local, "\"local\""),
+        (SpawnKind::Wsl, "\"wsl\""),
+        (SpawnKind::Ssh, "\"ssh\""),
+        (SpawnKind::Auto, "\"auto\""),
+    ];
+    for (kind, wire) in cases {
+        assert_eq!(serde_json::to_string(&kind).expect("serialize"), wire);
+        let back: SpawnKind = serde_json::from_str(wire).expect("deserialize");
+        assert_eq!(back, kind);
+    }
+}
+
+#[test]
+fn spawn_kind_defaults_to_auto() {
+    assert_eq!(SpawnKind::default(), SpawnKind::Auto);
+}
+
+#[test]
+fn spawn_request_round_trips_kind() {
+    let req = SpawnRequest {
+        location: Some("/p".to_string()),
+        kind: SpawnKind::Container,
+        ..Default::default()
+    };
+    let json = serde_json::to_string(&req).expect("serialize");
+    assert!(
+        json.contains("\"kind\":\"container\""),
+        "kind on the wire: {json}"
+    );
+    let back: SpawnRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back.kind, SpawnKind::Container);
+    assert_eq!(req, back);
+}
+
+#[test]
+fn old_payload_without_kind_deserializes_to_auto() {
+    // Pre-#1465 payloads carry no `kind` field; serde default must fill Auto so
+    // downstream consumers can fall back to presence-based inference.
+    let back: SpawnRequest =
+        serde_json::from_str(r#"{"location":"/p","container_image":"img"}"#).expect("deserialize");
+    assert_eq!(back.kind, SpawnKind::Auto);
+    assert_eq!(back.container_image.as_deref(), Some("img"));
+}
+
 // ── CLI parsing ──────────────────────────────────────────────────────────
 
 fn to_args(parts: &[&str]) -> Vec<String> {
@@ -95,6 +146,48 @@ fn parse_spawn_args_full() {
     assert!(req.pick);
     assert_eq!(req.container_image.as_deref(), Some("img"));
     assert_eq!(req.container_mount.as_deref(), Some("/mnt"));
+    // Image/mount present → authoritatively a container spawn.
+    assert_eq!(req.kind, SpawnKind::Container);
+}
+
+#[test]
+fn parse_spawn_args_container_image_infers_container_kind() {
+    let req = parse_spawn_args(&to_args(&["--location", "/p", "--container-image", "img"]));
+    assert_eq!(req.kind, SpawnKind::Container);
+}
+
+#[test]
+fn parse_spawn_args_container_mount_only_infers_container_kind() {
+    let req = parse_spawn_args(&to_args(&["--container-mount", "/mnt"]));
+    assert_eq!(req.kind, SpawnKind::Container);
+}
+
+#[test]
+fn parse_spawn_args_location_only_defaults_to_auto() {
+    let req = parse_spawn_args(&to_args(&["--location", "/p"]));
+    assert_eq!(req.kind, SpawnKind::Auto);
+}
+
+#[test]
+fn parse_spawn_args_explicit_kind_flag() {
+    let req = parse_spawn_args(&to_args(&["--location", "/p", "--kind", "local"]));
+    assert_eq!(req.kind, SpawnKind::Local);
+
+    let req = parse_spawn_args(&to_args(&["--kind=ssh", "--location", "/p"]));
+    assert_eq!(req.kind, SpawnKind::Ssh);
+}
+
+#[test]
+fn parse_spawn_args_explicit_kind_wins_over_container_presence() {
+    // An explicit non-auto kind must not be overridden by presence inference.
+    let req = parse_spawn_args(&to_args(&["--kind", "local", "--container-image", "img"]));
+    assert_eq!(req.kind, SpawnKind::Local);
+}
+
+#[test]
+fn parse_spawn_args_unknown_kind_stays_auto() {
+    let req = parse_spawn_args(&to_args(&["--kind", "bogus", "--location", "/p"]));
+    assert_eq!(req.kind, SpawnKind::Auto);
 }
 
 #[test]
