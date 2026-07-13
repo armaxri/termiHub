@@ -56,7 +56,9 @@ import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBa
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
-import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
+import { useRovingListNav } from "@/hooks/useRovingListNav";
+import { AgentTreeFilter, filterAgentTree } from "@/utils/agentTreeSearch";
+import { computeAgentTreeNodes, type AgentVisibleNode } from "@/utils/computeAgentTreeNodes";
 import { AgentSetupDialog } from "./AgentSetupDialog";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
@@ -72,6 +74,35 @@ const STATE_DOT_CLASSES: Record<string, string> = {
   reconnecting: "agent-node__state-dot--reconnecting",
   disconnected: "agent-node__state-dot--disconnected",
 };
+
+/**
+ * Shared roving-tabindex / filter plumbing threaded through the agent tree so
+ * every row participates in keyboard navigation and search filtering (#1379),
+ * mirroring the Connections tree. Roving focus + type-ahead are driven by the
+ * shared {@link useRovingListNav} hook over the flattened visible node list.
+ */
+interface AgentTreeNavProps {
+  /** Active search filter, or `null` when no query is entered. */
+  filter: AgentTreeFilter | null;
+  /** Roving-tabindex active index into the flattened visible node list. */
+  activeIndex: number;
+  /** Flattened-list index of a node by id (`-1` when not currently visible). */
+  getNodeIndex: (id: string) => number;
+  /** Stable per-index ref callback wiring a row into the roving-nav hook. */
+  getRowRef: (index: number) => (el: HTMLButtonElement | null) => void;
+  /** Keyboard handler for a tree row, keyed by its node id. */
+  onTreeKeyDown: (event: React.KeyboardEvent, nodeId: string) => void;
+  /** Sync the roving active index when a row gains DOM focus. */
+  onRowFocus: (index: number) => void;
+  /** Toggle a folder's expansion (suppressed while a filter is active). */
+  onToggleFolder: (folderId: string) => void;
+}
+
+/** Roving-nav props needed by a leaf (definition) row. */
+type AgentItemNavProps = Pick<
+  AgentTreeNavProps,
+  "activeIndex" | "getNodeIndex" | "getRowRef" | "onTreeKeyDown" | "onRowFocus"
+>;
 
 /** Icon for a session/connection type string. */
 function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
@@ -91,7 +122,7 @@ function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
 
 // ── Agent connection item ────────────────────────────────────────────
 
-interface AgentConnectionItemProps {
+interface AgentConnectionItemProps extends AgentItemNavProps {
   agentId: string;
   definition: AgentDefinitionInfo;
   depth: number;
@@ -119,6 +150,11 @@ function AgentConnectionItem({
   onStartPersistent,
   onAttachPersistent,
   onStopPersistent,
+  activeIndex,
+  getNodeIndex,
+  getRowRef,
+  onTreeKeyDown,
+  onRowFocus,
 }: AgentConnectionItemProps) {
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
   const persistentEntry = useAppStore((s) => s.persistentSessions[`${agentId}:${definition.id}`]);
@@ -143,6 +179,18 @@ function AgentConnectionItem({
     },
   });
 
+  const rowIndex = getNodeIndex(definition.id);
+  const rowRef = getRowRef(rowIndex);
+  // Merge the draggable ref with the roving-nav row ref so the definition button
+  // is both draggable and a focusable roving-tabindex row.
+  const setRowNode = useCallback(
+    (el: HTMLButtonElement | null) => {
+      setDragRef(el);
+      rowRef(el);
+    },
+    [setDragRef, rowRef]
+  );
+
   let className = "connection-tree__item";
   if (isDragging) className += " connection-tree__item--dragging";
   if (isSelected) className += " connection-tree__item--selected";
@@ -164,7 +212,7 @@ function AgentConnectionItem({
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <button
-          ref={setDragRef}
+          ref={setRowNode}
           className={className}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onClick={(e) => onConnectionClick(definition.id, e)}
@@ -182,6 +230,12 @@ function AgentConnectionItem({
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
           {...attributes}
           {...listeners}
+          role="treeitem"
+          aria-level={depth}
+          aria-selected={isSelected}
+          tabIndex={rowIndex === activeIndex ? 0 : -1}
+          onKeyDown={(e) => onTreeKeyDown(e, definition.id)}
+          onFocus={() => onRowFocus(rowIndex)}
         >
           <ConnectionIcon
             config={{
@@ -332,7 +386,7 @@ function AgentConnectionItem({
 
 // ── Agent folder node (recursive) ───────────────────────────────────
 
-interface AgentFolderNodeProps {
+interface AgentFolderNodeProps extends AgentTreeNavProps {
   agentId: string;
   folder: AgentFolderInfo;
   allFolders: AgentFolderInfo[];
@@ -366,14 +420,23 @@ function AgentFolderNode({
   onStartPersistent,
   onAttachPersistent,
   onStopPersistent,
+  filter,
+  activeIndex,
+  getNodeIndex,
+  getRowRef,
+  onTreeKeyDown,
+  onRowFocus,
+  onToggleFolder,
 }: AgentFolderNodeProps) {
-  const toggleAgentFolder = useAppStore((s) => s.toggleAgentFolder);
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
   const deleteAgentFolder = useAppStore((s) => s.deleteAgentFolder);
 
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
 
-  const Chevron = folder.isExpanded ? ChevronDown : ChevronRight;
+  // Under an active filter, matched folders are force-expanded regardless of
+  // their stored state (auto-expand matches).
+  const expanded = filter ? filter.visibleFolderIds.has(folder.id) : folder.isExpanded;
+  const Chevron = expanded ? ChevronDown : ChevronRight;
 
   const childFolders = useMemo(
     () => allFolders.filter((f) => f.parentId === folder.id),
@@ -383,11 +446,28 @@ function AgentFolderNode({
     () => allDefinitions.filter((d) => d.folderId === folder.id),
     [allDefinitions, folder.id]
   );
+  const visibleChildFolders = filter
+    ? childFolders.filter((f) => filter.visibleFolderIds.has(f.id))
+    : childFolders;
+  const visibleChildDefinitions = filter
+    ? childDefinitions.filter((d) => filter.matchingDefinitionIds.has(d.id))
+    : childDefinitions;
 
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: `agent-folder:${agentId}:${folder.id}`,
     data: { type: "agent-folder", agentId, folderId: folder.id },
   });
+  const rowIndex = getNodeIndex(folder.id);
+  const rowRef = getRowRef(rowIndex);
+  // Merge the droppable ref with the roving-nav row ref so the folder button is
+  // both a drop target and a focusable roving-tabindex row.
+  const setRowNode = useCallback(
+    (el: HTMLButtonElement | null) => {
+      setDropRef(el);
+      rowRef(el);
+    },
+    [setDropRef, rowRef]
+  );
   const { active } = useDndContext();
   const isAgentConnectionOver =
     isOver &&
@@ -399,10 +479,16 @@ function AgentFolderNode({
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <button
-            ref={setDropRef}
+            ref={setRowNode}
             className={`connection-tree__folder${isAgentConnectionOver ? " connection-tree__folder--drop-over" : ""}`}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            onClick={() => toggleAgentFolder(agentId, folder.id)}
+            onClick={() => onToggleFolder(folder.id)}
+            role="treeitem"
+            aria-expanded={expanded}
+            aria-level={depth}
+            tabIndex={rowIndex === activeIndex ? 0 : -1}
+            onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
+            onFocus={() => onRowFocus(rowIndex)}
           >
             <Folder size={16} />
             <span className="connection-tree__label">{folder.name}</span>
@@ -437,8 +523,8 @@ function AgentFolderNode({
         </ContextMenu.Portal>
       </ContextMenu.Root>
 
-      {folder.isExpanded && (
-        <div className="connection-tree__children">
+      {expanded && (
+        <div className="connection-tree__children" role="group">
           {creatingSubfolder && (
             <InlineFolderInput
               depth={depth + 1}
@@ -449,7 +535,7 @@ function AgentFolderNode({
               onCancel={() => setCreatingSubfolder(false)}
             />
           )}
-          {childFolders.map((f) => (
+          {visibleChildFolders.map((f) => (
             <AgentFolderNode
               key={f.id}
               agentId={agentId}
@@ -467,9 +553,16 @@ function AgentFolderNode({
               onStartPersistent={onStartPersistent}
               onAttachPersistent={onAttachPersistent}
               onStopPersistent={onStopPersistent}
+              filter={filter}
+              activeIndex={activeIndex}
+              getNodeIndex={getNodeIndex}
+              getRowRef={getRowRef}
+              onTreeKeyDown={onTreeKeyDown}
+              onRowFocus={onRowFocus}
+              onToggleFolder={onToggleFolder}
             />
           ))}
-          {childDefinitions.map((def) => (
+          {visibleChildDefinitions.map((def) => (
             <AgentConnectionItem
               key={def.id}
               agentId={agentId}
@@ -484,6 +577,11 @@ function AgentFolderNode({
               onStartPersistent={onStartPersistent}
               onAttachPersistent={onAttachPersistent}
               onStopPersistent={onStopPersistent}
+              activeIndex={activeIndex}
+              getNodeIndex={getNodeIndex}
+              getRowRef={getRowRef}
+              onTreeKeyDown={onTreeKeyDown}
+              onRowFocus={onRowFocus}
             />
           ))}
         </div>
@@ -498,9 +596,19 @@ interface AgentRootDropZoneProps {
   agentId: string;
   children: ReactNode;
   onAreaClick?: (event: React.MouseEvent) => void;
+  /** Accessible label for the tree (the agent name). */
+  ariaLabel: string;
+  /** Roving-nav keyboard handler is per-row, but the tree owns the ARIA role. */
+  onKeyDown?: (event: React.KeyboardEvent) => void;
 }
 
-function AgentRootDropZone({ agentId, children, onAreaClick }: AgentRootDropZoneProps) {
+function AgentRootDropZone({
+  agentId,
+  children,
+  onAreaClick,
+  ariaLabel,
+  onKeyDown,
+}: AgentRootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `agent-root:${agentId}`,
     data: { type: "agent-root", agentId },
@@ -516,6 +624,9 @@ function AgentRootDropZone({ agentId, children, onAreaClick }: AgentRootDropZone
       ref={setNodeRef}
       className={`connection-list__tree${isAgentConnectionOver ? " connection-tree__root-drop--over" : ""}`}
       onClick={onAreaClick}
+      onKeyDown={onKeyDown}
+      role="tree"
+      aria-label={ariaLabel}
     >
       {children}
     </div>
@@ -528,9 +639,11 @@ interface AgentNodeProps {
   agent: RemoteAgentDefinition;
   style?: React.CSSProperties;
   sectionRef?: (el: HTMLDivElement | null) => void;
+  /** Active search query for the Remote Agents section (empty = no filter). */
+  filterQuery?: string;
 }
 
-export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
+export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentNodeProps) {
   const {
     attributes,
     listeners,
@@ -596,9 +709,33 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     [agentDefinitions]
   );
 
+  const toggleAgentFolder = useAppStore((s) => s.toggleAgentFolder);
+
+  // Live search filter over this agent's saved definitions (auto-expands
+  // matching folders). `null` when the query is empty. Sessions are live, not
+  // saved entries, so they are never filtered out.
+  const filter = useMemo(
+    () => filterAgentTree(filterQuery, agentFolders, agentDefinitions),
+    [filterQuery, agentFolders, agentDefinitions]
+  );
+
+  // Only a connected/reconnecting agent renders its tree, so the roving-nav
+  // node list is empty otherwise (keeps activeIndex clamped to nothing).
+  const treeActive = isConnected || isReconnecting;
+
+  // Flattened, in-order list of the interactive rows actually rendered — drives
+  // both roving-tabindex keyboard navigation and Shift+Click range selection.
+  const visibleNodes = useMemo(
+    () =>
+      treeActive
+        ? computeAgentTreeNodes(agentSessions, agentFolders, agentDefinitions, filter)
+        : [],
+    [treeActive, agentSessions, agentFolders, agentDefinitions, filter]
+  );
+
   const flatVisibleDefIds = useMemo(
-    () => computeFlatVisibleIds(rootFolders, rootDefinitions, agentFolders, agentDefinitions),
-    [rootFolders, rootDefinitions, agentFolders, agentDefinitions]
+    () => visibleNodes.filter((n) => n.kind === "definition").map((n) => n.id),
+    [visibleNodes]
   );
 
   const {
@@ -609,6 +746,45 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   } = useTreeSelection(flatVisibleDefIds);
 
   const allSelectedDefIds = useMemo(() => [...selectedDefIds], [selectedDefIds]);
+
+  // Flat-list index lookup by node id so each row can resolve its position in
+  // the roving-nav item array (`visibleNodes`) for tabindex and ref wiring.
+  const nodeIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    visibleNodes.forEach((node, index) => map.set(node.id, index));
+    return map;
+  }, [visibleNodes]);
+  const getNodeIndex = useCallback((id: string) => nodeIndexById.get(id) ?? -1, [nodeIndexById]);
+
+  // Type-ahead label for a node: a session's title, a definition's name, or a
+  // folder's name.
+  const folderNameById = useMemo(
+    () => new Map(agentFolders.map((f) => [f.id, f.name])),
+    [agentFolders]
+  );
+  const getNodeLabel = useCallback(
+    (node: AgentVisibleNode) => {
+      if (node.kind === "session") return node.session?.title ?? "";
+      if (node.kind === "definition") return node.definition?.name ?? "";
+      return folderNameById.get(node.id) ?? "";
+    },
+    [folderNameById]
+  );
+
+  const { activeIndex, setActiveIndex, getRowRef, focusRow, makeKeyDownHandler } = useRovingListNav<
+    AgentVisibleNode,
+    HTMLButtonElement
+  >(visibleNodes, getNodeLabel);
+
+  // While a search filter is active, folders are force-expanded by the render
+  // logic; suppress toggles so clearing the filter restores the prior state.
+  const handleToggleFolder = useCallback(
+    (folderId: string) => {
+      if (filter) return;
+      toggleAgentFolder(agent.id, folderId);
+    },
+    [filter, toggleAgentFolder, agent.id]
+  );
 
   useDndMonitor({
     onDragEnd(event) {
@@ -874,6 +1050,112 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     [agent.id, stopPersistentSession]
   );
 
+  // Activate a row: folders toggle, sessions attach, definitions open — shared
+  // by Enter (via the roving-nav handler) and Space (tree-specific handler).
+  const activateNode = useCallback(
+    (node: AgentVisibleNode) => {
+      if (node.kind === "folder") {
+        handleToggleFolder(node.id);
+      } else if (node.kind === "session" && node.session) {
+        handleAttachSession(node.session);
+      } else if (node.kind === "definition" && node.definition) {
+        // Persistent shells go through the persistent-session machinery so the
+        // sidebar dot reflects real state (matching the double-click path).
+        if (node.definition.persistent) handleAttachPersistent(agent.id, node.definition);
+        else handleOpenDefinition(node.definition);
+      }
+    },
+    [
+      handleToggleFolder,
+      handleAttachSession,
+      handleAttachPersistent,
+      handleOpenDefinition,
+      agent.id,
+    ]
+  );
+
+  // Shared roving-nav keydown handler (Up/Down, Home/End, Enter, type-ahead,
+  // Escape). Focus navigation does not mutate the multi-selection, so the
+  // selection callbacks are intentionally inert (mouse drives selection).
+  const rovingKeyDown = useMemo(
+    () =>
+      makeKeyDownHandler({
+        onActivate: activateNode,
+        onNavigateUp: () => {},
+        onRename: () => {},
+        onSelectAll: () => {},
+        onClearSelection: clearDefSelection,
+        getAnchorIndex: () => -1,
+        onSelectRange: () => {},
+        onSelectSingle: () => {},
+      }),
+    [makeKeyDownHandler, activateNode, clearDefSelection]
+  );
+
+  // Per-row keydown: tree-specific keys (expand/collapse, move to parent/child,
+  // Space to activate) are handled here; everything else delegates to the
+  // shared roving-nav handler.
+  const handleTreeKeyDown = useCallback(
+    (event: React.KeyboardEvent, nodeId: string) => {
+      const index = getNodeIndex(nodeId);
+      const node = visibleNodes[index];
+      if (!node) return;
+      switch (event.key) {
+        case "ArrowRight": {
+          if (node.kind !== "folder") return;
+          event.preventDefault();
+          if (!node.isExpanded && node.hasChildren) {
+            handleToggleFolder(node.id);
+          } else if (node.isExpanded) {
+            const child = visibleNodes[index + 1];
+            if (child && child.depth > node.depth) focusRow(index + 1);
+          }
+          return;
+        }
+        case "ArrowLeft": {
+          event.preventDefault();
+          if (node.kind === "folder" && node.isExpanded) {
+            handleToggleFolder(node.id);
+          } else if (node.parentId) {
+            const parentIndex = getNodeIndex(node.parentId);
+            if (parentIndex >= 0) focusRow(parentIndex);
+          }
+          return;
+        }
+        case " ": {
+          event.preventDefault();
+          activateNode(node);
+          return;
+        }
+        default:
+          rovingKeyDown(event);
+      }
+    },
+    [visibleNodes, getNodeIndex, focusRow, activateNode, rovingKeyDown, handleToggleFolder]
+  );
+
+  // Sync the roving active index when a row gains DOM focus (Tab, click).
+  const handleRowFocus = useCallback((index: number) => setActiveIndex(index), [setActiveIndex]);
+
+  // Root-level rows filtered to the active search (folders auto-expand matches).
+  const visibleRootFolders = filter
+    ? rootFolders.filter((f) => filter.visibleFolderIds.has(f.id))
+    : rootFolders;
+  const visibleRootDefinitions = filter
+    ? rootDefinitions.filter((d) => filter.matchingDefinitionIds.has(d.id))
+    : rootDefinitions;
+  const hasFilterMatches = visibleRootFolders.length + visibleRootDefinitions.length > 0;
+
+  const treeNav: AgentTreeNavProps = {
+    filter,
+    activeIndex,
+    getNodeIndex,
+    getRowRef,
+    onTreeKeyDown: handleTreeKeyDown,
+    onRowFocus: handleRowFocus,
+    onToggleFolder: handleToggleFolder,
+  };
+
   const hasContent =
     agentSessions.length > 0 || agentDefinitions.length > 0 || agentFolders.length > 0;
 
@@ -1132,7 +1414,11 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
       />
 
       {agent.isExpanded && (
-        <AgentRootDropZone agentId={agent.id} onAreaClick={handleTreeAreaClick}>
+        <AgentRootDropZone
+          agentId={agent.id}
+          onAreaClick={handleTreeAreaClick}
+          ariaLabel={`${agent.name} connections`}
+        >
           {isConnected || isReconnecting ? (
             <>
               {/* Reconnecting banner */}
@@ -1153,19 +1439,28 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                     <Zap size={12} />
                     Active Sessions
                   </div>
-                  {agentSessions.map((session) => (
-                    <button
-                      key={session.sessionId}
-                      className="connection-tree__item"
-                      style={{ paddingLeft: 32 }}
-                      onDoubleClick={() => handleAttachSession(session)}
-                      title={`${session.title} (${session.status})`}
-                    >
-                      <SessionTypeIcon type={session.type} />
-                      <span className="connection-tree__label">{session.title}</span>
-                      <span className="connection-tree__type">{session.status}</span>
-                    </button>
-                  ))}
+                  {agentSessions.map((session) => {
+                    const rowIndex = getNodeIndex(session.sessionId);
+                    return (
+                      <button
+                        key={session.sessionId}
+                        ref={getRowRef(rowIndex)}
+                        className="connection-tree__item"
+                        style={{ paddingLeft: 32 }}
+                        onDoubleClick={() => handleAttachSession(session)}
+                        title={`${session.title} (${session.status})`}
+                        role="treeitem"
+                        aria-level={1}
+                        tabIndex={rowIndex === activeIndex ? 0 : -1}
+                        onKeyDown={(e) => handleTreeKeyDown(e, session.sessionId)}
+                        onFocus={() => handleRowFocus(rowIndex)}
+                      >
+                        <SessionTypeIcon type={session.type} />
+                        <span className="connection-tree__label">{session.title}</span>
+                        <span className="connection-tree__type">{session.status}</span>
+                      </button>
+                    );
+                  })}
                 </>
               )}
 
@@ -1190,7 +1485,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
               )}
 
               {/* Root folders */}
-              {rootFolders.map((folder) => (
+              {visibleRootFolders.map((folder) => (
                 <AgentFolderNode
                   key={folder.id}
                   agentId={agent.id}
@@ -1208,11 +1503,12 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   onStartPersistent={handleStartPersistent}
                   onAttachPersistent={handleAttachPersistent}
                   onStopPersistent={handleStopPersistent}
+                  {...treeNav}
                 />
               ))}
 
               {/* Root connections (no folder) */}
-              {rootDefinitions.map((def) => (
+              {visibleRootDefinitions.map((def) => (
                 <AgentConnectionItem
                   key={def.id}
                   agentId={agent.id}
@@ -1227,11 +1523,23 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   onStartPersistent={handleStartPersistent}
                   onAttachPersistent={handleAttachPersistent}
                   onStopPersistent={handleStopPersistent}
+                  activeIndex={activeIndex}
+                  getNodeIndex={getNodeIndex}
+                  getRowRef={getRowRef}
+                  onTreeKeyDown={handleTreeKeyDown}
+                  onRowFocus={handleRowFocus}
                 />
               ))}
 
+              {/* No-match state while filtering */}
+              {filter && !hasFilterMatches && agentSessions.length === 0 && (
+                <p className="agent-node__hint" role="status" style={{ paddingLeft: 32 }}>
+                  No connections match “{filter.query}”.
+                </p>
+              )}
+
               {/* Empty state */}
-              {!hasContent && (
+              {!hasContent && !filter && (
                 <div className="agent-node__hint" style={{ paddingLeft: 32 }}>
                   No sessions. Right-click to create one.
                 </div>
