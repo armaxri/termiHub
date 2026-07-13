@@ -939,6 +939,8 @@ mod tests {
                     connection_id: Some("saved-a".to_string()),
                     visibility: ShellEntryVisibility::Always,
                     show_for: ShowForTargets::default(),
+                    container_image: Some("alpine:3".to_string()),
+                    container_mount: Some("/src".to_string()),
                 }],
                 fallback: ShellIntegrationFallback::SystemDefaultShell,
                 open_in_new_window: true,

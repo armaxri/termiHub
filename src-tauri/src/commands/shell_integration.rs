@@ -123,6 +123,8 @@ mod tests {
             connection_id: None,
             visibility: ShellEntryVisibility::Always,
             show_for: ShowForTargets::default(),
+            container_image: None,
+            container_mount: None,
         }
     }
 
