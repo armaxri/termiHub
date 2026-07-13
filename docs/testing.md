@@ -778,6 +778,41 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### FTP insecure-connection warning & editor behaviors (#1338)
+
+Verifies the plaintext-FTP warning modal, the schema-conditional editor fields,
+and the TLS-mode → port auto-adjust. See PR #1338.
+
+**Editor — conditional fields.**
+
+1. Create a new connection and set Type to **FTP**.
+2. With TLS Mode = **None**, confirm the inline **cleartext warning callout**
+   appears in the Security section.
+3. Switch TLS Mode to **Explicit** or **Implicit** → the warning callout
+   disappears.
+4. Toggle **Use anonymous login** on → Username and Password rows hide; toggle
+   it off → they reappear.
+
+**Editor — port auto-adjust.**
+
+1. On a fresh FTP connection (Port shows 21), switch TLS Mode to **Implicit** →
+   Port becomes **990**. Switch back to **None**/**Explicit** → Port becomes
+   **21**.
+2. Type a custom Port (e.g. **2121**), then switch TLS Mode → the custom port is
+   **preserved** (not overwritten).
+
+**Connect — insecure warning modal.**
+
+1. Save a plain-FTP connection (TLS Mode = None) and connect (double-click).
+   Before any connection is attempted, the **Insecure Connection** modal appears.
+2. Click **Cancel** → nothing connects.
+3. Connect again, then click **Connect Anyway** → the connection proceeds and no
+   flag is persisted (the modal reappears on the next connect).
+4. Connect again, tick **Don't warn again for this connection**, then **Connect
+   Anyway** → the connection proceeds. Reconnect → the modal is **not** shown.
+5. Connect an **FTPS** (explicit or implicit) connection → the modal is **never**
+   shown.
+
 ### Agent binary SHA-256 checksums (release dry-run, #1350)
 
 Verifies that every published agent binary has a matching `*.sha256` asset and
