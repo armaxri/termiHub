@@ -175,3 +175,202 @@ describe("Button", () => {
     expect(btn.getAttribute("aria-label")).toBe("Submit form");
   });
 });
+
+/**
+ * The native form-submit bridge (#1469): a `type="submit"` Button with an
+ * `onClick` locates its owning `<form>` and drives its own async lifecycle on
+ * native submission (Enter), so Enter and click share ONE code path and ONE
+ * gate — the Button's `disabled` prop. This generalises what `useSubmitButton`
+ * (#1414) did per-form into the primitive itself.
+ */
+describe("Button — native form submit bridge (#1469)", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  function deferred(): { promise: Promise<void>; resolve: () => void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  async function flush() {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  function q<T extends HTMLElement>(testId: string): T {
+    return container.querySelector<T>(`[data-testid="${testId}"]`)!;
+  }
+
+  async function mount(ui: React.ReactElement) {
+    await act(async () => {
+      root.render(ui);
+    });
+    await flush();
+  }
+
+  async function fireSubmit(formTestId: string) {
+    await act(async () => {
+      q<HTMLFormElement>(formTestId).dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+    });
+    await flush();
+  }
+
+  async function fireClick(buttonTestId: string) {
+    await act(async () => {
+      q<HTMLButtonElement>(buttonTestId).dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true })
+      );
+    });
+    await flush();
+  }
+
+  function isPending(button: HTMLButtonElement): boolean {
+    return (
+      button.classList.contains("ui-btn--pending") && button.getAttribute("aria-busy") === "true"
+    );
+  }
+
+  it("drives the async pending lifecycle when the enclosing form is submitted (Enter)", async () => {
+    const gate = deferred();
+    const action = vi.fn(() => gate.promise);
+    await mount(
+      <form data-testid="f">
+        <input />
+        <Button type="submit" onClick={action} pendingLabel="Working…" data-testid="b">
+          Go
+        </Button>
+      </form>
+    );
+
+    await fireSubmit("f");
+
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(isPending(q<HTMLButtonElement>("b"))).toBe(true);
+    gate.resolve();
+  });
+
+  it("drives the SAME pending lifecycle on a click", async () => {
+    const gate = deferred();
+    const action = vi.fn(() => gate.promise);
+    await mount(
+      <form data-testid="f">
+        <Button type="submit" onClick={action} pendingLabel="Working…" data-testid="b">
+          Go
+        </Button>
+      </form>
+    );
+
+    await fireClick("b");
+
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(isPending(q<HTMLButtonElement>("b"))).toBe(true);
+    gate.resolve();
+  });
+
+  it("does not double-run the action on click (native re-submit prevented)", async () => {
+    const action = vi.fn(() => Promise.resolve());
+    await mount(
+      <form data-testid="f">
+        <Button type="submit" onClick={action} data-testid="b">
+          Go
+        </Button>
+      </form>
+    );
+
+    await fireClick("b");
+    await flush();
+
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
+  it("gates BOTH Enter and click through the single disabled prop", async () => {
+    const action = vi.fn(() => Promise.resolve());
+    await mount(
+      <form data-testid="f">
+        <input />
+        <Button type="submit" disabled onClick={action} data-testid="b">
+          Go
+        </Button>
+      </form>
+    );
+
+    expect(q<HTMLButtonElement>("b").disabled).toBe(true);
+    await fireSubmit("f"); // Enter: bridge honours the disabled gate
+    await act(async () => q<HTMLButtonElement>("b").click()); // native click: no-op when disabled
+    await flush();
+
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it("honours the form= attribute for a Button rendered outside its form", async () => {
+    const gate = deferred();
+    const action = vi.fn(() => gate.promise);
+    await mount(
+      <>
+        <form id="ext-form" data-testid="f">
+          <input />
+        </form>
+        <Button type="submit" form="ext-form" onClick={action} data-testid="b">
+          Go
+        </Button>
+      </>
+    );
+
+    await fireSubmit("f");
+
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(isPending(q<HTMLButtonElement>("b"))).toBe(true);
+    gate.resolve();
+  });
+
+  it("leaves a submit Button WITHOUT onClick as a plain native control (no recursion)", async () => {
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    await mount(
+      <form data-testid="f" onSubmit={onSubmit}>
+        <input />
+        <Button type="submit" data-testid="b">
+          Go
+        </Button>
+      </form>
+    );
+
+    // Must neither recurse nor throw; the form's own onSubmit still fires exactly once.
+    await fireSubmit("f");
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-submit Button never intercepts form submission", async () => {
+    const action = vi.fn(() => Promise.resolve());
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    await mount(
+      <form data-testid="f" onSubmit={onSubmit}>
+        <input />
+        <Button onClick={action} data-testid="b">
+          Go
+        </Button>
+      </form>
+    );
+
+    await fireSubmit("f");
+    expect(action).not.toHaveBeenCalled();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});

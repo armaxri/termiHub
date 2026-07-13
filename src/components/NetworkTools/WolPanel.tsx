@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
 import { Button, Tooltip, toast, Modal, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useSubmitButton } from "@/hooks/useSubmitButton";
 import {
   networkWolSend,
   networkWolDevicesList,
@@ -88,9 +87,6 @@ export function WolPanel() {
     setSaveModalOpen(true);
   }, [canSend]);
 
-  // Enter and click share one gate and one async Button lifecycle (#1414).
-  const { formProps, submitProps } = useSubmitButton(canSend, handleSend);
-
   const handleConfirmSave = useCallback(async () => {
     const name = saveName.trim();
     if (!name || macError) return;
@@ -128,7 +124,7 @@ export function WolPanel() {
   );
 
   return (
-    <form className="network-panel" data-testid="wol-panel" {...formProps}>
+    <form className="network-panel" data-testid="wol-panel">
       <div className="network-panel__header">
         <span className="network-panel__title">Wake-on-LAN</span>
         <div className="network-panel__actions">
@@ -138,7 +134,9 @@ export function WolPanel() {
             icon={<Power size={14} />}
             pendingLabel="Sending…"
             errorToast={false}
-            {...submitProps}
+            type="submit"
+            disabled={!canSend}
+            onClick={handleSend}
             data-testid="wol-send"
           >
             Send

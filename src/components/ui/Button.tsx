@@ -88,6 +88,15 @@ function isPromise(value: unknown): value is Promise<unknown> {
  * spinner) → success (brief) → idle, or → idle on rejection with a default
  * `toast.error`. Fully backward compatible: a sync `onClick` runs unchanged and
  * never enters the lifecycle.
+ *
+ * Native form-submit bridge (#1469): a `type="submit"` Button that has an
+ * `onClick` locates its owning `<form>` (honouring the `form=` attribute, so it
+ * works even when rendered outside the form — e.g. a Modal footer) and drives
+ * the *same* async lifecycle on native submission. Pressing **Enter** in any
+ * field therefore shows the identical pending affordance a **click** does,
+ * through the single `disabled` gate — no per-form `preventDefault + action()`
+ * wiring required. A submit Button *without* an `onClick` stays a plain native
+ * submit control (its form's own `onSubmit` runs untouched).
  */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {
@@ -110,6 +119,20 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const [asyncState, setAsyncState] = useState<AsyncState>("idle");
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
+  const isSubmit = type === "submit";
+
+  // Internal handle to the DOM node, merged with the forwarded ref. The submit
+  // bridge below needs it to reach the owning <form> and to re-dispatch a native
+  // submission (Enter) through the button's own click.
+  const innerRef = useRef<HTMLButtonElement | null>(null);
+  const setRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      innerRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) (ref as React.MutableRefObject<HTMLButtonElement | null>).current = node;
+    },
+    [ref]
+  );
 
   useEffect(() => {
     mounted.current = true;
@@ -118,6 +141,35 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       if (successTimer.current) clearTimeout(successTimer.current);
     };
   }, []);
+
+  // Native form-submit bridge (#1469). Only a type="submit" Button with an
+  // onClick owns the bridge: without an onClick it stays a plain native submit
+  // control, and binding here would recurse via the node.click() below.
+  //
+  // Depend on onClick *presence*, not identity: the listener never reads the
+  // handler (it only re-dispatches a click, which routes through the live
+  // onClick prop), so re-attaching on every fresh inline-closure identity — i.e.
+  // per keystroke in a controlled form — would be pure churn.
+  const hasOnClick = !!onClick;
+  useEffect(() => {
+    if (!isSubmit || !hasOnClick) return;
+    const node = innerRef.current;
+    const form = node?.form;
+    if (!node || !form) return;
+
+    const handleFormSubmit = (event: Event) => {
+      // Never let the SPA perform a real (navigating) submission. Route the
+      // submit — including Enter from any field — through the button's own click
+      // so it drives the SAME idle→pending→success lifecycle a click does,
+      // gated by the button's disabled state (the single shared gate).
+      event.preventDefault();
+      if (node.disabled) return;
+      node.click();
+    };
+
+    form.addEventListener("submit", handleFormSubmit);
+    return () => form.removeEventListener("submit", handleFormSubmit);
+  }, [isSubmit, hasOnClick]);
 
   // Icon-only buttons carry no visible label, so an accessible name is
   // mandatory. Surface a misuse (no aria-label / aria-labelledby / title) in the
@@ -137,6 +189,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       if (!onClick || asyncState === "pending") return;
+
+      // A type="submit" Button drives its own lifecycle, so stop the native form
+      // submission a real click would ALSO trigger — which, together with the
+      // submit bridge, would run the action twice.
+      if (isSubmit) event.preventDefault();
 
       const result = onClick(event);
       if (!isPromise(result)) return; // sync path — behaves exactly as before
@@ -159,7 +216,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         }
       );
     },
-    [onClick, asyncState, errorToast]
+    [onClick, asyncState, errorToast, isSubmit]
   );
 
   const pending = asyncState === "pending";
@@ -180,7 +237,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
   return (
     <button
-      ref={ref}
+      ref={setRef}
       type={type ?? "button"}
       className={classes}
       onClick={handleClick}
