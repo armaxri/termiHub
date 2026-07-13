@@ -37,6 +37,13 @@ export interface EditorTabMeta {
   isRemote: boolean;
   sftpSessionId?: string;
   /**
+   * Unix permission string (e.g. `-rw-r--r--`) for a remote file, captured from
+   * the file-browser listing when the editor was opened. Surfaced in the
+   * read-only badge tooltip; `null`/absent when unknown (local files or a
+   * backend that does not report permissions). (#1325)
+   */
+  permissions?: string | null;
+  /**
    * When true, the editor is a "scratch" buffer seeded from in-memory content
    * ({@link scratchContent}) instead of being read from disk. Used e.g. to open
    * captured terminal output in an editor that is not yet saved to a file.

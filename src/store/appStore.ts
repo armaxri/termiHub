@@ -425,7 +425,12 @@ interface AppState {
   ) => void;
   httpMonitors: HttpMonitorState[];
   setHttpMonitors: (monitors: HttpMonitorState[]) => void;
-  openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
+  openEditorTab: (
+    filePath: string,
+    isRemote: boolean,
+    sftpSessionId?: string,
+    permissions?: string | null
+  ) => void;
   /**
    * Open a new "scratch" editor tab seeded with in-memory content that is not
    * backed by a file on disk (e.g. captured terminal output). The tab is
@@ -2202,7 +2207,7 @@ export const useAppStore = create<AppState>((set, get) => {
         return { rootPanel, activePanelId: targetPanelId };
       }),
 
-    openEditorTab: (filePath, isRemote, sftpSessionId) =>
+    openEditorTab: (filePath, isRemote, sftpSessionId, permissions) =>
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
@@ -2238,7 +2243,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
         const fileName = filePath.split("/").pop() ?? filePath;
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId };
+        const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId, permissions };
         const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
         newTab.editorMeta = editorMeta;
 

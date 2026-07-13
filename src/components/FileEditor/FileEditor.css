@@ -40,6 +40,16 @@
   border-radius: var(--radius-sm);
 }
 
+/*
+ * Read-only badge: shares the remote-badge box (see composed class list in the
+ * markup) and only recolors it to the warning token. Signals that the
+ * connecting user has no write access to the remote file. (issue 1325)
+ */
+.file-editor__readonly-badge {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
 .file-editor__filepath {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
@@ -84,6 +94,27 @@
 }
 
 .file-editor__save-error-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+ * Dismissible read-only notice banner. Mirrors the save-error banner structure
+ * but is warning-colored (informational, not a failure). Tokens only; the tint
+ * is derived from the warning token via color-mix rather than a raw rgba. (issue 1325)
+ */
+.file-editor__readonly-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background-color: color-mix(in srgb, var(--color-warning) 12%, var(--bg-secondary));
+  border-bottom: 1px solid var(--color-warning);
+  color: var(--color-warning);
+  font-size: var(--font-size-sm);
+}
+
+.file-editor__readonly-banner-text {
   flex: 1;
   min-width: 0;
 }

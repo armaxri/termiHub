@@ -197,6 +197,9 @@ Fixed strings — match exactly.
 | `file-browser-up` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-upload` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-readonly-badge` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-readonly-banner` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-readonly-banner-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-remote-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
@@ -393,6 +396,7 @@ Fixed strings — match exactly.
 | `settings-menu-import` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-open` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-open-connections` | `src/components/ActivityBar/ActivityBar.tsx` |
+| `settings-menu-shortcuts` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-menu-updates` | `src/components/ActivityBar/ActivityBar.tsx` |
 | `settings-provide-x-server` | `src/components/Settings/GeneralSettings.tsx` |
 | `settings-restore-last-session` | `src/components/Settings/GeneralSettings.tsx` |
