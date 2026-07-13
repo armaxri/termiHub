@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useSubmitButton } from "@/hooks/useSubmitButton";
 import {
   networkPingStart,
   networkPingStop,
@@ -147,9 +146,6 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     taskIdRef.current = null;
   }, []);
 
-  // Enter and click share one gate and one async Button lifecycle (#1414).
-  const { formProps, submitProps } = useSubmitButton(status !== "running" && canStart, handleStart);
-
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
@@ -168,7 +164,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const displayStats = stats ?? liveStats;
 
   return (
-    <form className="network-panel" data-testid="ping-panel" {...formProps}>
+    <form className="network-panel" data-testid="ping-panel">
       <div className="network-panel__header">
         <span className="network-panel__title">Ping</span>
         <div className="network-panel__actions">
@@ -191,7 +187,9 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
               icon={<Play size={14} />}
               pendingLabel="Starting…"
               errorToast={false}
-              {...submitProps}
+              type="submit"
+              disabled={!canStart}
+              onClick={handleStart}
               data-testid="ping-start"
             >
               Start

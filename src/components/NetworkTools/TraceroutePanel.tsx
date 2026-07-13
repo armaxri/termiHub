@@ -12,7 +12,6 @@ import type { TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useSubmitButton } from "@/hooks/useSubmitButton";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
 interface TraceroutePanelProps {
@@ -60,9 +59,6 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
     subscribe,
   });
 
-  // Enter and click share one gate and one async Button lifecycle (#1414).
-  const { formProps, submitProps } = useSubmitButton(status !== "running" && canRun, run);
-
   const columns = [
     { key: "hop", label: "Hop" },
     { key: "ip", label: "Host" },
@@ -90,7 +86,7 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
       : null;
 
   return (
-    <form className="network-panel" data-testid="traceroute-panel" {...formProps}>
+    <form className="network-panel" data-testid="traceroute-panel">
       <div className="network-panel__header">
         <span className="network-panel__title">Traceroute</span>
         <div className="network-panel__actions">
@@ -112,7 +108,9 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
               icon={<Play size={14} />}
               pendingLabel="Starting…"
               errorToast={false}
-              {...submitProps}
+              type="submit"
+              disabled={!canRun}
+              onClick={run}
               data-testid="traceroute-run"
             >
               Start
