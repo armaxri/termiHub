@@ -7,6 +7,21 @@ import { getPlatform } from "@/utils/platform";
 /** Sentinel Select value for the "show the session picker" (no fixed connection) choice. */
 const PICKER_VALUE = "__picker__";
 
+/**
+ * Built-in container spawn defaults, shown as placeholders so the user sees what
+ * a blank field falls back to. Mirror the Rust constants in
+ * `src-tauri/src/spawn/container.rs` (`DEFAULT_CONTAINER_IMAGE` /
+ * `DEFAULT_MOUNT_TARGET`).
+ */
+const DEFAULT_CONTAINER_IMAGE = "ubuntu:22.04";
+const DEFAULT_MOUNT_TARGET = "/workspace";
+
+/** Normalize a text input to `undefined` when blank so no empty string persists. */
+function emptyToUndefined(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
 interface ShellIntegrationEntryEditorProps {
   /** Whether the editor modal is open. */
   open: boolean;
@@ -55,7 +70,14 @@ export function ShellIntegrationEntryEditor({
 
   const handleSave = () => {
     if (nameError) return;
-    onSave({ ...draft, name: draft.name.trim() });
+    onSave({
+      ...draft,
+      name: draft.name.trim(),
+      // Persist blank container fields as omitted rather than empty strings so
+      // the entry round-trips to the same shape as one that never set them.
+      containerImage: emptyToUndefined(draft.containerImage ?? ""),
+      containerMount: emptyToUndefined(draft.containerMount ?? ""),
+    });
   };
 
   const setShowFor = (key: keyof ShellEntry["showFor"], value: boolean) =>
@@ -124,6 +146,37 @@ export function ShellIntegrationEntryEditor({
             data-testid="shell-integration-entry-visibility"
           />
         </Field>
+
+        <div
+          className="shell-integration-editor__group"
+          role="group"
+          aria-label="Container spawn defaults"
+        >
+          <span className="shell-integration-editor__group-label">Container spawn defaults</span>
+          <span className="shell-integration-editor__meta">
+            Used when this entry opens a new container. Leave blank to use the built-in defaults
+            (image {DEFAULT_CONTAINER_IMAGE}, mount {DEFAULT_MOUNT_TARGET}). An explicit
+            command-line image/mount always takes precedence.
+          </span>
+          <Field label="Container image" htmlFor="si-entry-container-image">
+            <Input
+              id="si-entry-container-image"
+              value={draft.containerImage ?? ""}
+              placeholder={DEFAULT_CONTAINER_IMAGE}
+              data-testid="shell-integration-entry-container-image"
+              onChange={(e) => setDraft((d) => ({ ...d, containerImage: e.target.value }))}
+            />
+          </Field>
+          <Field label="Mount target" htmlFor="si-entry-container-mount">
+            <Input
+              id="si-entry-container-mount"
+              value={draft.containerMount ?? ""}
+              placeholder={DEFAULT_MOUNT_TARGET}
+              data-testid="shell-integration-entry-container-mount"
+              onChange={(e) => setDraft((d) => ({ ...d, containerMount: e.target.value }))}
+            />
+          </Field>
+        </div>
 
         <div className="shell-integration-editor__group" role="group" aria-label="Show for">
           <span className="shell-integration-editor__group-label">Show for</span>

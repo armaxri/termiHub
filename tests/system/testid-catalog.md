@@ -413,6 +413,8 @@ Fixed strings — match exactly.
 | `shell-integration-banner-not-now` | `src/components/ShellIntegrationBanner/ShellIntegrationBanner.tsx` |
 | `shell-integration-entries-empty` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shell-integration-entry-connection` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-container-image` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-container-mount` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
 | `shell-integration-entry-editor` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
 | `shell-integration-entry-list` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shell-integration-entry-name` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |

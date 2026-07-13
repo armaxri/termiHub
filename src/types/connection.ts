@@ -294,6 +294,18 @@ export interface ShellEntry {
   visibility: ShellEntryVisibility;
   /** Which right-click targets this entry is registered for. */
   showFor: ShowForTargets;
+  /**
+   * Saved per-entry container-image preference (e.g. `"alpine:3"`). Used when
+   * this entry opens a "new container" spawn and no explicit `--container-image`
+   * is given, ahead of the built-in default. Omitted → no saved preference.
+   */
+  containerImage?: string;
+  /**
+   * Saved per-entry in-container mount-target preference (e.g. `"/src"`). Same
+   * priority as {@link containerImage}: honored for a container spawn when no
+   * explicit `--container-mount` is given.
+   */
+  containerMount?: string;
 }
 
 /** Linux per-file-manager install toggles (Linux-only in effect). */

@@ -63,6 +63,7 @@ export function useSpawnRequests(): void {
         try {
           const spawn = await resolveContainerSpawn(
             location,
+            req.entry_id,
             req.container_image,
             req.container_mount
           );

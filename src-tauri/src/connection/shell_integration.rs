@@ -66,6 +66,18 @@ pub struct ShellEntry {
     /// Which right-click targets this entry is registered for.
     #[serde(default)]
     pub show_for: ShowForTargets,
+    /// Saved per-entry container-image preference (e.g. `"alpine:3"`). When this
+    /// entry opens a "new container" spawn and no explicit `--container-image` is
+    /// given, this image is used before the built-in default. `None` → no saved
+    /// preference. Optional + `#[serde(default)]` so pre-#1447 `settings.json`
+    /// files round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_image: Option<String>,
+    /// Saved per-entry in-container mount-target preference (e.g. `"/src"`). Same
+    /// priority + forward-compat semantics as [`container_image`](Self::container_image):
+    /// honored for a container spawn when no explicit `--container-mount` is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_mount: Option<String>,
 }
 
 /// Fallback behaviour when no entry resolves a spawn request.
@@ -301,6 +313,8 @@ mod tests {
             connection_id: connection.map(str::to_string),
             visibility,
             show_for: ShowForTargets::default(),
+            container_image: None,
+            container_mount: None,
         }
     }
 
@@ -550,9 +564,12 @@ mod tests {
 
     #[test]
     fn settings_round_trip() {
+        let mut container_entry = entry("open", Some("saved-a"), ShellEntryVisibility::Always);
+        container_entry.container_image = Some("alpine:3".to_string());
+        container_entry.container_mount = Some("/src".to_string());
         let settings = ShellIntegrationSettings {
             entries: vec![
-                entry("open", Some("saved-a"), ShellEntryVisibility::Always),
+                container_entry,
                 entry("pick", None, ShellEntryVisibility::Extended),
             ],
             fallback: ShellIntegrationFallback::SystemDefaultShell,
@@ -584,7 +601,9 @@ mod tests {
 
     #[test]
     fn entry_defaults_applied_for_partial_json() {
-        // An entry with only id + name gets default visibility / show_for.
+        // An entry with only id + name gets default visibility / show_for, and no
+        // saved container preference — critical forward-compat: a pre-#1447
+        // settings.json entry (no container fields) deserializes with `None`.
         let json = r#"{"entries":[{"id":"e1","name":"Open in termiHub"}]}"#;
         let settings: ShellIntegrationSettings = serde_json::from_str(json).unwrap();
         assert_eq!(settings.entries.len(), 1);
@@ -594,6 +613,33 @@ mod tests {
         assert!(e.show_for.folders);
         assert!(!e.show_for.files);
         assert!(!e.show_for.folder_background);
+        assert!(e.container_image.is_none());
+        assert!(e.container_mount.is_none());
+    }
+
+    #[test]
+    fn entry_container_preference_round_trips_and_is_camel_case() {
+        // A saved per-entry container image/mount preference survives a JSON
+        // round-trip and serializes with camelCase keys.
+        let mut e = entry("open", Some("saved-a"), ShellEntryVisibility::Always);
+        e.container_image = Some("node:20".to_string());
+        e.container_mount = Some("/srv".to_string());
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("containerImage"), "json: {json}");
+        assert!(json.contains("containerMount"), "json: {json}");
+        let back: ShellEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.container_image.as_deref(), Some("node:20"));
+        assert_eq!(back.container_mount.as_deref(), Some("/srv"));
+    }
+
+    #[test]
+    fn entry_without_container_preference_omits_fields_in_json() {
+        // No saved preference → the keys are omitted entirely, so existing
+        // settings.json files keep their exact byte shape (skip_serializing_if).
+        let e = entry("open", Some("saved-a"), ShellEntryVisibility::Always);
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(!json.contains("containerImage"), "json: {json}");
+        assert!(!json.contains("containerMount"), "json: {json}");
     }
 
     #[test]

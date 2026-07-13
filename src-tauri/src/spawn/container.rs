@@ -50,10 +50,12 @@ pub fn resolve_container_image(explicit: Option<&str>, saved_pref: Option<&str>)
         .to_string()
 }
 
-/// Resolve the in-container mount target, defaulting to
-/// [`DEFAULT_MOUNT_TARGET`] when the request does not specify one.
-pub fn resolve_mount_target(explicit: Option<&str>) -> String {
+/// Resolve the in-container mount target in priority order: an explicit
+/// `--container-mount` value from the request, then a saved per-entry
+/// preference, then [`DEFAULT_MOUNT_TARGET`]. Blank values are ignored.
+pub fn resolve_mount_target(explicit: Option<&str>, saved_pref: Option<&str>) -> String {
     non_blank(explicit)
+        .or(non_blank(saved_pref))
         .unwrap_or(DEFAULT_MOUNT_TARGET)
         .to_string()
 }
@@ -93,11 +95,16 @@ pub fn build_spawn_docker_config(host_dir: &str, image: &str, mount: &str) -> Do
     }
 }
 
-/// Resolve a full [`ContainerSpawn`] from a spawn request and an optional saved
-/// per-entry image preference.
-pub fn build_container_spawn(req: &SpawnRequest, saved_image_pref: Option<&str>) -> ContainerSpawn {
+/// Resolve a full [`ContainerSpawn`] from a spawn request and the optional saved
+/// per-entry image / mount preferences. For each, the explicit request value
+/// wins, then the saved preference, then the built-in default.
+pub fn build_container_spawn(
+    req: &SpawnRequest,
+    saved_image_pref: Option<&str>,
+    saved_mount_pref: Option<&str>,
+) -> ContainerSpawn {
     let image = resolve_container_image(req.container_image.as_deref(), saved_image_pref);
-    let mount = resolve_mount_target(req.container_mount.as_deref());
+    let mount = resolve_mount_target(req.container_mount.as_deref(), saved_mount_pref);
     let host_dir = resolve_host_directory(req.location.as_deref().unwrap_or("."));
 
     let config = build_spawn_docker_config(&host_dir, &image, &mount);
@@ -164,13 +171,22 @@ mod tests {
 
     #[test]
     fn mount_defaults_to_workspace() {
-        assert_eq!(resolve_mount_target(None), DEFAULT_MOUNT_TARGET);
-        assert_eq!(resolve_mount_target(Some("  ")), DEFAULT_MOUNT_TARGET);
+        assert_eq!(resolve_mount_target(None, None), DEFAULT_MOUNT_TARGET);
+        assert_eq!(resolve_mount_target(Some("  "), None), DEFAULT_MOUNT_TARGET);
     }
 
     #[test]
     fn mount_honours_explicit_value() {
-        assert_eq!(resolve_mount_target(Some("/src")), "/src");
+        assert_eq!(resolve_mount_target(Some("/src"), None), "/src");
+    }
+
+    #[test]
+    fn mount_prefers_explicit_then_saved_then_default() {
+        // explicit > saved > default, mirroring image resolution.
+        assert_eq!(resolve_mount_target(Some("/src"), Some("/saved")), "/src");
+        assert_eq!(resolve_mount_target(None, Some("/saved")), "/saved");
+        assert_eq!(resolve_mount_target(Some("  "), Some("/saved")), "/saved");
+        assert_eq!(resolve_mount_target(None, None), DEFAULT_MOUNT_TARGET);
     }
 
     // ── host directory resolution ─────────────────────────────────────────
@@ -229,7 +245,7 @@ mod tests {
     #[test]
     fn build_container_spawn_defaults_mount_and_image() {
         let req = req_with(Some("/home/user/app"), None, None);
-        let spawn = build_container_spawn(&req, None);
+        let spawn = build_container_spawn(&req, None, None);
         assert!(spawn.spawned);
         assert!(spawn.title.contains("Spawned"), "title: {}", spawn.title);
         let vols = spawn
@@ -248,7 +264,7 @@ mod tests {
     #[test]
     fn build_container_spawn_honours_explicit_image_and_mount() {
         let req = req_with(Some("/data"), Some("node:20"), Some("/srv"));
-        let spawn = build_container_spawn(&req, None);
+        let spawn = build_container_spawn(&req, None, None);
         assert_eq!(spawn.settings["image"], "node:20");
         assert_eq!(spawn.settings["workingDirectory"], "/srv");
         let vols = spawn
@@ -261,11 +277,36 @@ mod tests {
     }
 
     #[test]
+    fn build_container_spawn_honours_saved_prefs_when_request_is_blank() {
+        // No explicit request image/mount → the saved per-entry preferences are
+        // used (the #1447 wiring), ahead of the built-in defaults.
+        let req = req_with(Some("/data"), None, None);
+        let spawn = build_container_spawn(&req, Some("saved:9"), Some("/saved"));
+        assert_eq!(spawn.settings["image"], "saved:9");
+        assert_eq!(spawn.settings["workingDirectory"], "/saved");
+        let vols = spawn
+            .settings
+            .get("volumes")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(vols[0]["containerPath"], "/saved");
+    }
+
+    #[test]
+    fn build_container_spawn_explicit_beats_saved_prefs() {
+        // Explicit request values win over the saved per-entry preferences.
+        let req = req_with(Some("/data"), Some("node:20"), Some("/srv"));
+        let spawn = build_container_spawn(&req, Some("saved:9"), Some("/saved"));
+        assert_eq!(spawn.settings["image"], "node:20");
+        assert_eq!(spawn.settings["workingDirectory"], "/srv");
+    }
+
+    #[test]
     fn build_container_spawn_settings_roundtrip_to_docker_config() {
         // The produced settings must parse back into a DockerConfig cleanly so
         // the Docker backend's `parse_docker_settings` accepts them verbatim.
         let req = req_with(Some("/proj"), Some("alpine"), Some("/workspace"));
-        let spawn = build_container_spawn(&req, None);
+        let spawn = build_container_spawn(&req, None, None);
         let parsed: DockerConfig =
             serde_json::from_value(spawn.settings).expect("settings parse as DockerConfig");
         assert_eq!(parsed.image, "alpine");
