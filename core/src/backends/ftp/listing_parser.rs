@@ -101,6 +101,8 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         size,
         modified,
         permissions: Some(permissions),
+        // Writability is derived only for the desktop SFTP browser (#1324).
+        writable: None,
     })
 }
 
