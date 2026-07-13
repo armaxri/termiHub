@@ -228,6 +228,7 @@ Fixed strings — match exactly.
 | `inline-folder-cancel` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-confirm` | `src/components/Sidebar/InlineFolderInput.tsx` |
 | `inline-folder-name-input` | `src/components/Sidebar/InlineFolderInput.tsx` |
+| `insecure-ftp-warning` | `src/components/Sidebar/ConnectionList.tsx` |
 | `jump-host-add-hop` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `jump-host-enabled` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
 | `jump-host-errors` | `src/components/ConnectionEditor/JumpHostSection.tsx` |
@@ -687,12 +688,8 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `server-dialog-proto-*` | `server-dialog-proto-${type}` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
 | `server-duplicate-*` | `server-duplicate-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-edit-*` | `server-edit-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-item-*` | `server-item-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-name-*` | `server-name-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-start-*` | `server-start-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-status-*` | `server-status-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-stop-*` | `server-stop-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-type-*` | `server-type-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `settings-nav-*` | `settings-nav-${cat.id}` | `src/components/Settings/SettingsNav.tsx` |
 | `shell-integration-entry-*` | `shell-integration-entry-${entry.id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shell-integration-entry-delete-*` | `shell-integration-entry-delete-${entry.id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
@@ -708,14 +705,10 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `tunnel-delete-*` | `tunnel-delete-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-duplicate-*` | `tunnel-duplicate-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-edit-*` | `tunnel-edit-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-item-*` | `tunnel-item-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-name-*` | `tunnel-name-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-reconnect-*` | `tunnel-reconnect-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-retry-*` | `tunnel-retry-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-start-*` | `tunnel-start-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-status-*` | `tunnel-status-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-stop-*` | `tunnel-stop-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-type-*` | `tunnel-type-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-view-error-*` | `tunnel-view-error-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `workspace-delete-*` | `workspace-delete-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-duplicate-*` | `workspace-duplicate-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
@@ -723,9 +716,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `workspace-group-chip-*` | `workspace-group-chip-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-group-close-*` | `workspace-group-close-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-group-rename-input-*` | `workspace-group-rename-input-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
-| `workspace-item-*` | `workspace-item-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-launch-*` | `workspace-launch-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
-| `workspace-name-*` | `workspace-name-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 
 ## Indirect test IDs
 

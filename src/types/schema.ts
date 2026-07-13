@@ -63,7 +63,11 @@ export type FieldType =
   | { type: "serialPort" }
   | { type: "filePath"; kind: FilePathKind }
   | { type: "keyValueList" }
-  | { type: "objectList"; fields: SettingsField[] };
+  | { type: "objectList"; fields: SettingsField[] }
+  | { type: "notice"; severity: NoticeSeverity };
+
+/** Visual severity of a display-only {@link FieldType} `notice` callout. */
+export type NoticeSeverity = "info" | "warning";
 
 /** Capabilities declared by a connection type backend. */
 export interface Capabilities {
