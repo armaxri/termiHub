@@ -1094,6 +1094,7 @@ requires explicit confirmation. Needs a **shared agent process** so a second
 desktop is visible to the first — run the agent in TCP `--listen` mode (the
 default SSH `--stdio` deployment gives each desktop its own process, so the
 guard correctly sees no other hosts and this warning never fires). See PR
+
 # 1349.
 
 Prerequisites: an agent binary reachable in `--listen` mode, and two termiHub
