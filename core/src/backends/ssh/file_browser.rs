@@ -259,3 +259,26 @@ impl FileBrowser for SftpFileBrowser {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::writable_hint;
+
+    #[test]
+    fn writable_hint_none_without_permissions() {
+        assert_eq!(writable_hint(None), None);
+    }
+
+    #[test]
+    fn writable_hint_true_when_any_class_writable() {
+        // Owner-only write (typical `rw-r--r--`) still counts as writable.
+        assert_eq!(writable_hint(Some("rw-r--r--")), Some(true));
+        assert_eq!(writable_hint(Some("rwxr-xr-x")), Some(true));
+    }
+
+    #[test]
+    fn writable_hint_false_when_no_class_writable() {
+        assert_eq!(writable_hint(Some("r--r--r--")), Some(false));
+        assert_eq!(writable_hint(Some("r-xr-xr-x")), Some(false));
+    }
+}
