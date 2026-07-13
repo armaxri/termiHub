@@ -239,6 +239,100 @@ describe("FileEditor — close while in error state (#971)", () => {
   });
 });
 
+describe("FileEditor — read-only badge + banner (#1325)", () => {
+  const REMOTE_RO_META: EditorTabMeta = {
+    filePath: "/etc/hosts",
+    isRemote: true,
+    sftpSessionId: "sftp-sess-1",
+    permissions: "-rw-r--r--",
+  };
+  const LOCAL_META: EditorTabMeta = {
+    filePath: "/tmp/local.txt",
+    isRemote: false,
+  };
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  function mockWritability(result: "writable" | "readOnly" | "unknown"): void {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
+      if (cmd === "local_read_file") return Promise.resolve("local body\n");
+      if (cmd === "sftp_check_writable") return Promise.resolve(result);
+      return Promise.resolve(undefined);
+    });
+  }
+
+  it("renders the badge + banner and shows the parsed permissions in the tooltip", async () => {
+    mockWritability("readOnly");
+    render(REMOTE_RO_META);
+    await flush();
+
+    const badge = query("file-editor-readonly-badge");
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute("title") ?? "").toContain("rw-r--r--");
+    expect(query("file-editor-readonly-banner")).not.toBeNull();
+  });
+
+  it("dismisses the banner while keeping the badge", async () => {
+    mockWritability("readOnly");
+    render(REMOTE_RO_META);
+    await flush();
+
+    expect(query("file-editor-readonly-banner")).not.toBeNull();
+    await act(async () => {
+      (query("file-editor-readonly-banner-dismiss") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(query("file-editor-readonly-banner")).toBeNull();
+    // The badge is a persistent state indicator and stays after dismissal.
+    expect(query("file-editor-readonly-badge")).not.toBeNull();
+  });
+
+  it("shows neither badge nor banner for a writable remote file", async () => {
+    mockWritability("writable");
+    render(REMOTE_RO_META);
+    await flush();
+
+    expect(query("file-editor-readonly-badge")).toBeNull();
+    expect(query("file-editor-readonly-banner")).toBeNull();
+  });
+
+  it("shows neither badge nor banner when writability is unknown", async () => {
+    mockWritability("unknown");
+    render(REMOTE_RO_META);
+    await flush();
+
+    expect(query("file-editor-readonly-badge")).toBeNull();
+    expect(query("file-editor-readonly-banner")).toBeNull();
+  });
+
+  it("does not probe writability for a local file and renders no badge/banner", async () => {
+    mockWritability("readOnly");
+    render(LOCAL_META);
+    await flush();
+
+    const probed = mockedInvoke.mock.calls.some(([cmd]) => cmd === "sftp_check_writable");
+    expect(probed).toBe(false);
+    expect(query("file-editor-readonly-badge")).toBeNull();
+    expect(query("file-editor-readonly-banner")).toBeNull();
+  });
+});
+
 describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

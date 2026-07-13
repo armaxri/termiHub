@@ -18,6 +18,7 @@ import {
   ConnectionFolder,
   ConnectionTypeInfo,
   FileEntry,
+  Writability,
   ExternalFileError,
   AppSettings,
   ShellIntegrationStatus,
@@ -804,6 +805,23 @@ export async function sftpWriteFileContent(
  */
 export async function sftpHasExecCapability(sessionId: string): Promise<boolean> {
   return await invoke<boolean>("sftp_has_exec_capability", { sessionId });
+}
+
+/**
+ * Probe whether the connecting user can actually open a specific remote file
+ * for writing, via a non-destructive SFTP write-open probe (issue #1324).
+ *
+ * Returns `"writable"` / `"readOnly"` / `"unknown"`; the probe never modifies
+ * the file. `"unknown"` means the check was inconclusive — the caller treats it
+ * as writable and attempts the save so a false negative never blocks editing.
+ * This catches the owner-mismatch case the cheap `FileEntry.writable` hint
+ * cannot detect.
+ */
+export async function sftpCheckWritable(
+  sessionId: string,
+  remotePath: string
+): Promise<Writability> {
+  return await invoke<Writability>("sftp_check_writable", { sessionId, remotePath });
 }
 
 // --- Session-based file browsing commands ---

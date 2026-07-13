@@ -1168,6 +1168,27 @@ incompatible = error/red, updating = accent/blue.
    amber `· M updates available` count shows and clicking the item opens the
    Connections sidebar.
 
+### File editor read-only badge + banner (#1325)
+
+Verifies a read-only remote (SFTP) file surfaces its state in the editor.
+Detection only — no elevated save is offered. See PR #1486 (#1325).
+
+1. On a remote (SSH/SFTP) connection, browse to a file the connecting user
+   **cannot** write (e.g. a root-owned `/etc/…` file, or `chmod 400`/`chown` a
+   file to another user). Right-click → **Edit** to open it in the editor.
+2. Confirm a **Read-only** lock badge appears in the toolbar next to the
+   **Remote** badge, and a warning-colored info banner appears above the editor
+   explaining the file is read-only. Hover the badge — the tooltip shows the
+   file's permission string (e.g. `-rw-r--r--`).
+3. Click the banner's dismiss (×) control → the banner disappears while the
+   Read-only badge **remains** (the badge is a persistent state indicator).
+4. Open a **writable** remote file (one you own with write permission) → neither
+   the badge nor the banner appears, and Save works as before.
+5. Open a **local** file → neither the badge nor the banner appears (no probe is
+   performed for local files).
+6. Toggle light/dark themes (Settings → Appearance) with a read-only file open →
+   the badge and banner stay legible in both themes.
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
