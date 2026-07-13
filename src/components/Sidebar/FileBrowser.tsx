@@ -943,7 +943,8 @@ export function FileBrowser() {
               .openEditorTab(
                 entry.path,
                 mode === "sftp",
-                mode === "sftp" ? (sftpSessionId ?? undefined) : undefined
+                mode === "sftp" ? (sftpSessionId ?? undefined) : undefined,
+                mode === "sftp" ? entry.permissions : undefined
               );
           }
           // session mode: file editing via editor not yet supported for agent sessions

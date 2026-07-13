@@ -6,13 +6,28 @@ import { resolveContainerSpawn } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 
 /**
- * Whether a spawn request targets a "new container" spawn (#1446). The CLI
- * container path (`termiHub spawn --location … --container-image …`) always
- * carries an image; a mount override alone also signals container intent. All
- * other spawns (local / WSL / SSH) are owned by SI-2 and ignored here.
+ * Whether a spawn request targets a "new container" spawn (#1446/#1465).
+ *
+ * The authoritative signal is the explicit `kind` discriminator: `"container"`
+ * is ours, and the SI-2-owned kinds (`"local"`/`"wsl"`/`"ssh"`) are not. Older
+ * payloads (and CLI invocations with no discriminating flags) carry `"auto"`
+ * (or no `kind`); for those we fall back to the legacy presence-based inference
+ * — a container iff a `container_image`/`container_mount` is set — so behaviour
+ * is byte-for-byte identical during the SI-2 transition.
  */
 function isContainerSpawn(req: SpawnRequestPayload): boolean {
-  return !!req.container_image?.trim() || !!req.container_mount?.trim();
+  switch (req.kind) {
+    case "container":
+      return true;
+    case "local":
+    case "wsl":
+    case "ssh":
+      return false;
+    case "auto":
+    case undefined:
+    default:
+      return !!req.container_image?.trim() || !!req.container_mount?.trim();
+  }
 }
 
 /**

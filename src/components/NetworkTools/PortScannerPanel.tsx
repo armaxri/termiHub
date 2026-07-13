@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
 import { Button, Modal, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useSubmitButton } from "@/hooks/useSubmitButton";
 import {
   networkPortScan,
   networkPortScanCancel,
@@ -110,10 +109,6 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     await run();
   }, [run]);
 
-  // Enter and click share one gate and one async Button lifecycle (#1414).
-  // handleRun re-checks and may open the large-scan confirmation instead.
-  const { formProps, submitProps } = useSubmitButton(status !== "running" && canRun, handleRun);
-
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results
   // can grow to tens of thousands of rows on a CIDR-range scan.
@@ -144,7 +139,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const liveOpen = useMemo(() => results.filter((r) => r.state === "open").length, [results]);
 
   return (
-    <form className="network-panel" data-testid="port-scanner-panel" {...formProps}>
+    <form className="network-panel" data-testid="port-scanner-panel">
       <div className="network-panel__header">
         <span className="network-panel__title">Port Scanner</span>
         <div className="network-panel__actions">
@@ -166,7 +161,9 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
               icon={<Play size={14} />}
               pendingLabel="Starting…"
               errorToast={false}
-              {...submitProps}
+              type="submit"
+              disabled={!canRun}
+              onClick={handleRun}
               data-testid="port-scanner-run"
             >
               Start

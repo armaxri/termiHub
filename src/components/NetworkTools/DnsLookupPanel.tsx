@@ -6,7 +6,6 @@ import type { DnsRecord, DnsRecordType, DnsResult } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
-import { useSubmitButton } from "@/hooks/useSubmitButton";
 import { frontendLog } from "@/utils/frontendLog";
 
 const RECORD_TYPES: DnsRecordType[] = [
@@ -96,9 +95,6 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
     cancelRef.current?.();
   }, []);
 
-  // Enter and click share one gate and one async Button lifecycle (#1414).
-  const { formProps, submitProps } = useSubmitButton(!hostnameError, handleRun);
-
   const columns = [
     { key: "recordType", label: "Type" },
     { key: "name", label: "Name" },
@@ -114,7 +110,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
   }));
 
   return (
-    <form className="network-panel" data-testid="dns-lookup-panel" {...formProps}>
+    <form className="network-panel" data-testid="dns-lookup-panel">
       <div className="network-panel__header">
         <span className="network-panel__title">DNS Lookup</span>
         <div className="network-panel__actions">
@@ -135,7 +131,9 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
             icon={<Play size={14} />}
             pendingLabel="Looking up…"
             errorToast={false}
-            {...submitProps}
+            type="submit"
+            disabled={!!hostnameError}
+            onClick={handleRun}
             data-testid="dns-run"
           >
             Run

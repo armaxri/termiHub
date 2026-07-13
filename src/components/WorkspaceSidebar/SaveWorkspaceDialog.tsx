@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent } from "react";
+import { useState, useCallback } from "react";
 import { Modal, Button, Input } from "@/components/ui";
 
 /** id linking the footer submit Button to the body <form> (they render in separate Modal regions). */
@@ -11,7 +11,7 @@ interface SaveWorkspaceDialogProps {
   tabGroupCount: number;
   /** Name of the currently active tab group (shown in "active only" label). */
   activeGroupName: string;
-  onSave: (name: string, scope: SaveWorkspaceScope, description?: string) => void;
+  onSave: (name: string, scope: SaveWorkspaceScope, description?: string) => void | Promise<void>;
   onCancel: () => void;
 }
 
@@ -27,20 +27,13 @@ export function SaveWorkspaceDialog({
 
   const showScopeSelector = tabGroupCount > 1;
 
-  const handleSave = useCallback(() => {
-    if (!name.trim()) return;
-    onSave(name.trim(), showScopeSelector ? scope : "all", description.trim() || undefined);
+  // The single action for both entry points. Returning onSave's promise lets the
+  // submit Button drive its async pending affordance on BOTH Enter and click
+  // (the Button's native-submit bridge); the empty-name gate is the disabled
+  // prop, so this never runs while invalid.
+  const handleSave = useCallback((): void | Promise<void> => {
+    return onSave(name.trim(), showScopeSelector ? scope : "all", description.trim() || undefined);
   }, [name, description, scope, showScopeSelector, onSave]);
-
-  // Enter from any field submits the form (the footer Save button is associated
-  // via the form= attribute); the empty-name guard lives in handleSave.
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      handleSave();
-    },
-    [handleSave]
-  );
 
   return (
     <Modal
@@ -58,6 +51,8 @@ export function SaveWorkspaceDialog({
             form={FORM_ID}
             variant="primary"
             disabled={!name.trim()}
+            onClick={handleSave}
+            errorToast={false}
             data-testid="save-workspace-confirm"
           >
             Save
@@ -65,12 +60,7 @@ export function SaveWorkspaceDialog({
         </>
       }
     >
-      <form
-        id={FORM_ID}
-        className="save-workspace-dialog__form"
-        onSubmit={handleSubmit}
-        data-testid="save-workspace-form"
-      >
+      <form id={FORM_ID} className="save-workspace-dialog__form" data-testid="save-workspace-form">
         <div className="save-workspace-dialog__field">
           <label htmlFor="ws-save-name">Name</label>
           <Input

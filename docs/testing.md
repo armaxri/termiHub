@@ -814,6 +814,21 @@ that the desktop rejects a tampered binary before install. See PR #1350.
 4. Delete the tampered cache entry; the next deploy re-downloads, re-verifies,
    and succeeds.
 
+### Keyboard-shortcuts menu discoverability (#1353)
+
+Verifies the shortcuts reference is reachable from a visible menu and that
+Settings-menu rows show their accelerators. The menu item and accelerator
+rendering are covered by unit tests; this manual check confirms the accelerator
+strings render correctly per platform and reflect a user rebinding. See PR #1487.
+
+1. Open the Settings wheel menu in the Activity Bar.
+2. Confirm a **Keyboard Shortcuts** row appears with its accelerator on the
+   right (`Cmd+K Cmd+S` on macOS, `F1` on Windows/Linux), and the **Settings**
+   row shows `Cmd+,` / `Ctrl+,`.
+3. Click **Keyboard Shortcuts** → the keyboard-shortcuts overlay opens.
+4. In Settings, rebind "Open Settings" to a different combo, then reopen the
+   Settings menu → the Settings row accelerator reflects the new binding.
+
 ### Docker/Podman directory-mount container spawn — Podman variant (#1372)
 
 The Docker path is covered by the `docker_spawn` integration test
@@ -1167,6 +1182,27 @@ incompatible = error/red, updating = accent/blue.
    `N agents` summary appears; when an agent has an update available, confirm the
    amber `· M updates available` count shows and clicking the item opens the
    Connections sidebar.
+
+### File editor read-only badge + banner (#1325)
+
+Verifies a read-only remote (SFTP) file surfaces its state in the editor.
+Detection only — no elevated save is offered. See PR #1486 (#1325).
+
+1. On a remote (SSH/SFTP) connection, browse to a file the connecting user
+   **cannot** write (e.g. a root-owned `/etc/…` file, or `chmod 400`/`chown` a
+   file to another user). Right-click → **Edit** to open it in the editor.
+2. Confirm a **Read-only** lock badge appears in the toolbar next to the
+   **Remote** badge, and a warning-colored info banner appears above the editor
+   explaining the file is read-only. Hover the badge — the tooltip shows the
+   file's permission string (e.g. `-rw-r--r--`).
+3. Click the banner's dismiss (×) control → the banner disappears while the
+   Read-only badge **remains** (the badge is a persistent state indicator).
+4. Open a **writable** remote file (one you own with write permission) → neither
+   the badge nor the banner appears, and Save works as before.
+5. Open a **local** file → neither the badge nor the banner appears (no probe is
+   performed for local files).
+6. Toggle light/dark themes (Settings → Appearance) with a read-only file open →
+   the badge and banner stay legible in both themes.
 
 ### Guided-Manual Tests in the Python Harness (preferred)
 

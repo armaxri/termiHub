@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent } from "react";
+import { useState, useCallback } from "react";
 import { Shield } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
@@ -149,17 +149,19 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     const targetMode = confirmSwitch;
 
     if (confirmSwitch === "master_password") {
-      if (!newPassword) {
-        setPasswordError("Password is required.");
-        return;
-      }
-      if (newPassword !== confirmPassword) {
-        setPasswordError("Passwords do not match.");
-        return;
-      }
-      if (newPassword.length < 8) {
-        setPasswordError("Password must be at least 8 characters.");
-        return;
+      // Reject (rather than return) on invalid input so the submit Button's async
+      // lifecycle returns to idle instead of flashing success; the inline
+      // passwordError is the feedback.
+      const validationError = !newPassword
+        ? "Password is required."
+        : newPassword !== confirmPassword
+          ? "Passwords do not match."
+          : newPassword.length < 8
+            ? "Password must be at least 8 characters."
+            : null;
+      if (validationError) {
+        setPasswordError(validationError);
+        throw new Error(validationError);
       }
     }
 
@@ -187,27 +189,28 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       const message = err instanceof Error ? err.message : String(err);
       setPasswordError(message);
       toast.error(`Failed to switch credential store: ${message}`);
+      throw err; // keep the async Button in its error path (no success flash)
     } finally {
       setSwitching(false);
     }
   }, [confirmSwitch, newPassword, confirmPassword, loadCredentialStoreStatus]);
 
   const handleChangePassword = useCallback(async () => {
-    if (!currentPasswordInput) {
-      setChangePasswordError("Current password is required.");
-      return;
-    }
-    if (!changeNewPassword) {
-      setChangePasswordError("New password is required.");
-      return;
-    }
-    if (changeNewPassword !== changeConfirmPassword) {
-      setChangePasswordError("Passwords do not match.");
-      return;
-    }
-    if (changeNewPassword.length < 8) {
-      setChangePasswordError("Password must be at least 8 characters.");
-      return;
+    // Reject (rather than return) on invalid input so the submit Button's async
+    // lifecycle returns to idle instead of flashing success; the wrong-password /
+    // validation feedback stays inline (no toast).
+    const validationError = !currentPasswordInput
+      ? "Current password is required."
+      : !changeNewPassword
+        ? "New password is required."
+        : changeNewPassword !== changeConfirmPassword
+          ? "Passwords do not match."
+          : changeNewPassword.length < 8
+            ? "Password must be at least 8 characters."
+            : null;
+    if (validationError) {
+      setChangePasswordError(validationError);
+      throw new Error(validationError);
     }
 
     try {
@@ -216,26 +219,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       toast.success("Master password changed");
     } catch (err) {
       setChangePasswordError(err instanceof Error ? err.message : String(err));
+      throw err; // keep the async Button in its error path (inline error, no toast)
     }
   }, [currentPasswordInput, changeNewPassword, changeConfirmPassword, resetChangePasswordDialog]);
-
-  // Enter from any field in the setup / change dialogs submits (their <form>
-  // wrappers); the validation lives in the confirm handlers.
-  const handleMasterPasswordSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      void handleConfirmSwitch();
-    },
-    [handleConfirmSwitch]
-  );
-
-  const handleChangePasswordSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      void handleChangePassword();
-    },
-    [handleChangePassword]
-  );
 
   /**
    * Opens the change-master-password dialog. changeMasterPassword requires an unlocked
@@ -292,11 +278,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           </div>
 
           {masterPasswordSetup && confirmSwitch === "master_password" && (
-            <form
-              className="settings-panel__inline-dialog"
-              data-testid="master-password-setup"
-              onSubmit={handleMasterPasswordSubmit}
-            >
+            <form className="settings-panel__inline-dialog" data-testid="master-password-setup">
               <h4 className="settings-panel__inline-dialog-title">Set Master Password</h4>
               <p className="settings-panel__inline-dialog-text">
                 Choose a strong password to encrypt your credentials.
@@ -325,9 +307,12 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   variant="primary"
                   size="sm"
                   disabled={switching}
+                  onClick={handleConfirmSwitch}
+                  errorToast={false}
+                  pendingLabel="Switching…"
                   data-testid="master-password-confirm-btn"
                 >
-                  {switching ? "Switching…" : "Confirm"}
+                  Confirm
                 </Button>
                 <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
                   Cancel
@@ -355,9 +340,11 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   size="sm"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
+                  errorToast={false}
+                  pendingLabel="Switching…"
                   data-testid="confirm-switch-confirm-btn"
                 >
-                  {switching ? "Switching…" : "Confirm"}
+                  Confirm
                 </Button>
                 <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
                   Cancel
@@ -422,7 +409,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 <form
                   className="settings-panel__inline-dialog"
                   data-testid="change-password-dialog"
-                  onSubmit={handleChangePasswordSubmit}
                 >
                   <h4 className="settings-panel__inline-dialog-title">Change Master Password</h4>
                   <PasswordInput
@@ -455,6 +441,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                       type="submit"
                       variant="primary"
                       size="sm"
+                      onClick={handleChangePassword}
+                      errorToast={false}
+                      pendingLabel="Changing…"
                       data-testid="change-master-password-confirm-btn"
                     >
                       Change

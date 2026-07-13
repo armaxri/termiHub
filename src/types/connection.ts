@@ -521,3 +521,14 @@ export interface FileEntry {
    */
   writable: boolean | null;
 }
+
+/**
+ * Authoritative writability of a specific remote file, decided by a
+ * non-destructive SFTP write-open probe (`sftp_check_writable`, #1324).
+ *
+ * - `"writable"` — the file could be opened for writing.
+ * - `"readOnly"` — the server denied the write-open with `PERMISSION_DENIED`.
+ * - `"unknown"` — the probe was inconclusive; callers treat it as writable and
+ *   attempt the save so a false negative never blocks editing.
+ */
+export type Writability = "writable" | "readOnly" | "unknown";

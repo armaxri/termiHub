@@ -1,3 +1,4 @@
+import type React from "react";
 import { Play, Loader2, Pencil, Copy, Trash2 } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
@@ -15,6 +16,10 @@ interface WorkspaceListItemProps {
    * launch (GAP G6, #1146).
    */
   launchDisabled?: boolean;
+  /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
+  rowRef?: (el: HTMLDivElement | null) => void;
+  /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
+  rowProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
 export function WorkspaceListItem({
@@ -24,9 +29,13 @@ export function WorkspaceListItem({
   onDuplicate,
   onDelete,
   launchDisabled = false,
+  rowRef,
+  rowProps,
 }: WorkspaceListItemProps) {
   return (
     <SidebarListItem
+      ref={rowRef}
+      {...rowProps}
       testId={`workspace-item-${workspace.id}`}
       nameTestId={`workspace-name-${workspace.id}`}
       name={workspace.name}
