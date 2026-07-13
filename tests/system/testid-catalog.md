@@ -517,6 +517,10 @@ Fixed strings — match exactly.
 | `unsaved-changes-just-close` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
 | `unsaved-changes-save-and-close` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
 | `unsaved-editor-close-dialog` | `src/components/Terminal/TabBar.tsx` |
+| `update-agent-cancel` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
+| `update-agent-confirm` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
+| `update-agent-dialog` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
+| `update-agent-other-hosts` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
 | `update-auto-check-off` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-auto-check-on` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-build-hash` | `src/components/Settings/UpdateSettings.tsx` |
