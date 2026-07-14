@@ -778,6 +778,30 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### Deferred agent update (apply on last disconnect) (#1352)
+
+Verifies that a deferred agent update never interrupts active sessions and
+applies strictly when the last session disconnects, and that "Apply Now" forces
+it. Requires a real remote agent (SSH) whose staged binary can be swapped — use
+a Unix agent host (the exec-replace is Unix-only). See PR #1352.
+
+1. **No interruption while busy.** Connect to a remote agent and open at least one
+   long-running session (e.g. `tail -f` or `top`). Stage/deploy a newer agent
+   binary and request a deferred update (or trigger the staged-update banner and
+   press **Apply Now**). Expect: the session keeps running uninterrupted, and the
+   banner/toast reports the update is deferred until the last session disconnects
+   (naming the active-session count).
+2. **Applies on last disconnect.** Close the session(s) one by one. Expect: nothing
+   happens until the **last** session closes; when it does, the agent swaps its
+   binary and re-execs (the connection drops).
+3. **New version on reconnect.** Reconnect to the agent. Expect: the agent version
+   badge reports the new version, and any persistent daemon sessions are recovered.
+4. **Apply Now when idle.** With a staged-update banner shown and no active
+   sessions on the agent, press **Apply Now**. Expect: the update applies
+   immediately, the connection drops, and reconnecting shows the new version.
+5. **Dismiss.** Press **Dismiss** on the banner. Expect: the banner hides for the
+   session and no update is requested.
+
 ### FTP insecure-connection warning & editor behaviors (#1338)
 
 Verifies the plaintext-FTP warning modal, the schema-conditional editor fields,
