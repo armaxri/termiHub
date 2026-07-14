@@ -333,6 +333,250 @@ describe("FileEditor — read-only badge + banner (#1325)", () => {
   });
 });
 
+describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
+  const REMOTE_RO_META: EditorTabMeta = {
+    filePath: "/etc/hosts",
+    isRemote: true,
+    sftpSessionId: "sftp-sess-1",
+    permissions: "-rw-r--r--",
+  };
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    // A host label so the dialog can name the target and derive a credential key.
+    useAppStore.setState({
+      sftpSessions: { "sftp-sess-1": { hostLabel: "pi@raspberrypi:22", owningTabId: TAB_ID } },
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  /** Query portalled (Radix) dialog content from the whole document. */
+  function docQuery(testId: string): HTMLElement | null {
+    return document.querySelector(`[data-testid="${testId}"]`);
+  }
+
+  function typeInto(el: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  /**
+   * Mock the backend for elevated flows. `elevatedResults` is consumed one entry
+   * per `sftp_write_file_content_elevated` call so a test can script
+   * incorrect→incorrect→success sequences.
+   */
+  function mockBackend(opts: {
+    readOnly?: boolean;
+    execCapable?: boolean;
+    elevatedResults?: unknown[];
+    storeStatus?: "unlocked" | "locked" | "unavailable";
+  }): { elevatedCalls: Array<Record<string, unknown>> } {
+    const { readOnly = true, execCapable = true, elevatedResults = [] } = opts;
+    const elevatedCalls: Array<Record<string, unknown>> = [];
+    const queue = [...elevatedResults];
+    mockedInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
+      if (cmd === "sftp_has_exec_capability") return Promise.resolve(execCapable);
+      if (cmd === "sftp_check_writable") return Promise.resolve(readOnly ? "readOnly" : "writable");
+      if (cmd === "sftp_write_file_content_elevated") {
+        elevatedCalls.push((args ?? {}) as Record<string, unknown>);
+        return Promise.resolve(queue.shift() ?? { kind: "success" });
+      }
+      if (cmd === "store_credential") return Promise.resolve(undefined);
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      return Promise.resolve(undefined);
+    });
+    return { elevatedCalls };
+  }
+
+  it("offers 'Edit with sudo' only when the file is read-only and exec-capable", async () => {
+    mockBackend({ readOnly: true, execCapable: true });
+    render(REMOTE_RO_META);
+    await flush();
+
+    expect(query("file-editor-edit-with-sudo")).not.toBeNull();
+    // The plain Save button is replaced by the sudo entry point.
+    expect(query("file-editor-save")).toBeNull();
+  });
+
+  it("does not offer 'Edit with sudo' when the connection is not exec-capable", async () => {
+    mockBackend({ readOnly: true, execCapable: false });
+    render(REMOTE_RO_META);
+    await flush();
+
+    expect(query("file-editor-edit-with-sudo")).toBeNull();
+    expect(query("file-editor-save")).not.toBeNull();
+  });
+
+  it("routes an authorized save through the elevated command and shows the sudo marker", async () => {
+    const { elevatedCalls } = mockBackend({
+      readOnly: true,
+      execCapable: true,
+      elevatedResults: [{ kind: "success" }],
+    });
+    render(REMOTE_RO_META);
+    await flush();
+
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // The sudo prompt appears; authorize it.
+    typeInto(docQuery("sudo-prompt-input") as HTMLInputElement, "sudo-pw");
+    await act(async () => {
+      (docQuery("sudo-prompt-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(elevatedCalls).toHaveLength(1);
+    expect(elevatedCalls[0].sudoPassword).toBe("sudo-pw");
+    // Success: buffer is clean and the persistent sudo marker is shown.
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+    expect(query("file-editor-sudo-badge")).not.toBeNull();
+  });
+
+  it("re-prompts on an incorrect password up to 3 times, then falls to the #969 banner", async () => {
+    const { elevatedCalls } = mockBackend({
+      readOnly: true,
+      execCapable: true,
+      elevatedResults: [
+        { kind: "incorrectPassword" },
+        { kind: "incorrectPassword" },
+        { kind: "incorrectPassword" },
+      ],
+    });
+    render(REMOTE_RO_META);
+    await flush();
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // Three wrong attempts.
+    for (let i = 0; i < 3; i++) {
+      typeInto(docQuery("sudo-prompt-input") as HTMLInputElement, `wrong-${i}`);
+      await act(async () => {
+        (docQuery("sudo-prompt-submit") as HTMLButtonElement).click();
+      });
+      await flush();
+    }
+
+    expect(elevatedCalls).toHaveLength(3);
+    // Dialog is dismissed and the #969 save-error banner is shown with the buffer intact.
+    expect(docQuery("sudo-prompt-dialog")).toBeNull();
+    expect(query("file-editor-save-error")).not.toBeNull();
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+  });
+
+  it("surfaces a non-password failure ('other') in the #969 banner with the buffer intact", async () => {
+    mockBackend({
+      readOnly: true,
+      execCapable: true,
+      elevatedResults: [{ kind: "other", message: "sudo: command not found" }],
+    });
+    render(REMOTE_RO_META);
+    await flush();
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+    typeInto(docQuery("sudo-prompt-input") as HTMLInputElement, "pw");
+    await act(async () => {
+      (docQuery("sudo-prompt-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const banner = query("file-editor-save-error");
+    expect(banner?.textContent ?? "").toMatch(/command not found/i);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+  });
+
+  it("caches the session password so a second elevated save does not re-prompt", async () => {
+    const { elevatedCalls } = mockBackend({
+      readOnly: true,
+      execCapable: true,
+      elevatedResults: [{ kind: "success" }, { kind: "success" }],
+    });
+    render(REMOTE_RO_META);
+    await flush();
+    editContent("127.0.0.1 localhost\nedit1\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+    typeInto(docQuery("sudo-prompt-input") as HTMLInputElement, "cached-pw");
+    await act(async () => {
+      (docQuery("sudo-prompt-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(elevatedCalls).toHaveLength(1);
+
+    // Edit again and save via the (now elevated) Save button — no dialog.
+    editContent("127.0.0.1 localhost\nedit2\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(docQuery("sudo-prompt-dialog")).toBeNull();
+    expect(elevatedCalls).toHaveLength(2);
+    expect(elevatedCalls[1].sudoPassword).toBe("cached-pw");
+  });
+
+  it("adds a 'Retry with sudo' action to the #969 banner after a failed direct save", async () => {
+    // Writability unknown → direct save attempted → permission denied → banner.
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "sftp_read_file_content") return Promise.resolve("body\n");
+      if (cmd === "sftp_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "sftp_check_writable") return Promise.resolve("unknown");
+      if (cmd === "sftp_write_file_content") return Promise.reject(new Error("permission denied"));
+      return Promise.resolve(undefined);
+    });
+    render(REMOTE_RO_META);
+    await flush();
+    editContent("body\nmore\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(query("file-editor-save-error")).not.toBeNull();
+    expect(query("file-editor-save-error-retry-sudo")).not.toBeNull();
+  });
+});
+
 describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
