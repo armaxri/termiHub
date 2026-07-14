@@ -34,6 +34,8 @@ DEFAULT_PROJECT = "termihub"
 #: Mirrors ``tests/docker/docker-compose.yml`` and ``dev-local-env.sh``.
 BASE_PORTS: dict[str, int] = {
     "TERMIHUB_TEST_SSH_PASSWORD_PORT": 2201,
+    "TERMIHUB_TEST_SSH_SUDO_PORT": 2212,
+    "TERMIHUB_TEST_SSH_NOSUDO_PORT": 2213,
     "TERMIHUB_TEST_SSH_LEGACY_PORT": 2202,
     "TERMIHUB_TEST_SSH_KEYS_PORT": 2203,
     "TERMIHUB_TEST_SSH_BASTION_PORT": 2204,
