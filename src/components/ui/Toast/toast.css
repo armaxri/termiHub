@@ -62,23 +62,42 @@
   color: var(--text-secondary);
 }
 
+/*
+ * sonner renders the close button as the toast's first child; `order` moves it
+ * to the visual end and `margin-left: auto` pins it to the top-right corner
+ * (align-items: flex-start), clear of the icon, message, and action button.
+ * Sizing/hover/focus mirror the shared modal close button (.ui-modal__close).
+ */
 .th-toast [data-close-button] {
+  order: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   margin-left: auto;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 .th-toast [data-close-button]:hover {
+  background: var(--bg-hover);
   color: var(--text-primary);
+}
+.th-toast [data-close-button]:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+.th-toast__close-icon {
+  width: 15px;
+  height: 15px;
 }
 
 /* ── Intent accents ─────────────────────────────────────────────────── */
