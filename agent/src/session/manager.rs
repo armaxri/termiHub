@@ -1282,6 +1282,37 @@ mod tests {
             }
         }
 
+        /// [`UpdateApplier`] that always fails, to exercise retain-on-failure.
+        struct FailingApplier {
+            attempts: Arc<StdMutex<Vec<PendingUpdate>>>,
+        }
+
+        impl UpdateApplier for FailingApplier {
+            fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+                self.attempts
+                    .lock()
+                    .expect("attempts lock")
+                    .push(pending.clone());
+                anyhow::bail!("simulated apply failure")
+            }
+        }
+
+        fn manager_with_failing_applier() -> (SessionManager, AppliedLog, tempfile::TempDir) {
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+            let attempts: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path,
+                Arc::new(FailingApplier {
+                    attempts: attempts.clone(),
+                }),
+            );
+            (mgr, attempts, tmp)
+        }
+
         type AppliedLog = Arc<StdMutex<Vec<PendingUpdate>>>;
 
         fn manager_with_recording_applier() -> (SessionManager, AppliedLog, tempfile::TempDir) {
@@ -1331,9 +1362,37 @@ mod tests {
 
             // Closing the last session applies it exactly once.
             mgr.close(&ids[1]).await;
-            let log = applied.lock().unwrap();
-            assert_eq!(log.len(), 1, "update applies exactly on last disconnect");
-            assert_eq!(log[0].binary_path, "/tmp/new-agent");
+            {
+                let log = applied.lock().unwrap();
+                assert_eq!(log.len(), 1, "update applies exactly on last disconnect");
+                assert_eq!(log[0].binary_path, "/tmp/new-agent");
+            }
+            // A successful apply clears the pending update.
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "successful apply on last disconnect clears pending_update"
+            );
+        }
+
+        #[tokio::test]
+        async fn failed_apply_on_last_disconnect_keeps_pending() {
+            // Retain-on-failure (#1401): if the apply fails on the last
+            // disconnect, the pending update is KEPT so a later cycle can retry.
+            let (mgr, attempts, _tmp) = manager_with_failing_applier();
+            mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/new-agent"))
+                .await;
+            let ids: Vec<String> = mgr.list().await.into_iter().map(|s| s.id).collect();
+
+            mgr.close(&ids[0]).await;
+
+            assert_eq!(attempts.lock().unwrap().len(), 1, "apply was attempted");
+            assert!(
+                mgr.pending_update_for_test().await.is_some(),
+                "a failed apply must keep pending_update for retry"
+            );
         }
 
         #[tokio::test]

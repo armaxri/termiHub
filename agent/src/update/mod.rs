@@ -310,13 +310,53 @@ fn now_rfc3339() -> String {
 mod tests {
     use super::*;
     use crate::protocol::messages::JsonRpcNotification;
+    use crate::session::manager::{SessionManager, SystemDaemonLauncher};
+    use crate::state::persistence::PendingUpdate;
+    use std::sync::Mutex as StdMutex;
     use tokio::sync::mpsc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const SHA256_OF_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
-    fn test_config(api_url: String, state_path: PathBuf, staging_dir: PathBuf) -> UpdateConfig {
+    /// [`UpdateApplier`] that records apply calls (returning success) instead of
+    /// swapping the binary + re-execing, so the auto-apply path can be tested
+    /// without replacing the test process.
+    struct RecordingApplier {
+        applied: Arc<StdMutex<Vec<PendingUpdate>>>,
+    }
+
+    impl UpdateApplier for RecordingApplier {
+        fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+            self.applied
+                .lock()
+                .expect("recording lock")
+                .push(pending.clone());
+            Ok(())
+        }
+    }
+
+    /// [`UpdateApplier`] that always fails, to exercise the retain-on-failure
+    /// path (the pending update must survive so a later cycle can retry).
+    struct FailingApplier {
+        attempts: Arc<StdMutex<Vec<PendingUpdate>>>,
+    }
+
+    impl UpdateApplier for FailingApplier {
+        fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+            self.attempts
+                .lock()
+                .expect("attempts lock")
+                .push(pending.clone());
+            anyhow::bail!("simulated apply failure")
+        }
+    }
+
+    fn test_config(
+        api_url: String,
+        staging_dir: PathBuf,
+        update_strategy: UpdateStrategy,
+    ) -> UpdateConfig {
         UpdateConfig {
             allow_self_update: true,
             check_interval: DEFAULT_CHECK_INTERVAL,
@@ -324,15 +364,76 @@ mod tests {
             current_version: "0.2.1".to_string(),
             asset_suffix: Some("linux-x64".to_string()),
             staging_dir,
-            state_path,
             user_agent: "termihub-agent/test".to_string(),
+            update_strategy,
         }
+    }
+
+    /// Build a session manager over an isolated `state.json` and injected
+    /// [`UpdateApplier`], so the self-update timer's state writes and apply calls
+    /// are observable without touching the real state or re-execing.
+    fn test_session_manager(
+        state_path: PathBuf,
+        applier: Arc<dyn UpdateApplier>,
+    ) -> Arc<SessionManager> {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let registry = Arc::new(crate::registry::build_registry());
+        Arc::new(SessionManager::with_test_deps(
+            tx,
+            registry,
+            Arc::new(SystemDaemonLauncher),
+            state_path,
+            applier,
+        ))
+    }
+
+    fn recording_manager(
+        state_path: PathBuf,
+    ) -> (Arc<SessionManager>, Arc<StdMutex<Vec<PendingUpdate>>>) {
+        let applied = Arc::new(StdMutex::new(Vec::new()));
+        let mgr = test_session_manager(
+            state_path,
+            Arc::new(RecordingApplier {
+                applied: applied.clone(),
+            }),
+        );
+        (mgr, applied)
     }
 
     fn try_recv(
         rx: &mut mpsc::UnboundedReceiver<JsonRpcNotification>,
     ) -> Option<JsonRpcNotification> {
         rx.try_recv().ok()
+    }
+
+    /// Mount a `releases/latest` response advertising v0.3.0 with a binary +
+    /// checksum asset served by the same mock server (SHA-256 of `b"abc"`).
+    async fn mount_update_release(server: &MockServer) {
+        let body = format!(
+            r#"{{"tag_name":"v0.3.0","assets":[
+                {{"name":"termihub-agent-linux-x64","browser_download_url":"{base}/bin"}},
+                {{"name":"termihub-agent-linux-x64.sha256","browser_download_url":"{base}/bin.sha256"}}
+            ]}}"#,
+            base = server.uri()
+        );
+        Mock::given(method("GET"))
+            .and(path("/releases/latest"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/bin"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"abc".to_vec()))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/bin.sha256"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n")),
+            )
+            .mount(server)
+            .await;
     }
 
     #[tokio::test]
@@ -342,9 +443,10 @@ mod tests {
         let state_path = tmp.path().join("state.json");
         let config = test_config(
             "http://127.0.0.1:1/repos/x/y/releases/latest".to_string(),
-            state_path.clone(),
             tmp.path().join("updates"),
+            UpdateStrategy::Immediate,
         );
+        let (mgr, applied) = recording_manager(state_path.clone());
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(500))
             .build()
@@ -352,10 +454,11 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         // Must not error despite the network being unreachable.
-        run_check_once(&config, &client, 0, &tx).await.unwrap();
+        run_check_once(&config, &client, &mgr, &tx).await.unwrap();
 
-        // No notification emitted, but the attempt was recorded.
+        // No notification emitted, but the attempt was recorded and nothing applied.
         assert!(try_recv(&mut rx).is_none());
+        assert!(applied.lock().unwrap().is_empty());
         let state = AgentState::load_from(&state_path);
         assert!(state.update.last_check_time.is_some());
         assert!(state.update.pending_update.is_none());
@@ -375,16 +478,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = test_config(
             format!("{}/releases/latest", server.uri()),
-            tmp.path().join("state.json"),
             tmp.path().join("updates"),
+            UpdateStrategy::Immediate,
         );
+        let (mgr, _applied) = recording_manager(tmp.path().join("state.json"));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        run_check_once(&config, &reqwest::Client::new(), 0, &tx)
+        run_check_once(&config, &reqwest::Client::new(), &mgr, &tx)
             .await
             .unwrap();
 
-        assert!(try_recv(&mut rx).is_none(), "no update → no notification");
+        assert!(try_recv(&mut rx).is_none(), "no update -> no notification");
     }
 
     #[tokio::test]
@@ -404,13 +508,20 @@ mod tests {
         let state_path = tmp.path().join("state.json");
         let config = test_config(
             format!("{}/releases/latest", server.uri()),
-            state_path.clone(),
             tmp.path().join("updates"),
+            UpdateStrategy::Immediate,
         );
+        let (mgr, applied) = recording_manager(state_path.clone());
+        // Two active sessions -> notify only, never download or apply.
+        mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+            .await
+            .unwrap();
+        mgr.create_stub_session("stub", "B".to_string(), serde_json::json!({}))
+            .await
+            .unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        // 2 active sessions → notify only, never download.
-        run_check_once(&config, &reqwest::Client::new(), 2, &tx)
+        run_check_once(&config, &reqwest::Client::new(), &mgr, &tx)
             .await
             .unwrap();
 
@@ -418,70 +529,137 @@ mod tests {
         assert_eq!(notif.method, AGENT_UPDATE_AVAILABLE);
         assert_eq!(notif.params["availableVersion"], "0.3.0");
         assert_eq!(notif.params["staged"], false);
-        // Nothing staged with sessions active.
+        // Nothing staged or applied with sessions active.
+        assert!(applied.lock().unwrap().is_empty());
         let state = AgentState::load_from(&state_path);
         assert!(state.update.pending_update.is_none());
     }
 
     #[tokio::test]
-    async fn newer_when_idle_downloads_verifies_and_stages() {
+    async fn newer_when_idle_stages_and_auto_applies() {
+        // apply-on-idle transition: idle + eligible strategy -> the staged,
+        // verified binary is applied and the pending update is cleared (#1401).
         let server = MockServer::start().await;
-        // Release JSON points binary + checksum assets back at this mock server.
-        let body = format!(
-            r#"{{"tag_name":"v0.3.0","assets":[
-                {{"name":"termihub-agent-linux-x64","browser_download_url":"{base}/bin"}},
-                {{"name":"termihub-agent-linux-x64.sha256","browser_download_url":"{base}/bin.sha256"}}
-            ]}}"#,
-            base = server.uri()
-        );
-        Mock::given(method("GET"))
-            .and(path("/releases/latest"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(body))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/bin"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"abc".to_vec()))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/bin.sha256"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n")),
-            )
-            .mount(&server)
-            .await;
+        mount_update_release(&server).await;
 
         let tmp = tempfile::tempdir().unwrap();
         let state_path = tmp.path().join("state.json");
         let staging_dir = tmp.path().join("updates");
         let config = test_config(
             format!("{}/releases/latest", server.uri()),
-            state_path.clone(),
             staging_dir.clone(),
+            UpdateStrategy::Deferred,
         );
+        let (mgr, applied) = recording_manager(state_path.clone());
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        // 0 active sessions → download + verify + stage.
-        run_check_once(&config, &reqwest::Client::new(), 0, &tx)
+        run_check_once(&config, &reqwest::Client::new(), &mgr, &tx)
             .await
             .unwrap();
 
         let staged_path = staging_dir.join("termihub-agent-linux-x64");
         assert_eq!(std::fs::read(&staged_path).unwrap(), b"abc");
 
+        // Notification emitted before the apply so desktops see the lifecycle.
         let notif = try_recv(&mut rx).expect("update notification emitted");
         assert_eq!(notif.params["availableVersion"], "0.3.0");
         assert_eq!(notif.params["staged"], true);
 
-        let state = AgentState::load_from(&state_path);
-        let pending = state
+        // The staged binary was applied (idle) and the pending update cleared.
+        {
+            let log = applied.lock().unwrap();
+            assert_eq!(log.len(), 1, "staged self-update applied exactly once");
+            assert_eq!(log[0].version, "0.3.0");
+            assert_eq!(log[0].binary_path, staged_path.to_string_lossy());
+        }
+        assert!(
+            mgr.pending_update_for_test().await.is_none(),
+            "successful apply clears pending_update"
+        );
+    }
+
+    #[tokio::test]
+    async fn newer_when_idle_coordinated_stages_without_applying() {
+        // A coordinated strategy stages + notifies but must NOT auto-apply; the
+        // pending update is recorded for a later coordinated apply (#1401).
+        let server = MockServer::start().await;
+        mount_update_release(&server).await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state_path = tmp.path().join("state.json");
+        let staging_dir = tmp.path().join("updates");
+        let config = test_config(
+            format!("{}/releases/latest", server.uri()),
+            staging_dir.clone(),
+            UpdateStrategy::Coordinated,
+        );
+        let (mgr, applied) = recording_manager(state_path.clone());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        run_check_once(&config, &reqwest::Client::new(), &mgr, &tx)
+            .await
+            .unwrap();
+
+        let notif = try_recv(&mut rx).expect("update notification emitted");
+        assert_eq!(notif.params["staged"], true);
+        // Never applied under a coordinated strategy...
+        assert!(
+            applied.lock().unwrap().is_empty(),
+            "coordinated strategy must not auto-apply on idle"
+        );
+        // ...but the staged update is recorded for a later coordinated apply.
+        let pending = mgr
+            .pending_update_for_test()
+            .await
+            .expect("coordinated strategy records the staged update");
+        assert_eq!(pending.version, "0.3.0");
+        assert_eq!(
+            pending.binary_path,
+            staging_dir
+                .join("termihub-agent-linux-x64")
+                .to_string_lossy()
+        );
+    }
+
+    #[tokio::test]
+    async fn newer_when_idle_failed_apply_keeps_pending() {
+        // state-clearing: a FAILED apply must KEEP the pending update so a later
+        // cycle can retry (#1401).
+        let server = MockServer::start().await;
+        mount_update_release(&server).await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state_path = tmp.path().join("state.json");
+        let staging_dir = tmp.path().join("updates");
+        let config = test_config(
+            format!("{}/releases/latest", server.uri()),
+            staging_dir.clone(),
+            UpdateStrategy::Immediate,
+        );
+        let attempts = Arc::new(StdMutex::new(Vec::new()));
+        let mgr = test_session_manager(
+            state_path.clone(),
+            Arc::new(FailingApplier {
+                attempts: attempts.clone(),
+            }),
+        );
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        run_check_once(&config, &reqwest::Client::new(), &mgr, &tx)
+            .await
+            .unwrap();
+
+        assert_eq!(attempts.lock().unwrap().len(), 1, "apply was attempted");
+        let pending = mgr
+            .pending_update_for_test()
+            .await
+            .expect("failed apply keeps pending_update for retry");
+        assert_eq!(pending.version, "0.3.0");
+        // Persisted too, so a later agent run still sees it.
+        assert!(AgentState::load_from(&state_path)
             .update
             .pending_update
-            .expect("pending update recorded");
-        assert_eq!(pending.version, "0.3.0");
-        assert_eq!(pending.binary_path, staged_path.to_string_lossy());
+            .is_some());
     }
 
     #[test]
@@ -491,8 +669,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut config = test_config(
             "http://127.0.0.1:1/".to_string(),
-            tmp.path().join("state.json"),
             tmp.path().join("updates"),
+            UpdateStrategy::Immediate,
         );
         config.allow_self_update = false;
         // Build the pieces spawn needs without a running check.

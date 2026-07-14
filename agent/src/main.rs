@@ -198,4 +198,46 @@ mod tests {
         // No flag, and the env var is not set in this test process.
         assert!(!self_update_enabled(&args(&["termihub-agent", "--stdio"])));
     }
+
+    #[test]
+    fn update_strategy_parses_from_flag() {
+        use update::UpdateStrategy;
+        assert_eq!(
+            update_strategy_from_args(&args(&[
+                "termihub-agent",
+                "--stdio",
+                "--allow-self-update",
+                "--update-strategy",
+                "deferred",
+            ])),
+            UpdateStrategy::Deferred
+        );
+        assert_eq!(
+            update_strategy_from_args(&args(&[
+                "termihub-agent",
+                "--stdio",
+                "--update-strategy",
+                "coordinated",
+            ])),
+            UpdateStrategy::Coordinated
+        );
+    }
+
+    #[test]
+    fn update_strategy_defaults_to_immediate_when_absent_or_unknown() {
+        use update::UpdateStrategy;
+        assert_eq!(
+            update_strategy_from_args(&args(&["termihub-agent", "--stdio"])),
+            UpdateStrategy::Immediate
+        );
+        assert_eq!(
+            update_strategy_from_args(&args(&[
+                "termihub-agent",
+                "--stdio",
+                "--update-strategy",
+                "bogus",
+            ])),
+            UpdateStrategy::Immediate
+        );
+    }
 }

@@ -508,10 +508,38 @@ mod tests {
             allow_self_update: true,
             ..Default::default()
         };
+        // Self-update on with the default (immediate) strategy.
         assert_eq!(
             config.agent_exec_command(),
-            "$HOME/.local/bin/termihub-agent --stdio --allow-self-update"
+            "$HOME/.local/bin/termihub-agent --stdio --allow-self-update --update-strategy immediate"
         );
+    }
+
+    #[test]
+    fn agent_exec_command_passes_configured_update_strategy() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            username: "pi".to_string(),
+            allow_self_update: true,
+            update_strategy: UpdateStrategy::Deferred,
+            ..Default::default()
+        };
+        assert_eq!(
+            config.agent_exec_command(),
+            "$HOME/.local/bin/termihub-agent --stdio --allow-self-update --update-strategy deferred"
+        );
+    }
+
+    #[test]
+    fn agent_exec_command_omits_update_strategy_when_self_update_off() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            username: "pi".to_string(),
+            update_strategy: UpdateStrategy::Deferred,
+            ..Default::default()
+        };
+        // Strategy is only meaningful for self-update; omit it when off.
+        assert!(!config.agent_exec_command().contains("--update-strategy"));
     }
 
     #[test]
