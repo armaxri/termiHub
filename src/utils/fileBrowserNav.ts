@@ -125,3 +125,50 @@ export function findTypeAheadIndex<T>(
   }
   return -1;
 }
+
+/**
+ * Parent directory of a POSIX-style path (`/a/b/c` → `/a/b`, `/a` → `/`).
+ * A trailing slash is ignored. Returns `/` when there is no parent.
+ */
+function parentDir(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  if (idx <= 0) return "/";
+  return trimmed.slice(0, idx);
+}
+
+/**
+ * Collapse `.` and `..` segments in a POSIX path, preserving a leading `/`.
+ * `..` past the root is clamped at the root.
+ */
+function normalizePosixPath(path: string): string {
+  const absolute = path.startsWith("/");
+  const out: string[] = [];
+  for (const seg of path.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
+      else if (!absolute) out.push("..");
+    } else {
+      out.push(seg);
+    }
+  }
+  const joined = out.join("/");
+  return absolute ? `/${joined}` : joined || ".";
+}
+
+/**
+ * Resolve the path a symlink entry should navigate to when followed.
+ *
+ * Absolute targets are used as-is (normalized); relative targets resolve
+ * against the link's own parent directory. When the backend reported no target
+ * (e.g. FTP MLSD `type=link`), the link's own path is returned so the server
+ * resolves it on the listing request.
+ */
+export function resolveSymlinkTarget(entry: FileEntry): string {
+  const target = entry.symlinkTarget;
+  if (!target) return entry.path;
+  const isAbsolute = target.startsWith("/") || /^[A-Za-z]:/.test(target);
+  if (isAbsolute) return normalizePosixPath(target);
+  return normalizePosixPath(`${parentDir(entry.path)}/${target}`);
+}

@@ -93,6 +93,9 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         Some("file") | Some("link") => false,
         _ => return None,
     };
+    // MLSD reports symlinks as `type=link` but carries no target fact, so the
+    // target stays `None`.
+    let is_symlink = type_val.as_deref() == Some("link");
 
     let writable = writable_from_permissions(&permissions);
     Some(FileEntry {
@@ -103,6 +106,8 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
         modified,
         permissions: Some(permissions),
         writable,
+        is_symlink,
+        symlink_target: None,
     })
 }
 
@@ -212,6 +217,13 @@ fn entry_from_file(file: &FtpFile, dir: &str, with_perms: bool) -> FileEntry {
     // DOS lines carry none, so `writable` stays `None` there.
     let permissions = with_perms.then(|| perms_string(file));
     let writable = permissions.as_deref().and_then(writable_from_permissions);
+    // A Unix `ls -l` symlink line ends in `-> target`; suppaftp strips that from
+    // the name and exposes the target via `symlink()`. Map an empty target (a
+    // link line without `-> …`) to `None` so it never surfaces as `""`.
+    let symlink_target = file.symlink().and_then(|target| {
+        let s = target.to_string_lossy();
+        (!s.is_empty()).then(|| s.into_owned())
+    });
     FileEntry {
         name: file.name().to_string(),
         path: join_path(dir, file.name()),
@@ -220,6 +232,8 @@ fn entry_from_file(file: &FtpFile, dir: &str, with_perms: bool) -> FileEntry {
         modified: modified_iso(file),
         permissions,
         writable,
+        is_symlink: file.is_symlink(),
+        symlink_target,
     }
 }
 
@@ -517,6 +531,39 @@ mod tests {
         for case in &cases {
             check(parse_mlsd_line(case.line, DIR), case);
         }
+    }
+
+    #[test]
+    fn parses_symlink_target_from_posix_line() {
+        // A Unix `ls -l` symlink: `-> target` is stripped from the name, the
+        // entry is flagged as a symlink, and the absolute target is captured.
+        let entry = parse_list_line(b"lrwxrwxrwx 1 0 0 7 Nov 5 2018 link -> /etc/target", DIR)
+            .expect("symlink line should parse");
+        assert_eq!(entry.name, "link");
+        assert!(entry.is_symlink, "is_symlink");
+        assert_eq!(entry.symlink_target.as_deref(), Some("/etc/target"));
+        assert!(!entry.is_directory);
+    }
+
+    #[test]
+    fn parses_symlink_flag_from_mlsd_line() {
+        // MLSD `type=link` marks a symlink but carries no target fact.
+        let entry = parse_mlsd_line(b"type=link;modify=20181105163248; shortcut", DIR)
+            .expect("mlsd link should parse");
+        assert!(entry.is_symlink, "is_symlink");
+        assert_eq!(entry.symlink_target, None);
+        assert!(!entry.is_directory);
+    }
+
+    #[test]
+    fn non_symlink_entries_carry_no_symlink_metadata() {
+        let file = parse_list_line(b"-rw-r--r-- 1 0 0 12 Mar 18 2018 a.txt", DIR).unwrap();
+        assert!(!file.is_symlink);
+        assert_eq!(file.symlink_target, None);
+
+        let dir = parse_mlsd_line(b"type=dir;size=4096;modify=20181105163248; docs", DIR).unwrap();
+        assert!(!dir.is_symlink);
+        assert_eq!(dir.symlink_target, None);
     }
 
     #[test]

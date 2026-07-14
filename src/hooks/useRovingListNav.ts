@@ -34,6 +34,18 @@ export interface RovingListNavCallbacks<T> {
   onSelectSingle: (item: T, index: number) => void;
 }
 
+/** Optional behavior tweaks for {@link useRovingListNav}. */
+export interface RovingListNavOptions {
+  /**
+   * Scroll the row at `index` into view before focus is applied. Supply this for
+   * a **virtualized** list, where the target row may be unmounted (outside the
+   * rendered window): the hook calls it so the row is scrolled — and mounted —
+   * first, then focuses it once it appears. Omit it for fully-rendered lists,
+   * where focus lands synchronously as before.
+   */
+  onScrollToIndex?: (index: number) => void;
+}
+
 /** Public surface of {@link useRovingListNav}. */
 export interface RovingListNav<T, E extends HTMLElement = HTMLElement> {
   /** Roving-tabindex focus index into the items array. */
@@ -81,7 +93,8 @@ export interface RovingListNav<T, E extends HTMLElement = HTMLElement> {
  */
 export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
   items: T[],
-  getLabel: (item: T) => string
+  getLabel: (item: T) => string,
+  options?: RovingListNavOptions
 ): RovingListNav<T, E> {
   const [activeIndex, setActiveIndex] = useState(0);
   const rowRefs = useRef<(E | null)[]>([]);
@@ -92,6 +105,13 @@ export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
   // identity when the consumer passes a fresh closure each render.
   const getLabelRef = useRef(getLabel);
   getLabelRef.current = getLabel;
+
+  // Kept in a ref so a fresh scroll closure each render never churns the
+  // memoized keydown handler. `null` when the list isn't virtualized, in which
+  // case focus always lands synchronously (every row is mounted).
+  const onScrollToIndexRef = useRef(options?.onScrollToIndex);
+  onScrollToIndexRef.current = options?.onScrollToIndex;
+  const pendingFocus = useRef<number | null>(null);
 
   // Stable per-index ref callback so rows don't detach/reattach every render.
   const getRowRef = useCallback((index: number) => {
@@ -106,6 +126,32 @@ export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
     return cb;
   }, []);
 
+  // Move DOM focus to the row at `index`. For a virtualized list, scroll it into
+  // view first (which mounts it); if it isn't in the DOM yet, remember it and let
+  // the effect below focus it once the scroll mounts it. Non-virtualized lists
+  // have every row mounted, so focus lands immediately.
+  const focusIndex = useCallback((index: number) => {
+    onScrollToIndexRef.current?.(index);
+    const el = rowRefs.current[index];
+    if (el) {
+      el.focus();
+      pendingFocus.current = null;
+    } else {
+      pendingFocus.current = index;
+    }
+  }, []);
+
+  // Focus a deferred roving target once its (previously off-screen) row mounts.
+  useEffect(() => {
+    const idx = pendingFocus.current;
+    if (idx === null) return;
+    const el = rowRefs.current[idx];
+    if (el) {
+      el.focus();
+      pendingFocus.current = null;
+    }
+  });
+
   // Keep the active index in range as the list length changes.
   useEffect(() => {
     setActiveIndex((i) => Math.min(Math.max(0, i), Math.max(0, items.length - 1)));
@@ -113,10 +159,13 @@ export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
 
   const reset = useCallback(() => setActiveIndex(0), []);
 
-  const focusRow = useCallback((index: number) => {
-    setActiveIndex(index);
-    rowRefs.current[index]?.focus();
-  }, []);
+  const focusRow = useCallback(
+    (index: number) => {
+      setActiveIndex(index);
+      focusIndex(index);
+    },
+    [focusIndex]
+  );
 
   const makeKeyDownHandler = useCallback(
     (callbacks: RovingListNavCallbacks<T>) => (e: React.KeyboardEvent) => {
@@ -131,7 +180,7 @@ export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
         const item = entries[index];
         if (!item) return;
         setActiveIndex(index);
-        rowRefs.current[index]?.focus();
+        focusIndex(index);
         if (extend) {
           const anchorIdx = callbacks.getAnchorIndex();
           if (anchorIdx >= 0) {
@@ -199,7 +248,7 @@ export function useRovingListNav<T, E extends HTMLElement = HTMLElement>(
         if (idx >= 0) moveActive(idx, false);
       }
     },
-    [items, activeIndex]
+    [items, activeIndex, focusIndex]
   );
 
   return { activeIndex, setActiveIndex, getRowRef, reset, focusRow, makeKeyDownHandler };

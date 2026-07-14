@@ -1082,6 +1082,29 @@ for #1348.
 4. Start another rename and press **Escape** (or click away with no change) →
    the edit is abandoned and no rename occurs.
 
+**File browser virtual scrolling — large directories (#1514).**
+
+1. Open the file browser on a directory with several thousand entries (e.g. a
+   large FTP/SFTP listing, or a local folder with a few thousand files).
+2. The list appears instantly and scrolls smoothly top-to-bottom with no freeze
+   or jank; only the visible rows are in the DOM (inspect the element tree — the
+   row count stays small and changes as you scroll). A single scrollbar (the
+   shared/global style) is used — no nested or second scrollbar appears.
+3. Multi-select still works: click a row, then Shift-click a far-off row (scroll
+   to reach it) → the whole range is selected; Ctrl/Cmd-click toggles individual
+   rows; the "N selected" indicator reflects the full selection. Ctrl/Cmd-A
+   selects the entire directory.
+4. Keyboard navigation still works: click a row, then use ArrowDown/ArrowUp,
+   Home/End, and type-ahead. Focus follows the active row and **End** (or a
+   type-ahead match far down) scrolls the previously off-screen focused row into
+   view and keeps focus on it.
+5. Drag a file from the OS (Finder/Explorer) onto the list → the upload/copy
+   drop still works. Start an inline rename (F2) on a row → the inline editor
+   appears in place and commit/cancel behave as before. Trigger a transfer and
+   confirm the transfer footer still renders below the list.
+
+See PR for #1514.
+
 **File multi-delete outcome reporting (#1394).**
 
 1. Open the file browser on a local or SFTP directory. Prepare at least one entry
@@ -1769,6 +1792,23 @@ termiHub FTP **client** end-to-end once the backend sub-issues
 4. Repeat with **explicit FTPS** (TLS Mode = Explicit, port 2401) and **implicit
    FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
    plain-FTP insecure warning must appear only for TLS Mode = None.
+
+### FTP symlink icon, navigation, and target in properties (#1513)
+
+Verifies the file browser's symbolic-link handling. Parser population and the
+frontend rendering/navigation are covered by unit tests
+(`cargo test -p termihub-core --lib backends::ftp`, `pnpm test FileBrowser`);
+this manual step confirms it end-to-end against a real FTP server whose `/pub`
+tree contains a symlink (create one on the host, e.g. `ln -s data linkdir` and
+`ln -s data/dataset-1k.bin linkfile` under the served root).
+
+1. Open the FTP connection and browse to the directory holding the symlinks.
+   Each symlink row must show the distinct **link-badge icon** (not a plain
+   file/folder glyph) and, for `ls -l`-style listings, an inline `→ target`
+   hint after the name (hovering shows the full `Symbolic link → target` title).
+2. Double-click (or select + Enter) the directory symlink `linkdir` — the
+   browser must **follow** it and list the target directory's contents.
+3. Confirm a non-symlink file shows no link icon and no `→ target` hint.
 
 ### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
 
