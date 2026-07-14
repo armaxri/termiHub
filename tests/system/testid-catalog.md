@@ -413,6 +413,8 @@ Fixed strings — match exactly.
 | `shell-integration-banner-not-now` | `src/components/ShellIntegrationBanner/ShellIntegrationBanner.tsx` |
 | `shell-integration-entries-empty` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shell-integration-entry-connection` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-container-image` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
+| `shell-integration-entry-container-mount` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
 | `shell-integration-entry-editor` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
 | `shell-integration-entry-list` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shell-integration-entry-name` | `src/components/Settings/ShellIntegrationEntryEditor.tsx` |
@@ -518,6 +520,10 @@ Fixed strings — match exactly.
 | `unsaved-changes-just-close` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
 | `unsaved-changes-save-and-close` | `src/components/ConnectionEditor/UnsavedChangesDialog.tsx` |
 | `unsaved-editor-close-dialog` | `src/components/Terminal/TabBar.tsx` |
+| `update-agent-cancel` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
+| `update-agent-confirm` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
+| `update-agent-dialog` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
+| `update-agent-other-hosts` | `src/components/Sidebar/UpdateAgentDialog.tsx` |
 | `update-auto-check-off` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-auto-check-on` | `src/components/Settings/UpdateSettings.tsx` |
 | `update-build-hash` | `src/components/Settings/UpdateSettings.tsx` |

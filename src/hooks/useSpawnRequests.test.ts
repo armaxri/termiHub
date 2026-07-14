@@ -14,8 +14,8 @@ vi.mock("@/services/events", () => ({
 
 const resolveContainerSpawn = vi.fn();
 vi.mock("@/services/api", () => ({
-  resolveContainerSpawn: (location: string, image?: string, mount?: string) =>
-    resolveContainerSpawn(location, image, mount),
+  resolveContainerSpawn: (location: string, entryId?: string, image?: string, mount?: string) =>
+    resolveContainerSpawn(location, entryId, image, mount),
 }));
 
 vi.mock("@/components/ui", () => ({
@@ -105,7 +105,28 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
       await Promise.resolve();
     });
 
-    expect(resolveContainerSpawn).toHaveBeenCalledWith("/home/user/app", "alpine:3", "/workspace");
+    expect(resolveContainerSpawn).toHaveBeenCalledWith(
+      "/home/user/app",
+      undefined,
+      "alpine:3",
+      "/workspace"
+    );
+  });
+
+  it("forwards the triggering entry_id so a saved preference can be honored (#1447)", async () => {
+    await mountHook();
+
+    await act(async () => {
+      emit!(containerRequest({ entry_id: "entry-1", container_image: undefined }));
+      await Promise.resolve();
+    });
+
+    expect(resolveContainerSpawn).toHaveBeenCalledWith(
+      "/home/user/app",
+      "entry-1",
+      undefined,
+      "/workspace"
+    );
   });
 
   it("opens a Docker tab with the resolved settings and title, marked spawned", async () => {
@@ -216,7 +237,12 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
       await Promise.resolve();
     });
 
-    expect(resolveContainerSpawn).toHaveBeenCalledWith("/home/user/app", "alpine:3", "/workspace");
+    expect(resolveContainerSpawn).toHaveBeenCalledWith(
+      "/home/user/app",
+      undefined,
+      "alpine:3",
+      "/workspace"
+    );
   });
 
   it("ignores an explicit local/WSL/SSH kind even when container fields are present", async () => {
@@ -241,7 +267,12 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
       await Promise.resolve();
     });
 
-    expect(resolveContainerSpawn).toHaveBeenCalledWith("/home/user/app", "alpine:3", "/workspace");
+    expect(resolveContainerSpawn).toHaveBeenCalledWith(
+      "/home/user/app",
+      undefined,
+      "alpine:3",
+      "/workspace"
+    );
   });
 
   it("falls back to presence inference for an auto kind (non-container)", async () => {

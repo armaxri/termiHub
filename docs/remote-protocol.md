@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.2.0
+**Version**: 0.3.0
 **Status**: Draft
-**Issue**: #17, #360
+**Issue**: #17, #360, #1349
 
 ---
 
@@ -264,12 +264,16 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                |
-| --------------- | ------------- | ------------------------------------------ |
-| 0.2.0           | 0.2.0         | Yes                                        |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized) |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)       |
-| 1.0.0           | 0.2.0         | No (major mismatch)                        |
+| Desktop Version | Agent Version | Compatible?                                         |
+| --------------- | ------------- | --------------------------------------------------- |
+| 0.3.0           | 0.3.0         | Yes                                                 |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent) |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                    |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)          |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                |
+| 1.0.0           | 0.3.0         | No (major mismatch)                                 |
+
+**0.3.0 (additive, minor)** — adds the read-only [`agent.list_connections`](#agentlist_connections) method and a `client_id` field in the `initialize` result (#1349). Both are backwards compatible: a 0.2.0 desktop ignores the extra field and never calls the new method; a 0.2.0 agent simply lacks them, so a 0.3.0 desktop falls back gracefully (an empty other-hosts list for the update guard).
 
 ---
 
@@ -300,8 +304,9 @@ Handshake that establishes the protocol version and exchanges capabilities.
 {
   "jsonrpc": "2.0",
   "result": {
-    "protocol_version": "0.2.0",
+    "protocol_version": "0.3.0",
     "agent_version": "0.1.0",
+    "client_id": "b3f1c2d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "capabilities": {
       "connection_types": [
         {
@@ -340,6 +345,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | -------------------------------------- | ---------------------- | -------------------------------------------- |
 | `protocol_version`                     | `string`               | Negotiated protocol version                  |
 | `agent_version`                        | `string`               | Agent binary version                         |
+| `client_id`                            | `string`               | Agent-assigned id for this client (0.3.0+)   |
 | `capabilities.connection_types`        | `ConnectionTypeInfo[]` | Available connection types with schemas/caps |
 | `capabilities.max_sessions`            | `integer`              | Maximum concurrent sessions                  |
 | `capabilities.available_shells`        | `string[]`             | Available shell paths                        |
@@ -724,6 +730,58 @@ Check agent health and connectivity. Can be used as a keepalive.
 | `status`          | `string`  | Always `"ok"` if the agent is responsive |
 | `uptime_secs`     | `integer` | Agent process uptime in seconds          |
 | `active_sessions` | `integer` | Number of running sessions               |
+
+---
+
+### `agent.list_connections`
+
+List the clients currently connected to this agent process — a snapshot of the per-process `ConnectionRegistry` (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Read-only; added in protocol 0.3.0 (#1349).
+
+Primary consumer is the **connected-host update guard**: before updating an agent the desktop calls this, drops its own entry (matched by the `client_id` from `initialize`), and — if any other clients remain — warns the user that updating will hard-cut them before proceeding.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.list_connections",
+  "params": {},
+  "id": 11
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "connections": [
+      {
+        "client_id": "b3f1c2d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "client": "termihub-desktop",
+        "client_version": "0.1.0",
+        "connected_since": "2026-07-14T10:30:00Z"
+      }
+    ]
+  },
+  "id": 11
+}
+```
+
+| Result Field                    | Type                | Description                                       |
+| ------------------------------- | ------------------- | ------------------------------------------------- |
+| `connections`                   | `ConnectedClient[]` | Clients connected to this agent process           |
+| `connections[].client_id`       | `string`            | Agent-assigned id for the client connection       |
+| `connections[].client`          | `string`            | Client name reported in `initialize`              |
+| `connections[].client_version`  | `string`            | Client version reported in `initialize`           |
+| `connections[].connected_since` | `string`            | ISO 8601 timestamp of when the client initialized |
+
+> **Best-effort scope (topology limitation).** The registry is **per agent process**, and the SSH-tunnelled deployment runs **one `--stdio` process per desktop connection**, so in practice this snapshot holds exactly the requesting desktop — the guard then sees no other hosts and the update proceeds as before. Additional clients appear only when a single agent process is shared (a `--listen` TCP agent) or once a future daemon-level coordination layer aggregates clients across processes. Until then the connected-host warning is a genuine safeguard for the shared-process case and a no-op for the common single-desktop case, never a false alarm.
+
+**Errors:**
+
+- `-32007` Not initialized (must call `initialize` first)
 
 ---
 

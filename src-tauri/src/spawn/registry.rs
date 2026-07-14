@@ -838,6 +838,8 @@ mod macos {
                 connection_id: None,
                 visibility: ShellEntryVisibility::Always,
                 show_for,
+                container_image: None,
+                container_mount: None,
             }
         }
 
@@ -1328,6 +1330,8 @@ mod imp {
                 connection_id: None,
                 visibility,
                 show_for,
+                container_image: None,
+                container_mount: None,
             }
         }
 
@@ -2303,6 +2307,8 @@ mod linux {
                 connection_id: None,
                 visibility: ShellEntryVisibility::Always,
                 show_for,
+                container_image: None,
+                container_mount: None,
             }
         }
 
