@@ -40,6 +40,37 @@ services:
       timeout: 3s
       retries: 5
 
+  # SSH with a password-required sudoer + a root-owned target file, for the
+  # elevated remote-save integration test (#1494). testuser is in the `sudo`
+  # group (password required), sudo is installed.
+  ssh-sudo:
+    build: ./ssh-sudo
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-sudo
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_SUDO_PORT:-2212}:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # SSH with password auth but NO sudo installed + a root-owned target file, for
+  # the "not permitted" (Other) branch of the elevated remote-save test (#1494).
+  ssh-nosudo:
+    build: ./ssh-nosudo
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-ssh-nosudo
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_SSH_NOSUDO_PORT:-2213}:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # SFTP-only SSH (ForceCommand internal-sftp — no usable exec/shell channel)
   ssh-sftp-only:
     build: ./ssh-sftp-only
