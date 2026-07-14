@@ -636,6 +636,9 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `agent-reconnect-*` | `agent-reconnect-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-shutdown-*` | `agent-shutdown-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
+| `agent-update-banner-*` | `agent-update-banner-${agentId}` | `src/components/AgentUpdateBanner/AgentUpdateBanner.tsx` |
+| `agent-update-banner-apply-*` | `agent-update-banner-apply-${agentId}` | `src/components/AgentUpdateBanner/AgentUpdateBanner.tsx` |
+| `agent-update-banner-dismiss-*` | `agent-update-banner-dismiss-${agentId}` | `src/components/AgentUpdateBanner/AgentUpdateBanner.tsx` |
 | `agent-version-badge-*` | `agent-version-badge-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `connection-connect-*` | `connection-connect-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |

@@ -24,6 +24,7 @@ import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
+import { useAgentUpdateEvents } from "@/hooks/useAgentUpdateEvents";
 import { useSpawnRequests } from "@/hooks/useSpawnRequests";
 import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
@@ -105,6 +106,7 @@ function App() {
   useTransferEvents();
   useEmbeddedServerEvents();
   useCredentialStoreEvents();
+  useAgentUpdateEvents();
   useSpawnRequests();
   useHttpMonitorNotifications();
   useWebviewZoom();

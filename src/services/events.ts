@@ -325,6 +325,44 @@ export async function onAgentDeployProgress(
   });
 }
 
+/**
+ * Payload of an `agent-update-available` event (#1352). The desktop backend
+ * forwards the agent's `agent.update_available` JSON-RPC notification, tagging
+ * it with the originating `agent_id`. `staged: true` means a verified new binary
+ * is staged on the agent and ready to apply (idle) or defer (busy).
+ */
+interface AgentUpdateAvailablePayload {
+  agent_id: string;
+  currentVersion: string;
+  availableVersion: string;
+  staged: boolean;
+}
+
+/** A staged/available agent update, keyed to its originating agent. */
+export interface AgentUpdateAvailable {
+  agentId: string;
+  currentVersion: string;
+  availableVersion: string;
+  staged: boolean;
+}
+
+/**
+ * Subscribe to `agent.update_available` notifications forwarded by the backend
+ * as `agent-update-available` Tauri events (#1352). Returns the unlisten handle.
+ */
+export async function onAgentUpdateAvailable(
+  callback: (update: AgentUpdateAvailable) => void
+): Promise<UnlistenFn> {
+  return await listen<AgentUpdateAvailablePayload>("agent-update-available", (event) => {
+    callback({
+      agentId: event.payload.agent_id,
+      currentVersion: event.payload.currentVersion,
+      availableVersion: event.payload.availableVersion,
+      staged: event.payload.staged,
+    });
+  });
+}
+
 interface VscodeEditCompletePayload {
   remotePath: string;
   success: boolean;

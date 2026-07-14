@@ -283,6 +283,18 @@ function stripPassword(connection: SavedConnection): SavedConnection {
   return connection;
 }
 
+/**
+ * A staged/available update reported by a connected agent via its
+ * `agent.update_available` notification (#1352). Recorded per agent id so the
+ * deferred-update banner can offer "Apply Now".
+ */
+export interface AgentPendingUpdate {
+  currentVersion: string;
+  availableVersion: string;
+  /** `true` when a verified new binary is staged and ready to apply/defer. */
+  staged: boolean;
+}
+
 interface AppState {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
@@ -807,6 +819,14 @@ interface AppState {
   agentSessions: Record<string, AgentSessionInfo[]>;
   agentDefinitions: Record<string, AgentDefinitionInfo[]>;
   agentFolders: Record<string, AgentFolderInfo[]>;
+  /** Staged/available agent updates by agent id, from `agent.update_available` (#1352). */
+  agentUpdates: Record<string, AgentPendingUpdate>;
+  /** Per-agent dismissal of the deferred-update banner (#1352). */
+  agentUpdatesDismissed: Record<string, boolean>;
+  /** Record (or clear) a staged/available update for an agent. */
+  setAgentUpdateAvailable: (agentId: string, update: AgentPendingUpdate) => void;
+  /** Hide the deferred-update banner for an agent for this session. */
+  dismissAgentUpdate: (agentId: string) => void;
   addRemoteAgent: (agent: RemoteAgentDefinition) => void;
   updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
   deleteRemoteAgent: (agentId: string) => void;
@@ -3944,6 +3964,23 @@ export const useAppStore = create<AppState>((set, get) => {
     agentSessions: {},
     agentDefinitions: {},
     agentFolders: {},
+    agentUpdates: {},
+    agentUpdatesDismissed: {},
+
+    setAgentUpdateAvailable: (agentId, update) => {
+      set((s) => ({
+        agentUpdates: { ...s.agentUpdates, [agentId]: update },
+        // A freshly reported update re-arms the banner even if a prior one was
+        // dismissed this session.
+        agentUpdatesDismissed: { ...s.agentUpdatesDismissed, [agentId]: false },
+      }));
+    },
+
+    dismissAgentUpdate: (agentId) => {
+      set((s) => ({
+        agentUpdatesDismissed: { ...s.agentUpdatesDismissed, [agentId]: true },
+      }));
+    },
 
     addRemoteAgent: (agent) => {
       set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
