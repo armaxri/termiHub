@@ -1,7 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Save, Loader2, AlertCircle, Globe, FileEdit, Lock, ShieldCheck, X } from "lucide-react";
+import {
+  Save,
+  Loader2,
+  AlertCircle,
+  Globe,
+  FileEdit,
+  Lock,
+  ShieldCheck,
+  Copy,
+  Download,
+  X,
+} from "lucide-react";
 import { Button, toast } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
@@ -19,13 +30,16 @@ import {
   sftpWriteFileContentElevated,
   sftpHasExecCapability,
   sftpCheckWritable,
+  sftpDownload,
   storeCredential,
   resolveCredential,
   removeCredential,
+  TransferTerminalError,
   type ElevatedWriteResult,
 } from "@/services/api";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
+import { SaveCopyDialog } from "./SaveCopyDialog";
 import { frontendLog } from "@/utils/frontendLog";
 import "./FileEditor.css";
 
@@ -149,6 +163,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const [sudoDialogOpen, setSudoDialogOpen] = useState(false);
   const [sudoAttempt, setSudoAttempt] = useState(1);
   const [sudoBusy, setSudoBusy] = useState(false);
+
+  // SFTP-only read-only fallback (#1330). When the file is read-only and the
+  // connection has no exec channel, sudo elevation is impossible; the user may
+  // instead save the buffer to a writable remote path (this dialog) or download
+  // it locally.
+  const [saveCopyDialogOpen, setSaveCopyDialogOpen] = useState(false);
+  const [saveCopyBusy, setSaveCopyBusy] = useState(false);
 
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -304,6 +325,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     meta.isRemote && !!meta.sftpSessionId && writable === false && execCapable && !elevated;
   // Whether a failed direct save can be retried with sudo (a shell exists).
   const canRetryWithSudo = meta.isRemote && !!meta.sftpSessionId && execCapable && !elevated;
+  // SFTP-only read-only file (#1330): read-only on a connection with no exec
+  // channel, so no sudo path exists. The direct Save stays disabled; the user is
+  // offered "Save a copy" (to a writable remote path) or a local download.
+  const sftpOnlyReadonly =
+    meta.isRemote && !!meta.sftpSessionId && writable === false && !execCapable;
 
   // Sync dirty state to the store (drives the tab dirty dot and close prompt).
   useEffect(() => {
@@ -489,6 +515,55 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     setSudoDialogOpen(false);
     setSudoAttempt(1);
   }, []);
+
+  // Write the current buffer to a user-chosen writable remote path (#1330). The
+  // original read-only file is untouched — this creates a separate copy, so the
+  // buffer's dirty state is intentionally left as-is.
+  const handleSaveCopySubmit = useCallback(
+    async (destPath: string) => {
+      if (content === null || !meta.sftpSessionId) return;
+      setSaveCopyBusy(true);
+      const toastId = toast.loading(`Saving a copy to ${destPath}…`);
+      try {
+        await sftpWriteFileContent(meta.sftpSessionId, destPath, content);
+        toast.success(`Saved a copy to ${destPath}`, { id: toastId });
+        setSaveCopyDialogOpen(false);
+        frontendLog("file_editor", `saved a copy of ${meta.filePath} to ${destPath}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(`Save a copy failed: ${message}`, { id: toastId });
+        frontendLog("file_editor", `save a copy of ${meta.filePath} failed: ${message}`);
+      } finally {
+        setSaveCopyBusy(false);
+      }
+    },
+    [content, meta.sftpSessionId, meta.filePath]
+  );
+
+  // Download the read-only remote file to a user-chosen local path (#1330). The
+  // terminal success/error toast is owned by the transfer-progress event path
+  // (useTransferEvents); here we only show the pending toast and surface an
+  // early failure that never produced a transfer event.
+  const handleDownloadCopy = useCallback(async () => {
+    if (!meta.sftpSessionId) return;
+    const localPath = await save({ title: "Download a copy…", defaultPath: fileName });
+    if (!localPath) return;
+    const toastId = toast.loading(`Downloading ${fileName}…`);
+    try {
+      await sftpDownload(meta.sftpSessionId, meta.filePath, localPath);
+      toast.dismiss(toastId);
+      frontendLog("file_editor", `downloaded ${meta.filePath} to ${localPath}`);
+    } catch (err) {
+      if (err instanceof TransferTerminalError) {
+        // The transfer-progress event path already surfaced this outcome.
+        toast.dismiss(toastId);
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Download failed: ${message}`, { id: toastId });
+      frontendLog("file_editor", `download of ${meta.filePath} failed: ${message}`);
+    }
+  }, [meta.sftpSessionId, meta.filePath, fileName]);
 
   const handleSave = useCallback(async () => {
     if (content === null || saving) return;
@@ -762,10 +837,16 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             size="sm"
             icon={<Save size={14} />}
             onClick={handleSave}
-            disabled={!isDirty}
+            disabled={!isDirty || sftpOnlyReadonly}
             pendingLabel="Saving..."
             errorToast={false}
-            title={isUnsavedScratch ? "Save As... (Ctrl+S)" : "Save (Ctrl+S)"}
+            title={
+              sftpOnlyReadonly
+                ? "This file is read-only — use “Save a copy…” or Download"
+                : isUnsavedScratch
+                  ? "Save As... (Ctrl+S)"
+                  : "Save (Ctrl+S)"
+            }
             data-testid="file-editor-save"
           >
             {isUnsavedScratch ? "Save As..." : "Save"}
@@ -780,9 +861,34 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         >
           <Lock size={14} />
           <span className="file-editor__readonly-banner-text">
-            This file is read-only — you don&apos;t have permission to write to it. Saving directly
-            will fail; a read-only fallback (save a copy) will be offered in a later update.
+            {sftpOnlyReadonly
+              ? "This file is read-only and sudo elevation isn't available on this connection. Save a copy to a writable path or download the file locally instead."
+              : "This file is read-only — you don't have permission to write to it. Saving directly will fail."}
           </span>
+          {sftpOnlyReadonly && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Copy size={14} />}
+                onClick={() => setSaveCopyDialogOpen(true)}
+                title="Write the current contents to a writable remote path"
+                data-testid="file-editor-save-copy"
+              >
+                Save a copy…
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Download size={14} />}
+                onClick={handleDownloadCopy}
+                title="Download this file to your computer"
+                data-testid="file-editor-download"
+              >
+                Download
+              </Button>
+            </>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -836,6 +942,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         busy={sudoBusy}
         onSubmit={handleSudoSubmit}
         onCancel={handleSudoCancel}
+      />
+      <SaveCopyDialog
+        open={saveCopyDialogOpen}
+        defaultPath={effectivePath}
+        busy={saveCopyBusy}
+        onSubmit={handleSaveCopySubmit}
+        onCancel={() => setSaveCopyDialogOpen(false)}
       />
       <div className="file-editor__editor-container">
         <Editor
