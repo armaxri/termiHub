@@ -211,14 +211,20 @@ curl -k --ssl-reqd ftp://ftpuser:ftppass@127.0.0.1:2401/pub/  # explicit FTPS
 curl -k ftps://ftpuser:ftppass@127.0.0.1:2402/pub/            # implicit FTPS
 ```
 
-The app-level Rust integration test for the FTP file browser lives at
-[`core/tests/ftp_file_browser.rs`](../../core/tests/ftp_file_browser.rs) (gated
-behind the `ftp` feature; skips cleanly when the fixture is not up). Run it
-directly against the fixture with:
+The app-level Rust integration tests for the FTP backend live at
+[`core/tests/ftp_file_browser.rs`](../../core/tests/ftp_file_browser.rs) (listing
+
+- CRUD) and [`core/tests/ftp_transfer.rs`](../../core/tests/ftp_transfer.rs)
+  (byte-exact up/download + `REST` kill/resume + concurrent transfers) — both gated
+  behind the `ftp` feature and skipping cleanly when the fixture is not up. The
+  `REST`-based upload-resume path relies on `AllowStoreRestart on` in
+  [`ftp-server/proftpd.conf.tmpl`](ftp-server/proftpd.conf.tmpl). Run them directly
+  against the fixture with:
 
 ```bash
 docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
 cargo test -p termihub-core --features ftp --test ftp_file_browser -- --nocapture
+cargo test -p termihub-core --features ftp --test ftp_transfer -- --nocapture
 ```
 
 Or via the orchestration scripts, which start the `ftp` profile and run the
