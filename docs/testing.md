@@ -1105,6 +1105,36 @@ through save/load. See PR #1388.
    the update still succeeds via the immediate path, and the app log records a
    warning that the coordinated/deferred strategy is not yet honored (#1351/#1352).
 
+### Connected-host update guard + Update dialog (#1349)
+
+Verifies that updating an agent warns when other hosts are connected and
+requires explicit confirmation. Needs a **shared agent process** so a second
+desktop is visible to the first — run the agent in TCP `--listen` mode (the
+default SSH `--stdio` deployment gives each desktop its own process, so the
+guard correctly sees no other hosts and this warning never fires). See
+PR #1349.
+
+Prerequisites: an agent binary reachable in `--listen` mode, and two termiHub
+desktops (or two app instances) both connected to that same agent.
+
+1. From **desktop A**, connect to the shared agent. From **desktop B**, connect
+   to the **same** agent so two clients are attached.
+2. On desktop A, trigger **Update agent** for that agent → the Update dialog
+   opens showing **Installed** vs **Available** versions and an amber warning
+   reading "1 other host(s) are connected to this agent" that lists desktop B
+   with a relative "connected … ago" time. The primary button reads **Notify
+   Others & Update**.
+3. Click **Cancel** → the dialog closes and nothing is updated (desktop B stays
+   connected).
+4. Reopen the dialog and click **Notify Others & Update** → the update proceeds
+   (via `update_agent_force`); desktop B is disconnected (hard-cut) and, on
+   reconnect, sees the new agent version.
+5. Now disconnect desktop B and repeat **Update agent** from desktop A with no
+   other hosts → the dialog omits the warning, shows "No other hosts are
+   connected. The update applies immediately.", and the primary button reads
+   plain **Update**; clicking it updates without any extra confirmation (same as
+   before this change).
+
 ### Windows Explorer context-menu registration (#1368)
 
 Verifies that shell-integration registration writes/removes the Windows Explorer

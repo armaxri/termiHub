@@ -1,0 +1,65 @@
+.update-agent-dialog__versions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.update-agent-dialog__ver-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  font-size: var(--font-size-sm);
+}
+
+.update-agent-dialog__ver-label {
+  color: var(--text-secondary);
+}
+
+.update-agent-dialog__ver-value {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+}
+
+.update-agent-dialog__note {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.update-agent-dialog__warning {
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.update-agent-dialog__warning-icon {
+  flex-shrink: 0;
+  color: var(--color-warning);
+  margin-top: 1px;
+}
+
+.update-agent-dialog__hosts {
+  list-style: none;
+  margin: var(--spacing-xs) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs, 2px);
+}
+
+.update-agent-dialog__host-time {
+  color: var(--text-secondary);
+}
+
+.update-agent-dialog__warning-hint {
+  margin-top: var(--spacing-xs);
+  color: var(--text-secondary);
+}
