@@ -53,6 +53,7 @@ import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentE
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
+import { AgentUpdateBanner } from "@/components/AgentUpdateBanner";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
@@ -1401,6 +1402,10 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+
+      {/* Deferred-update banner: only for a connected agent with a staged update
+          (the banner self-gates on the store's staged/dismissed state, #1352). */}
+      {isConnected && <AgentUpdateBanner agentId={agent.id} agentName={agent.name} />}
 
       <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
       <ConnectionErrorDialog

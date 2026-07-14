@@ -831,6 +831,59 @@ Gracefully shut down the agent process. Active sessions are detached (left runni
 
 ---
 
+### `agent.request_deferred_update`
+
+Request a **deferred agent update** (#1352). The agent records a pending update in `state.json` and applies it **only** when it has zero active sessions — so active sessions are never interrupted. When the agent is already idle it applies immediately (this is the "Apply Now" path); otherwise the update is deferred until the last session disconnects (the agent also emits an `agent.update_available` notification when it stages a self-update, which drives the desktop's "Apply Now" banner).
+
+Applying swaps the on-disk agent binary with the staged one and re-execs it (Unix only). The detached-daemon model means persistent sessions survive the swap and are recovered on the next connect, which reports the new version. Because the agent re-execs on a successful immediate apply, the current connection is torn down — the desktop should treat a subsequent disconnect as expected and reconnect.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.request_deferred_update",
+  "params": {
+    "binaryPath": "/opt/updates/termihub-agent",
+    "version": "0.3.0"
+  },
+  "id": 11
+}
+```
+
+| Param        | Type     | Required | Description                                                                                                                  |
+| ------------ | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `binaryPath` | `string` | No       | Absolute path (on the agent host) to the new agent binary to stage. Omit to apply an update the agent already staged itself. |
+| `version`    | `string` | No       | Target version label (bookkeeping only)                                                                                      |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "applied": false,
+    "activeSessions": 2
+  },
+  "id": 11
+}
+```
+
+| Result Field     | Type      | Description                                                         |
+| ---------------- | --------- | ------------------------------------------------------------------- |
+| `applied`        | `boolean` | `true` if applied immediately (agent idle); `false` if deferred     |
+| `activeSessions` | `integer` | Sessions still active (the update applies when they all disconnect) |
+
+**Errors:**
+
+| Code     | When                                                            |
+| -------- | --------------------------------------------------------------- |
+| `-32007` | Agent not initialized                                           |
+| `-32602` | `binaryPath` does not exist, or no update is staged to apply    |
+| `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix) |
+
+---
+
 ### `connections.list`
 
 List all saved connections and folders.
@@ -1706,6 +1759,7 @@ For serial sessions:
 | `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial)               |
 | `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                  |
 | `-32015` | Shutdown error              | An error occurred during agent shutdown                                              |
+| `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)         |
 
 ---
 

@@ -29,6 +29,7 @@ mod tests {
             FILE_BROWSING_NOT_SUPPORTED,
             MONITORING_ERROR,
             SHUTDOWN_ERROR,
+            DEFERRED_UPDATE_FAILED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -71,6 +72,7 @@ mod tests {
             FILE_BROWSING_NOT_SUPPORTED,
             MONITORING_ERROR,
             SHUTDOWN_ERROR,
+            DEFERRED_UPDATE_FAILED,
         ];
         for code in app_codes {
             assert!(

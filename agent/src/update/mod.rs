@@ -17,10 +17,13 @@
 //! # Partial implementation (#1355)
 //!
 //! This lands the poll → semver → verified-download → notify/stage pipeline. The
-//! deferred **auto-apply on idle** step depends on SI-6 (#1352, not yet built);
-//! until it lands the agent stops after staging the verified binary and
-//! recording it in `state.json`. Wiring auto-apply is tracked as a follow-up.
+//! deferred-apply mechanism itself now exists (SI-6, #1352 — see the `apply`
+//! submodule and [`crate::session::manager::SessionManager`]), but the
+//! *background self-update timer* still stops after staging the verified binary
+//! and recording it in `state.json`; auto-triggering the apply from this timer
+//! on idle is tracked as a follow-up.
 
+mod apply;
 mod checksum;
 mod download;
 mod github;
@@ -39,6 +42,7 @@ use crate::protocol::methods::{UpdateAvailableNotification, AGENT_UPDATE_AVAILAB
 use crate::session::manager::SessionManager;
 use crate::state::persistence::{AgentState, PendingUpdate};
 
+pub use apply::{should_apply_deferred_update, SystemUpdateApplier, UpdateApplier};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
 
 /// Default interval between self-update checks (24 hours).
@@ -227,12 +231,15 @@ async fn run_check_once(
                         available_version,
                         dest.display()
                     );
-                    // Deferred auto-apply on idle depends on SI-6 (#1352), which
-                    // is not implemented yet — stop after staging. A follow-up
-                    // wires the apply step once SI-6 lands.
+                    // The deferred-apply mechanism (SI-6 / #1352) now exists, but
+                    // this background timer intentionally stops after staging —
+                    // auto-triggering the apply from the timer on idle is a
+                    // separate follow-up. The staged update will still be applied
+                    // when the last session disconnects or via
+                    // `agent.request_deferred_update`.
                     debug!(
-                        "Self-update: auto-apply deferred (SI-6 / #1352 not implemented); \
-                         binary staged and recorded in state.json"
+                        "Self-update: binary staged and recorded in state.json; \
+                         apply happens on last disconnect or via request_deferred_update"
                     );
                 }
                 Err(e) => {

@@ -1179,6 +1179,36 @@ export async function applyAgentSettings(agentId: string, settings: AgentSetting
   await invoke("apply_agent_settings", { agentId, settings });
 }
 
+/** Outcome of a deferred agent-update request (#1352). */
+export interface AgentDeferredUpdateResult {
+  /**
+   * `true` when the agent was idle and applied the update immediately (the
+   * connection is expected to drop as the binary swaps); `false` when the
+   * update was deferred until the last of `activeSessions` disconnects.
+   */
+  applied: boolean;
+  /** Number of active sessions the update will wait on when `applied` is false. */
+  activeSessions: number;
+}
+
+/**
+ * Request a deferred agent update. Omit `binaryPath` to apply the agent's
+ * already-staged pending update (the banner case). When the agent is idle it
+ * applies immediately (`applied: true`); otherwise it defers until the last of
+ * `activeSessions` sessions disconnects (`applied: false`).
+ */
+export async function requestAgentDeferredUpdate(
+  agentId: string,
+  binaryPath?: string,
+  version?: string
+): Promise<AgentDeferredUpdateResult> {
+  return await invoke<AgentDeferredUpdateResult>("request_agent_deferred_update", {
+    agentId,
+    binaryPath,
+    version,
+  });
+}
+
 /** Disconnect from a remote agent. */
 export async function disconnectAgent(agentId: string): Promise<void> {
   await invoke("disconnect_agent", { agentId });

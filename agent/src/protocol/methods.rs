@@ -411,6 +411,30 @@ pub struct AgentShutdownResult {
     pub detached_sessions: u32,
 }
 
+// ── agent.request_deferred_update ───────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRequestDeferredUpdateParams {
+    /// Absolute path (on the agent host) to the new agent binary to stage.
+    /// Omit to apply an update the agent already staged itself (self-update).
+    #[serde(default)]
+    pub binary_path: Option<String>,
+    /// Optional target version label (bookkeeping only).
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRequestDeferredUpdateResult {
+    /// `true` if the update was applied immediately (agent was idle); `false`
+    /// if it was deferred until the last session disconnects.
+    pub applied: bool,
+    /// Number of sessions still active (0 when applied immediately).
+    pub active_sessions: u32,
+}
+
 // ── network.port_scan ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]

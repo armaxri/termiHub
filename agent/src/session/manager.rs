@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +25,8 @@ use termihub_core::session::traits::OutputSink;
 
 use crate::daemon::client::{DaemonClient, DaemonWriterHandle};
 use crate::daemon::transport::{endpoint_alive, session_endpoint};
-use crate::state::persistence::{AgentState, PersistedSession};
+use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
+use crate::update::{should_apply_deferred_update, SystemUpdateApplier, UpdateApplier};
 
 /// Maximum number of concurrent sessions the agent supports.
 pub const MAX_SESSIONS: u32 = 20;
@@ -77,6 +79,13 @@ pub trait SessionManagerApi: Send + Sync + 'static {
     /// Return the number of sessions with status `Running`.
     async fn active_count(&self) -> u32;
 
+    /// Record a deferred agent update, applying it immediately when idle.
+    async fn request_deferred_update(
+        &self,
+        binary_path: Option<String>,
+        version: Option<String>,
+    ) -> Result<DeferredUpdateOutcome, DeferredUpdateError>;
+
     /// Attach a client to an existing session.
     async fn attach(&self, session_id: &str) -> Result<(), String>;
 
@@ -113,6 +122,40 @@ impl fmt::Display for SessionCreateError {
             Self::LimitReached => write!(f, "Session limit reached (max {MAX_SESSIONS})"),
             Self::InvalidConfig(msg) => write!(f, "Invalid configuration: {msg}"),
             Self::BackendFailed(msg) => write!(f, "Backend failed: {msg}"),
+        }
+    }
+}
+
+/// Result of a deferred-update request (`agent.request_deferred_update`).
+#[derive(Debug)]
+pub enum DeferredUpdateOutcome {
+    /// The agent was idle (0 active sessions) so the update is being applied
+    /// immediately. On Unix the process re-execs and this variant is only
+    /// observed in tests / on the non-Unix path.
+    Applying,
+    /// The update was recorded and will apply when the last of `active_sessions`
+    /// sessions disconnects. Active sessions are never interrupted.
+    Deferred { active_sessions: u32 },
+}
+
+/// Errors from requesting a deferred update.
+#[derive(Debug)]
+pub enum DeferredUpdateError {
+    /// The provided binary path does not point to an existing file.
+    BinaryNotFound(String),
+    /// No `binary_path` was given and no update is currently staged/pending.
+    NoPendingUpdate,
+    /// Applying the update failed (binary swap or re-exec error, or an
+    /// unsupported platform).
+    ApplyFailed(anyhow::Error),
+}
+
+impl fmt::Display for DeferredUpdateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BinaryNotFound(path) => write!(f, "Update binary not found: {path}"),
+            Self::NoPendingUpdate => write!(f, "No pending update to apply"),
+            Self::ApplyFailed(e) => write!(f, "Failed to apply update: {e:#}"),
         }
     }
 }
@@ -311,20 +354,25 @@ pub struct SessionManager {
     registry: Arc<ConnectionTypeRegistry>,
     launcher: Arc<dyn DaemonLauncher>,
     state: Mutex<AgentState>,
+    /// Path the persisted [`AgentState`] is read from / written to. Configurable
+    /// so tests get an isolated `state.json` instead of touching the real one.
+    state_path: PathBuf,
+    /// Applies a deferred update by swapping the agent binary. Injected so tests
+    /// can record apply requests without replacing the test process.
+    update_applier: Arc<dyn UpdateApplier>,
     /// Configurable ring-buffer size for daemon-backed persistent sessions.
     persistent_buffer_size: Arc<AtomicUsize>,
 }
 
 impl SessionManager {
     pub fn new(notification_tx: NotificationSender, registry: Arc<ConnectionTypeRegistry>) -> Self {
-        Self {
-            sessions: Mutex::new(HashMap::new()),
+        Self::with_deps(
             notification_tx,
             registry,
-            launcher: Arc::new(SystemDaemonLauncher),
-            state: Mutex::new(AgentState::load()),
-            persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
-        }
+            Arc::new(SystemDaemonLauncher),
+            AgentState::default_path(),
+            Arc::new(SystemUpdateApplier),
+        )
     }
 
     /// Create a session manager with a custom daemon launcher (for testing).
@@ -334,12 +382,52 @@ impl SessionManager {
         registry: Arc<ConnectionTypeRegistry>,
         launcher: Arc<dyn DaemonLauncher>,
     ) -> Self {
+        Self::with_deps(
+            notification_tx,
+            registry,
+            launcher,
+            AgentState::default_path(),
+            Arc::new(SystemUpdateApplier),
+        )
+    }
+
+    /// Create a session manager with a fully injected set of dependencies,
+    /// including an isolated state path and a custom [`UpdateApplier`] (used by
+    /// the deferred-update tests so they never touch the real `state.json` or
+    /// re-exec the test process).
+    #[cfg(test)]
+    pub fn with_test_deps(
+        notification_tx: NotificationSender,
+        registry: Arc<ConnectionTypeRegistry>,
+        launcher: Arc<dyn DaemonLauncher>,
+        state_path: PathBuf,
+        update_applier: Arc<dyn UpdateApplier>,
+    ) -> Self {
+        Self::with_deps(
+            notification_tx,
+            registry,
+            launcher,
+            state_path,
+            update_applier,
+        )
+    }
+
+    fn with_deps(
+        notification_tx: NotificationSender,
+        registry: Arc<ConnectionTypeRegistry>,
+        launcher: Arc<dyn DaemonLauncher>,
+        state_path: PathBuf,
+        update_applier: Arc<dyn UpdateApplier>,
+    ) -> Self {
+        let state = AgentState::load_from(&state_path);
         Self {
             sessions: Mutex::new(HashMap::new()),
             notification_tx,
             registry,
             launcher,
-            state: Mutex::new(AgentState::load()),
+            state: Mutex::new(state),
+            state_path,
+            update_applier,
             persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
         }
     }
@@ -383,7 +471,7 @@ impl SessionManager {
         if capabilities.persistent {
             if let SessionBackend::Daemon(ref client) = backend {
                 let mut state = self.state.lock().await;
-                state.add_session(
+                state.sessions.insert(
                     id.clone(),
                     PersistedSession {
                         type_id: type_id.to_string(),
@@ -394,6 +482,7 @@ impl SessionManager {
                         definition_id: definition_id.clone(),
                     },
                 );
+                state.save_to(&self.state_path);
             }
         }
 
@@ -520,19 +609,40 @@ impl SessionManager {
     /// Disconnects the backend before removing the session.
     /// Returns `true` if the session was found and removed.
     pub async fn close(&self, session_id: &str) -> bool {
-        let mut sessions = self.sessions.lock().await;
-        if let Some(mut info) = sessions.remove(session_id) {
-            close_backend(&mut info.backend).await;
-
-            {
-                let mut state = self.state.lock().await;
-                state.remove_session(session_id);
+        let reached_zero = {
+            let mut sessions = self.sessions.lock().await;
+            match sessions.remove(session_id) {
+                Some(mut info) => {
+                    close_backend(&mut info.backend).await;
+                    // Compute the remaining running count while we still hold the
+                    // lock so the "reached zero" decision can't race a concurrent
+                    // create/close.
+                    sessions
+                        .values()
+                        .filter(|s| s.status == SessionStatus::Running)
+                        .count()
+                        == 0
+                }
+                None => return false,
             }
+        };
 
-            true
-        } else {
-            false
+        {
+            let mut state = self.state.lock().await;
+            state.sessions.remove(session_id);
+            state.save_to(&self.state_path);
         }
+
+        // Deferred-update hook: when the last session disconnects and an update
+        // is pending, apply it now (persistent daemon sessions are unaffected —
+        // there are none left running here).
+        if reached_zero {
+            if let Err(e) = self.apply_pending_update().await {
+                warn!("Deferred agent update failed to apply on last disconnect: {e:#}");
+            }
+        }
+
+        true
     }
 
     /// Detach all sessions without closing them.
@@ -609,7 +719,8 @@ impl SessionManager {
                 None => {
                     warn!("Session {id} has no daemon endpoint, removing");
                     let mut state = self.state.lock().await;
-                    state.remove_session(id);
+                    state.sessions.remove(id);
+                    state.save_to(&self.state_path);
                     continue;
                 }
             };
@@ -617,7 +728,8 @@ impl SessionManager {
             if !endpoint_alive(&endpoint) {
                 info!("Daemon endpoint gone for session {id}, removing from state");
                 let mut state = self.state.lock().await;
-                state.remove_session(id);
+                state.sessions.remove(id);
+                state.save_to(&self.state_path);
                 continue;
             }
 
@@ -648,7 +760,8 @@ impl SessionManager {
                 Err(e) => {
                     warn!("Failed to recover session {id}: {e}");
                     let mut state = self.state.lock().await;
-                    state.remove_session(id);
+                    state.sessions.remove(id);
+                    state.save_to(&self.state_path);
                 }
             }
         }
@@ -667,6 +780,87 @@ impl SessionManager {
             .values()
             .filter(|s| s.status == SessionStatus::Running)
             .count() as u32
+    }
+
+    /// Record a deferred agent update and apply it immediately if the agent is
+    /// already idle (#1352).
+    ///
+    /// When `binary_path` is `Some`, that binary is staged as the pending update
+    /// (persisted to `state.json`). When it is `None`, the already-staged pending
+    /// update is used — this is the "Apply Now" path for a self-update binary the
+    /// agent downloaded earlier.
+    ///
+    /// The update is applied immediately **only** when there are zero active
+    /// sessions; otherwise it is deferred until the last session disconnects
+    /// (see [`SessionManager::close`]). Active sessions are never interrupted.
+    pub async fn request_deferred_update(
+        &self,
+        binary_path: Option<String>,
+        version: Option<String>,
+    ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
+        // Stage a caller-supplied binary, or fall back to an existing pending
+        // update.
+        if let Some(path) = binary_path {
+            if !Path::new(&path).is_file() {
+                return Err(DeferredUpdateError::BinaryNotFound(path));
+            }
+            let mut state = self.state.lock().await;
+            state.update.pending_update = Some(PendingUpdate {
+                version: version.unwrap_or_default(),
+                binary_path: path,
+                staged_at: Utc::now().to_rfc3339(),
+            });
+            state.save_to(&self.state_path);
+        }
+
+        let has_pending = self.state.lock().await.update.pending_update.is_some();
+        if !has_pending {
+            return Err(DeferredUpdateError::NoPendingUpdate);
+        }
+
+        let active = self.active_count().await;
+        if should_apply_deferred_update(active, true) {
+            self.apply_pending_update()
+                .await
+                .map_err(DeferredUpdateError::ApplyFailed)?;
+            Ok(DeferredUpdateOutcome::Applying)
+        } else {
+            info!(
+                "Deferred agent update recorded — will apply when the last of {active} \
+                 active session(s) disconnects"
+            );
+            Ok(DeferredUpdateOutcome::Deferred {
+                active_sessions: active,
+            })
+        }
+    }
+
+    /// Consume the pending update (clearing it from persisted state) and apply
+    /// it. A no-op when nothing is pending.
+    ///
+    /// The pending update is cleared **before** the apply so a failed or
+    /// re-execed apply can never trigger an apply loop. On a successful Unix
+    /// apply the process re-execs and this never returns.
+    async fn apply_pending_update(&self) -> anyhow::Result<()> {
+        let pending = {
+            let mut state = self.state.lock().await;
+            let taken = state.update.pending_update.take();
+            if taken.is_some() {
+                state.save_to(&self.state_path);
+            }
+            taken
+        };
+
+        match pending {
+            Some(pending) => {
+                info!(
+                    "Applying deferred agent update (version {:?}) from {}",
+                    pending.version, pending.binary_path
+                );
+                self.update_applier.apply(&pending)
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -813,6 +1007,14 @@ impl SessionManagerApi for SessionManager {
 
     async fn active_count(&self) -> u32 {
         SessionManager::active_count(self).await
+    }
+
+    async fn request_deferred_update(
+        &self,
+        binary_path: Option<String>,
+        version: Option<String>,
+    ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
+        SessionManager::request_deferred_update(self, binary_path, version).await
     }
 
     async fn attach(&self, session_id: &str) -> Result<(), String> {
@@ -1032,6 +1234,207 @@ mod tests {
             let snapshot = info.snapshot();
             sessions.insert(id, info);
             Ok(snapshot)
+        }
+
+        /// Seed a pending update directly into the in-memory + persisted state
+        /// (test-only), so the zero-session hook has something to apply.
+        #[cfg(test)]
+        pub async fn seed_pending_update_for_test(
+            &self,
+            pending: crate::state::persistence::PendingUpdate,
+        ) {
+            let mut state = self.state.lock().await;
+            state.update.pending_update = Some(pending);
+            state.save_to(&self.state_path);
+        }
+
+        /// Read the current pending update (test-only).
+        #[cfg(test)]
+        pub async fn pending_update_for_test(
+            &self,
+        ) -> Option<crate::state::persistence::PendingUpdate> {
+            self.state.lock().await.update.pending_update.clone()
+        }
+    }
+
+    // ── Deferred update (issue #1352) ────────────────────────────────
+
+    mod deferred_update_tests {
+        use super::*;
+        use crate::state::persistence::PendingUpdate;
+        use crate::update::UpdateApplier;
+        use std::sync::Mutex as StdMutex;
+
+        /// [`UpdateApplier`] that records apply calls instead of swapping the
+        /// binary + re-execing, so the zero-session hook can be tested without
+        /// replacing the test process.
+        struct RecordingApplier {
+            applied: Arc<StdMutex<Vec<PendingUpdate>>>,
+        }
+
+        impl UpdateApplier for RecordingApplier {
+            fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+                self.applied
+                    .lock()
+                    .expect("recording lock")
+                    .push(pending.clone());
+                Ok(())
+            }
+        }
+
+        type AppliedLog = Arc<StdMutex<Vec<PendingUpdate>>>;
+
+        fn manager_with_recording_applier() -> (SessionManager, AppliedLog, tempfile::TempDir) {
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+            let applied: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path,
+                Arc::new(RecordingApplier {
+                    applied: applied.clone(),
+                }),
+            );
+            (mgr, applied, tmp)
+        }
+
+        fn fake_pending(path: &str) -> PendingUpdate {
+            PendingUpdate {
+                version: "0.9.0".to_string(),
+                binary_path: path.to_string(),
+                staged_at: "2026-07-14T09:00:00Z".to_string(),
+            }
+        }
+
+        #[tokio::test]
+        async fn applies_only_on_last_disconnect() {
+            let (mgr, applied, _tmp) = manager_with_recording_applier();
+            mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            mgr.create_stub_session("stub", "B".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/new-agent"))
+                .await;
+
+            let ids: Vec<String> = mgr.list().await.into_iter().map(|s| s.id).collect();
+
+            // Closing the first of two sessions must NOT apply the update.
+            mgr.close(&ids[0]).await;
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "update must not apply while a session is still running"
+            );
+
+            // Closing the last session applies it exactly once.
+            mgr.close(&ids[1]).await;
+            let log = applied.lock().unwrap();
+            assert_eq!(log.len(), 1, "update applies exactly on last disconnect");
+            assert_eq!(log[0].binary_path, "/tmp/new-agent");
+        }
+
+        #[tokio::test]
+        async fn last_disconnect_without_pending_does_not_apply() {
+            let (mgr, applied, _tmp) = manager_with_recording_applier();
+            mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            let ids: Vec<String> = mgr.list().await.into_iter().map(|s| s.id).collect();
+            mgr.close(&ids[0]).await;
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "no pending update → nothing applied on last disconnect"
+            );
+        }
+
+        #[tokio::test]
+        async fn request_with_active_sessions_defers_without_applying() {
+            let (mgr, applied, tmp) = manager_with_recording_applier();
+            mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            // A real file so path validation passes.
+            let bin = tmp.path().join("staged-agent");
+            std::fs::write(&bin, b"BIN").unwrap();
+
+            let outcome = mgr
+                .request_deferred_update(
+                    Some(bin.to_string_lossy().into_owned()),
+                    Some("1.0.0".to_string()),
+                )
+                .await
+                .unwrap();
+
+            assert!(
+                matches!(
+                    outcome,
+                    DeferredUpdateOutcome::Deferred { active_sessions: 1 }
+                ),
+                "must defer with an active session, got {outcome:?}"
+            );
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "must not apply while a session is active"
+            );
+            assert!(
+                mgr.pending_update_for_test().await.is_some(),
+                "the pending update must be persisted for the last-disconnect apply"
+            );
+        }
+
+        #[tokio::test]
+        async fn request_when_idle_applies_immediately() {
+            let (mgr, applied, tmp) = manager_with_recording_applier();
+            let bin = tmp.path().join("staged-agent");
+            std::fs::write(&bin, b"BIN").unwrap();
+
+            let outcome = mgr
+                .request_deferred_update(Some(bin.to_string_lossy().into_owned()), None)
+                .await
+                .unwrap();
+
+            assert!(
+                matches!(outcome, DeferredUpdateOutcome::Applying),
+                "idle agent applies immediately, got {outcome:?}"
+            );
+            assert_eq!(applied.lock().unwrap().len(), 1);
+            // Consumed on apply.
+            assert!(mgr.pending_update_for_test().await.is_none());
+        }
+
+        #[tokio::test]
+        async fn request_without_path_applies_existing_pending_when_idle() {
+            // The "Apply Now" path for an already-staged self-update: no binary
+            // path is supplied, the agent uses its recorded pending update.
+            let (mgr, applied, _tmp) = manager_with_recording_applier();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/staged-agent"))
+                .await;
+
+            let outcome = mgr.request_deferred_update(None, None).await.unwrap();
+            assert!(matches!(outcome, DeferredUpdateOutcome::Applying));
+            let log = applied.lock().unwrap();
+            assert_eq!(log.len(), 1);
+            assert_eq!(log[0].binary_path, "/tmp/staged-agent");
+        }
+
+        #[tokio::test]
+        async fn request_without_path_and_no_pending_errors() {
+            let (mgr, _applied, _tmp) = manager_with_recording_applier();
+            let err = mgr.request_deferred_update(None, None).await.unwrap_err();
+            assert!(matches!(err, DeferredUpdateError::NoPendingUpdate));
+        }
+
+        #[tokio::test]
+        async fn request_with_missing_binary_errors() {
+            let (mgr, _applied, _tmp) = manager_with_recording_applier();
+            let err = mgr
+                .request_deferred_update(Some("/no/such/binary".to_string()), None)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, DeferredUpdateError::BinaryNotFound(_)));
         }
     }
 
