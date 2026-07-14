@@ -949,8 +949,37 @@ manual.
    is **not** also listed under **Local Sessions**. Its **Kill** action stops the
    backend session.
 7. (Boundary) Run `termiHub spawn --location ~/tmp/spawn` with **no**
-   `--container-image`. Confirm no tab opens (non-container spawns are SI-2; the
-   request is ignored, logged in the LogViewer under `frontend::spawn`).
+   `--container-image`. Confirm this now opens a **local shell tab** `cd`'d to the
+   directory (the SI-2 path below), not a container.
+
+### External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)
+
+The wiring (spawn event / cold-start drain → `resolve_shell_spawn` → focus window
+→ open local shell tab `cd`'d to the target → confirmation toast) is covered by
+unit tests (`src-tauri/src/spawn/handler.rs`, `src/hooks/useSpawnRequests.test.ts`).
+A live end-to-end run needs a built app, so the path below is manual (window focus
+per-OS, especially Wayland, is manual-only). Referenced by PR #1508.
+
+**Spawn a local shell at a directory / file / missing path.**
+
+1. With the built app already running, create a scratch directory with a file
+   (e.g. `mkdir -p ~/tmp/spawn && echo hi > ~/tmp/spawn/hi.txt`).
+2. From another terminal run `termiHub spawn --location ~/tmp/spawn`.
+3. Confirm the termiHub **window comes to the foreground**, a **new local shell
+   tab** opens titled `spawn (Spawned)` with a **"Spawned"** badge, and a brief
+   **confirmation toast** reports the shell was opened (mentions the location).
+4. In the terminal, `pwd` prints the target directory — proving the shell opened
+   `cd`'d there.
+5. (File) Run `termiHub spawn --location ~/tmp/spawn/hi.txt`. Confirm the shell
+   opens in the **parent directory** (`~/tmp/spawn`).
+6. (Missing) Run `termiHub spawn --location ~/tmp/does-not-exist`. Confirm the
+   shell opens in your **home directory** and an **info toast** warns the path was
+   not found.
+7. (Windows/WSL) With `--kind wsl`, confirm the WSL shell opens at the target
+   converted to its `/mnt/<drive>/…` path.
+8. (Cold start) Quit the app, then run `termiHub spawn --location ~/tmp/spawn`.
+   Confirm the app launches and, once loaded, focuses and opens the shell tab at
+   the target (the queued cold-start spawn is processed post-UI-ready).
 
 ### Spawned container grouping survives tab close (#1466)
 

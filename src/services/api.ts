@@ -13,6 +13,7 @@ import {
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
+import type { SpawnRequestPayload } from "@/services/events";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -169,6 +170,57 @@ export async function resolveContainerSpawn(
     containerImage,
     containerMount,
   });
+}
+
+/**
+ * A resolved local/WSL/SSH shell spawn (#1365, SI-2). Mirrors the Rust
+ * `ShellSpawn`: the camelCase local-shell backend `settings` (with the resolved
+ * target as `startingDirectory`) to open the session with, a `"… (Spawned)"` tab
+ * `title`, `spawned: true` so it is tracked separately from saved connections,
+ * and `missing: true` when the requested path did not exist and the home
+ * directory was substituted.
+ */
+export interface ShellSpawn {
+  /** Local-shell backend settings (camelCase) for the spawned session. */
+  settings: Record<string, unknown>;
+  /** Display title carrying the "Spawned" marker for the tab badge. */
+  title: string;
+  /** Always `true` — distinguishes spawned shells from saved connections. */
+  spawned: boolean;
+  /** `true` when the requested path was missing and home was substituted. */
+  missing: boolean;
+}
+
+/**
+ * Resolve an external local/WSL/SSH spawn into local-shell session settings
+ * (#1365). Given the spawn `location` (folder, file, or missing path) and its
+ * `kind`, the backend resolves the working directory (folder → itself, file →
+ * parent, missing → home, symlinks resolved; a WSL spawn is converted to its
+ * `/mnt/` path) and returns the settings + title used to open a shell tab `cd`'d
+ * to the target.
+ */
+export async function resolveShellSpawn(
+  location?: string,
+  connection?: string,
+  entryId?: string,
+  kind?: string
+): Promise<ShellSpawn> {
+  return await invoke<ShellSpawn>("resolve_shell_spawn", {
+    location,
+    connection,
+    entryId,
+    kind,
+  });
+}
+
+/**
+ * Drain the cold-start pending spawn, if any (#1365). A freshly-launched
+ * instance parks a spawn handed to it before the UI was ready; the frontend
+ * calls this once its `spawn-request` subscription is registered to pick it up.
+ * Returns `null` when nothing is pending.
+ */
+export async function takePendingSpawn(): Promise<SpawnRequestPayload | null> {
+  return await invoke<SpawnRequestPayload | null>("take_pending_spawn");
 }
 
 /** Send input data to a terminal session */
