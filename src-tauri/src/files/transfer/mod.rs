@@ -1,22 +1,26 @@
-//! Cancellable, chunked SFTP transfer subsystem (issue #1245).
+//! Cancellable, queued file-transfer subsystem (issues #1245, #1336).
 //!
-//! The legacy transfer path buffered a whole file *under the session `Mutex`*,
-//! which froze browsing on that session for the duration of the copy and could
-//! not be cancelled. This module replaces it with:
+//! Originally a single-phase, cancellable chunked *SFTP* copy path (#1245),
+//! this module now also hosts the richer, backend-agnostic **transfer queue
+//! model** (#1336): per-session bounded concurrency, pause/resume, auto-retry
+//! with exponential backoff, and `REST`-based resume, driving FTP uploads and
+//! downloads. The SFTP path is unchanged and remains fully backward-compatible.
 //!
-//! - a [`TransferRegistry`] that maps a per-transfer `transfer_id` to a
-//!   [`CancellationToken`] (managed as Tauri state);
-//! - a chunked copy loop that runs on a **dedicated** SFTP channel opened off
-//!   the same authenticated SSH session, so the copy does *not* hold the session
-//!   `Mutex` and directory listing / navigation stays live during a transfer;
-//! - throttled `transfer-progress` events and a terminal event on completion,
-//!   cancellation, or error.
+//! Structure:
+//!
+//! - [`state`] — the pure `Queued/Active/Paused/Completed/Failed/Cancelled`
+//!   state machine (no I/O, fully unit-tested).
+//! - [`scheduler`] — pure per-session slot accounting (`max_concurrent`).
+//! - [`retry`] — pure backoff schedule, `REST` resume-offset math, and a
+//!   throughput/ETA meter.
+//! - [`registry`] — the [`TransferRegistry`] Tauri state: the legacy
+//!   `transfer_id → CancellationToken` map *plus* the rich queue model.
+//! - [`ftp`] — FTP upload/download executor (feature-gated behind `ftp`).
 //!
 //! `tokio_util::sync::CancellationToken` provides the cancellation primitive
 //! (libraries-first — no hand-rolled channels).
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use russh_sftp::client::SftpSession as RusshSftp;
@@ -28,8 +32,21 @@ use tracing::{debug, info, warn};
 
 use crate::utils::errors::TerminalError;
 
-/// Chunk size for the copy loop. Large enough to keep SFTP round-trips
-/// amortised, small enough that cancel latency stays sub-second.
+pub mod registry;
+pub mod retry;
+pub mod scheduler;
+pub mod state;
+
+#[cfg(feature = "ftp")]
+pub mod ftp;
+
+pub use registry::{TransferRegistry, TransferSnapshot};
+pub use retry::{backoff_delay, resume_offset, ThroughputMeter, BASE_BACKOFF};
+pub use scheduler::{Admission, SessionScheduler, DEFAULT_MAX_CONCURRENT};
+pub use state::{InvalidTransition, TransferEvent, TransferState, TransferStateTag, MAX_RETRIES};
+
+/// Chunk size for the copy loop. Large enough to keep round-trips amortised,
+/// small enough that cancel latency stays sub-second.
 const CHUNK_SIZE: usize = 256 * 1024;
 
 /// Minimum interval between two `transfer-progress` emits, to avoid flooding
@@ -40,15 +57,19 @@ const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 pub const TRANSFER_PROGRESS_EVENT: &str = "transfer-progress";
 
 /// Direction of a transfer, driving the icon / verb in the UI.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransferDirection {
     Download,
     Upload,
 }
 
-/// Lifecycle phase of a transfer. `Transferring` is intermediate; the other
-/// three are terminal and clear the UI row.
+/// Lifecycle phase of a transfer (legacy, #1245). `Transferring` is
+/// intermediate; the other three are terminal and clear the UI row.
+///
+/// Retained for backward compatibility with the existing SFTP progress
+/// consumers. The richer [`TransferStateTag`] (`state` field) is emitted
+/// alongside it; both describe the same event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransferPhase {
@@ -58,10 +79,29 @@ pub enum TransferPhase {
     Error,
 }
 
-/// A single `transfer-progress` event payload (concept Decision 2).
+impl TransferPhase {
+    /// The equivalent rich state tag for this legacy phase, so the SFTP path
+    /// populates the new `state` field consistently with the FTP path.
+    fn state_tag(self) -> TransferStateTag {
+        match self {
+            TransferPhase::Transferring => TransferStateTag::Active,
+            TransferPhase::Done => TransferStateTag::Completed,
+            TransferPhase::Cancelled => TransferStateTag::Cancelled,
+            TransferPhase::Error => TransferStateTag::Failed,
+        }
+    }
+}
+
+/// A single `transfer-progress` event payload.
+///
+/// **Backward compatibility (#1336):** the original #1245 fields (`phase`,
+/// `total`, `transferred`, `message`, …) are unchanged, so existing SFTP
+/// consumers keep working untouched. The queue model adds *additive* fields —
+/// `state`, `speed`, `totalBytes`, `etaSecs`, `attempt`, `maxAttempts` — which
+/// older consumers simply ignore.
 ///
 /// `total == 0` means indeterminate (stat unavailable); the UI shows a spinner.
-/// `message` is only populated for the [`TransferPhase::Error`] phase.
+/// `message` is only populated for a failed/error update.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferProgress {
@@ -71,90 +111,52 @@ pub struct TransferProgress {
     pub file_name: String,
     pub transferred: u64,
     pub total: u64,
+    /// Legacy phase (#1245) — kept for backward compatibility.
     pub phase: TransferPhase,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+
+    // --- Queue-model additive fields (#1336) ---
+    /// Rich queue state (`queued/active/paused/completed/failed/cancelled`).
+    pub state: TransferStateTag,
+    /// Current throughput in bytes/sec (`0` = unknown / not yet measured).
+    pub speed: u64,
+    /// Total size in bytes (mirror of `total`; `0` = indeterminate).
+    pub total_bytes: u64,
+    /// Estimated seconds remaining, when a speed is known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eta_secs: Option<u64>,
+    /// Retry attempt number (0 when not in a retry cycle).
+    pub attempt: u32,
+    /// Maximum retry attempts before permanent failure.
+    pub max_attempts: u32,
 }
 
-/// Tracks in-flight transfers by `transfer_id`, each with a cancellation token.
-///
-/// `Clone` (the map is behind an `Arc`) so a handle can be moved into the copy
-/// task and into Tauri commands. Managed as Tauri state.
-#[derive(Clone, Default)]
-pub struct TransferRegistry {
-    transfers: Arc<Mutex<HashMap<String, CancellationToken>>>,
-}
-
-impl TransferRegistry {
-    /// Create an empty registry.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Lock the inner map, recovering the guard even if the mutex is poisoned.
-    ///
-    /// A poisoned lock here is always cleanup-adjacent (register/cancel/drop),
-    /// so recovering the guard and continuing is correct — mirrors the
-    /// poison-safe draining in `SftpManager` (audit GAP C1, #1143/#1244).
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, CancellationToken>> {
-        self.transfers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// Register a fresh transfer, returning its cancellation token.
-    ///
-    /// The returned token is checked by the copy loop at each chunk boundary.
-    pub fn register(&self, transfer_id: &str) -> CancellationToken {
-        let token = CancellationToken::new();
-        self.lock().insert(transfer_id.to_string(), token.clone());
-        token
-    }
-
-    /// Cancel a transfer by id. Unknown / already-finished ids are a no-op
-    /// (returns `false`); a live transfer is cancelled (returns `true`).
-    pub fn cancel(&self, transfer_id: &str) -> bool {
-        match self.lock().get(transfer_id) {
-            Some(token) => {
-                token.cancel();
-                true
-            }
-            None => false,
+impl TransferProgress {
+    /// Build a payload from a rich [`TransferSnapshot`] (the FTP queue path),
+    /// pairing the precise `state` with a backward-compatible legacy `phase`.
+    pub fn from_snapshot(
+        snap: &TransferSnapshot,
+        phase: TransferPhase,
+        eta_secs: Option<u64>,
+        message: Option<String>,
+    ) -> Self {
+        TransferProgress {
+            transfer_id: snap.transfer_id.clone(),
+            session_id: snap.session_id.clone(),
+            direction: snap.direction,
+            file_name: snap.file_name.clone(),
+            transferred: snap.transferred,
+            total: snap.total,
+            phase,
+            message,
+            state: snap.state,
+            speed: snap.speed,
+            total_bytes: snap.total,
+            eta_secs,
+            attempt: snap.attempt,
+            max_attempts: snap.max_attempts,
         }
-    }
-
-    /// Cancel every in-flight transfer. Used on app quit *before* SFTP sessions
-    /// are closed, so no half-written file keeps a channel open during teardown.
-    /// Returns the number of transfers signalled.
-    pub fn cancel_all(&self) -> usize {
-        let guard = self.lock();
-        for token in guard.values() {
-            token.cancel();
-        }
-        guard.len()
-    }
-
-    /// Drop a transfer's registry entry once its copy loop has finished.
-    pub fn drop_entry(&self, transfer_id: &str) {
-        self.lock().remove(transfer_id);
-    }
-
-    /// Number of currently-registered transfers (for tests / diagnostics).
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.lock().len()
-    }
-
-    /// Whether no transfers are currently registered (for tests / diagnostics).
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.lock().is_empty()
-    }
-
-    /// Whether a transfer id is currently registered (for tests / diagnostics).
-    #[cfg(test)]
-    pub fn contains(&self, transfer_id: &str) -> bool {
-        self.lock().contains_key(transfer_id)
     }
 }
 
@@ -174,8 +176,8 @@ pub fn app_progress_sink(app: AppHandle) -> ProgressSink {
     })
 }
 
-/// Shared context for a running transfer, so the chunk loop and the terminal
-/// emit share one description of the transfer.
+/// Shared context for a running SFTP transfer, so the chunk loop and the
+/// terminal emit share one description of the transfer (#1245 path).
 pub struct TransferContext {
     pub transfer_id: String,
     pub session_id: String,
@@ -200,13 +202,21 @@ impl TransferContext {
             total: self.total,
             phase,
             message,
+            // Additive queue-model fields, derived from the legacy phase so the
+            // SFTP path emits a consistent `state`/`totalBytes` (#1336).
+            state: phase.state_tag(),
+            speed: 0,
+            total_bytes: self.total,
+            eta_secs: None,
+            attempt: 0,
+            max_attempts: MAX_RETRIES,
         }
     }
 }
 
 /// Copy `reader` to `writer` in [`CHUNK_SIZE`] chunks, checking `token` at each
-/// boundary and emitting throttled progress. Returns the number of bytes copied
-/// on success, or `Err(bytes_written)` shaped errors via [`TerminalError`].
+/// boundary and emitting throttled progress. Returns the outcome via
+/// [`CopyOutcome`], or a [`TerminalError`] on I/O failure.
 ///
 /// Cancellation stops the loop at the next chunk boundary and returns
 /// [`CopyOutcome::Cancelled`] with the bytes written so far, so the caller can
@@ -379,88 +389,4 @@ fn finish_transfer<F: FnOnce()>(
         }
     }
     registry.drop_entry(&ctx.transfer_id);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn register_adds_a_live_token() {
-        let reg = TransferRegistry::new();
-        let token = reg.register("t1");
-        assert!(reg.contains("t1"));
-        assert_eq!(reg.len(), 1);
-        assert!(!token.is_cancelled());
-    }
-
-    #[test]
-    fn cancel_trips_the_token_and_reports_true() {
-        let reg = TransferRegistry::new();
-        let token = reg.register("t1");
-        assert!(reg.cancel("t1"), "cancelling a live transfer returns true");
-        assert!(
-            token.is_cancelled(),
-            "the copy loop's token must be tripped"
-        );
-    }
-
-    #[test]
-    fn cancel_unknown_id_is_a_noop() {
-        let reg = TransferRegistry::new();
-        assert!(
-            !reg.cancel("does-not-exist"),
-            "cancelling an unknown id is a no-op (returns false), not an error"
-        );
-    }
-
-    #[test]
-    fn cancel_all_trips_every_token() {
-        let reg = TransferRegistry::new();
-        let a = reg.register("a");
-        let b = reg.register("b");
-        let c = reg.register("c");
-        assert_eq!(
-            reg.cancel_all(),
-            3,
-            "cancel_all reports the count signalled"
-        );
-        assert!(a.is_cancelled());
-        assert!(b.is_cancelled());
-        assert!(c.is_cancelled());
-    }
-
-    #[test]
-    fn cancel_all_on_empty_registry_is_zero() {
-        let reg = TransferRegistry::new();
-        assert_eq!(reg.cancel_all(), 0);
-    }
-
-    #[test]
-    fn drop_entry_removes_the_transfer() {
-        let reg = TransferRegistry::new();
-        reg.register("t1");
-        reg.drop_entry("t1");
-        assert!(!reg.contains("t1"));
-        assert_eq!(reg.len(), 0);
-    }
-
-    #[test]
-    fn drop_entry_for_unknown_id_is_a_noop() {
-        let reg = TransferRegistry::new();
-        reg.register("t1");
-        reg.drop_entry("other");
-        assert!(reg.contains("t1"), "unrelated entry must survive");
-        assert_eq!(reg.len(), 1);
-    }
-
-    #[test]
-    fn cancel_after_drop_is_a_noop() {
-        // Models an already-finished transfer: the copy loop ended and dropped
-        // the entry; a late cancel from the UI must be a harmless no-op.
-        let reg = TransferRegistry::new();
-        reg.register("t1");
-        reg.drop_entry("t1");
-        assert!(!reg.cancel("t1"));
-    }
 }

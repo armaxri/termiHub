@@ -11,6 +11,7 @@ import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
+import { CommandPalette } from "@/components/CommandPalette/CommandPalette";
 import { OverlayViewPanel } from "@/components/Settings/OverlayViewPanel";
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
@@ -285,6 +286,7 @@ function App() {
             warnings={recoveryWarnings}
           />
           <ShortcutsOverlay open={shortcutsOverlayOpen} onOpenChange={setShortcutsOverlayOpen} />
+          <CommandPalette />
           <OverlayViewPanel />
           <LargePasteDialog
             open={largePasteDialog.open}

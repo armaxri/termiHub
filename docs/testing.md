@@ -799,8 +799,27 @@ a Unix agent host (the exec-replace is Unix-only). See PR #1352.
 4. **Apply Now when idle.** With a staged-update banner shown and no active
    sessions on the agent, press **Apply Now**. Expect: the update applies
    immediately, the connection drops, and reconnecting shows the new version.
+
 5. **Dismiss.** Press **Dismiss** on the banner. Expect: the banner hides for the
    session and no update is requested.
+
+### Command palette (#1484)
+
+Verifies the Cmd/Ctrl+P command palette that fuzzy-matches application commands
+and saved connections. Introduced in PR #1484.
+
+1. Press the palette shortcut (macOS **Cmd+P**, Windows/Linux **Ctrl+Shift+P**) →
+   a modal opens with an empty search box focused, listing commands first, then
+   saved connections.
+2. Type part of a command name (e.g. `new term`) → **New Terminal** ranks to the
+   top with its accelerator shown on the right. Press **Enter** → a new terminal
+   tab opens and the palette closes.
+3. Reopen the palette and type part of a saved connection's name or host → the
+   matching connection ranks to the top with its connection-type badge. Press
+   **Enter** → it connects exactly as a sidebar double-click would (including any
+   password/passphrase or credential-store-unlock prompt).
+4. With the palette open, use **Arrow Up/Down** to move the highlight and
+   **Esc** to close without running anything.
 
 ### FTP insecure-connection warning & editor behaviors (#1338)
 
@@ -955,8 +974,37 @@ manual.
    is **not** also listed under **Local Sessions**. Its **Kill** action stops the
    backend session.
 7. (Boundary) Run `termiHub spawn --location ~/tmp/spawn` with **no**
-   `--container-image`. Confirm no tab opens (non-container spawns are SI-2; the
-   request is ignored, logged in the LogViewer under `frontend::spawn`).
+   `--container-image`. Confirm this now opens a **local shell tab** `cd`'d to the
+   directory (the SI-2 path below), not a container.
+
+### External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)
+
+The wiring (spawn event / cold-start drain → `resolve_shell_spawn` → focus window
+→ open local shell tab `cd`'d to the target → confirmation toast) is covered by
+unit tests (`src-tauri/src/spawn/handler.rs`, `src/hooks/useSpawnRequests.test.ts`).
+A live end-to-end run needs a built app, so the path below is manual (window focus
+per-OS, especially Wayland, is manual-only). Referenced by PR #1508.
+
+**Spawn a local shell at a directory / file / missing path.**
+
+1. With the built app already running, create a scratch directory with a file
+   (e.g. `mkdir -p ~/tmp/spawn && echo hi > ~/tmp/spawn/hi.txt`).
+2. From another terminal run `termiHub spawn --location ~/tmp/spawn`.
+3. Confirm the termiHub **window comes to the foreground**, a **new local shell
+   tab** opens titled `spawn (Spawned)` with a **"Spawned"** badge, and a brief
+   **confirmation toast** reports the shell was opened (mentions the location).
+4. In the terminal, `pwd` prints the target directory — proving the shell opened
+   `cd`'d there.
+5. (File) Run `termiHub spawn --location ~/tmp/spawn/hi.txt`. Confirm the shell
+   opens in the **parent directory** (`~/tmp/spawn`).
+6. (Missing) Run `termiHub spawn --location ~/tmp/does-not-exist`. Confirm the
+   shell opens in your **home directory** and an **info toast** warns the path was
+   not found.
+7. (Windows/WSL) With `--kind wsl`, confirm the WSL shell opens at the target
+   converted to its `/mnt/<drive>/…` path.
+8. (Cold start) Quit the app, then run `termiHub spawn --location ~/tmp/spawn`.
+   Confirm the app launches and, once loaded, focuses and opens the shell tab at
+   the target (the queued cold-start spawn is processed post-UI-ready).
 
 ### Spawned container grouping survives tab close (#1466)
 
@@ -1686,6 +1734,34 @@ termiHub FTP **client** end-to-end once the backend sub-issues
 4. Repeat with **explicit FTPS** (TLS Mode = Explicit, port 2401) and **implicit
    FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
    plain-FTP insecure warning must appear only for TLS Mode = None.
+
+### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
+
+Verifies the shared transfer-queue model (queue / bounded concurrency /
+pause / resume / auto-retry / `REST` resume) and FTP up/download end-to-end.
+Requires an `ftp`-feature build (default) and the FTP fixture from the section
+above (`--profile ftp`, `127.0.0.1:2401`, `ftpuser` / `ftppass`). The live
+byte-exact + kill/resume Docker integration test is deferred to a follow-up;
+verify manually until it lands. See PR #1509.
+
+1. **Concurrency cap + queue:** start **three** downloads of large files (e.g.
+   `pub/data/dataset-1m.bin` to three local paths) in quick succession. Confirm
+   at most **two** are `active` at once and the third shows `queued`; when one
+   finishes, the queued one promotes to `active` automatically.
+2. **Pause / resume:** pause an active download mid-flight. Confirm it stops
+   moving bytes (state `paused`) and a queued transfer takes its slot. Resume it
+   and confirm it continues from where it stopped (via `REST`) and completes to
+   the exact original byte size — not restarting from zero.
+3. **Cancel:** cancel a queued transfer (it just disappears) and an active one
+   (its partial local file is removed). Both leave browsing responsive.
+4. **Auto-retry / backoff:** start a transfer, then break the server mid-flight
+   (e.g. `docker pause` the `ftp-server` container). Confirm the transfer reports
+   `failed (n/3)` and auto-retries with increasing backoff; unpause the container
+   before the 3rd attempt and confirm it resumes and completes. Leave it paused
+   past 3 attempts to confirm it surfaces a permanent failure, then use retry to
+   restart it once the server is back.
+5. **Upload:** repeat 1–4 for uploads into `/uploads` as `ftpuser`, confirming
+   byte-exact results and that concurrent uploads use separate connections.
 
 ### Remote system monitoring
 

@@ -170,6 +170,7 @@ pub fn run() {
         .manage(NetworkManager::new())
         .manage(x_server_manager.clone())
         .manage(x_server_consent_registry.clone())
+        .manage(spawn::handler::PendingSpawn::default())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
@@ -512,16 +513,18 @@ pub fn run() {
             match spawn::SpawnEndpoint::for_current_user() {
                 Ok(endpoint) => {
                     let emit_handle = app.handle().clone();
-                    let handler: spawn::SpawnHandler =
-                        Arc::new(move |req: spawn::SpawnRequest| match emit_handle
-                            .emit(spawn::SPAWN_REQUEST_EVENT, &req)
-                        {
+                    let handler: spawn::SpawnHandler = Arc::new(move |req: spawn::SpawnRequest| {
+                        // Focus the window and forward the request to the
+                        // frontend (#1365 adds the focus so an external spawn
+                        // raises the running instance, for every spawn kind).
+                        match spawn::handler::emit_spawn_request(&emit_handle, &req) {
                             Ok(()) => spawn::SpawnResponse::accepted(),
                             Err(e) => {
                                 tracing::warn!("failed to emit spawn-request event: {e}");
                                 spawn::SpawnResponse::error(format!("emit failed: {e}"))
                             }
-                        });
+                        }
+                    });
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = spawn::ipc_server::serve(&endpoint, handler).await {
                             tracing::warn!("spawn IPC server stopped: {e}");
@@ -532,11 +535,16 @@ pub fn run() {
             }
 
             // Process a spawn request this instance launched to handle itself
-            // (no running instance accepted the pre-init forward).
-            if let Some(req) = &pending_spawn {
-                if let Err(e) = app.handle().emit(spawn::SPAWN_REQUEST_EVENT, req) {
-                    tracing::warn!("failed to emit pending spawn-request: {e}");
-                }
+            // (no running instance accepted the pre-init forward). On cold start
+            // the frontend listener is not registered yet, so an event would be
+            // lost — park the request and focus the window; the frontend drains
+            // it via `take_pending_spawn` once its subscription is ready (#1365).
+            if let Some(req) = pending_spawn {
+                spawn::handler::store_pending_spawn(
+                    app.handle(),
+                    &app.state::<spawn::handler::PendingSpawn>(),
+                    req,
+                );
             }
 
             // Store recovery warnings so the frontend can retrieve them
@@ -631,6 +639,8 @@ pub fn run() {
             commands::shell_integration::uninstall_shell_integration,
             commands::shell_integration::save_shell_integration_settings,
             commands::spawn::resolve_container_spawn,
+            commands::spawn::resolve_shell_spawn,
+            commands::spawn::take_pending_spawn,
             commands::connection::move_connection_to_file,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,
@@ -650,6 +660,14 @@ pub fn run() {
             commands::files::sftp_download,
             commands::files::sftp_upload,
             commands::files::sftp_cancel_transfer,
+            // Generic transfer-queue controls (shared model; #1336)
+            commands::transfer::transfer_pause,
+            commands::transfer::transfer_resume,
+            commands::transfer::transfer_cancel,
+            commands::transfer::transfer_retry,
+            commands::transfer::transfer_list,
+            commands::transfer::ftp_download,
+            commands::transfer::ftp_upload,
             commands::files::sftp_mkdir,
             commands::files::sftp_delete,
             commands::files::sftp_rename,

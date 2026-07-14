@@ -103,7 +103,7 @@ import {
   detachPersistentTab as apiDetachPersistentTab,
   saveShellIntegrationSettings,
 } from "@/services/api";
-import type { ConnectionTypeInfo, ContainerSpawn } from "@/services/api";
+import type { ConnectionTypeInfo, ContainerSpawn, ShellSpawn } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { EmbeddedServerConfig, ServerState as EmbeddedServerState } from "@/types/embeddedServer";
@@ -364,6 +364,13 @@ interface AppState {
    * Returns the created tab id.
    */
   openSpawnedContainer: (spawn: ContainerSpawn) => string;
+  /**
+   * Open a local-shell session tab for a resolved external local/WSL/SSH spawn
+   * (#1365, SI-2). Reuses the standard {@link addTab} open path with the spawn's
+   * shell settings (the resolved target as `startingDirectory`) + tab title and
+   * marks the tab `spawned` (no saved connection id). Returns the created tab id.
+   */
+  openSpawnedShell: (spawn: ShellSpawn) => string;
 
   // Persistent connection sessions
   /** Live state of all persistent connection sessions, keyed by connectionId. */
@@ -519,6 +526,10 @@ interface AppState {
   // Shortcuts overlay
   shortcutsOverlayOpen: boolean;
   setShortcutsOverlayOpen: (open: boolean) => void;
+
+  // Command palette (Cmd/Ctrl+P) — fuzzy-find commands + saved connections
+  commandPaletteOpen: boolean;
+  setCommandPaletteOpen: (open: boolean) => void;
 
   // Standalone overlay views (updates, about) — opened from the settings menu
   overlayView: "updates" | "about" | null;
@@ -2134,6 +2145,14 @@ export const useAppStore = create<AppState>((set, get) => {
         { contentType: "terminal", spawned: true }
       ),
 
+    openSpawnedShell: (spawn) =>
+      get().addTab(
+        spawn.title,
+        "local",
+        { type: "local", config: spawn.settings },
+        { contentType: "terminal", spawned: true }
+      ),
+
     openSettingsTab: () =>
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
@@ -2761,6 +2780,9 @@ export const useAppStore = create<AppState>((set, get) => {
     // Shortcuts overlay
     shortcutsOverlayOpen: false,
     setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    commandPaletteOpen: false,
+    setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
 
     // Standalone overlay views
     overlayView: null,

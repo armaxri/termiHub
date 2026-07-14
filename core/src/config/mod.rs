@@ -508,6 +508,11 @@ pub struct FtpConfig {
     /// Connect timeout in seconds.
     #[serde(default = "default_ftp_timeout_secs")]
     pub timeout_secs: u64,
+    /// Idle keep-alive interval in seconds. A periodic `NOOP` is sent on the
+    /// browsing control connection every `keep_alive_secs` seconds to stop
+    /// servers dropping an idle connection. `0` disables keep-alive.
+    #[serde(default = "default_ftp_keep_alive_secs")]
+    pub keep_alive_secs: u64,
     /// When set, the plain-FTP insecure-connection warning is suppressed for
     /// this connection (the user checked "Don't warn again for this
     /// connection"). Set implicitly by the connect-time warning modal, not by
@@ -529,6 +534,7 @@ impl Default for FtpConfig {
             transfer_type: FtpTransferType::default(),
             initial_directory: None,
             timeout_secs: default_ftp_timeout_secs(),
+            keep_alive_secs: default_ftp_keep_alive_secs(),
             suppress_security_warning: false,
         }
     }
@@ -538,6 +544,14 @@ impl FtpConfig {
     /// Connect timeout as a [`Duration`].
     pub fn timeout(&self) -> Duration {
         Duration::from_secs(self.timeout_secs)
+    }
+
+    /// Keep-alive interval as a [`Duration`], or `None` when disabled (`0`).
+    ///
+    /// Backends spawn a periodic `NOOP` task on this interval; returning `None`
+    /// means no keep-alive task should be started.
+    pub fn keep_alive_interval(&self) -> Option<Duration> {
+        (self.keep_alive_secs > 0).then(|| Duration::from_secs(self.keep_alive_secs))
     }
 }
 
@@ -668,6 +682,10 @@ fn default_ftp_port() -> u16 {
 
 fn default_ftp_timeout_secs() -> u64 {
     30
+}
+
+fn default_ftp_keep_alive_secs() -> u64 {
+    60
 }
 
 #[cfg(test)]
@@ -1414,6 +1432,30 @@ mod tests {
         assert!(cfg.initial_directory.is_none());
         assert_eq!(cfg.timeout_secs, 30);
         assert_eq!(cfg.timeout(), Duration::from_secs(30));
+        // Keep-alive defaults to 60s (concept: periodic NOOP, default 60s).
+        assert_eq!(cfg.keep_alive_secs, 60);
+        assert_eq!(cfg.keep_alive_interval(), Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn ftp_config_keep_alive_interval_disabled_when_zero() {
+        let cfg = FtpConfig {
+            keep_alive_secs: 0,
+            ..FtpConfig::default()
+        };
+        assert_eq!(
+            cfg.keep_alive_interval(),
+            None,
+            "keep-alive of 0 must disable the NOOP task"
+        );
+    }
+
+    #[test]
+    fn ftp_config_keep_alive_secs_camel_case() {
+        let json = r#"{"host": "ftp.example.com", "keepAliveSecs": 15}"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.keep_alive_secs, 15);
+        assert_eq!(cfg.keep_alive_interval(), Some(Duration::from_secs(15)));
     }
 
     #[test]
@@ -1490,6 +1532,7 @@ mod tests {
             transfer_type: FtpTransferType::Binary,
             initial_directory: Some("/pub".into()),
             timeout_secs: 30,
+            keep_alive_secs: 60,
             suppress_security_warning: false,
         };
         let json = serde_json::to_string(&cfg).unwrap();

@@ -63,6 +63,8 @@ Fixed strings — match exactly.
 | `color-picker-apply` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `color-picker-clear` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `color-picker-hex-input` | `src/components/Terminal/ColorPickerDialog.tsx` |
+| `command-palette` | `src/components/CommandPalette/CommandPalette.tsx` |
+| `command-palette-input` | `src/components/CommandPalette/CommandPalette.tsx` |
 | `confirm-close-tab-cancel` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `confirm-close-tab-dialog` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `confirm-delete-cancel` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
@@ -641,6 +643,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `agent-update-banner-dismiss-*` | `agent-update-banner-dismiss-${agentId}` | `src/components/AgentUpdateBanner/AgentUpdateBanner.tsx` |
 | `agent-version-badge-*` | `agent-version-badge-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
+| `command-palette-item-*` | `command-palette-item-${entry.key}` | `src/components/CommandPalette/CommandPalette.tsx` |
 | `connection-connect-*` | `connection-connect-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-jump-badge-*` | `connection-jump-badge-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |

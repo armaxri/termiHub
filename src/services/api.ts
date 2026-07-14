@@ -13,6 +13,7 @@ import {
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
+import type { SpawnRequestPayload } from "@/services/events";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -169,6 +170,57 @@ export async function resolveContainerSpawn(
     containerImage,
     containerMount,
   });
+}
+
+/**
+ * A resolved local/WSL/SSH shell spawn (#1365, SI-2). Mirrors the Rust
+ * `ShellSpawn`: the camelCase local-shell backend `settings` (with the resolved
+ * target as `startingDirectory`) to open the session with, a `"… (Spawned)"` tab
+ * `title`, `spawned: true` so it is tracked separately from saved connections,
+ * and `missing: true` when the requested path did not exist and the home
+ * directory was substituted.
+ */
+export interface ShellSpawn {
+  /** Local-shell backend settings (camelCase) for the spawned session. */
+  settings: Record<string, unknown>;
+  /** Display title carrying the "Spawned" marker for the tab badge. */
+  title: string;
+  /** Always `true` — distinguishes spawned shells from saved connections. */
+  spawned: boolean;
+  /** `true` when the requested path was missing and home was substituted. */
+  missing: boolean;
+}
+
+/**
+ * Resolve an external local/WSL/SSH spawn into local-shell session settings
+ * (#1365). Given the spawn `location` (folder, file, or missing path) and its
+ * `kind`, the backend resolves the working directory (folder → itself, file →
+ * parent, missing → home, symlinks resolved; a WSL spawn is converted to its
+ * `/mnt/` path) and returns the settings + title used to open a shell tab `cd`'d
+ * to the target.
+ */
+export async function resolveShellSpawn(
+  location?: string,
+  connection?: string,
+  entryId?: string,
+  kind?: string
+): Promise<ShellSpawn> {
+  return await invoke<ShellSpawn>("resolve_shell_spawn", {
+    location,
+    connection,
+    entryId,
+    kind,
+  });
+}
+
+/**
+ * Drain the cold-start pending spawn, if any (#1365). A freshly-launched
+ * instance parks a spawn handed to it before the UI was ready; the frontend
+ * calls this once its `spawn-request` subscription is registered to pick it up.
+ * Returns `null` when nothing is pending.
+ */
+export async function takePendingSpawn(): Promise<SpawnRequestPayload | null> {
+  return await invoke<SpawnRequestPayload | null>("take_pending_spawn");
 }
 
 /** Send input data to a terminal session */
@@ -628,7 +680,26 @@ export async function sftpRealpath(sessionId: string, path: string): Promise<str
 /** Lifecycle phase of an SFTP transfer (see `transfer-progress` event). */
 export type TransferPhase = "transferring" | "done" | "cancelled" | "error";
 
-/** Payload of the `transfer-progress` event emitted per SFTP transfer (#1245). */
+/**
+ * Rich queue state of a transfer (#1336). Emitted alongside the legacy
+ * {@link TransferPhase} `phase`; the queue-aware UI prefers `state`.
+ */
+export type TransferQueueState =
+  | "queued"
+  | "active"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/**
+ * Payload of the `transfer-progress` event emitted per transfer.
+ *
+ * The #1245 fields (`phase`, `total`, …) are unchanged for backward
+ * compatibility with the existing SFTP consumers. The queue model (#1336) adds
+ * the optional `state`/`speed`/`totalBytes`/`etaSecs`/`attempt`/`maxAttempts`
+ * fields, populated for both SFTP (derived) and FTP (measured) transfers.
+ */
 export interface TransferProgress {
   transferId: string;
   sessionId: string;
@@ -638,6 +709,34 @@ export interface TransferProgress {
   total: number;
   phase: TransferPhase;
   message?: string;
+  /** Rich queue state (#1336). */
+  state?: TransferQueueState;
+  /** Throughput in bytes/sec (`0` = unknown). */
+  speed?: number;
+  /** Total size in bytes (mirror of `total`; `0` = indeterminate). */
+  totalBytes?: number;
+  /** Estimated seconds remaining, when a speed is known. */
+  etaSecs?: number;
+  /** Retry attempt number (0 when not retrying). */
+  attempt?: number;
+  /** Maximum retry attempts before permanent failure. */
+  maxAttempts?: number;
+}
+
+/**
+ * A snapshot of one queued transfer, returned by {@link transferList} (#1336).
+ */
+export interface TransferSnapshot {
+  transferId: string;
+  sessionId: string;
+  direction: "download" | "upload";
+  fileName: string;
+  state: TransferQueueState;
+  transferred: number;
+  total: number;
+  speed: number;
+  attempt: number;
+  maxAttempts: number;
 }
 
 /**
@@ -737,6 +836,69 @@ export async function sftpUpload(
 /** Cancel an in-flight SFTP transfer. Unknown/finished ids are a no-op (#1245). */
 export async function sftpCancelTransfer(transferId: string): Promise<void> {
   await invoke("sftp_cancel_transfer", { transferId });
+}
+
+// --- Generic transfer-queue controls (#1336) ---
+
+/** Pause an in-flight transfer. Unknown ids are a no-op. */
+export async function transferPause(transferId: string): Promise<void> {
+  await invoke("transfer_pause", { transferId });
+}
+
+/** Resume a paused transfer. Unknown ids are a no-op. */
+export async function transferResume(transferId: string): Promise<void> {
+  await invoke("transfer_resume", { transferId });
+}
+
+/** Cancel a transfer (queued, active, or paused). Unknown ids are a no-op. */
+export async function transferCancel(transferId: string): Promise<void> {
+  await invoke("transfer_cancel", { transferId });
+}
+
+/** Manually retry a failed transfer. Unknown ids are a no-op. */
+export async function transferRetry(transferId: string): Promise<void> {
+  await invoke("transfer_retry", { transferId });
+}
+
+/** List queued transfers, optionally filtered by session. */
+export async function transferList(sessionId?: string): Promise<TransferSnapshot[]> {
+  return await invoke<TransferSnapshot[]>("transfer_list", { sessionId });
+}
+
+/**
+ * Register an FTP download (remote → local). Returns the `transferId`; progress
+ * is reported via `transfer-progress` events (#1336).
+ */
+export async function ftpDownload(
+  sessionId: string,
+  config: unknown,
+  remotePath: string,
+  localPath: string
+): Promise<string> {
+  return await invoke<string>("ftp_download", {
+    sessionId,
+    config,
+    remotePath,
+    localPath,
+  });
+}
+
+/**
+ * Register an FTP upload (local → remote). Returns the `transferId`; progress is
+ * reported via `transfer-progress` events (#1336).
+ */
+export async function ftpUpload(
+  sessionId: string,
+  config: unknown,
+  localPath: string,
+  remotePath: string
+): Promise<string> {
+  return await invoke<string>("ftp_upload", {
+    sessionId,
+    config,
+    localPath,
+    remotePath,
+  });
 }
 
 /** Create a directory on the remote host. */
