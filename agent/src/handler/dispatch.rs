@@ -25,20 +25,23 @@ use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
 use crate::protocol::methods::{
-    AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
-    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
-    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
-    FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
-    FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
-    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
-    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
-    SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult, SessionInputParams,
-    SessionListEntry, SessionListResult, SessionResizeParams,
+    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentSettings,
+    AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult, Capabilities,
+    ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo, ConnectionListResult,
+    ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams, FilesListParams,
+    FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult, FilesRenameParams,
+    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
+    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
+    MonitoringUnsubscribeParams, NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams,
+    NetworkTracerouteParams, NetworkWolParams, SessionAttachParams, SessionCloseParams,
+    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
+    SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
+    SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
-use crate::session::manager::{SessionCreateError, SessionManagerApi, MAX_SESSIONS};
+use crate::session::manager::{
+    DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
+};
 
 /// The agent's protocol version.
 ///
@@ -318,6 +321,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_health_check(module)?;
     register_agent_shutdown(module)?;
     register_agent_settings_update(module)?;
+    register_agent_request_deferred_update(module)?;
     register_agent_list_connections(module)?;
     Ok(())
 }
@@ -1271,6 +1275,59 @@ fn register_agent_settings_update(
 
         Ok::<_, ErrorObjectOwned>(json!({"applied": true}))
     })?;
+    Ok(())
+}
+
+/// `agent.request_deferred_update` — stage/apply a deferred agent update (#1352).
+///
+/// Records the update and applies it immediately when the agent is idle (0
+/// sessions); otherwise it is deferred until the last session disconnects.
+/// Active sessions are never interrupted.
+fn register_agent_request_deferred_update(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        "agent.request_deferred_update",
+        |params, ctx, _ext| async move {
+            let session_manager = get_session_manager(&ctx).await?;
+
+            let p: AgentRequestDeferredUpdateParams = params
+                .parse()
+                .map_err(|e| invalid_params("agent.request_deferred_update", e))?;
+
+            let outcome = session_manager
+                .request_deferred_update(p.binary_path, p.version)
+                .await
+                .map_err(|e| match e {
+                    DeferredUpdateError::BinaryNotFound(path) => rpc_err(
+                        errors::INVALID_PARAMS,
+                        format!("Update binary not found: {path}"),
+                    ),
+                    DeferredUpdateError::NoPendingUpdate => {
+                        rpc_err(errors::INVALID_PARAMS, "No pending update to apply")
+                    }
+                    DeferredUpdateError::ApplyFailed(err) => rpc_err(
+                        errors::DEFERRED_UPDATE_FAILED,
+                        format!("Failed to apply update: {err:#}"),
+                    ),
+                })?;
+
+            let result = match outcome {
+                DeferredUpdateOutcome::Applying => AgentRequestDeferredUpdateResult {
+                    applied: true,
+                    active_sessions: 0,
+                },
+                DeferredUpdateOutcome::Deferred { active_sessions } => {
+                    AgentRequestDeferredUpdateResult {
+                        applied: false,
+                        active_sessions,
+                    }
+                }
+            };
+
+            serde_json::to_value(result).map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+        },
+    )?;
     Ok(())
 }
 
@@ -3110,6 +3167,21 @@ mod tests {
 
         async fn active_count(&self) -> u32 {
             self.sessions.lock().await.len() as u32
+        }
+
+        async fn request_deferred_update(
+            &self,
+            _binary_path: Option<String>,
+            _version: Option<String>,
+        ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
+            let active = self.sessions.lock().await.len() as u32;
+            if active == 0 {
+                Ok(DeferredUpdateOutcome::Applying)
+            } else {
+                Ok(DeferredUpdateOutcome::Deferred {
+                    active_sessions: active,
+                })
+            }
         }
 
         async fn attach(&self, session_id: &str) -> Result<(), String> {

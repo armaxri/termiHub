@@ -140,6 +140,65 @@ pub async fn apply_agent_settings(
     .unwrap_or_else(|e| Err(e.to_string()))
 }
 
+/// Response to a deferred-update request (`request_agent_deferred_update`).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredUpdateResponse {
+    /// `true` if the agent was idle and applied the update immediately.
+    pub applied: bool,
+    /// Sessions still active on the agent (0 when applied immediately).
+    pub active_sessions: u32,
+}
+
+/// Request a deferred agent update (#1352).
+///
+/// Sends `agent.request_deferred_update` over JSON-RPC. When `binary_path` is
+/// omitted the agent applies an update it already staged itself ("Apply Now").
+/// The agent applies immediately only when idle; otherwise it defers until the
+/// last session disconnects, never interrupting active sessions.
+///
+/// Note: when the agent applies immediately it re-execs the new binary, which
+/// tears down the current connection — the caller should treat a subsequent
+/// disconnect as expected and reconnect to observe the new version.
+#[tauri::command]
+pub async fn request_agent_deferred_update(
+    agent_id: String,
+    binary_path: Option<String>,
+    version: Option<String>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<DeferredUpdateResponse, String> {
+    info!(agent_id, "Requesting deferred agent update");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut params = serde_json::Map::new();
+        if let Some(path) = binary_path {
+            params.insert("binaryPath".to_string(), Value::String(path));
+        }
+        if let Some(v) = version {
+            params.insert("version".to_string(), Value::String(v));
+        }
+        let result = manager
+            .send_request(
+                &agent_id,
+                "agent.request_deferred_update",
+                Value::Object(params),
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(DeferredUpdateResponse {
+            applied: result
+                .get("applied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            active_sessions: result
+                .get("activeSessions")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32,
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
 /// Close a session on a remote agent.
 ///
 /// Sends `connection.close` over JSON-RPC to the agent, then the agent

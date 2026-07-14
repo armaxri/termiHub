@@ -124,30 +124,6 @@ impl AgentState {
         }
     }
 
-    /// Load state from the default state file.
-    pub fn load() -> Self {
-        let path = Self::default_path();
-        Self::load_from(&path)
-    }
-
-    /// Save state to the default state file.
-    pub fn save(&self) {
-        let path = Self::default_path();
-        self.save_to(&path);
-    }
-
-    /// Add a session and persist.
-    pub fn add_session(&mut self, id: String, session: PersistedSession) {
-        self.sessions.insert(id, session);
-        self.save();
-    }
-
-    /// Remove a session and persist.
-    pub fn remove_session(&mut self, id: &str) {
-        self.sessions.remove(id);
-        self.save();
-    }
-
     /// The default `state.json` path under the platform config dir.
     ///
     /// Resolves to `$XDG_CONFIG_HOME/termihub-agent/state.json` on Linux,

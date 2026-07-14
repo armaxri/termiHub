@@ -62,6 +62,9 @@ pub const MONITORING_ERROR: i64 = -32014;
 /// An error occurred during agent shutdown.
 pub const SHUTDOWN_ERROR: i64 = -32015;
 
+/// A deferred agent update failed to apply (binary swap / re-exec error).
+pub const DEFERRED_UPDATE_FAILED: i64 = -32016;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +92,7 @@ mod tests {
             FILE_BROWSING_NOT_SUPPORTED,
             MONITORING_ERROR,
             SHUTDOWN_ERROR,
+            DEFERRED_UPDATE_FAILED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -131,6 +135,7 @@ mod tests {
             FILE_BROWSING_NOT_SUPPORTED,
             MONITORING_ERROR,
             SHUTDOWN_ERROR,
+            DEFERRED_UPDATE_FAILED,
         ];
         for code in app_codes {
             assert!(

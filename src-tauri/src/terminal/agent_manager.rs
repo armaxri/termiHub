@@ -1587,6 +1587,21 @@ fn emit_agent_state(app_handle: &AppHandle, agent_id: &str, state: &str) {
     emit_agent_state_with_error(app_handle, agent_id, state, None);
 }
 
+/// Forward an agent's `agent.update_available` notification to the frontend as
+/// the `agent-update-available` Tauri event (#1352). Tags it with the desktop's
+/// `agent_id` so the per-agent deferred-update banner can key off it.
+fn emit_agent_update_available(app_handle: &AppHandle, agent_id: &str, params: &Value) {
+    let _ = app_handle.emit(
+        "agent-update-available",
+        serde_json::json!({
+            "agent_id": agent_id,
+            "currentVersion": params.get("currentVersion").and_then(Value::as_str).unwrap_or(""),
+            "availableVersion": params.get("availableVersion").and_then(Value::as_str).unwrap_or(""),
+            "staged": params.get("staged").and_then(Value::as_bool).unwrap_or(false),
+        }),
+    );
+}
+
 // ── Async I/O task ───────────────────────────────────────────────────
 
 /// Main async I/O task for an agent connection.
@@ -1731,6 +1746,13 @@ async fn agent_io_task(
                                         }
                                     }
                                     Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
+                                        if method == "agent.update_available" {
+                                            emit_agent_update_available(
+                                                &app_handle,
+                                                &agent_id,
+                                                &params,
+                                            );
+                                        }
                                         handle_notification(
                                             &method,
                                             &params,
