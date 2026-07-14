@@ -1620,7 +1620,7 @@ pause / resume / auto-retry / `REST` resume) and FTP up/download end-to-end.
 Requires an `ftp`-feature build (default) and the FTP fixture from the section
 above (`--profile ftp`, `127.0.0.1:2401`, `ftpuser` / `ftppass`). The live
 byte-exact + kill/resume Docker integration test is deferred to a follow-up;
-verify manually until it lands. See PR #<TBD>.
+verify manually until it lands. See PR #1509.
 
 1. **Concurrency cap + queue:** start **three** downloads of large files (e.g.
    `pub/data/dataset-1m.bin` to three local paths) in quick succession. Confirm
