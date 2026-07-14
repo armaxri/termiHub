@@ -198,6 +198,7 @@ Fixed strings — match exactly.
 | `file-browser-transfers` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-up` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-upload` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-editor-download` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-edit-with-sudo` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-readonly-badge` | `src/components/FileEditor/FileEditor.tsx` |
@@ -205,6 +206,7 @@ Fixed strings — match exactly.
 | `file-editor-readonly-banner-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-remote-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-save-copy` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error-retry-sudo` | `src/components/FileEditor/FileEditor.tsx` |
@@ -357,6 +359,10 @@ Fixed strings — match exactly.
 | `rename-dialog-apply` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-cancel` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-input` | `src/components/Terminal/RenameDialog.tsx` |
+| `save-copy-cancel` | `src/components/FileEditor/SaveCopyDialog.tsx` |
+| `save-copy-dialog` | `src/components/FileEditor/SaveCopyDialog.tsx` |
+| `save-copy-input` | `src/components/FileEditor/SaveCopyDialog.tsx` |
+| `save-copy-submit` | `src/components/FileEditor/SaveCopyDialog.tsx` |
 | `save-workspace-confirm` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-description` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-dialog` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |

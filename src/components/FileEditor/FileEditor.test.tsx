@@ -3,6 +3,7 @@ import { act } from "react";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import { FileEditor } from "./FileEditor";
 import type { EditorTabMeta } from "@/types/terminal";
@@ -625,5 +626,156 @@ describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
     const dismiss = query("file-editor-save-error-dismiss") as HTMLButtonElement;
     expect(dismiss).not.toBeNull();
     expect(dismiss.classList.contains("ui-btn")).toBe(true);
+  });
+});
+
+describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
+  const REMOTE_RO_META: EditorTabMeta = {
+    filePath: "/etc/hosts",
+    isRemote: true,
+    sftpSessionId: "sftp-sess-1",
+    permissions: "-rw-r--r--",
+  };
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  /** Query portalled (Radix) dialog content from the whole document. */
+  function docQuery(testId: string): HTMLElement | null {
+    return document.querySelector(`[data-testid="${testId}"]`);
+  }
+
+  function typeInto(el: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  /**
+   * Mock a read-only remote file on a connection with **no** exec channel
+   * (SFTP-only / relayed), recording any Save-a-copy / Download backend calls.
+   */
+  function mockSftpOnlyReadonly(): {
+    writeCalls: Array<Record<string, unknown>>;
+    downloadCalls: Array<Record<string, unknown>>;
+  } {
+    const writeCalls: Array<Record<string, unknown>> = [];
+    const downloadCalls: Array<Record<string, unknown>> = [];
+    mockedInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
+      if (cmd === "sftp_has_exec_capability") return Promise.resolve(false);
+      if (cmd === "sftp_check_writable") return Promise.resolve("readOnly");
+      if (cmd === "sftp_write_file_content") {
+        writeCalls.push((args ?? {}) as Record<string, unknown>);
+        return Promise.resolve(undefined);
+      }
+      if (cmd === "sftp_download") {
+        downloadCalls.push((args ?? {}) as Record<string, unknown>);
+        return Promise.resolve("transfer-1");
+      }
+      return Promise.resolve(undefined);
+    });
+    return { writeCalls, downloadCalls };
+  }
+
+  it("shows the fallback banner, disables Save, and offers copy/download without Edit-with-sudo", async () => {
+    mockSftpOnlyReadonly();
+    render(REMOTE_RO_META);
+    await flush();
+
+    // The fallback banner explains that sudo elevation is unavailable.
+    const banner = query("file-editor-readonly-banner");
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent ?? "").toMatch(/sudo elevation isn't available/i);
+
+    // No sudo entry point on an SFTP-only connection.
+    expect(query("file-editor-edit-with-sudo")).toBeNull();
+
+    // Save is present but disabled — even after an edit (a direct save can't succeed).
+    const saveBtn = query("file-editor-save") as HTMLButtonElement;
+    expect(saveBtn).not.toBeNull();
+    expect(saveBtn.disabled).toBe(true);
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(true);
+
+    // The fallback actions are offered instead.
+    expect(query("file-editor-save-copy")).not.toBeNull();
+    expect(query("file-editor-download")).not.toBeNull();
+  });
+
+  it("writes the buffer to the chosen writable remote path via Save a copy", async () => {
+    const { writeCalls } = mockSftpOnlyReadonly();
+    render(REMOTE_RO_META);
+    await flush();
+    editContent("127.0.0.1 localhost\nmy edit\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-save-copy") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // Choose a writable destination and confirm.
+    typeInto(docQuery("save-copy-input") as HTMLInputElement, "/home/user/hosts.copy");
+    await act(async () => {
+      (docQuery("save-copy-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0].remotePath).toBe("/home/user/hosts.copy");
+    expect(writeCalls[0].content).toBe("127.0.0.1 localhost\nmy edit\n");
+  });
+
+  it("downloads the file to a chosen local path via Download", async () => {
+    const { downloadCalls } = mockSftpOnlyReadonly();
+    vi.mocked(save).mockResolvedValueOnce("/local/hosts.txt");
+    render(REMOTE_RO_META);
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-download") as HTMLButtonElement).click();
+    });
+    await flush();
+    await flush();
+
+    expect(downloadCalls).toHaveLength(1);
+    expect(downloadCalls[0].remotePath).toBe("/etc/hosts");
+    expect(downloadCalls[0].localPath).toBe("/local/hosts.txt");
+  });
+
+  it("keeps the exec-capable Edit-with-sudo path (no fallback) when a shell exists", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "sftp_read_file_content") return Promise.resolve("body\n");
+      if (cmd === "sftp_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "sftp_check_writable") return Promise.resolve("readOnly");
+      return Promise.resolve(undefined);
+    });
+    render(REMOTE_RO_META);
+    await flush();
+
+    // The #1329 path is intact: the sudo entry point shows, fallback actions do not.
+    expect(query("file-editor-edit-with-sudo")).not.toBeNull();
+    expect(query("file-editor-save-copy")).toBeNull();
+    expect(query("file-editor-download")).toBeNull();
   });
 });
