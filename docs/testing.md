@@ -563,6 +563,47 @@ names, published ports, Docker networks, the `tauri-driver` port, the virtual
 serial device paths) is derived from a single per-checkout config file so two
 checkouts never contend for the same resource.
 
+#### Disk cost per checkout
+
+Ports and container names are isolated, but **disk is shared** — it is what
+actually caps how many checkouts fit on one machine. Each checkout carries its
+own `target/`, and nothing is shared between them. Measured on macOS
+(aarch64, rustc 1.93) with the workspace `[profile.dev] debug = 0` set in the
+root `Cargo.toml`:
+
+| Checkout state                                   | `target/debug` |
+| ------------------------------------------------ | -------------- |
+| Cold (never built)                               | 0              |
+| After `cargo build --workspace` (or `setup.sh`)  | **3.3 GB**     |
+| After the test binaries are built (`cargo test`) | **5.0 GB**     |
+
+So budget **~5 GB per checkout** — a primed-but-untested checkout starts at
+3.3 GB and grows toward 5 GB as soon as its suites run. Five parallel checkouts
+need ~25 GB of free disk, ten need ~50 GB.
+
+> Without the `[profile.dev]` setting these were **6.7 GB / 9.4 GB** — Cargo's
+> default `debug = true` emits full DWARF for every crate in the dependency
+> graph ([#1537](https://github.com/armaxri/termiHub/issues/1537)).
+>
+> `debug = 0` is a deliberate trade: dev/test builds emit **no debug info**, so
+> a panic backtrace names its frames but gives **no file/line for them**. The
+> panic site itself is still reported with file and line — that comes from
+> `#[track_caller]`, not from debug info — so a failing test still points at
+> where it blew up. If you need full backtraces or a step-debugger for a
+> session, build with `RUSTFLAGS="-C debuginfo=2"` (or `=1` for file/line
+> only); the disk cost above then reverts for that checkout.
+
+Two things worth knowing before provisioning N checkouts:
+
+- **A cold checkout pulls its whole `target/` the first time anything builds
+  it** — including the first time a test run builds it. Several cold checkouts
+  can therefore exhaust the disk mid-run and fail builds in **every** checkout
+  at once, including ones that were already working. If builds start failing
+  across unrelated checkouts, check free space before reading any diff.
+- **Reclaim with `cargo clean`** in an idle checkout (at the cost of a full
+  rebuild). Never `git clean -xfd` — `dev.local.json` is gitignored, so that
+  would delete this checkout's isolation config (see below).
+
 #### Setup
 
 Each checkout owns a gitignored `dev.local.json`. Create it from the committed
