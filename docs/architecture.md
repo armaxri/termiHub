@@ -1137,7 +1137,7 @@ sequenceDiagram
 
 **Rationale:**
 
-- Mature ecosystem with production-ready libraries (dnd-kit, react-resizable-panels, react-virtuoso)
+- Mature ecosystem with production-ready libraries (dnd-kit, react-resizable-panels, @tanstack/react-virtual)
 - Better tooling for complex drag-and-drop interactions
 - Larger community and more examples for AI-assisted development
 - Better knowledge base for Claude Code contributions

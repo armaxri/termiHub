@@ -25,6 +25,89 @@ if (typeof Element !== "undefined") {
   if (!Element.prototype.scrollIntoView) {
     Element.prototype.scrollIntoView = () => {};
   }
+
+  // jsdom does no layout, so scroll containers report size 0 and a windowing
+  // library (@tanstack/react-virtual, used by the FileBrowser) would render an
+  // empty window under test. The virtualizer measures its scroll element via
+  // offsetHeight/clientHeight and derives the max scroll offset from
+  // scrollHeight - clientHeight, so give the FileBrowser's scroll container a
+  // real viewport size and a scrollHeight matching its virtual spacer. Then
+  // small test directories render in full (as they did pre-virtualization),
+  // while large synthetic directories still mount only a subset and can scroll.
+  // Only the FileBrowser list opts in; every other element keeps jsdom's zero
+  // size, so Radix measurement/positioning stays untouched.
+  const FILE_BROWSER_LIST_HEIGHT = 2000;
+  const FILE_BROWSER_LIST_WIDTH = 300;
+  const isFileBrowserList = (el: unknown): el is HTMLElement =>
+    el instanceof HTMLElement && el.classList.contains("file-browser__list");
+  /** Total scrollable content height = the virtual spacer's declared height. */
+  const fileBrowserScrollHeight = (list: HTMLElement): number => {
+    const inner = list.querySelector<HTMLElement>(".file-browser__list-inner");
+    const declared = inner ? parseFloat(inner.style.height) : NaN;
+    return Number.isNaN(declared) ? FILE_BROWSER_LIST_HEIGHT : declared;
+  };
+  const overrideDimension = (
+    prop: "offsetHeight" | "offsetWidth" | "clientHeight" | "clientWidth" | "scrollHeight",
+    measure: (list: HTMLElement) => number
+  ): void => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, prop);
+    Object.defineProperty(HTMLElement.prototype, prop, {
+      configurable: true,
+      get(this: HTMLElement): number {
+        if (isFileBrowserList(this)) return measure(this);
+        return original?.get?.call(this) ?? 0;
+      },
+    });
+  };
+  overrideDimension("offsetHeight", () => FILE_BROWSER_LIST_HEIGHT);
+  overrideDimension("clientHeight", () => FILE_BROWSER_LIST_HEIGHT);
+  overrideDimension("offsetWidth", () => FILE_BROWSER_LIST_WIDTH);
+  overrideDimension("clientWidth", () => FILE_BROWSER_LIST_WIDTH);
+  overrideDimension("scrollHeight", fileBrowserScrollHeight);
+
+  // jsdom's scrollTop/scrollLeft are inert (setting them is a no-op that always
+  // reads back 0), but @tanstack/react-virtual reads element.scrollTop to know
+  // the scroll offset. Back them with real per-element storage so a programmatic
+  // scroll actually sticks.
+  const scrollTopStore = new WeakMap<Element, number>();
+  const scrollLeftStore = new WeakMap<Element, number>();
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+    configurable: true,
+    get(this: HTMLElement): number {
+      return scrollTopStore.get(this) ?? 0;
+    },
+    set(this: HTMLElement, value: number) {
+      scrollTopStore.set(this, value);
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollLeft", {
+    configurable: true,
+    get(this: HTMLElement): number {
+      return scrollLeftStore.get(this) ?? 0;
+    },
+    set(this: HTMLElement, value: number) {
+      scrollLeftStore.set(this, value);
+    },
+  });
+
+  // @tanstack/react-virtual's scrollToIndex() drives the scroll element via
+  // scrollTo(); jsdom's implementation is an inert no-op that never updates
+  // scrollTop or fires a scroll event, so make it actually move the element and
+  // notify listeners. This lets keyboard-nav tests observe an off-screen row
+  // being scrolled (and mounted) into view.
+  Element.prototype.scrollTo = function scrollTo(
+    xOrOptions?: number | ScrollToOptions,
+    y?: number
+  ): void {
+    if (typeof xOrOptions === "object" && xOrOptions !== null) {
+      if (typeof xOrOptions.top === "number") this.scrollTop = xOrOptions.top;
+      if (typeof xOrOptions.left === "number") this.scrollLeft = xOrOptions.left;
+    } else {
+      if (typeof xOrOptions === "number") this.scrollLeft = xOrOptions;
+      if (typeof y === "number") this.scrollTop = y;
+    }
+    this.dispatchEvent(new Event("scroll"));
+  };
 }
 
 // Mock monaco-editor so tests don't need a browser environment.
