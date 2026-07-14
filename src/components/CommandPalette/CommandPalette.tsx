@@ -1,0 +1,216 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { matchSorter } from "match-sorter";
+import { TerminalSquare } from "lucide-react";
+import { useAppStore } from "@/store/appStore";
+import { buildCommands } from "@/services/commands";
+import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
+import { ConnectionIcon } from "@/utils/connectionIcons";
+import { Modal, Input } from "@/components/ui";
+import type { SavedConnection } from "@/types/connection";
+import "./CommandPalette.css";
+
+/** A single fuzzy-matchable palette entry — either a command or a saved connection. */
+type PaletteEntry =
+  | {
+      kind: "command";
+      /** Stable React/list key. */
+      key: string;
+      /** Primary text shown and matched against. */
+      label: string;
+      /** Effective accelerator string, or null. */
+      accelerator: string | null;
+      /** Activate the entry. */
+      run: () => void;
+    }
+  | {
+      kind: "connection";
+      key: string;
+      label: string;
+      /** Host used as a secondary match key, if any. */
+      host: string;
+      connection: SavedConnection;
+    };
+
+/**
+ * Command palette (Cmd/Ctrl+P): a keyboard-first modal that fuzzy-matches both
+ * application commands and saved connections in one ranked list. Enter runs the
+ * highlighted command or connects the highlighted connection; Arrow keys move
+ * the selection and Esc closes (via the shared Modal).
+ *
+ * Composed from the shared {@link Modal} + {@link Input} primitives; matching is
+ * delegated to `match-sorter`. Connecting reuses {@link useConnectSavedConnection}
+ * so the palette shares the sidebar's exact credential flow.
+ */
+export function CommandPalette(): React.ReactElement {
+  const open = useAppStore((s) => s.commandPaletteOpen);
+  const setOpen = useAppStore((s) => s.setCommandPaletteOpen);
+  const connections = useAppStore((s) => s.connections);
+  const { connect } = useConnectSavedConnection();
+
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // All entries (commands first, then connections) in declaration order — the
+  // order shown when the query is empty.
+  const entries = useMemo<PaletteEntry[]>(() => {
+    const commandEntries: PaletteEntry[] = buildCommands().map((cmd) => ({
+      kind: "command",
+      key: `command:${cmd.id}`,
+      label: cmd.label,
+      accelerator: cmd.accelerator,
+      run: cmd.run,
+    }));
+    const connectionEntries: PaletteEntry[] = connections.map((conn) => ({
+      kind: "connection",
+      key: `connection:${conn.id}`,
+      label: conn.name,
+      host: String((conn.config.config as Record<string, unknown>).host ?? ""),
+      connection: conn,
+    }));
+    return [...commandEntries, ...connectionEntries];
+  }, [connections]);
+
+  // Ranked results. An empty query returns every entry in declaration order.
+  const results = useMemo<PaletteEntry[]>(() => {
+    if (query.trim() === "") return entries;
+    return matchSorter(entries, query, {
+      keys: ["label", (entry) => (entry.kind === "connection" ? entry.host : "")],
+    });
+  }, [entries, query]);
+
+  // Reset the query and selection each time the palette opens.
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setActiveIndex(0);
+    }
+  }, [open]);
+
+  // Keep the selection in range and pointed at the top hit as results change.
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  // Keep the highlighted row scrolled into view.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const row = list.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, results]);
+
+  const activate = useCallback(
+    (entry: PaletteEntry | undefined) => {
+      if (!entry) return;
+      // Close first so the palette never stacks over a follow-on dialog (e.g.
+      // the password prompt a connect may trigger).
+      setOpen(false);
+      if (entry.kind === "command") {
+        entry.run();
+      } else {
+        void connect(entry.connection);
+      }
+    },
+    [connect, setOpen]
+  );
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveIndex((i) => (results.length === 0 ? 0 : (i + 1) % results.length));
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveIndex((i) =>
+          results.length === 0 ? 0 : (i - 1 + results.length) % results.length
+        );
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setActiveIndex(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setActiveIndex(Math.max(0, results.length - 1));
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        activate(results[activeIndex]);
+      }
+    },
+    [results, activeIndex, activate]
+  );
+
+  return (
+    <Modal
+      open={open}
+      onOpenChange={setOpen}
+      title="Command Palette"
+      description="Fuzzy-find and run a command or connect to a saved connection"
+      size="lg"
+      hideClose
+      data-testid="command-palette"
+    >
+      <div className="command-palette">
+        <Input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type a command or connection…"
+          aria-label="Command or connection search"
+          role="combobox"
+          aria-expanded
+          aria-controls="command-palette-list"
+          data-testid="command-palette-input"
+        />
+        {results.length === 0 ? (
+          <p className="command-palette__empty" role="status">
+            No matching commands or connections.
+          </p>
+        ) : (
+          <ul
+            id="command-palette-list"
+            className="command-palette__list"
+            role="listbox"
+            aria-label="Commands and connections"
+            ref={listRef}
+          >
+            {results.map((entry, index) => (
+              <li
+                key={entry.key}
+                data-index={index}
+                role="option"
+                aria-selected={index === activeIndex}
+                className={`command-palette__item${
+                  index === activeIndex ? " command-palette__item--active" : ""
+                }`}
+                onMouseMove={() => setActiveIndex(index)}
+                onClick={() => activate(entry)}
+                data-testid={`command-palette-item-${entry.key}`}
+              >
+                <span className="command-palette__icon" aria-hidden="true">
+                  {entry.kind === "command" ? (
+                    <TerminalSquare size={16} />
+                  ) : (
+                    <ConnectionIcon
+                      config={entry.connection.config}
+                      customIcon={entry.connection.icon}
+                      size={16}
+                    />
+                  )}
+                </span>
+                <span className="command-palette__label">{entry.label}</span>
+                {entry.kind === "command" ? (
+                  entry.accelerator ? (
+                    <span className="command-palette__accelerator">{entry.accelerator}</span>
+                  ) : null
+                ) : (
+                  <span className="command-palette__type">{entry.connection.config.type}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Modal>
+  );
+}

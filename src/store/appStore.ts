@@ -508,6 +508,10 @@ interface AppState {
   shortcutsOverlayOpen: boolean;
   setShortcutsOverlayOpen: (open: boolean) => void;
 
+  // Command palette (Cmd/Ctrl+P) — fuzzy-find commands + saved connections
+  commandPaletteOpen: boolean;
+  setCommandPaletteOpen: (open: boolean) => void;
+
   // Standalone overlay views (updates, about) — opened from the settings menu
   overlayView: "updates" | "about" | null;
   openOverlayView: (view: "updates" | "about") => void;
@@ -2741,6 +2745,9 @@ export const useAppStore = create<AppState>((set, get) => {
     // Shortcuts overlay
     shortcutsOverlayOpen: false,
     setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    commandPaletteOpen: false,
+    setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
 
     // Standalone overlay views
     overlayView: null,
