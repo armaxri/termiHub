@@ -125,19 +125,64 @@ pub struct AgentDeployProgress {
     pub progress: f64,
 }
 
-/// Result of deploying the agent binary to a remote host.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A host (other than the initiating desktop) connected to the agent when an
+/// update is requested. Surfaced to the Update dialog so the user can see who
+/// will be cut off before confirming a forced update (#1349).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentDeployResult {
-    pub success: bool,
-    pub installed_version: Option<String>,
-    /// Absolute path the agent was installed to on the remote host.
-    ///
-    /// Useful for Windows hosts, where the install location
-    /// (`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`) differs from the
-    /// POSIX default and should be stored as the connection's agent path.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub installed_path: Option<String>,
+pub struct ConnectedHost {
+    /// Agent-assigned id for this client connection.
+    pub client_id: String,
+    /// Client name reported in `initialize` (e.g. `"termihub-desktop"`).
+    pub client: String,
+    /// Client version reported in `initialize`.
+    pub client_version: String,
+    /// ISO 8601 timestamp of when the host connected to the agent.
+    pub connected_since: String,
+}
+
+/// Outcome of an agent deploy/update.
+///
+/// `Deployed` is the normal outcome (of both deploy and a proceeding update);
+/// `OtherHostsConnected` is returned only by the update path when the
+/// connected-host guard blocks an unforced update because other hosts are
+/// connected. The desktop then shows the Update dialog's warning and may retry
+/// via `update_agent_force`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AgentDeployResult {
+    /// The binary was deployed/updated. `success` reflects the post-install
+    /// `--version` verification.
+    #[serde(rename_all = "camelCase")]
+    Deployed {
+        success: bool,
+        installed_version: Option<String>,
+        /// Absolute path the agent was installed to on the remote host.
+        ///
+        /// Useful for Windows hosts, where the install location
+        /// (`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`) differs from the
+        /// POSIX default and should be stored as the connection's agent path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        installed_path: Option<String>,
+    },
+    /// The update was blocked by the connected-host guard: other hosts are
+    /// connected to the agent and would be hard-cut by the update.
+    #[serde(rename_all = "camelCase")]
+    OtherHostsConnected { hosts: Vec<ConnectedHost> },
+}
+
+/// Decide whether an update may proceed given the hosts (other than the
+/// initiating desktop) currently connected to the agent.
+///
+/// Returns `Some(AgentDeployResult::OtherHostsConnected)` when at least one
+/// other host is connected — the desktop must confirm before forcing — or
+/// `None` when the update may proceed exactly as today (no other hosts).
+pub fn connected_host_guard(other_hosts: Vec<ConnectedHost>) -> Option<AgentDeployResult> {
+    if other_hosts.is_empty() {
+        None
+    } else {
+        Some(AgentDeployResult::OtherHostsConnected { hosts: other_hosts })
+    }
 }
 
 /// Deploy the agent binary to a remote host.
@@ -343,7 +388,7 @@ pub fn deploy_agent(
         1.0,
     );
 
-    Ok(AgentDeployResult {
+    Ok(AgentDeployResult::Deployed {
         success,
         installed_version,
         installed_path,
@@ -354,20 +399,45 @@ pub fn deploy_agent(
 
 /// Update the agent: shut down the running instance, then deploy a new binary.
 ///
+/// Unless `force` is set, a connected-host guard runs first (#1349):
+/// `list_other_hosts_fn` reports the hosts — other than the initiating desktop
+/// — connected to the agent, and if any are present the update is refused with
+/// [`AgentDeployResult::OtherHostsConnected`] so the desktop can warn the user
+/// before hard-cutting those sessions. `force` (from `update_agent_force`)
+/// bypasses the guard after the user confirms.
+///
 /// `shutdown_fn` is called to send `agent.shutdown` to the running agent
-/// before deploying. This is a closure so we don't need a direct dependency
+/// before deploying. Both are closures so we don't need a direct dependency
 /// on `AgentConnectionManager` here.
-pub fn update_agent<F>(
+// The deploy context (id/config/app handle/cancel), the guard toggle, and the
+// two injected closures are all distinct inputs; bundling them into a struct
+// would only obscure the call site.
+#[allow(clippy::too_many_arguments)]
+pub fn update_agent<L, F>(
     agent_id: &str,
     config: &RemoteAgentConfig,
     deploy_config: &AgentDeployConfig,
     app_handle: &AppHandle,
     cancel: Option<&CancellationToken>,
+    force: bool,
+    list_other_hosts_fn: L,
     shutdown_fn: F,
 ) -> Result<AgentDeployResult, TerminalError>
 where
+    L: FnOnce() -> Result<Vec<ConnectedHost>, TerminalError>,
     F: FnOnce() -> Result<u32, TerminalError>,
 {
+    // 0. Connected-host guard: refuse an unforced update while other hosts are
+    // connected to the agent (they would be hard-cut). Runs before shutdown so
+    // the agent is still reachable for `agent.list_connections`.
+    if !force {
+        let other_hosts = list_other_hosts_fn()?;
+        if let Some(blocked) = connected_host_guard(other_hosts) {
+            info!(agent_id, "Update blocked: other hosts connected to agent");
+            return Ok(blocked);
+        }
+    }
+
     // 1. Shut down the running agent
     emit_progress(
         app_handle,
@@ -479,24 +549,20 @@ mod tests {
 
     #[test]
     fn deploy_result_success() {
-        let result = AgentDeployResult {
+        let result = AgentDeployResult::Deployed {
             success: true,
             installed_version: Some("0.1.0".to_string()),
             installed_path: Some("/home/user/.local/bin/termihub-agent".to_string()),
         };
         let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"kind\":\"deployed\""));
         let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
-        assert!(parsed.success);
-        assert_eq!(parsed.installed_version.as_deref(), Some("0.1.0"));
-        assert_eq!(
-            parsed.installed_path.as_deref(),
-            Some("/home/user/.local/bin/termihub-agent")
-        );
+        assert_eq!(parsed, result);
     }
 
     #[test]
     fn deploy_result_failure() {
-        let result = AgentDeployResult {
+        let result = AgentDeployResult::Deployed {
             success: false,
             installed_version: None,
             installed_path: None,
@@ -505,9 +571,47 @@ mod tests {
         // installed_path is omitted from JSON when None.
         assert!(!json.contains("installedPath"));
         let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
-        assert!(!parsed.success);
-        assert!(parsed.installed_version.is_none());
-        assert!(parsed.installed_path.is_none());
+        assert_eq!(parsed, result);
+    }
+
+    fn sample_host(id: &str) -> ConnectedHost {
+        ConnectedHost {
+            client_id: id.to_string(),
+            client: "termihub-desktop".to_string(),
+            client_version: "0.1.0".to_string(),
+            connected_since: "2026-07-14T10:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn guard_allows_update_when_no_other_hosts() {
+        // 0 other hosts → behaves as today: the update proceeds (no block).
+        assert_eq!(connected_host_guard(vec![]), None);
+    }
+
+    #[test]
+    fn guard_blocks_update_when_other_hosts_connected() {
+        // N other hosts → the update is blocked and the hosts are surfaced.
+        let hosts = vec![sample_host("id-1"), sample_host("id-2")];
+        match connected_host_guard(hosts.clone()) {
+            Some(AgentDeployResult::OtherHostsConnected { hosts: reported }) => {
+                assert_eq!(reported, hosts, "all other hosts must be reported");
+            }
+            other => panic!("expected OtherHostsConnected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn other_hosts_result_serializes_for_the_dialog() {
+        let result = AgentDeployResult::OtherHostsConnected {
+            hosts: vec![sample_host("id-1")],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"kind\":\"otherHostsConnected\""));
+        assert!(json.contains("\"clientId\":\"id-1\""));
+        assert!(json.contains("\"connectedSince\""));
+        let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, result);
     }
 
     #[test]
