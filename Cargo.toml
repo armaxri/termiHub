@@ -2,21 +2,32 @@
 members = ["core", "src-tauri", "agent"]
 resolver = "2"
 
-# Dev/test builds keep file:line backtraces but drop full DWARF. A clean
-# `cargo build --workspace` target/debug measures 6.7 GB with Cargo's default
-# `debug = true` and 4.5 GB here (9.4 GB -> 6.5 GB once test binaries are built),
-# which is what makes several parallel checkouts fit on one disk — see
-# docs/testing.md -> "Parallel test isolation". Release builds are unaffected:
-# every shipping artifact is built with `--release`.
+# Dev/test builds emit no debug info at all. The workspace declared no
+# [profile.dev], so it ran on Cargo's default `debug = true` — full DWARF for
+# every crate in the dependency graph, which was the bulk of the debug target.
+# Release builds are unaffected: every shipping artifact is built with
+# `--release`.
 #
-# `line-tables-only` keeps symbolised file/line backtraces across the whole
-# stack, dependencies included, which is the debugging story this repo actually
-# documents (docs/contributing.md -> "Process exit codes": RUST_BACKTRACE=1).
-# Step-debugging through dependency code degrades; override locally with
-# `RUSTFLAGS="-C debuginfo=2"` or a `[profile.dev]` in `.cargo/config.toml` if
-# you need it. See https://github.com/armaxri/termiHub/issues/1537.
+# Measured, clean `du -sh target/debug` (macOS aarch64, rustc 1.93):
+#
+#   debug = true (Cargo default)  6.7 GB   9.4 GB with test binaries
+#   debug = "line-tables-only"    4.5 GB   6.5 GB
+#   debug = 0 (this)              3.3 GB   5.0 GB
+#
+# That is what makes several parallel checkouts fit on one disk — see
+# docs/testing.md -> "Parallel test isolation".
+#
+# TRADE-OFF, deliberate: this strips file/line from panic backtraces. A
+# backtrace still names the function symbols but reports no source location,
+# and `RUST_BACKTRACE=1` (docs/contributing.md -> "Process exit codes") is
+# correspondingly coarser. termiHub is not step-debugged in practice, so the
+# debug info was not earning its disk. To get it back for a debugging session,
+# build with `RUSTFLAGS="-C debuginfo=2"` (full DWARF) or
+# `RUSTFLAGS="-C debuginfo=1"` (file/line only), or set a [profile.dev] in a
+# local, uncommitted .cargo/config.toml. See
+# https://github.com/armaxri/termiHub/issues/1537.
 [profile.dev]
-debug = "line-tables-only"
+debug = 0
 
 [workspace.dependencies]
 async-trait = "0.1"
