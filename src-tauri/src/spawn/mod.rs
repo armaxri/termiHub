@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 compile_error!("spawn IPC requires a Unix or Windows target");
 
 pub mod container;
+pub mod handler;
 pub mod ipc_client;
 pub mod ipc_server;
 pub mod registry;
