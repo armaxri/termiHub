@@ -1390,10 +1390,17 @@ export async function setAutoLockTimeout(minutes: number | null): Promise<void> 
   await invoke("set_auto_lock_timeout", { minutes });
 }
 
+/**
+ * A credential kind the frontend can store/resolve/remove. Mirrors the backend
+ * `CredentialType` string forms. `sudo_password` (#1327) backs the elevated
+ * edit mode's opt-in persistence (#1329).
+ */
+export type CredentialType = "password" | "key_passphrase" | "sudo_password";
+
 /** Store a credential for a connection (e.g., after entering it via the password prompt). */
 export async function storeCredential(
   connectionId: string,
-  credentialType: "password" | "key_passphrase",
+  credentialType: CredentialType,
   value: string
 ): Promise<void> {
   await invoke("store_credential", { connectionId, credentialType, value });
@@ -1402,7 +1409,7 @@ export async function storeCredential(
 /** Resolve a stored credential for a connection. Returns the value or null if not found. */
 export async function resolveCredential(
   connectionId: string,
-  credentialType: "password" | "key_passphrase"
+  credentialType: CredentialType
 ): Promise<string | null> {
   return await invoke<string | null>("resolve_credential", { connectionId, credentialType });
 }
@@ -1410,7 +1417,7 @@ export async function resolveCredential(
 /** Remove a stored credential for a connection (e.g., after auth failure). */
 export async function removeCredential(
   connectionId: string,
-  credentialType: "password" | "key_passphrase"
+  credentialType: CredentialType
 ): Promise<void> {
   await invoke("remove_credential", { connectionId, credentialType });
 }

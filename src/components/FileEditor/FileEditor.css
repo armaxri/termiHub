@@ -50,6 +50,17 @@
   border-color: var(--color-warning);
 }
 
+/*
+ * Elevated ("sudo") edit-mode marker: a filled accent chip (not just an accent
+ * outline like the remote badge) so the persistent elevated state reads clearly
+ * against the toolbar. (issue 1329)
+ */
+.file-editor__sudo-badge {
+  color: var(--text-on-accent);
+  background-color: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
 .file-editor__filepath {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);

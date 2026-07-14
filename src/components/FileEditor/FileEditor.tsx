@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Save, Loader2, AlertCircle, Globe, FileEdit, Lock, X } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Save, Loader2, AlertCircle, Globe, FileEdit, Lock, ShieldCheck, X } from "lucide-react";
+import { Button, toast } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
@@ -16,12 +16,21 @@ import {
   localWriteFile,
   sftpReadFileContent,
   sftpWriteFileContent,
+  sftpWriteFileContentElevated,
   sftpHasExecCapability,
   sftpCheckWritable,
+  storeCredential,
+  resolveCredential,
+  removeCredential,
+  type ElevatedWriteResult,
 } from "@/services/api";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
+import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
 import { frontendLog } from "@/utils/frontendLog";
 import "./FileEditor.css";
+
+/** Maximum number of sudo-password attempts before falling back to the error banner. */
+const MAX_SUDO_ATTEMPTS = 3;
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
@@ -82,6 +91,18 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // Subscribe to the theme setting so we re-derive the Monaco theme when the
   // user explicitly switches between dark / light / system in the settings.
   const themeSetting = useAppStore((s) => s.settings.theme);
+  // Host label (`user@host:port`) of the editor's SFTP session — names the host
+  // in the sudo prompt and keys the (optional) credential-store entry. The
+  // credential store treats this string as an opaque namespace, and a sudo
+  // password belongs to the remote user@host rather than any UI connection id.
+  const hostLabel = useAppStore((s) =>
+    meta.sftpSessionId ? (s.sftpSessions[meta.sftpSessionId]?.hostLabel ?? null) : null
+  );
+  // Live credential-store status — the "save in credential store" option only
+  // appears when it is unlocked.
+  const credentialStoreUnlocked = useAppStore(
+    (s) => s.credentialStoreStatus?.status === "unlocked"
+  );
 
   const [content, setContent] = useState<string | null>(null);
   const [savedContent, setSavedContent] = useState<string | null>(null);
@@ -118,8 +139,23 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // persistent state indicator; only the banner is dismissible.
   const [readonlyBannerDismissed, setReadonlyBannerDismissed] = useState(false);
 
+  // Elevated ("sudo") edit mode. Once a save is authorized with sudo, the tab
+  // stays in elevated mode for the rest of the session: a persistent `sudo`
+  // marker is shown and subsequent saves route through the elevated path.
+  const [elevated, setElevated] = useState(false);
+  // Sudo prompt dialog state. `sudoAttempt` is 1-based; a rejected password
+  // bumps it (up to MAX_SUDO_ATTEMPTS) while the dialog stays open. `sudoBusy`
+  // drives the dialog's pending state while the backend verifies.
+  const [sudoDialogOpen, setSudoDialogOpen] = useState(false);
+  const [sudoAttempt, setSudoAttempt] = useState(1);
+  const [sudoBusy, setSudoBusy] = useState(false);
+
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // In-memory session password cache ("Remember for this session"). Held in a
+  // ref — never React/store state and never {@link EditorTabMeta} — so it is
+  // impossible for it to be serialized into persisted tab/workspace state.
+  const sudoPasswordRef = useRef<string | null>(null);
 
   // A scratch buffer has no on-disk counterpart until the user saves it.
   const isUnsavedScratch = meta.scratch === true && scratchSavedPath === null;
@@ -260,6 +296,15 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const isDirty =
     content !== null && savedContent !== null && (isUnsavedScratch || content !== savedContent);
 
+  // Whether the primary toolbar action should be "Edit with sudo" instead of
+  // "Save": a remote file the probe reported read-only, on an exec-capable
+  // (shell) connection, before the session has been elevated. Once elevated the
+  // normal Save button returns (it routes through the sudo path).
+  const offerEditWithSudo =
+    meta.isRemote && !!meta.sftpSessionId && writable === false && execCapable && !elevated;
+  // Whether a failed direct save can be retried with sudo (a shell exists).
+  const canRetryWithSudo = meta.isRemote && !!meta.sftpSessionId && execCapable && !elevated;
+
   // Sync dirty state to the store (drives the tab dirty dot and close prompt).
   useEffect(() => {
     if (content === null || savedContent === null) return;
@@ -282,8 +327,178 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     }
   }, [error, tabId, pendingCloseRequest, setEditorDirty, setPendingCloseRequest, closeTab]);
 
+  // Apply the effects of a successful elevated write: mark the buffer saved,
+  // enter (persistent) elevated mode, optionally cache the password for the
+  // session, and confirm with a success toast.
+  const applyElevatedSuccess = useCallback(
+    (bufferContent: string, password: string, remember: boolean) => {
+      setSavedContent(bufferContent);
+      setElevated(true);
+      if (remember) sudoPasswordRef.current = password;
+      frontendLog("file_editor", `elevated save succeeded for ${meta.filePath}`);
+      toast.success(`Saved ${getBasename(meta.filePath)} with sudo`);
+    },
+    [meta.filePath]
+  );
+
+  // Attempt a single elevated write with a candidate password. Returns a small
+  // discriminated outcome so the two call sites (silent cache/credential path
+  // and the interactive dialog) can react. Non-password failures are surfaced
+  // in the #969 banner here; the password is never logged.
+  const attemptElevatedWrite = useCallback(
+    async (password: string, bufferContent: string): Promise<"success" | "wrong" | "error"> => {
+      const sessionId = meta.sftpSessionId;
+      if (!sessionId) return "error";
+      frontendLog(
+        "file_editor",
+        `elevated save attempt for ${meta.filePath} on ${hostLabel ?? "unknown host"}`
+      );
+      let result: ElevatedWriteResult;
+      try {
+        result = await sftpWriteFileContentElevated(
+          sessionId,
+          meta.filePath,
+          bufferContent,
+          password
+        );
+      } catch (err) {
+        frontendLog(
+          "file_editor",
+          `elevated save threw for ${meta.filePath}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        setSaveError(formatSaveError(err));
+        return "error";
+      }
+      if (result.kind === "success") return "success";
+      if (result.kind === "incorrectPassword") return "wrong";
+      frontendLog("file_editor", `elevated save failed for ${meta.filePath}: ${result.message}`);
+      setSaveError(`Save failed: ${result.message}`);
+      return "error";
+    },
+    [meta.sftpSessionId, meta.filePath, hostLabel]
+  );
+
+  // Save via the elevated (sudo) path, prompting only when needed. Tries the
+  // in-memory session cache first, then an opt-in persisted credential (when the
+  // store is unlocked); a hit saves silently, a miss or a stale/rejected
+  // password opens the interactive prompt.
+  const saveElevated = useCallback(async () => {
+    if (content === null || saving) return;
+    const bufferContent = content;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      let password = sudoPasswordRef.current;
+      let fromStore = false;
+      if (!password && credentialStoreUnlocked && hostLabel) {
+        try {
+          password = await resolveCredential(hostLabel, "sudo_password");
+          fromStore = password != null;
+        } catch {
+          password = null;
+        }
+      }
+      if (password) {
+        const outcome = await attemptElevatedWrite(password, bufferContent);
+        if (outcome === "success") {
+          applyElevatedSuccess(bufferContent, password, true);
+          return;
+        }
+        if (outcome === "error") return;
+        // Stale cache / rejected stored password — discard it and prompt.
+        sudoPasswordRef.current = null;
+        if (fromStore && hostLabel) {
+          try {
+            await removeCredential(hostLabel, "sudo_password");
+          } catch {
+            // best-effort cleanup
+          }
+        }
+      }
+    } finally {
+      setSaving(false);
+    }
+    setSudoAttempt(1);
+    setSudoDialogOpen(true);
+  }, [
+    content,
+    saving,
+    credentialStoreUnlocked,
+    hostLabel,
+    attemptElevatedWrite,
+    applyElevatedSuccess,
+  ]);
+
+  // Handle a password submitted from the sudo prompt: verify it, then persist /
+  // cache / re-prompt / give up per the outcome and the 3-attempt limit.
+  const handleSudoSubmit = useCallback(
+    async (password: string, opts: SudoAuthorizeOptions) => {
+      if (content === null) return;
+      const bufferContent = content;
+      setSudoBusy(true);
+      setSaveError(null);
+      const outcome = await attemptElevatedWrite(password, bufferContent);
+      setSudoBusy(false);
+
+      if (outcome === "success") {
+        applyElevatedSuccess(bufferContent, password, opts.rememberForSession);
+        if (opts.persistToStore && credentialStoreUnlocked && hostLabel) {
+          try {
+            await storeCredential(hostLabel, "sudo_password", password);
+          } catch (err) {
+            frontendLog(
+              "file_editor",
+              `failed to persist sudo password: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+        setSudoDialogOpen(false);
+        setSudoAttempt(1);
+        return;
+      }
+      if (outcome === "error") {
+        // Non-password failure: dismiss the prompt, keep the buffer, show banner.
+        setSudoDialogOpen(false);
+        setSudoAttempt(1);
+        return;
+      }
+      // Wrong password: re-prompt until the attempt limit, then fall to #969.
+      if (sudoAttempt >= MAX_SUDO_ATTEMPTS) {
+        setSudoDialogOpen(false);
+        setSudoAttempt(1);
+        setSaveError(
+          `Incorrect sudo password — ${MAX_SUDO_ATTEMPTS} attempts failed. The file was not saved.`
+        );
+        return;
+      }
+      setSudoAttempt((n) => n + 1);
+    },
+    [
+      content,
+      attemptElevatedWrite,
+      applyElevatedSuccess,
+      credentialStoreUnlocked,
+      hostLabel,
+      sudoAttempt,
+    ]
+  );
+
+  const handleSudoCancel = useCallback(() => {
+    setSudoDialogOpen(false);
+    setSudoAttempt(1);
+  }, []);
+
   const handleSave = useCallback(async () => {
     if (content === null || saving) return;
+
+    // Read-only remote file that has a shell, or an already-elevated session:
+    // route through the sudo path instead of the direct SFTP write.
+    if (meta.isRemote && meta.sftpSessionId && (elevated || (writable === false && execCapable))) {
+      await saveElevated();
+      return;
+    }
 
     // First save of a scratch buffer: ask the user where to write it (Save As).
     // Until a destination is chosen there is nothing to write to disk.
@@ -327,6 +542,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     meta.sftpSessionId,
     tabId,
     renameTab,
+    elevated,
+    writable,
+    execCapable,
+    saveElevated,
   ]);
 
   // Keep saveRef up to date for Monaco keybinding
@@ -503,6 +722,16 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
               Read-only
             </span>
           )}
+          {elevated && (
+            <span
+              className="file-editor__remote-badge file-editor__sudo-badge"
+              data-testid="file-editor-sudo-badge"
+              title="Elevated (sudo) edit mode — saves are written with root privileges"
+            >
+              <ShieldCheck size={12} />
+              sudo
+            </span>
+          )}
           {isUnsavedScratch && (
             <span className="file-editor__remote-badge" data-testid="file-editor-scratch-badge">
               <FileEdit size={12} />
@@ -513,19 +742,35 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             {effectivePath}
           </span>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<Save size={14} />}
-          onClick={handleSave}
-          disabled={!isDirty}
-          pendingLabel="Saving..."
-          errorToast={false}
-          title={isUnsavedScratch ? "Save As... (Ctrl+S)" : "Save (Ctrl+S)"}
-          data-testid="file-editor-save"
-        >
-          {isUnsavedScratch ? "Save As..." : "Save"}
-        </Button>
+        {offerEditWithSudo ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<ShieldCheck size={14} />}
+            onClick={handleSave}
+            disabled={!isDirty}
+            pendingLabel="Saving..."
+            errorToast={false}
+            title="Save this read-only file with sudo"
+            data-testid="file-editor-edit-with-sudo"
+          >
+            Edit with sudo
+          </Button>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Save size={14} />}
+            onClick={handleSave}
+            disabled={!isDirty}
+            pendingLabel="Saving..."
+            errorToast={false}
+            title={isUnsavedScratch ? "Save As... (Ctrl+S)" : "Save (Ctrl+S)"}
+            data-testid="file-editor-save"
+          >
+            {isUnsavedScratch ? "Save As..." : "Save"}
+          </Button>
+        )}
       </div>
       {writable === false && !readonlyBannerDismissed && (
         <div
@@ -554,6 +799,21 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         <div className="file-editor__save-error" role="alert" data-testid="file-editor-save-error">
           <AlertCircle size={14} />
           <span className="file-editor__save-error-text">{saveError}</span>
+          {canRetryWithSudo && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<ShieldCheck size={14} />}
+              onClick={() => {
+                setSaveError(null);
+                void saveElevated();
+              }}
+              title="Retry this save with sudo"
+              data-testid="file-editor-save-error-retry-sudo"
+            >
+              Retry with sudo
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -566,6 +826,17 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
           />
         </div>
       )}
+      <SudoPromptDialog
+        open={sudoDialogOpen}
+        hostLabel={hostLabel ?? meta.filePath}
+        targetPath={meta.filePath}
+        attempt={sudoAttempt}
+        maxAttempts={MAX_SUDO_ATTEMPTS}
+        credentialStoreUnlocked={credentialStoreUnlocked}
+        busy={sudoBusy}
+        onSubmit={handleSudoSubmit}
+        onCancel={handleSudoCancel}
+      />
       <div className="file-editor__editor-container">
         <Editor
           defaultValue={content ?? ""}
