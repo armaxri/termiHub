@@ -1007,6 +1007,40 @@ per-OS, especially Wayland, is manual-only). Referenced by PR #1508.
    Confirm the app launches and, once loaded, focuses and opens the shell tab at
    the target (the queued cold-start spawn is processed post-UI-ready).
 
+### External WSL/SSH spawn opens its real backend (#1511)
+
+The settings mapping (WSL: distribution + `/mnt/` `startingDirectory`; SSH:
+saved-connection settings + post-connect `cd`) is covered by unit tests
+(`src-tauri/src/spawn/handler.rs`, `src-tauri/src/commands/spawn.rs`,
+`src/hooks/useSpawnRequests.test.ts`). A live end-to-end run needs a real WSL
+distro / SSH host and a built app, so the paths below are manual. Referenced by
+PR #1529.
+
+**WSL spawn opens a distribution at the converted path (Windows).**
+
+1. With a WSL distro installed and the built app running, from a Windows shell run
+   `termiHub spawn --kind wsl --location C:\Users\<you>\project`.
+2. Confirm a **new WSL tab** opens (titled `project (Spawned)`, with the
+   **"Spawned"** badge) running inside the distribution — `uname -a` shows Linux.
+3. In the terminal, `pwd` prints `/mnt/c/Users/<you>/project` — proving the
+   Windows path was converted to its `/mnt/` form and the distro started there.
+4. (Named distro) With a saved WSL connection whose distribution is e.g. `Debian`,
+   run the same command with `--connection <that-connection-id>` and confirm the
+   session uses **that** distribution rather than the default distro.
+
+**SSH spawn opens the saved connection and `cd`s into the target.**
+
+1. With a saved SSH connection (note its id, e.g. `Prod/Web`) and the built app
+   running, run `termiHub spawn --kind ssh --connection Prod/Web --location /srv/app`.
+2. Confirm a **new SSH tab** opens (titled `<connection name> (Spawned)`, with the
+   **"Spawned"** badge) and connects to that host — **not** a local shell.
+3. Once connected, confirm the session has `cd`'d into `/srv/app` (`pwd` prints it)
+   — the `cd` runs after connect since SSH cannot set a start cwd at spawn.
+4. (Error) Run the same command with `--connection does-not-exist`. Confirm an
+   **error toast** reports the connection was not found and **no** tab opens
+   (no silent local-shell fallback). Likewise a `--connection` pointing at a
+   non-SSH connection reports "not an SSH connection".
+
 ### Spawned container grouping survives tab close (#1466)
 
 See PR #1495. The spawned origin is now recorded on the backend session

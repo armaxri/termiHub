@@ -181,7 +181,13 @@ export async function resolveContainerSpawn(
  * directory was substituted.
  */
 export interface ShellSpawn {
-  /** Local-shell backend settings (camelCase) for the spawned session. */
+  /**
+   * Backend session type to open: `"local"` shell, `"wsl"` distribution, or
+   * `"ssh"` saved connection (#1511). Absent on legacy payloads → treated as
+   * `"local"`.
+   */
+  type?: "local" | "wsl" | "ssh";
+  /** Backend settings (camelCase) for the spawned session. */
   settings: Record<string, unknown>;
   /** Display title carrying the "Spawned" marker for the tab badge. */
   title: string;
@@ -189,15 +195,26 @@ export interface ShellSpawn {
   spawned: boolean;
   /** `true` when the requested path was missing and home was substituted. */
   missing: boolean;
+  /**
+   * For an SSH spawn: absolute path to `cd` into once the session connects
+   * (SSH cannot set a start cwd at spawn). Absent for local/WSL spawns. (#1511)
+   */
+  cdPath?: string;
 }
 
 /**
- * Resolve an external local/WSL/SSH spawn into local-shell session settings
- * (#1365). Given the spawn `location` (folder, file, or missing path) and its
- * `kind`, the backend resolves the working directory (folder → itself, file →
- * parent, missing → home, symlinks resolved; a WSL spawn is converted to its
- * `/mnt/` path) and returns the settings + title used to open a shell tab `cd`'d
- * to the target.
+ * Resolve an external local/WSL/SSH spawn into the correct backend session
+ * settings (#1365 local, #1511 WSL/SSH). Dispatches on `kind`:
+ *
+ * - **local** — the resolved working directory becomes a local shell's
+ *   `startingDirectory` (folder → itself, file → parent, missing → home).
+ * - **wsl** — a `wsl` session at the `/mnt/`-converted path, distribution from
+ *   the saved WSL connection (`connection`) or the system default distro.
+ * - **ssh** — the saved SSH connection (`connection`) opened verbatim, with the
+ *   target path returned as `cdPath` to `cd` into after connect.
+ *
+ * Rejects (throws) an SSH/WSL spawn that cannot be resolved to a
+ * connection/distribution, so the caller can surface an error toast.
  */
 export async function resolveShellSpawn(
   location?: string,
