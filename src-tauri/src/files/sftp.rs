@@ -1126,6 +1126,232 @@ mod tests {
         );
     }
 
+    // ── Docker-backed elevated-save integration tests ────────────────────
+    //
+    // Exercise the real `SftpSession::write_file_content_elevated` path
+    // end-to-end over a live SSH connection (temp SFTP upload → `sudo -S`
+    // rewrite → typed classification → temp cleanup), covering the three
+    // outcomes the #1328 unit tests can only stub: correct password, wrong
+    // password, and no-sudo. They self-skip when the container is not up,
+    // mirroring the "Agent Deploy SFTP" test in `utils::remote_exec` and the
+    // `require_docker!` convention in `core/tests/common`. Bring the fixtures
+    // up with:
+    //   docker compose -f tests/docker/docker-compose.yml up -d ssh-sudo ssh-nosudo
+    //
+    // Ports are read from `TERMIHUB_TEST_SSH_SUDO_PORT` (default 2212) and
+    // `TERMIHUB_TEST_SSH_NOSUDO_PORT` (default 2213) so a sharded / parallel
+    // run can point at a separate container instance. A second, plain SSH
+    // session (as `testuser`) reads the world-readable root-owned target back
+    // to verify contents/owner/mode and to confirm no `/tmp/termihub-*` temp
+    // leaked — never the elevated write path itself.
+    use crate::utils::remote_exec::run_remote_command;
+
+    /// Root-owned file the fixtures ship (see `tests/docker/ssh-sudo`).
+    const ELEVATED_TARGET: &str = "/etc/termihub-elevated-target.txt";
+    /// Default host ports of the elevated-save fixtures (`tests/docker`).
+    const DEFAULT_SSH_SUDO_PORT: u16 = 2212;
+    const DEFAULT_SSH_NOSUDO_PORT: u16 = 2213;
+
+    fn env_port(var: &str, default: u16) -> u16 {
+        std::env::var(var)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// Returns `true` if a TCP connection to the SSH server succeeds quickly.
+    fn ssh_port_reachable(port: u16) -> bool {
+        use std::net::TcpStream;
+        use std::time::Duration;
+        format!("127.0.0.1:{port}")
+            .parse()
+            .ok()
+            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok())
+            .is_some()
+    }
+
+    /// Password-auth config for a fixture container on `127.0.0.1:port`.
+    fn testuser_config(port: u16, password: &str) -> SshConfig {
+        SshConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "testuser".to_string(),
+            auth_method: "password".to_string(),
+            password: Some(password.to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Count of leftover `/tmp/termihub-*` temp files as seen by `testuser`.
+    fn temp_leftover_count(verify: &SshSession) -> Result<usize, TerminalError> {
+        // `2>/dev/null` swallows the "No such file" when the glob matches
+        // nothing; `printf %s` avoids `wc`'s leading whitespace.
+        let out = run_remote_command(
+            verify,
+            "ls -1d /tmp/termihub-* 2>/dev/null | grep -c . || true",
+        )?;
+        Ok(out.trim().parse().unwrap_or(0))
+    }
+
+    /// Correct password → `Success`: the root-owned file is rewritten, its
+    /// owner/mode are preserved, and no temp upload leaks.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn elevated_save_success_rewrites_root_file_over_real_ssh() {
+        let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
+        if !ssh_port_reachable(port) {
+            eprintln!(
+                "SKIPPED: ssh-sudo container not reachable on port {port} \
+                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-sudo)"
+            );
+            return;
+        }
+
+        let result = tokio::task::spawn_blocking(move || {
+            let config = testuser_config(port, "testpass");
+            let verify = connect_and_authenticate(&config)?;
+
+            let stat_cmd = format!("stat -c '%U %G %a' {ELEVATED_TARGET}");
+            let stat_before = run_remote_command(&verify, &stat_cmd)?;
+
+            let session = SftpSession::new(&config)?;
+            let new_content = format!("elevated-rewrite-{}\n", uuid::Uuid::new_v4());
+            let outcome =
+                session.write_file_content_elevated(ELEVATED_TARGET, &new_content, "testpass")?;
+
+            let after = run_remote_command(&verify, &format!("cat {ELEVATED_TARGET}"))?;
+            let stat_after = run_remote_command(&verify, &stat_cmd)?;
+            let leftover = temp_leftover_count(&verify)?;
+
+            Ok::<_, TerminalError>((
+                outcome,
+                new_content,
+                after,
+                stat_before,
+                stat_after,
+                leftover,
+            ))
+        })
+        .await
+        .expect("spawn_blocking join");
+
+        let (outcome, new_content, after, stat_before, stat_after, leftover) =
+            result.expect("elevated save (success) should complete");
+
+        assert_eq!(outcome, ElevatedWriteResult::Success, "expected Success");
+        assert_eq!(
+            after,
+            new_content.trim(),
+            "root-owned file should hold the newly written content"
+        );
+        assert_eq!(
+            stat_before, stat_after,
+            "owner/group/mode must be unchanged by the elevated rewrite"
+        );
+        assert_eq!(
+            stat_after, "root root 644",
+            "target must remain root-owned, mode 644"
+        );
+        assert_eq!(leftover, 0, "no /tmp/termihub-* temp should remain");
+    }
+
+    /// Wrong password → `IncorrectPassword`: the file is untouched and the temp
+    /// upload is cleaned up.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn elevated_save_wrong_password_leaves_file_untouched() {
+        let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
+        if !ssh_port_reachable(port) {
+            eprintln!(
+                "SKIPPED: ssh-sudo container not reachable on port {port} \
+                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-sudo)"
+            );
+            return;
+        }
+
+        let result = tokio::task::spawn_blocking(move || {
+            let config = testuser_config(port, "testpass");
+            let verify = connect_and_authenticate(&config)?;
+
+            let before = run_remote_command(&verify, &format!("cat {ELEVATED_TARGET}"))?;
+
+            let session = SftpSession::new(&config)?;
+            let new_content = format!("should-not-land-{}\n", uuid::Uuid::new_v4());
+            let outcome = session.write_file_content_elevated(
+                ELEVATED_TARGET,
+                &new_content,
+                "definitely-the-wrong-password",
+            )?;
+
+            let after = run_remote_command(&verify, &format!("cat {ELEVATED_TARGET}"))?;
+            let leftover = temp_leftover_count(&verify)?;
+
+            Ok::<_, TerminalError>((outcome, before, after, leftover))
+        })
+        .await
+        .expect("spawn_blocking join");
+
+        let (outcome, before, after, leftover) =
+            result.expect("elevated save (wrong password) should complete");
+
+        assert_eq!(
+            outcome,
+            ElevatedWriteResult::IncorrectPassword,
+            "a rejected sudo password must classify as IncorrectPassword"
+        );
+        assert_eq!(
+            after, before,
+            "file must be unchanged on a rejected password"
+        );
+        assert_eq!(leftover, 0, "temp upload must be cleaned up on failure");
+    }
+
+    /// No sudo installed → `Other`: the file is untouched and the temp upload is
+    /// cleaned up.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn elevated_save_without_sudo_returns_other() {
+        let port = env_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", DEFAULT_SSH_NOSUDO_PORT);
+        if !ssh_port_reachable(port) {
+            eprintln!(
+                "SKIPPED: ssh-nosudo container not reachable on port {port} \
+                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-nosudo)"
+            );
+            return;
+        }
+
+        let result = tokio::task::spawn_blocking(move || {
+            let config = testuser_config(port, "testpass");
+            let verify = connect_and_authenticate(&config)?;
+
+            let before = run_remote_command(&verify, &format!("cat {ELEVATED_TARGET}"))?;
+
+            let session = SftpSession::new(&config)?;
+            let new_content = format!("should-not-land-{}\n", uuid::Uuid::new_v4());
+            let outcome =
+                session.write_file_content_elevated(ELEVATED_TARGET, &new_content, "testpass")?;
+
+            let after = run_remote_command(&verify, &format!("cat {ELEVATED_TARGET}"))?;
+            let leftover = temp_leftover_count(&verify)?;
+
+            Ok::<_, TerminalError>((outcome, before, after, leftover))
+        })
+        .await
+        .expect("spawn_blocking join");
+
+        let (outcome, before, after, leftover) =
+            result.expect("elevated save (no sudo) should complete");
+
+        match outcome {
+            ElevatedWriteResult::Other(msg) => {
+                assert!(!msg.is_empty(), "Other must carry a displayable message")
+            }
+            other => panic!("expected Other when sudo is unavailable, got {other:?}"),
+        }
+        assert_eq!(
+            after, before,
+            "file must be unchanged when sudo is unavailable"
+        );
+        assert_eq!(leftover, 0, "temp upload must be cleaned up on failure");
+    }
+
     /// The lock helper must map a poisoned mutex to a recoverable
     /// `TerminalError` instead of panicking (audit GAP C1, #1143).
     #[test]
