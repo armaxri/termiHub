@@ -34,11 +34,14 @@ fn print_usage() {
     eprintln!(
         "  --allow-self-update   Enable the background GitHub self-update check (off by default)"
     );
+    eprintln!("  --update-strategy <s> Self-update apply strategy: immediate|coordinated|deferred");
 }
 
 /// CLI flag / env var that opts the agent into the background self-update check.
 const SELF_UPDATE_FLAG: &str = "--allow-self-update";
 const SELF_UPDATE_ENV: &str = "TERMIHUB_AGENT_ALLOW_SELF_UPDATE";
+/// CLI flag carrying the connection's configured self-update apply strategy.
+const UPDATE_STRATEGY_FLAG: &str = "--update-strategy";
 
 /// Determine whether the agent should run the optional self-update check.
 ///
@@ -53,6 +56,19 @@ fn self_update_enabled(args: &[String]) -> bool {
         std::env::var(SELF_UPDATE_ENV).ok().as_deref(),
         Some("1") | Some("true") | Some("yes")
     )
+}
+
+/// Parse the `--update-strategy <value>` CLI flag (#1401).
+///
+/// The desktop appends it alongside `--allow-self-update` so the agent knows
+/// whether a self-downloaded update may auto-apply on idle. Absent or unknown
+/// values default to [`UpdateStrategy::Immediate`].
+fn update_strategy_from_args(args: &[String]) -> update::UpdateStrategy {
+    args.iter()
+        .position(|a| a == UPDATE_STRATEGY_FLAG)
+        .and_then(|i| args.get(i + 1))
+        .map(|v| update::UpdateStrategy::from_cli(v))
+        .unwrap_or_default()
 }
 
 #[tokio::main]
@@ -83,8 +99,9 @@ async fn main() -> anyhow::Result<()> {
 
             let shutdown = setup_shutdown_signal();
             let allow_self_update = self_update_enabled(&args);
+            let update_strategy = update_strategy_from_args(&args);
             info!("termihub-agent {} starting in stdio mode", VERSION);
-            io::stdio::run_stdio_loop(shutdown, allow_self_update).await
+            io::stdio::run_stdio_loop(shutdown, allow_self_update, update_strategy).await
         }
         "--listen" => {
             init_tracing();
@@ -98,11 +115,12 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or(DEFAULT_LISTEN_ADDR);
             let shutdown = setup_shutdown_signal();
             let allow_self_update = self_update_enabled(&args);
+            let update_strategy = update_strategy_from_args(&args);
             info!(
                 "termihub-agent {} starting in TCP listener mode on {}",
                 VERSION, addr
             );
-            io::tcp::run_tcp_listener(addr, shutdown, allow_self_update).await
+            io::tcp::run_tcp_listener(addr, shutdown, allow_self_update, update_strategy).await
         }
         "--daemon" => {
             init_tracing();
@@ -197,5 +215,47 @@ mod tests {
     fn self_update_absent_is_disabled_by_default() {
         // No flag, and the env var is not set in this test process.
         assert!(!self_update_enabled(&args(&["termihub-agent", "--stdio"])));
+    }
+
+    #[test]
+    fn update_strategy_parses_from_flag() {
+        use update::UpdateStrategy;
+        assert_eq!(
+            update_strategy_from_args(&args(&[
+                "termihub-agent",
+                "--stdio",
+                "--allow-self-update",
+                "--update-strategy",
+                "deferred",
+            ])),
+            UpdateStrategy::Deferred
+        );
+        assert_eq!(
+            update_strategy_from_args(&args(&[
+                "termihub-agent",
+                "--stdio",
+                "--update-strategy",
+                "coordinated",
+            ])),
+            UpdateStrategy::Coordinated
+        );
+    }
+
+    #[test]
+    fn update_strategy_defaults_to_immediate_when_absent_or_unknown() {
+        use update::UpdateStrategy;
+        assert_eq!(
+            update_strategy_from_args(&args(&["termihub-agent", "--stdio"])),
+            UpdateStrategy::Immediate
+        );
+        assert_eq!(
+            update_strategy_from_args(&args(&[
+                "termihub-agent",
+                "--stdio",
+                "--update-strategy",
+                "bogus",
+            ])),
+            UpdateStrategy::Immediate
+        );
     }
 }

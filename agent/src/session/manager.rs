@@ -835,32 +835,58 @@ impl SessionManager {
         }
     }
 
-    /// Consume the pending update (clearing it from persisted state) and apply
-    /// it. A no-op when nothing is pending.
+    /// Record the timestamp of the most recent self-update poll (#1401).
     ///
-    /// The pending update is cleared **before** the apply so a failed or
-    /// re-execed apply can never trigger an apply loop. On a successful Unix
-    /// apply the process re-execs and this never returns.
-    async fn apply_pending_update(&self) -> anyhow::Result<()> {
-        let pending = {
-            let mut state = self.state.lock().await;
-            let taken = state.update.pending_update.take();
-            if taken.is_some() {
-                state.save_to(&self.state_path);
-            }
-            taken
-        };
+    /// Owned here so the self-update timer and the deferred-apply path share a
+    /// single in-memory + persisted `update` state; a direct write from the
+    /// timer would be clobbered by the next session-close persist.
+    pub async fn record_update_check_time(&self, timestamp: String) {
+        let mut state = self.state.lock().await;
+        state.update.last_check_time = Some(timestamp);
+        state.save_to(&self.state_path);
+    }
 
-        match pending {
-            Some(pending) => {
-                info!(
-                    "Applying deferred agent update (version {:?}) from {}",
-                    pending.version, pending.binary_path
-                );
-                self.update_applier.apply(&pending)
-            }
-            None => Ok(()),
-        }
+    /// Record a staged pending update in the shared agent state **without**
+    /// applying it (#1401).
+    ///
+    /// Used by the self-update timer when the connection's update strategy does
+    /// not auto-apply on idle (coordinated), so a later coordinated apply — or
+    /// an explicit `agent.request_deferred_update` — can consume it.
+    pub async fn stage_pending_update(&self, binary_path: String, version: String) {
+        let mut state = self.state.lock().await;
+        state.update.pending_update = Some(PendingUpdate {
+            version,
+            binary_path,
+            staged_at: Utc::now().to_rfc3339(),
+        });
+        state.save_to(&self.state_path);
+    }
+
+    /// Apply the pending update, clearing it from persisted state **only on
+    /// success**. A no-op when nothing is pending.
+    ///
+    /// The update is applied first and the pending record is cleared afterwards,
+    /// so a failed apply KEEPS the pending update and a later cycle (the next
+    /// last-disconnect, or the next self-update poll) can retry (#1401). On a
+    /// successful Unix apply the process re-execs and this never returns, so the
+    /// clear only runs in tests / on the non-Unix path. Retaining on failure
+    /// cannot cause a tight apply loop: applies fire only on discrete
+    /// transitions (a session closing to zero, or a 24h poll), never in a spin.
+    async fn apply_pending_update(&self) -> anyhow::Result<()> {
+        let pending = { self.state.lock().await.update.pending_update.clone() };
+        let Some(pending) = pending else {
+            return Ok(());
+        };
+        info!(
+            "Applying deferred agent update (version {:?}) from {}",
+            pending.version, pending.binary_path
+        );
+        self.update_applier.apply(&pending)?;
+        // Success (test / non-unix path): consume the pending update.
+        let mut state = self.state.lock().await;
+        state.update.pending_update = None;
+        state.save_to(&self.state_path);
+        Ok(())
     }
 }
 
@@ -1282,6 +1308,37 @@ mod tests {
             }
         }
 
+        /// [`UpdateApplier`] that always fails, to exercise retain-on-failure.
+        struct FailingApplier {
+            attempts: Arc<StdMutex<Vec<PendingUpdate>>>,
+        }
+
+        impl UpdateApplier for FailingApplier {
+            fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+                self.attempts
+                    .lock()
+                    .expect("attempts lock")
+                    .push(pending.clone());
+                anyhow::bail!("simulated apply failure")
+            }
+        }
+
+        fn manager_with_failing_applier() -> (SessionManager, AppliedLog, tempfile::TempDir) {
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+            let attempts: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path,
+                Arc::new(FailingApplier {
+                    attempts: attempts.clone(),
+                }),
+            );
+            (mgr, attempts, tmp)
+        }
+
         type AppliedLog = Arc<StdMutex<Vec<PendingUpdate>>>;
 
         fn manager_with_recording_applier() -> (SessionManager, AppliedLog, tempfile::TempDir) {
@@ -1331,9 +1388,37 @@ mod tests {
 
             // Closing the last session applies it exactly once.
             mgr.close(&ids[1]).await;
-            let log = applied.lock().unwrap();
-            assert_eq!(log.len(), 1, "update applies exactly on last disconnect");
-            assert_eq!(log[0].binary_path, "/tmp/new-agent");
+            {
+                let log = applied.lock().unwrap();
+                assert_eq!(log.len(), 1, "update applies exactly on last disconnect");
+                assert_eq!(log[0].binary_path, "/tmp/new-agent");
+            }
+            // A successful apply clears the pending update.
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "successful apply on last disconnect clears pending_update"
+            );
+        }
+
+        #[tokio::test]
+        async fn failed_apply_on_last_disconnect_keeps_pending() {
+            // Retain-on-failure (#1401): if the apply fails on the last
+            // disconnect, the pending update is KEPT so a later cycle can retry.
+            let (mgr, attempts, _tmp) = manager_with_failing_applier();
+            mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/new-agent"))
+                .await;
+            let ids: Vec<String> = mgr.list().await.into_iter().map(|s| s.id).collect();
+
+            mgr.close(&ids[0]).await;
+
+            assert_eq!(attempts.lock().unwrap().len(), 1, "apply was attempted");
+            assert!(
+                mgr.pending_update_for_test().await.is_some(),
+                "a failed apply must keep pending_update for retry"
+            );
         }
 
         #[tokio::test]

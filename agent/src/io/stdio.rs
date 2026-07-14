@@ -20,6 +20,7 @@ use crate::session::manager::SessionManager;
 pub async fn run_stdio_loop(
     shutdown: CancellationToken,
     allow_self_update: bool,
+    update_strategy: crate::update::UpdateStrategy,
 ) -> anyhow::Result<()> {
     let (notification_tx, mut notification_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
@@ -41,7 +42,11 @@ pub async fn run_stdio_loop(
 
     // Optional background GitHub self-update check (off unless opted in).
     crate::update::spawn_self_update_task(
-        crate::update::UpdateConfig::from_env(allow_self_update, env!("CARGO_PKG_VERSION")),
+        crate::update::UpdateConfig::from_env(
+            allow_self_update,
+            update_strategy,
+            env!("CARGO_PKG_VERSION"),
+        ),
         session_manager.clone(),
         update_tx,
         shutdown.child_token(),

@@ -25,6 +25,7 @@ pub async fn run_tcp_listener(
     addr: &str,
     shutdown: CancellationToken,
     allow_self_update: bool,
+    update_strategy: crate::update::UpdateStrategy,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!("Listening on {}", listener.local_addr()?);
@@ -48,7 +49,11 @@ pub async fn run_tcp_listener(
 
     // Optional background GitHub self-update check (off unless opted in).
     crate::update::spawn_self_update_task(
-        crate::update::UpdateConfig::from_env(allow_self_update, env!("CARGO_PKG_VERSION")),
+        crate::update::UpdateConfig::from_env(
+            allow_self_update,
+            update_strategy,
+            env!("CARGO_PKG_VERSION"),
+        ),
         session_manager.clone(),
         update_tx,
         shutdown.child_token(),
