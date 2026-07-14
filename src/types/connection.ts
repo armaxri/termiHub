@@ -51,6 +51,14 @@ export interface TransferState {
   transferred: number;
   total: number;
   phase: "transferring" | "done" | "cancelled" | "error";
+  // Queue-model additive fields (#1336), populated for FTP transfers and
+  // derived for SFTP. Optional so existing SFTP consumers are unaffected.
+  state?: "queued" | "active" | "paused" | "completed" | "failed" | "cancelled";
+  speed?: number;
+  totalBytes?: number;
+  etaSecs?: number;
+  attempt?: number;
+  maxAttempts?: number;
 }
 
 export interface SavedConnection {
