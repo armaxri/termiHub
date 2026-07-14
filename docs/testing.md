@@ -813,6 +813,24 @@ and the TLS-mode → port auto-adjust. See PR #1338.
 5. Connect an **FTPS** (explicit or implicit) connection → the modal is **never**
    shown.
 
+### Toast close button — light/dark rendering (#1504)
+
+Verifies the bottom-right toast close (X) button renders and is styled
+correctly in both themes. See PR #1504.
+
+1. Trigger any toast (e.g. save a connection to get a success toast, or perform
+   an action that fails to get a persistent error toast).
+2. Confirm a close (**X**) button appears in the top-right of the toast, using
+   the lucide `X` icon, not overlapping the message or action button.
+3. Hover the button → it shows a subtle background; **Tab** to it → a visible
+   focus ring appears; press **Enter/Space** or click → the toast dismisses
+   immediately.
+4. Switch between **light** and **dark** themes (Settings → Appearance) and
+   repeat: the icon, hover, and focus ring must remain legible in both.
+5. Repeat across variants (success, error, info). Loading toasts intentionally
+   have no close button; confirm the toast they resolve into (success/error)
+   does.
+
 ### Agent binary SHA-256 checksums (release dry-run, #1350)
 
 Verifies that every published agent binary has a matching `*.sha256` asset and
