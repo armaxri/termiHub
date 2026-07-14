@@ -33,12 +33,15 @@ pub struct UpdateState {
     pub pending_update: Option<PendingUpdate>,
 }
 
-/// A self-update binary that has been downloaded and SHA-256-verified but not
-/// yet applied.
+/// An agent binary that has been staged (downloaded + SHA-256-verified, or
+/// pushed via `agent.request_deferred_update`) but not yet applied.
 ///
-/// Applying it on idle (deferred apply) depends on SI-6 (#1352) and is
-/// intentionally not wired up yet — until then the agent only stages the binary
-/// and records it here so a later change can pick it up.
+/// The deferred apply (SI-6, #1352) is wired: the agent applies this when its
+/// last session disconnects, or immediately via `agent.request_deferred_update`
+/// when it is idle — see [`crate::session::manager::SessionManager`] and the
+/// `crate::update::apply` module. (Auto-applying a *self-update* staged by the
+/// background timer on idle is still staging-only; that wiring is tracked
+/// separately.)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingUpdate {
     /// Target version (release tag semver, e.g. `"0.3.0"`).
@@ -71,15 +74,9 @@ pub struct PersistedSession {
 }
 
 impl AgentState {
-    /// Load state from the default state file.
+    /// Load state from a specific path.
     ///
     /// Returns an empty state if the file is missing or corrupt.
-    pub fn load() -> Self {
-        let path = Self::default_path();
-        Self::load_from(&path)
-    }
-
-    /// Load state from a specific path (for testing).
     pub fn load_from(path: &PathBuf) -> Self {
         match std::fs::read_to_string(path) {
             Ok(contents) => match serde_json::from_str::<AgentState>(&contents) {
@@ -103,13 +100,7 @@ impl AgentState {
         }
     }
 
-    /// Save state to the default state file.
-    pub fn save(&self) {
-        let path = Self::default_path();
-        self.save_to(&path);
-    }
-
-    /// Save state to a specific path (for testing).
+    /// Save state to a specific path.
     pub fn save_to(&self, path: &PathBuf) {
         if let Some(parent) = path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -131,6 +122,18 @@ impl AgentState {
                 warn!("Failed to serialize agent state: {}", e);
             }
         }
+    }
+
+    /// Load state from the default state file.
+    pub fn load() -> Self {
+        let path = Self::default_path();
+        Self::load_from(&path)
+    }
+
+    /// Save state to the default state file.
+    pub fn save(&self) {
+        let path = Self::default_path();
+        self.save_to(&path);
     }
 
     /// Add a session and persist.
@@ -378,6 +381,40 @@ mod tests {
             .expect("pending update present");
         assert_eq!(pending.version, "0.3.0");
         assert_eq!(pending.binary_path, "/tmp/updates/termihub-agent-linux-x64");
+    }
+
+    #[test]
+    fn deferred_update_request_round_trips_and_consumes() {
+        // A deferred update requested via `agent.request_deferred_update` records
+        // a PendingUpdate (version may be empty when only a path is supplied). It
+        // must survive a restart and clear cleanly once consumed on apply.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state.update.pending_update = Some(PendingUpdate {
+            version: String::new(),
+            binary_path: "/opt/updates/termihub-agent".to_string(),
+            staged_at: "2026-07-14T09:00:00Z".to_string(),
+        });
+        state.save_to(&path);
+
+        // Survives a restart.
+        let mut reloaded = AgentState::load_from(&path);
+        let pending = reloaded
+            .update
+            .pending_update
+            .clone()
+            .expect("pending update present after reload");
+        assert_eq!(pending.binary_path, "/opt/updates/termihub-agent");
+        assert!(pending.version.is_empty());
+
+        // Consuming it (apply) clears it and persists the cleared state.
+        let taken = reloaded.update.pending_update.take();
+        assert!(taken.is_some());
+        reloaded.save_to(&path);
+        let after = AgentState::load_from(&path);
+        assert!(after.update.pending_update.is_none());
     }
 
     #[test]
