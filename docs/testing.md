@@ -1417,7 +1417,7 @@ Raspberry Pi). See PR #1508 (#1329).
 ### File editor SFTP-only read-only fallback (#1330)
 
 Verifies the graceful fallback for a read-only file on an SFTP-only / relayed
-connection (no exec channel, so no `sudo` path). See PR #<PR> (#1330).
+connection (no exec channel, so no `sudo` path). See PR #1525 (#1330).
 
 1. Open a file on an **SFTP-only** connection where the connecting user cannot
    write it (e.g. a root-owned file, or one `chmod`/`chown`ed to another user). A
