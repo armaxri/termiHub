@@ -1386,8 +1386,36 @@ See PR #1389.
    (`could not reach GitHub, skipping this cycle`) and keeps serving sessions —
    it must not crash. `last_check_time` in `state.json` still updates.
 
-> Note: automatic apply-on-idle of a staged update is deferred to #1352; this PR
-> stops after staging and notifying.
+### Agent self-update auto-apply on idle (#1401)
+
+Verifies that an agent with self-update enabled automatically applies a staged,
+verified update once its last session closes — respecting the connection's
+update strategy and never interrupting active sessions. Requires a Linux remote
+host. See PR for #1401. (End-to-end apply across a real restart is covered by the
+deferred Docker integration follow-up #1519.)
+
+1. **Strategy reaches the agent.** Edit the agent, turn **Allow agent self-update**
+   on, set **Update Strategy** to **Deferred** (or **Immediate**), save, and
+   reconnect. Confirm the SSH exec command now ends with
+   `--stdio --allow-self-update --update-strategy deferred` (inspect the app log
+   or `agent_exec_command`).
+2. **Active session blocks apply.** With a newer release published and a staged
+   `pending_update` in the host's `state.json`, keep at least one session open on
+   that agent. Wait for (or force) a self-update cycle. Confirm the agent does
+   **not** swap its binary while a session is active (the session keeps running;
+   `pending_update` remains in `state.json`).
+3. **Applies on last disconnect.** Close the last session on that agent. Confirm
+   the agent applies the staged binary (exec-replace), comes back on the new
+   version, and clears `pending_update` from `state.json`. Persistent daemon
+   sessions (if any were re-opened) survive the restart and re-attach.
+4. **Coordinated does not auto-apply.** Repeat step 1 with **Update Strategy** set
+   to **Coordinated**. Confirm that on idle the agent stages and notifies but does
+   **not** auto-apply — `pending_update` stays recorded for a later coordinated
+   apply.
+5. **Retry on failure.** Make the staged binary unusable (e.g. corrupt the staged
+   file after staging) and trigger an apply on last disconnect. Confirm the apply
+   fails, the agent keeps running the old version, logs the failure, and retains
+   `pending_update` so the next cycle retries.
 
 ### Agent version + update-state badge — light/dark colors (#1347)
 
