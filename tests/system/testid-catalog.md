@@ -63,6 +63,8 @@ Fixed strings — match exactly.
 | `color-picker-apply` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `color-picker-clear` | `src/components/Terminal/ColorPickerDialog.tsx` |
 | `color-picker-hex-input` | `src/components/Terminal/ColorPickerDialog.tsx` |
+| `command-palette` | `src/components/CommandPalette/CommandPalette.tsx` |
+| `command-palette-input` | `src/components/CommandPalette/CommandPalette.tsx` |
 | `confirm-close-tab-cancel` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `confirm-close-tab-dialog` | `src/components/Terminal/ConfirmCloseTabDialog.tsx` |
 | `confirm-delete-cancel` | `src/components/Sidebar/ConfirmDeleteDialog.tsx` |
@@ -196,6 +198,7 @@ Fixed strings — match exactly.
 | `file-browser-transfers` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-up` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-upload` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-editor-edit-with-sudo` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-readonly-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-readonly-banner` | `src/components/FileEditor/FileEditor.tsx` |
@@ -204,7 +207,9 @@ Fixed strings — match exactly.
 | `file-editor-save` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-save-error-retry-sudo` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-scratch-badge` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-sudo-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-row-rename-input` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-type-add-btn` | `src/components/Settings/FileTypeSettings.tsx` |
 | `file-type-add-error` | `src/components/Settings/FileTypeSettings.tsx` |
@@ -445,6 +450,16 @@ Fixed strings — match exactly.
 | `status-bar-language` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-tab-size` | `src/components/StatusBar/StatusBar.tsx` |
 | `status-bar-transfers` | `src/components/StatusBar/StatusBar.tsx` |
+| `sudo-prompt-cancel` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-dialog` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-error` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-host` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-input` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-persist` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-remember` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-submit` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-target` | `src/components/FileEditor/SudoPromptDialog.tsx` |
+| `sudo-prompt-user` | `src/components/FileEditor/SudoPromptDialog.tsx` |
 | `tab-context-clear` | `src/components/Terminal/Tab.tsx` |
 | `tab-context-copy` | `src/components/Terminal/Tab.tsx` |
 | `tab-context-horizontal-scroll` | `src/components/Terminal/Tab.tsx` |
@@ -625,6 +640,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `agent-state-*` | `agent-state-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `agent-version-badge-*` | `agent-version-badge-${agent.id}` | `src/components/Sidebar/AgentNode.tsx` |
 | `color-picker-swatch-*` | `color-picker-swatch-${color.replace("#", "")}` | `src/components/Terminal/ColorPickerDialog.tsx` |
+| `command-palette-item-*` | `command-palette-item-${entry.key}` | `src/components/CommandPalette/CommandPalette.tsx` |
 | `connection-connect-*` | `connection-connect-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-item-*` | `connection-item-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |
 | `connection-jump-badge-*` | `connection-jump-badge-${connection.id}` | `src/components/Sidebar/ConnectionList.tsx` |

@@ -11,6 +11,11 @@
 
 mod file_browser;
 mod listing_parser;
+mod transfer;
+
+pub use transfer::{
+    probe_remote_size, run_attempt, AttemptOutcome, FtpDirection, StopReason, FTP_CHUNK_SIZE,
+};
 
 use std::sync::Arc;
 

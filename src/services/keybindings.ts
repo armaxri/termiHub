@@ -36,6 +36,17 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "command-palette",
+    label: "Command Palette",
+    category: "general",
+    macDefault: { key: "p", meta: true },
+    // Avoid bare Ctrl+P: readline "previous-history". Ctrl+Shift+P matches the
+    // familiar VS Code command-palette shortcut and does not collide with the
+    // shell key map.
+    winLinuxDefault: { key: "P", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
     action: "show-shortcuts",
     label: "Keyboard Shortcuts",
     category: "general",

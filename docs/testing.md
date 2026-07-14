@@ -779,6 +779,24 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### Command palette (#1484)
+
+Verifies the Cmd/Ctrl+P command palette that fuzzy-matches application commands
+and saved connections. Introduced in PR #1484.
+
+1. Press the palette shortcut (macOS **Cmd+P**, Windows/Linux **Ctrl+Shift+P**) →
+   a modal opens with an empty search box focused, listing commands first, then
+   saved connections.
+2. Type part of a command name (e.g. `new term`) → **New Terminal** ranks to the
+   top with its accelerator shown on the right. Press **Enter** → a new terminal
+   tab opens and the palette closes.
+3. Reopen the palette and type part of a saved connection's name or host → the
+   matching connection ranks to the top with its connection-type badge. Press
+   **Enter** → it connects exactly as a sidebar double-click would (including any
+   password/passphrase or credential-store-unlock prompt).
+4. With the palette open, use **Arrow Up/Down** to move the highlight and
+   **Esc** to close without running anything.
+
 ### FTP insecure-connection warning & editor behaviors (#1338)
 
 Verifies the plaintext-FTP warning modal, the schema-conditional editor fields,
@@ -932,8 +950,37 @@ manual.
    is **not** also listed under **Local Sessions**. Its **Kill** action stops the
    backend session.
 7. (Boundary) Run `termiHub spawn --location ~/tmp/spawn` with **no**
-   `--container-image`. Confirm no tab opens (non-container spawns are SI-2; the
-   request is ignored, logged in the LogViewer under `frontend::spawn`).
+   `--container-image`. Confirm this now opens a **local shell tab** `cd`'d to the
+   directory (the SI-2 path below), not a container.
+
+### External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)
+
+The wiring (spawn event / cold-start drain → `resolve_shell_spawn` → focus window
+→ open local shell tab `cd`'d to the target → confirmation toast) is covered by
+unit tests (`src-tauri/src/spawn/handler.rs`, `src/hooks/useSpawnRequests.test.ts`).
+A live end-to-end run needs a built app, so the path below is manual (window focus
+per-OS, especially Wayland, is manual-only). Referenced by PR #1508.
+
+**Spawn a local shell at a directory / file / missing path.**
+
+1. With the built app already running, create a scratch directory with a file
+   (e.g. `mkdir -p ~/tmp/spawn && echo hi > ~/tmp/spawn/hi.txt`).
+2. From another terminal run `termiHub spawn --location ~/tmp/spawn`.
+3. Confirm the termiHub **window comes to the foreground**, a **new local shell
+   tab** opens titled `spawn (Spawned)` with a **"Spawned"** badge, and a brief
+   **confirmation toast** reports the shell was opened (mentions the location).
+4. In the terminal, `pwd` prints the target directory — proving the shell opened
+   `cd`'d there.
+5. (File) Run `termiHub spawn --location ~/tmp/spawn/hi.txt`. Confirm the shell
+   opens in the **parent directory** (`~/tmp/spawn`).
+6. (Missing) Run `termiHub spawn --location ~/tmp/does-not-exist`. Confirm the
+   shell opens in your **home directory** and an **info toast** warns the path was
+   not found.
+7. (Windows/WSL) With `--kind wsl`, confirm the WSL shell opens at the target
+   converted to its `/mnt/<drive>/…` path.
+8. (Cold start) Quit the app, then run `termiHub spawn --location ~/tmp/spawn`.
+   Confirm the app launches and, once loaded, focuses and opens the shell tab at
+   the target (the queued cold-start spawn is processed post-UI-ready).
 
 ### Spawned container grouping survives tab close (#1466)
 
@@ -1310,6 +1357,38 @@ Detection only — no elevated save is offered. See PR #1486 (#1325).
 6. Toggle light/dark themes (Settings → Appearance) with a read-only file open →
    the badge and banner stay legible in both themes.
 
+### File editor elevated (sudo) edit mode (#1329)
+
+Verifies read-only remote files can be saved with `sudo` via the in-app prompt.
+Requires an SSH/SFTP connection whose user has `sudo` rights on the host (e.g. a
+Raspberry Pi). See PR #1508 (#1329).
+
+1. On a remote SSH/SFTP connection, open a **root-owned** file the user cannot
+   write directly (e.g. `/etc/hosts`). Confirm the read-only badge/banner appear
+   and the toolbar action is **Edit with sudo** (not **Save**).
+2. Make an edit, then click **Edit with sudo**. In the prompt confirm the **host**,
+   **user**, and **file** are named and the password field is masked. Leave
+   **Remember for this session** on (default). Enter the correct password →
+   **Authorize**.
+3. The save succeeds (success toast), a persistent accent **sudo** marker appears
+   in the toolbar, and the buffer is clean. Verify the file was actually changed
+   on the host (`cat` it in a shell).
+4. Edit again and press **Save** / `Ctrl+S` → it saves elevated **without**
+   re-prompting (the session password is cached). The `sudo` marker stays.
+5. Open another root-owned file, click **Edit with sudo**, and enter a **wrong**
+   password three times → the prompt shows an "Incorrect password. Attempt N of 3"
+   counter, then after the 3rd failure the dialog closes and the #969 save-error
+   banner appears with the buffer **intact** (still dirty; nothing lost).
+6. With the credential store **locked** (or in `none` mode), open the sudo prompt →
+   the **Save in credential store** option is **hidden**. Unlock the store and
+   reopen the prompt → the option appears; enabling it and authorizing persists
+   the sudo password (a later session reuses it silently).
+7. On a file whose writability was **unknown**, press **Save**, let the direct save
+   fail with a permission error → the #969 banner shows a **Retry with sudo**
+   action; click it to open the prompt and save elevated.
+8. Confirm the sudo password is never visible in the LogViewer (elevated-save DEBUG
+   lines name the host/path only) and never written to workspace/tab state.
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
@@ -1631,6 +1710,34 @@ termiHub FTP **client** end-to-end once the backend sub-issues
 4. Repeat with **explicit FTPS** (TLS Mode = Explicit, port 2401) and **implicit
    FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
    plain-FTP insecure warning must appear only for TLS Mode = None.
+
+### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
+
+Verifies the shared transfer-queue model (queue / bounded concurrency /
+pause / resume / auto-retry / `REST` resume) and FTP up/download end-to-end.
+Requires an `ftp`-feature build (default) and the FTP fixture from the section
+above (`--profile ftp`, `127.0.0.1:2401`, `ftpuser` / `ftppass`). The live
+byte-exact + kill/resume Docker integration test is deferred to a follow-up;
+verify manually until it lands. See PR #1509.
+
+1. **Concurrency cap + queue:** start **three** downloads of large files (e.g.
+   `pub/data/dataset-1m.bin` to three local paths) in quick succession. Confirm
+   at most **two** are `active` at once and the third shows `queued`; when one
+   finishes, the queued one promotes to `active` automatically.
+2. **Pause / resume:** pause an active download mid-flight. Confirm it stops
+   moving bytes (state `paused`) and a queued transfer takes its slot. Resume it
+   and confirm it continues from where it stopped (via `REST`) and completes to
+   the exact original byte size — not restarting from zero.
+3. **Cancel:** cancel a queued transfer (it just disappears) and an active one
+   (its partial local file is removed). Both leave browsing responsive.
+4. **Auto-retry / backoff:** start a transfer, then break the server mid-flight
+   (e.g. `docker pause` the `ftp-server` container). Confirm the transfer reports
+   `failed (n/3)` and auto-retries with increasing backoff; unpause the container
+   before the 3rd attempt and confirm it resumes and completes. Leave it paused
+   past 3 attempts to confirm it surfaces a permanent failure, then use retry to
+   restart it once the server is back.
+5. **Upload:** repeat 1–4 for uploads into `/uploads` as `ftpuser`, confirming
+   byte-exact results and that concurrent uploads use separate connections.
 
 ### Remote system monitoring
 

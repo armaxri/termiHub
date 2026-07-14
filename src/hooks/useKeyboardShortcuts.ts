@@ -143,6 +143,11 @@ export function useKeyboardShortcuts() {
           useAppStore.getState().openSettingsTab();
           break;
 
+        case "command-palette":
+          e.preventDefault();
+          useAppStore.getState().setCommandPaletteOpen(true);
+          break;
+
         case "clear-terminal": {
           e.preventDefault();
           const panel = allLeaves.find((p) => p.id === activePanelId);
