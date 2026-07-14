@@ -151,6 +151,9 @@ fn entry_from_metadata(name: String, path: String, metadata: &std::fs::Metadata)
         permissions: None,
         // No permission info over UNC → writability is unknown.
         writable: None,
+        // Link status over UNC is not resolved here (see #1513).
+        is_symlink: false,
+        symlink_target: None,
     }
 }
 

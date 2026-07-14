@@ -5,6 +5,8 @@ import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manage
 import {
   Folder,
   File,
+  FileSymlink,
+  FolderSymlink,
   ArrowUp,
   RefreshCw,
   Upload,
@@ -46,6 +48,7 @@ import { formatBytes, formatRelativeTime } from "@/utils/formatters";
 import {
   sortEntries,
   filterEntries,
+  resolveSymlinkTarget,
   type FileSortKey,
   type SortDirection,
 } from "@/utils/fileBrowserNav";
@@ -324,6 +327,18 @@ function SortHeader({
 
 /** The leading folder/file glyph shared by file rows and the rename editor. */
 function FileEntryIcon({ entry }: { entry: FileEntry }) {
+  // Symbolic links get a distinct badge-arrow glyph so they read differently
+  // from a plain file/folder; a symlink-to-directory keeps the folder variant.
+  if (entry.isSymlink) {
+    return entry.isDirectory ? (
+      <FolderSymlink
+        size={16}
+        className="file-browser__icon file-browser__icon--folder file-browser__icon--symlink"
+      />
+    ) : (
+      <FileSymlink size={16} className="file-browser__icon file-browser__icon--symlink" />
+    );
+  }
   return entry.isDirectory ? (
     <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
   ) : (
@@ -424,7 +439,8 @@ function FileRow({
             data-testid={`file-row-${entry.name}`}
             onClick={(e) => onRowClick(entry, e)}
             onDoubleClick={() => {
-              if (entry.isDirectory) {
+              // Directories and symlinks are followed; other files open for edit.
+              if (entry.isDirectory || entry.isSymlink) {
                 onNavigate(entry);
               } else {
                 onContextAction(entry, "edit");
@@ -432,7 +448,26 @@ function FileRow({
             }}
           >
             <FileEntryIcon entry={entry} />
-            <span className="file-browser__name">{entry.name}</span>
+            <span
+              className="file-browser__name"
+              title={
+                entry.isSymlink
+                  ? entry.symlinkTarget
+                    ? `Symbolic link → ${entry.symlinkTarget}`
+                    : "Symbolic link"
+                  : undefined
+              }
+            >
+              {entry.name}
+            </span>
+            {entry.isSymlink && entry.symlinkTarget && (
+              <span
+                className="file-browser__symlink-target"
+                title={`Symbolic link → ${entry.symlinkTarget}`}
+              >
+                → {entry.symlinkTarget}
+              </span>
+            )}
             {entry.modified && (
               <span className="file-browser__modified">{formatRelativeTime(entry.modified)}</span>
             )}
@@ -915,7 +950,14 @@ export function FileBrowser() {
 
   const handleNavigate = useCallback(
     (entry: FileEntry) => {
-      if (entry.isDirectory) handleNavigatePath(entry.path);
+      // A real directory (including a symlink-to-dir, which reports
+      // isDirectory) is listed by its own path. A symlink whose target type is
+      // unknown (e.g. FTP) is followed via its resolved target path.
+      if (entry.isDirectory) {
+        handleNavigatePath(entry.path);
+      } else if (entry.isSymlink) {
+        handleNavigatePath(resolveSymlinkTarget(entry));
+      }
     },
     [handleNavigatePath]
   );
@@ -1075,7 +1117,7 @@ export function FileBrowser() {
     () =>
       makeKeyDownHandler({
         onActivate: (entry) => {
-          if (entry.isDirectory) handleNavigate(entry);
+          if (entry.isDirectory || entry.isSymlink) handleNavigate(entry);
           else handleContextAction(entry, "edit");
         },
         onNavigateUp: handleNavigateUp,
