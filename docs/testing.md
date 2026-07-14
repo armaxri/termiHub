@@ -1295,7 +1295,7 @@ Detection only — no elevated save is offered. See PR #1486 (#1325).
 
 Verifies read-only remote files can be saved with `sudo` via the in-app prompt.
 Requires an SSH/SFTP connection whose user has `sudo` rights on the host (e.g. a
-Raspberry Pi). See PR #<PR> (#1329).
+Raspberry Pi). See PR #1508 (#1329).
 
 1. On a remote SSH/SFTP connection, open a **root-owned** file the user cannot
    write directly (e.g. `/etc/hosts`). Confirm the read-only badge/banner appear
