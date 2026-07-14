@@ -563,6 +563,40 @@ names, published ports, Docker networks, the `tauri-driver` port, the virtual
 serial device paths) is derived from a single per-checkout config file so two
 checkouts never contend for the same resource.
 
+#### Disk cost per checkout
+
+Ports and container names are isolated, but **disk is shared** — it is what
+actually caps how many checkouts fit on one machine. Each checkout carries its
+own `target/`, and nothing is shared between them. Measured on macOS
+(aarch64, rustc 1.93) with the workspace `[profile.dev] debug =
+"line-tables-only"` set in the root `Cargo.toml`:
+
+| Checkout state                                   | `target/debug` |
+| ------------------------------------------------ | -------------- |
+| Cold (never built)                               | 0              |
+| After `cargo build --workspace` (or `setup.sh`)  | **4.5 GB**     |
+| After the test binaries are built (`cargo test`) | **6.5 GB**     |
+
+So budget **~6.5 GB per checkout** — a primed-but-untested checkout starts at
+4.5 GB and grows toward 6.5 GB as soon as its suites run. Five parallel
+checkouts need ~33 GB of free disk, ten need ~65 GB.
+
+> Without the `[profile.dev]` setting these were **6.7 GB / 9.4 GB** — Cargo's
+> default `debug = true` emits full DWARF for every crate in the dependency
+> graph ([#1537](https://github.com/armaxri/termiHub/issues/1537)). Backtraces
+> still carry file/line; only step-debugging through dependency code degrades.
+
+Two things worth knowing before provisioning N checkouts:
+
+- **A cold checkout pulls its whole `target/` the first time anything builds
+  it** — including the first time a test run builds it. Several cold checkouts
+  can therefore exhaust the disk mid-run and fail builds in **every** checkout
+  at once, including ones that were already working. If builds start failing
+  across unrelated checkouts, check free space before reading any diff.
+- **Reclaim with `cargo clean`** in an idle checkout (at the cost of a full
+  rebuild). Never `git clean -xfd` — `dev.local.json` is gitignored, so that
+  would delete this checkout's isolation config (see below).
+
 #### Setup
 
 Each checkout owns a gitignored `dev.local.json`. Create it from the committed
