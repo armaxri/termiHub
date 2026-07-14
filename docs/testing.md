@@ -778,6 +778,24 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### Command palette (#1484)
+
+Verifies the Cmd/Ctrl+P command palette that fuzzy-matches application commands
+and saved connections. Introduced in PR #1484.
+
+1. Press the palette shortcut (macOS **Cmd+P**, Windows/Linux **Ctrl+Shift+P**) →
+   a modal opens with an empty search box focused, listing commands first, then
+   saved connections.
+2. Type part of a command name (e.g. `new term`) → **New Terminal** ranks to the
+   top with its accelerator shown on the right. Press **Enter** → a new terminal
+   tab opens and the palette closes.
+3. Reopen the palette and type part of a saved connection's name or host → the
+   matching connection ranks to the top with its connection-type badge. Press
+   **Enter** → it connects exactly as a sidebar double-click would (including any
+   password/passphrase or credential-store-unlock prompt).
+4. With the palette open, use **Arrow Up/Down** to move the highlight and
+   **Esc** to close without running anything.
+
 ### FTP insecure-connection warning & editor behaviors (#1338)
 
 Verifies the plaintext-FTP warning modal, the schema-conditional editor fields,
