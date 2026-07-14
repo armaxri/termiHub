@@ -397,7 +397,10 @@ mod tests {
         let link = entries.iter().find(|e| e.name == "link.txt").unwrap();
         assert!(link.is_symlink, "link.txt should be flagged as a symlink");
         assert!(
-            link.symlink_target.as_deref().unwrap().ends_with("real.txt"),
+            link.symlink_target
+                .as_deref()
+                .unwrap()
+                .ends_with("real.txt"),
             "target should point at real.txt, got {:?}",
             link.symlink_target
         );
@@ -418,7 +421,11 @@ mod tests {
 
         let entry = stat_sync(link_path.to_str().unwrap()).unwrap();
         assert!(entry.is_symlink);
-        assert!(entry.symlink_target.as_deref().unwrap().ends_with("real.txt"));
+        assert!(entry
+            .symlink_target
+            .as_deref()
+            .unwrap()
+            .ends_with("real.txt"));
     }
 
     #[test]

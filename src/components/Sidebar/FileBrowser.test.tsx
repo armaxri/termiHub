@@ -1924,9 +1924,7 @@ describe("FileBrowser – symlinks (#1513)", () => {
 
   it("follows the symlink to its resolved target on double-click", async () => {
     await renderAt("/home");
-    const linkRow = container.querySelector(
-      '[data-testid="file-row-mylink"]'
-    ) as HTMLButtonElement;
+    const linkRow = container.querySelector('[data-testid="file-row-mylink"]') as HTMLButtonElement;
     await act(async () => {
       linkRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });

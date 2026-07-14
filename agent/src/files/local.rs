@@ -266,7 +266,11 @@ mod tests {
 
         let link = entries.iter().find(|e| e.name == "link.txt").unwrap();
         assert!(link.is_symlink);
-        assert!(link.symlink_target.as_deref().unwrap().ends_with("real.txt"));
+        assert!(link
+            .symlink_target
+            .as_deref()
+            .unwrap()
+            .ends_with("real.txt"));
 
         let real = entries.iter().find(|e| e.name == "real.txt").unwrap();
         assert!(!real.is_symlink);
