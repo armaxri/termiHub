@@ -1261,6 +1261,38 @@ Detection only — no elevated save is offered. See PR #1486 (#1325).
 6. Toggle light/dark themes (Settings → Appearance) with a read-only file open →
    the badge and banner stay legible in both themes.
 
+### File editor elevated (sudo) edit mode (#1329)
+
+Verifies read-only remote files can be saved with `sudo` via the in-app prompt.
+Requires an SSH/SFTP connection whose user has `sudo` rights on the host (e.g. a
+Raspberry Pi). See PR #<PR> (#1329).
+
+1. On a remote SSH/SFTP connection, open a **root-owned** file the user cannot
+   write directly (e.g. `/etc/hosts`). Confirm the read-only badge/banner appear
+   and the toolbar action is **Edit with sudo** (not **Save**).
+2. Make an edit, then click **Edit with sudo**. In the prompt confirm the **host**,
+   **user**, and **file** are named and the password field is masked. Leave
+   **Remember for this session** on (default). Enter the correct password →
+   **Authorize**.
+3. The save succeeds (success toast), a persistent accent **sudo** marker appears
+   in the toolbar, and the buffer is clean. Verify the file was actually changed
+   on the host (`cat` it in a shell).
+4. Edit again and press **Save** / `Ctrl+S` → it saves elevated **without**
+   re-prompting (the session password is cached). The `sudo` marker stays.
+5. Open another root-owned file, click **Edit with sudo**, and enter a **wrong**
+   password three times → the prompt shows an "Incorrect password. Attempt N of 3"
+   counter, then after the 3rd failure the dialog closes and the #969 save-error
+   banner appears with the buffer **intact** (still dirty; nothing lost).
+6. With the credential store **locked** (or in `none` mode), open the sudo prompt →
+   the **Save in credential store** option is **hidden**. Unlock the store and
+   reopen the prompt → the option appears; enabling it and authorizing persists
+   the sudo password (a later session reuses it silently).
+7. On a file whose writability was **unknown**, press **Save**, let the direct save
+   fail with a permission error → the #969 banner shows a **Retry with sudo**
+   action; click it to open the prompt and save elevated.
+8. Confirm the sudo password is never visible in the LogViewer (elevated-save DEBUG
+   lines name the host/path only) and never written to workspace/tab state.
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.
