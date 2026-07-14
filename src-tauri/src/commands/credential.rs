@@ -348,6 +348,7 @@ fn parse_credential_type(s: &str) -> Result<CredentialType, String> {
     match s {
         "password" => Ok(CredentialType::Password),
         "key_passphrase" => Ok(CredentialType::KeyPassphrase),
+        "sudo_password" => Ok(CredentialType::SudoPassword),
         _ => Err(format!("Unknown credential type: {s}")),
     }
 }
@@ -437,6 +438,14 @@ mod tests {
         assert_eq!(
             parse_credential_type("key_passphrase").unwrap(),
             CredentialType::KeyPassphrase
+        );
+    }
+
+    #[test]
+    fn parse_credential_type_sudo_password() {
+        assert_eq!(
+            parse_credential_type("sudo_password").unwrap(),
+            CredentialType::SudoPassword
         );
     }
 
