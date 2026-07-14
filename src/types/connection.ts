@@ -540,6 +540,18 @@ export interface FileEntry {
    * from the `sftp_check_writable` command.
    */
   writable: boolean | null;
+  /**
+   * True when this entry is a symbolic link. Populated by backends that can tell
+   * cheaply (the FTP listing parser and the local/SFTP browsers); `false`
+   * otherwise. Optional so payloads persisted before the field existed decode.
+   */
+  isSymlink?: boolean;
+  /**
+   * The link target when the backend could determine it cheaply (e.g. the
+   * `-> target` suffix of a Unix `ls -l` FTP line). `null`/absent for non-links
+   * and for formats that do not carry a target (MLSD `type=link`, SFTP readdir).
+   */
+  symlinkTarget?: string | null;
 }
 
 /**

@@ -1847,3 +1847,88 @@ describe("FileBrowser – navigation UX (#1361)", () => {
     expect(modifiedCells.length).toBeGreaterThan(0);
   });
 });
+
+describe("FileBrowser – symlinks (#1513)", () => {
+  const symlinkEntries: FileEntry[] = [
+    {
+      name: "mylink",
+      path: "/home/mylink",
+      isDirectory: false,
+      size: 7,
+      modified: "2026-01-05T00:00:00Z",
+      permissions: "rwxrwxrwx",
+      writable: true,
+      isSymlink: true,
+      symlinkTarget: "/etc/target",
+    },
+    {
+      name: "plain.txt",
+      path: "/home/plain.txt",
+      isDirectory: false,
+      size: 5,
+      modified: "2026-01-02T00:00:00Z",
+      permissions: "rw-r--r--",
+      writable: true,
+      isSymlink: false,
+      symlinkTarget: null,
+    },
+  ];
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(symlinkEntries);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  async function renderAt(path: string) {
+    const localTab = makeTab({ connectionType: "local", config: { type: "local", config: {} } });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files", tabCwds: { "tab-1": path } });
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+  }
+
+  it("renders a distinct symlink icon only on the link row", async () => {
+    await renderAt("/home");
+    const linkRow = container.querySelector('[data-testid="file-row-mylink"]');
+    const plainRow = container.querySelector('[data-testid="file-row-plain.txt"]');
+    expect(linkRow?.querySelector(".file-browser__icon--symlink")).toBeTruthy();
+    expect(plainRow?.querySelector(".file-browser__icon--symlink")).toBeNull();
+  });
+
+  it("shows the link target in the row", async () => {
+    await renderAt("/home");
+    const target = container.querySelector(".file-browser__symlink-target");
+    expect(target?.textContent).toContain("/etc/target");
+    expect(target?.getAttribute("title")).toContain("/etc/target");
+  });
+
+  it("follows the symlink to its resolved target on double-click", async () => {
+    await renderAt("/home");
+    const linkRow = container.querySelector('[data-testid="file-row-mylink"]') as HTMLButtonElement;
+    await act(async () => {
+      linkRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    await flushAsync();
+    expect(useAppStore.getState().localCurrentPath).toBe("/etc/target");
+  });
+});

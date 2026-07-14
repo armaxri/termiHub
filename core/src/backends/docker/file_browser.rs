@@ -295,6 +295,9 @@ fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, 
             permissions,
             // Writability is derived only for the desktop SFTP browser (#1324).
             writable: None,
+            // The `ls` capture does not distinguish links cheaply (see #1513).
+            is_symlink: false,
+            symlink_target: None,
         });
     }
 
@@ -329,6 +332,9 @@ fn parse_stat_output(output: &str, path: &str) -> Result<FileEntry, FileError> {
         permissions: Some(format_permissions(mode)),
         // Writability is derived only for the desktop SFTP browser (#1324).
         writable: None,
+        // `stat -c` capture does not surface link status cheaply (see #1513).
+        is_symlink: false,
+        symlink_target: None,
     })
 }
 

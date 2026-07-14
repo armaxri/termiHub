@@ -1,10 +1,13 @@
 import { useCallback, useState, useEffect, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import {
   Folder,
   File,
+  FileSymlink,
+  FolderSymlink,
   ArrowUp,
   RefreshCw,
   Upload,
@@ -46,6 +49,7 @@ import { formatBytes, formatRelativeTime } from "@/utils/formatters";
 import {
   sortEntries,
   filterEntries,
+  resolveSymlinkTarget,
   type FileSortKey,
   type SortDirection,
 } from "@/utils/fileBrowserNav";
@@ -57,6 +61,16 @@ import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import "./FileBrowser.css";
+
+/**
+ * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. The
+ * list is virtualized (@tanstack/react-virtual) so only the visible window of
+ * rows is mounted; a uniform height keeps the windowing math exact and cheap.
+ */
+const ROW_HEIGHT = 24;
+
+/** Extra rows rendered above/below the viewport so fast scrolls stay smooth. */
+const ROW_OVERSCAN = 8;
 
 interface FileRowProps {
   entry: FileEntry;
@@ -324,6 +338,18 @@ function SortHeader({
 
 /** The leading folder/file glyph shared by file rows and the rename editor. */
 function FileEntryIcon({ entry }: { entry: FileEntry }) {
+  // Symbolic links get a distinct badge-arrow glyph so they read differently
+  // from a plain file/folder; a symlink-to-directory keeps the folder variant.
+  if (entry.isSymlink) {
+    return entry.isDirectory ? (
+      <FolderSymlink
+        size={16}
+        className="file-browser__icon file-browser__icon--folder file-browser__icon--symlink"
+      />
+    ) : (
+      <FileSymlink size={16} className="file-browser__icon file-browser__icon--symlink" />
+    );
+  }
   return entry.isDirectory ? (
     <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
   ) : (
@@ -424,7 +450,8 @@ function FileRow({
             data-testid={`file-row-${entry.name}`}
             onClick={(e) => onRowClick(entry, e)}
             onDoubleClick={() => {
-              if (entry.isDirectory) {
+              // Directories and symlinks are followed; other files open for edit.
+              if (entry.isDirectory || entry.isSymlink) {
                 onNavigate(entry);
               } else {
                 onContextAction(entry, "edit");
@@ -432,7 +459,26 @@ function FileRow({
             }}
           >
             <FileEntryIcon entry={entry} />
-            <span className="file-browser__name">{entry.name}</span>
+            <span
+              className="file-browser__name"
+              title={
+                entry.isSymlink
+                  ? entry.symlinkTarget
+                    ? `Symbolic link → ${entry.symlinkTarget}`
+                    : "Symbolic link"
+                  : undefined
+              }
+            >
+              {entry.name}
+            </span>
+            {entry.isSymlink && entry.symlinkTarget && (
+              <span
+                className="file-browser__symlink-target"
+                title={`Symbolic link → ${entry.symlinkTarget}`}
+              >
+                → {entry.symlinkTarget}
+              </span>
+            )}
             {entry.modified && (
               <span className="file-browser__modified">{formatRelativeTime(entry.modified)}</span>
             )}
@@ -864,13 +910,33 @@ export function FileBrowser() {
     [sortedEntries, filterQuery]
   );
 
+  // Scroll container for the row list; the virtualizer measures and scrolls it.
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Only the visible window of rows (+overscan) is mounted, so a directory with
+  // thousands of entries no longer renders thousands of DOM nodes. Uniform row
+  // height (ROW_HEIGHT) keeps the layout math exact; the scroll + scrollbar stay
+  // on `.file-browser__list`, so the global scrollbar styling is reused as-is.
+  const rowVirtualizer = useVirtualizer({
+    count: displayEntries.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: ROW_OVERSCAN,
+    // Key rows by path so selection/focus survive scroll-driven remounts.
+    getItemKey: (index) => displayEntries[index]?.path ?? index,
+  });
+
   // Roving-tabindex keyboard navigation over the displayed rows. The hook owns
   // the active focus index, the type-ahead buffer, and the per-row ref wiring;
   // selection/navigation semantics are supplied below via makeKeyDownHandler.
+  // The scroll callback lets the hook mount an off-screen focus target (via the
+  // virtualizer) before focusing it — essential once rows are windowed.
   const { activeIndex, setActiveIndex, getRowRef, reset, makeKeyDownHandler } = useRovingListNav<
     FileEntry,
     HTMLButtonElement
-  >(displayEntries, (e) => e.name);
+  >(displayEntries, (e) => e.name, {
+    onScrollToIndex: (index) => rowVirtualizer.scrollToIndex(index),
+  });
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -915,7 +981,14 @@ export function FileBrowser() {
 
   const handleNavigate = useCallback(
     (entry: FileEntry) => {
-      if (entry.isDirectory) handleNavigatePath(entry.path);
+      // A real directory (including a symlink-to-dir, which reports
+      // isDirectory) is listed by its own path. A symlink whose target type is
+      // unknown (e.g. FTP) is followed via its resolved target path.
+      if (entry.isDirectory) {
+        handleNavigatePath(entry.path);
+      } else if (entry.isSymlink) {
+        handleNavigatePath(resolveSymlinkTarget(entry));
+      }
     },
     [handleNavigatePath]
   );
@@ -1075,7 +1148,7 @@ export function FileBrowser() {
     () =>
       makeKeyDownHandler({
         onActivate: (entry) => {
-          if (entry.isDirectory) handleNavigate(entry);
+          if (entry.isDirectory || entry.isSymlink) handleNavigate(entry);
           else handleContextAction(entry, "edit");
         },
         onNavigateUp: handleNavigateUp,
@@ -1519,11 +1592,20 @@ export function FileBrowser() {
             </div>
           ) : (
             <div
+              ref={listRef}
               className="file-browser__list"
               data-testid="file-browser-list"
               onKeyDown={handleListKeyDown}
               onClick={(e) => {
-                if (e.target === e.currentTarget) clearSelection();
+                // Clicking empty space (the list itself or the virtual spacer,
+                // never a row) clears the selection.
+                const target = e.target as HTMLElement;
+                if (
+                  target === e.currentTarget ||
+                  target.classList.contains("file-browser__list-inner")
+                ) {
+                  clearSelection();
+                }
               }}
             >
               {displayEntries.length === 0 ? (
@@ -1531,27 +1613,42 @@ export function FileBrowser() {
                   {filterQuery ? "No files match the filter" : "This folder is empty"}
                 </div>
               ) : (
-                displayEntries.map((entry, index) => (
-                  <FileRow
-                    key={entry.path}
-                    entry={entry}
-                    vscodeAvailable={vscodeAvailable}
-                    onNavigate={handleNavigate}
-                    onContextAction={handleContextAction}
-                    onPaste={handlePaste}
-                    hasClipboard={fileClipboard !== null}
-                    isSelected={selectedPaths.has(entry.path)}
-                    onRowClick={handleRowClick}
-                    selectedCount={selectedPaths.size}
-                    onMultiContextAction={handleMultiAction}
-                    onShareVia={mode === "local" ? handleShareVia : undefined}
-                    tabIndex={index === activeIndex ? 0 : -1}
-                    rowRef={getRowRef(index)}
-                    isRenaming={renamingPath === entry.path}
-                    onRenameSubmit={handleRenameSubmit}
-                    onRenameCancel={handleRenameCancel}
-                  />
-                ))
+                <div
+                  className="file-browser__list-inner"
+                  style={{ height: rowVirtualizer.getTotalSize() }}
+                >
+                  {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const index = virtualRow.index;
+                    const entry = displayEntries[index];
+                    if (!entry) return null;
+                    return (
+                      <div
+                        key={virtualRow.key}
+                        className="file-browser__virtual-row"
+                        style={{ transform: `translateY(${virtualRow.start}px)` }}
+                      >
+                        <FileRow
+                          entry={entry}
+                          vscodeAvailable={vscodeAvailable}
+                          onNavigate={handleNavigate}
+                          onContextAction={handleContextAction}
+                          onPaste={handlePaste}
+                          hasClipboard={fileClipboard !== null}
+                          isSelected={selectedPaths.has(entry.path)}
+                          onRowClick={handleRowClick}
+                          selectedCount={selectedPaths.size}
+                          onMultiContextAction={handleMultiAction}
+                          onShareVia={mode === "local" ? handleShareVia : undefined}
+                          tabIndex={index === activeIndex ? 0 : -1}
+                          rowRef={getRowRef(index)}
+                          isRenaming={renamingPath === entry.path}
+                          onRenameSubmit={handleRenameSubmit}
+                          onRenameCancel={handleRenameCancel}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           )}

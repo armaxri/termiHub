@@ -38,6 +38,12 @@ pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
 
         let permissions = get_permissions(&metadata);
 
+        // `DirEntry::file_type()` is cheap (backed by the readdir `d_type` where
+        // available) and does not follow the link, so it detects symlinks
+        // without an extra stat. `is_directory` above still reflects the
+        // followed target, so a symlink-to-dir stays navigable.
+        let (is_symlink, symlink_target) = read_symlink(entry.file_type().ok(), &entry.path());
+
         let full_path = normalize_path_separators(&entry.path().to_string_lossy());
 
         result.push(FileEntry {
@@ -49,6 +55,8 @@ pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
             permissions,
             // Writability is derived only for the desktop SFTP browser (#1324).
             writable: None,
+            is_symlink,
+            symlink_target,
         });
     }
 
@@ -107,6 +115,11 @@ fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
 
     let permissions = get_permissions(&metadata);
 
+    // `metadata` above follows the link; a separate `symlink_metadata` reveals
+    // whether the path itself is a symlink (and, if so, its target).
+    let symlink_type = std::fs::symlink_metadata(p).ok().map(|m| m.file_type());
+    let (is_symlink, symlink_target) = read_symlink(symlink_type, p);
+
     Ok(FileEntry {
         name,
         path: normalize_path_separators(path),
@@ -116,7 +129,25 @@ fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
         permissions,
         // Writability is derived only for the desktop SFTP browser (#1324).
         writable: None,
+        is_symlink,
+        symlink_target,
     })
+}
+
+/// Derive `(is_symlink, symlink_target)` from a (non-following) file type.
+///
+/// When `file_type` reports a symlink, the target is read with `read_link`
+/// (cheap: one syscall, only for links). Any read failure degrades to `None`
+/// rather than erroring, so a broken or unreadable link still lists.
+fn read_symlink(file_type: Option<std::fs::FileType>, path: &Path) -> (bool, Option<String>) {
+    if file_type.is_some_and(|ft| ft.is_symlink()) {
+        let target = std::fs::read_link(path)
+            .ok()
+            .map(|t| t.to_string_lossy().into_owned());
+        (true, target)
+    } else {
+        (false, None)
+    }
 }
 
 /// File backend that operates on the local filesystem.
@@ -351,6 +382,50 @@ mod tests {
         assert_eq!(entries[2].name, "a_file.txt");
         assert!(!entries[3].is_directory);
         assert_eq!(entries[3].name, "b_file.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_sync_flags_symlink_with_target() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("real.txt"), "hi").unwrap();
+        symlink(dir.path().join("real.txt"), dir.path().join("link.txt")).unwrap();
+
+        let entries = list_dir_sync(dir.path().to_str().unwrap()).unwrap();
+
+        let link = entries.iter().find(|e| e.name == "link.txt").unwrap();
+        assert!(link.is_symlink, "link.txt should be flagged as a symlink");
+        assert!(
+            link.symlink_target
+                .as_deref()
+                .unwrap()
+                .ends_with("real.txt"),
+            "target should point at real.txt, got {:?}",
+            link.symlink_target
+        );
+
+        let real = entries.iter().find(|e| e.name == "real.txt").unwrap();
+        assert!(!real.is_symlink);
+        assert_eq!(real.symlink_target, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_sync_flags_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("real.txt"), "hi").unwrap();
+        let link_path = dir.path().join("link.txt");
+        symlink(dir.path().join("real.txt"), &link_path).unwrap();
+
+        let entry = stat_sync(link_path.to_str().unwrap()).unwrap();
+        assert!(entry.is_symlink);
+        assert!(entry
+            .symlink_target
+            .as_deref()
+            .unwrap()
+            .ends_with("real.txt"));
     }
 
     #[test]

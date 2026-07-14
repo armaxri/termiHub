@@ -4,6 +4,7 @@ import {
   sortEntries,
   filterEntries,
   findTypeAheadIndex,
+  resolveSymlinkTarget,
 } from "./fileBrowserNav";
 import type { FileEntry } from "@/types/connection";
 
@@ -159,5 +160,39 @@ describe("findTypeAheadIndex", () => {
 
   it("returns -1 for an empty buffer", () => {
     expect(findTypeAheadIndex(entries, byName, "", 0, true)).toBe(-1);
+  });
+});
+
+describe("resolveSymlinkTarget", () => {
+  it("returns the link's own path when no target is known", () => {
+    const e = entry("link", { path: "/pub/link", isSymlink: true });
+    expect(resolveSymlinkTarget(e)).toBe("/pub/link");
+  });
+
+  it("uses an absolute target as-is (normalized)", () => {
+    const e = entry("link", {
+      path: "/pub/link",
+      isSymlink: true,
+      symlinkTarget: "/etc/target",
+    });
+    expect(resolveSymlinkTarget(e)).toBe("/etc/target");
+  });
+
+  it("resolves a relative target against the link's parent directory", () => {
+    const e = entry("link", {
+      path: "/pub/docs/link",
+      isSymlink: true,
+      symlinkTarget: "../shared",
+    });
+    expect(resolveSymlinkTarget(e)).toBe("/pub/shared");
+  });
+
+  it("collapses . and .. segments in the resolved path", () => {
+    const e = entry("link", {
+      path: "/a/b/link",
+      isSymlink: true,
+      symlinkTarget: "./x/../y",
+    });
+    expect(resolveSymlinkTarget(e)).toBe("/a/b/y");
   });
 });

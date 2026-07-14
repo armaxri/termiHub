@@ -113,6 +113,23 @@
   overflow-y: auto;
 }
 
+/* Virtualized list (@tanstack/react-virtual): an inner spacer sized to the full
+   list height reserves the scroll range, and the visible window of rows is
+   absolutely positioned inside it. The scroll + scrollbar stay on
+   .file-browser__list, so the global scrollbar styling applies unchanged and no
+   per-row transition is introduced (one scrollbar, one motion language). */
+.file-browser__list-inner {
+  position: relative;
+  width: 100%;
+}
+
+.file-browser__virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
 .file-browser__row-wrapper {
   display: flex;
   align-items: center;
@@ -157,6 +174,23 @@
 
 .file-browser__icon--folder {
   color: var(--text-accent);
+}
+
+/* Symbolic links use the accent colour so they read apart from plain files. */
+.file-browser__icon--symlink {
+  color: var(--text-accent);
+}
+
+/* Inline link target shown after a symlink's name (the "→ target" hint). */
+.file-browser__symlink-target {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
 .file-browser__name {
