@@ -175,6 +175,8 @@ impl FileBrowser for FtpFileBrowser {
                 modified: String::new(),
                 permissions: None,
                 writable: None,
+                is_symlink: false,
+                symlink_target: None,
             });
         }
 

@@ -134,6 +134,11 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
         #[cfg(not(unix))]
         let permissions = None;
 
+        // `DirEntry::file_type()` is cheap and does not follow the link, so it
+        // detects symlinks without an extra stat; `is_directory` above still
+        // reflects the followed target.
+        let (is_symlink, symlink_target) = read_symlink(entry.file_type().ok(), &entry.path());
+
         let full_path = normalize_path_separators(&entry.path().to_string_lossy());
 
         result.push(FileEntry {
@@ -145,10 +150,27 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
             permissions,
             // Writability is derived only for the desktop SFTP browser (#1324).
             writable: None,
+            is_symlink,
+            symlink_target,
         });
     }
 
     Ok(result)
+}
+
+/// Derive `(is_symlink, symlink_target)` from a (non-following) file type.
+///
+/// When `file_type` reports a symlink, the target is read with `read_link`;
+/// any read failure degrades to `None` so a broken link still lists.
+fn read_symlink(file_type: Option<std::fs::FileType>, path: &Path) -> (bool, Option<String>) {
+    if file_type.is_some_and(|ft| ft.is_symlink()) {
+        let target = std::fs::read_link(path)
+            .ok()
+            .map(|t| t.to_string_lossy().into_owned());
+        (true, target)
+    } else {
+        (false, None)
+    }
 }
 
 /// Synchronous stat for a single path.
@@ -177,6 +199,11 @@ fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
     #[cfg(not(unix))]
     let permissions = None;
 
+    // `metadata` above follows the link; `symlink_metadata` reveals whether the
+    // path itself is a symlink (and its target).
+    let symlink_type = std::fs::symlink_metadata(p).ok().map(|m| m.file_type());
+    let (is_symlink, symlink_target) = read_symlink(symlink_type, p);
+
     Ok(FileEntry {
         name,
         path: normalize_path_separators(path),
@@ -186,6 +213,8 @@ fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
         permissions,
         // Writability is derived only for the desktop SFTP browser (#1324).
         writable: None,
+        is_symlink,
+        symlink_target,
     })
 }
 
@@ -222,6 +251,26 @@ mod tests {
 
         let dir_entry = entries.iter().find(|e| e.name == "subdir").unwrap();
         assert!(dir_entry.is_directory);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn list_flags_symlink_with_target() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("real.txt"), "hi").unwrap();
+        symlink(dir.path().join("real.txt"), dir.path().join("link.txt")).unwrap();
+
+        let backend = LocalFileBackend::new();
+        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
+
+        let link = entries.iter().find(|e| e.name == "link.txt").unwrap();
+        assert!(link.is_symlink);
+        assert!(link.symlink_target.as_deref().unwrap().ends_with("real.txt"));
+
+        let real = entries.iter().find(|e| e.name == "real.txt").unwrap();
+        assert!(!real.is_symlink);
+        assert_eq!(real.symlink_target, None);
     }
 
     #[tokio::test]

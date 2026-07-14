@@ -324,6 +324,10 @@ impl SftpSession {
                             .unwrap_or_default(),
                         permissions,
                         writable,
+                        // `read_dir` returns lstat-style attributes, so this
+                        // flags the link itself; SFTP carries no cheap target.
+                        is_symlink: meta.is_symlink(),
+                        symlink_target: None,
                     });
                 }
                 Ok::<Vec<FileEntry>, TerminalError>(result)
@@ -498,6 +502,9 @@ impl SftpSession {
                         .unwrap_or_default(),
                     permissions,
                     writable,
+                    // `metadata` follows the link, so this reports the target.
+                    is_symlink: meta.is_symlink(),
+                    symlink_target: None,
                 })
             })
         })

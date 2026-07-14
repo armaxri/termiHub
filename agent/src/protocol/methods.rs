@@ -1100,6 +1100,8 @@ mod tests {
             modified: "2026-02-20T10:00:00Z".to_string(),
             permissions: Some("rw-r--r--".to_string()),
             writable: None,
+            is_symlink: true,
+            symlink_target: Some("/home/user/target.md".to_string()),
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert_eq!(v["name"], "readme.md");
@@ -1108,6 +1110,10 @@ mod tests {
         assert_eq!(v["size"], 1024);
         assert_eq!(v["modified"], "2026-02-20T10:00:00Z");
         assert_eq!(v["permissions"], "rw-r--r--");
+        assert_eq!(v["isSymlink"], true);
+        assert_eq!(v["symlinkTarget"], "/home/user/target.md");
+        assert!(v.get("is_symlink").is_none());
+        assert!(v.get("symlink_target").is_none());
     }
 
     #[test]
@@ -1120,6 +1126,8 @@ mod tests {
             modified: String::new(),
             permissions: None,
             writable: None,
+            is_symlink: false,
+            symlink_target: None,
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert!(v["permissions"].is_null());
@@ -1149,6 +1157,8 @@ mod tests {
                 modified: "2026-01-01T00:00:00Z".to_string(),
                 permissions: Some("rwxr-xr-x".to_string()),
                 writable: None,
+                is_symlink: false,
+                symlink_target: None,
             }],
         };
         let v = serde_json::to_value(&result).unwrap();
@@ -1219,6 +1229,8 @@ mod tests {
             modified: "2026-02-20T10:00:00Z".to_string(),
             permissions: Some("rwxr-xr-x".to_string()),
             writable: None,
+            is_symlink: false,
+            symlink_target: None,
         };
         let v = serde_json::to_value(&result).unwrap();
         assert_eq!(v["isDirectory"], true);
