@@ -86,7 +86,37 @@ pub struct Capabilities {
 pub struct InitializeResult {
     pub protocol_version: String,
     pub agent_version: String,
+    /// Agent-assigned id for this client connection.
+    ///
+    /// Lets the desktop recognise its own entry in an `agent.list_connections`
+    /// snapshot so the connected-host update guard (#1349) can exclude itself.
+    /// Added in protocol 0.3.0 (additive, backwards compatible).
+    pub client_id: String,
     pub capabilities: Capabilities,
+}
+
+// ── agent.list_connections ───────────────────────────────────────────
+
+/// Result of `agent.list_connections`: a snapshot of every client currently
+/// connected to this agent process (see [`ConnectionInfo`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionListResult {
+    pub connections: Vec<ConnectionInfo>,
+}
+
+/// A single client connected to this agent process, as reported by
+/// `agent.list_connections`. Mirrors the agent's internal `ConnectedClient`,
+/// with the timestamp rendered as an ISO 8601 (RFC 3339) string for the wire.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionInfo {
+    /// Agent-assigned id for this client connection.
+    pub client_id: String,
+    /// Client name reported in `initialize` (e.g. `"termihub-desktop"`).
+    pub client: String,
+    /// Client version reported in `initialize`.
+    pub client_version: String,
+    /// ISO 8601 timestamp of when the client completed `initialize`.
+    pub connected_since: String,
 }
 
 // ── agent.settingsUpdate ─────────────────────────────────────────────
@@ -613,6 +643,7 @@ mod tests {
         let result = InitializeResult {
             protocol_version: "0.2.0".to_string(),
             agent_version: "0.1.0".to_string(),
+            client_id: "client-1".to_string(),
             capabilities: Capabilities {
                 connection_types: vec![ConnectionTypeInfo {
                     type_id: "local".to_string(),

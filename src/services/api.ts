@@ -1260,17 +1260,43 @@ export interface AgentDeployConfig {
   remotePath?: string;
 }
 
-/** Result of deploying the agent to a remote host. */
-export interface AgentDeployResult {
-  success: boolean;
-  installedVersion: string | null;
-  /**
-   * Absolute path the agent was installed to on the remote host. On Windows
-   * this is the resolved `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`
-   * location, which differs from the POSIX default. May be omitted.
-   */
-  installedPath?: string | null;
+/** A host (other than this desktop) connected to the agent when an update is
+ * requested. Surfaced in the Update dialog's connected-host warning (#1349). */
+export interface ConnectedHost {
+  /** Agent-assigned id for this client connection. */
+  clientId: string;
+  /** Client name reported in `initialize` (e.g. `"termihub-desktop"`). */
+  client: string;
+  /** Client version reported in `initialize`. */
+  clientVersion: string;
+  /** ISO 8601 timestamp of when the host connected to the agent. */
+  connectedSince: string;
 }
+
+/**
+ * Result of deploying or updating the agent on a remote host.
+ *
+ * Discriminated on `kind`: `deployed` is the normal outcome; the update path
+ * returns `otherHostsConnected` when the connected-host guard blocks an
+ * unforced update because other hosts are attached — the desktop then shows the
+ * warning and may retry via {@link updateAgentForce}.
+ */
+export type AgentDeployResult =
+  | {
+      kind: "deployed";
+      success: boolean;
+      installedVersion: string | null;
+      /**
+       * Absolute path the agent was installed to on the remote host. On Windows
+       * this is the resolved `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`
+       * location, which differs from the POSIX default. May be omitted.
+       */
+      installedPath?: string | null;
+    }
+  | {
+      kind: "otherHostsConnected";
+      hosts: ConnectedHost[];
+    };
 
 /** Probe a remote host for an existing agent binary. */
 export async function probeRemoteAgent(
@@ -1292,13 +1318,32 @@ export async function deployAgent(
   return await invoke<AgentDeployResult>("deploy_agent", { agentId, config, deployConfig });
 }
 
-/** Update the agent: shut down the running instance, then deploy a new binary. */
+/**
+ * Update the agent: shut down the running instance, then deploy a new binary.
+ *
+ * Runs the connected-host guard first: if other hosts are connected, resolves
+ * to `{ kind: "otherHostsConnected", hosts }` without touching the remote, so
+ * the caller can warn the user and retry via {@link updateAgentForce}.
+ */
 export async function updateAgent(
   agentId: string,
   config: RemoteAgentConfig,
   deployConfig: AgentDeployConfig
 ): Promise<AgentDeployResult> {
   return await invoke<AgentDeployResult>("update_agent", { agentId, config, deployConfig });
+}
+
+/**
+ * Force an agent update, bypassing the connected-host guard. Call after the
+ * user confirms in the Update dialog that other connected hosts may be
+ * hard-cut (#1349).
+ */
+export async function updateAgentForce(
+  agentId: string,
+  config: RemoteAgentConfig,
+  deployConfig: AgentDeployConfig
+): Promise<AgentDeployResult> {
+  return await invoke<AgentDeployResult>("update_agent_force", { agentId, config, deployConfig });
 }
 
 // --- Agent persistence commands ---
