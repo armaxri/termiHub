@@ -303,8 +303,10 @@ mod tests {
             ..SpawnRequest::default()
         };
         let spawn = build_shell_spawn(&req, &home);
+        assert_eq!(spawn.session_type, "local");
         assert!(spawn.spawned);
         assert!(!spawn.missing);
+        assert!(spawn.cd_path.is_none());
         assert!(spawn.title.contains("Spawned"), "title: {}", spawn.title);
         let cwd = fs::canonicalize(dir.path()).unwrap();
         assert_eq!(
@@ -330,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn build_shell_spawn_wsl_kind_converts_windows_path() {
+    fn build_wsl_spawn_converts_windows_path_and_sets_distribution() {
         // A WSL spawn's resolved Windows directory is converted to its /mnt path
         // so the distribution opens in the right place. Use a path that does not
         // exist so resolution falls back to `home` deterministically, then the
@@ -341,10 +343,38 @@ mod tests {
             kind: SpawnKind::Wsl,
             ..SpawnRequest::default()
         };
-        let spawn = build_shell_spawn(&req, &home);
+        let spawn = build_wsl_spawn(&req, &home, "Ubuntu");
+        assert_eq!(spawn.session_type, "wsl");
+        assert!(spawn.spawned);
+        assert!(spawn.cd_path.is_none());
+        assert_eq!(spawn.settings["distribution"], json!("Ubuntu"));
         assert_eq!(
             spawn.settings["startingDirectory"],
             json!("/mnt/c/Users/foo")
         );
+    }
+
+    #[test]
+    fn build_ssh_spawn_carries_connection_settings_and_cd_path() {
+        // The saved SSH connection's settings are used verbatim, and the target
+        // path is carried as `cd_path` for the frontend to `cd` into on connect.
+        let settings = json!({ "host": "example.com", "port": 22, "username": "me" });
+        let spawn = build_ssh_spawn(Some("/srv/app"), &settings, "My Server");
+        assert_eq!(spawn.session_type, "ssh");
+        assert!(spawn.spawned);
+        assert!(!spawn.missing);
+        assert_eq!(spawn.settings, settings);
+        assert_eq!(spawn.cd_path.as_deref(), Some("/srv/app"));
+        assert_eq!(spawn.title, "My Server (Spawned)");
+    }
+
+    #[test]
+    fn build_ssh_spawn_without_location_has_no_cd_path() {
+        let settings = json!({ "host": "h", "username": "u" });
+        let spawn = build_ssh_spawn(None, &settings, "");
+        assert_eq!(spawn.session_type, "ssh");
+        assert!(spawn.cd_path.is_none());
+        // An empty connection name falls back to a generic "SSH" tab title.
+        assert_eq!(spawn.title, "SSH (Spawned)");
     }
 }

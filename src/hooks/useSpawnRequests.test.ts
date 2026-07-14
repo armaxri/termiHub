@@ -428,3 +428,117 @@ describe("useSpawnRequests — shell spawn wiring (#1365, SI-2)", () => {
     expect(tab?.config.config).toEqual(SAMPLE_SHELL_SPAWN.settings);
   });
 });
+
+describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  const WSL_SPAWN: ShellSpawn = {
+    type: "wsl",
+    settings: { distribution: "Ubuntu", startingDirectory: "/mnt/c/Users/foo/app" },
+    title: "app (Spawned)",
+    spawned: true,
+    missing: false,
+  };
+
+  const SSH_SPAWN: ShellSpawn = {
+    type: "ssh",
+    settings: { host: "example.com", port: 22, username: "me" },
+    title: "Web (Spawned)",
+    spawned: true,
+    missing: false,
+    cdPath: "/srv/app",
+  };
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    emit = undefined;
+    resolveContainerSpawn.mockReset();
+    resolveContainerSpawn.mockResolvedValue(SAMPLE_SPAWN);
+    resolveShellSpawn.mockReset();
+    resolveShellSpawn.mockResolvedValue(SAMPLE_SHELL_SPAWN);
+    takePendingSpawn.mockReset();
+    takePendingSpawn.mockResolvedValue(null);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  async function mountHook(): Promise<void> {
+    function Harness() {
+      useSpawnRequests();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("opens a WSL distribution tab with the resolved distro + startingDirectory", async () => {
+    resolveShellSpawn.mockResolvedValue(WSL_SPAWN);
+    await mountHook();
+
+    await act(async () => {
+      emit!({ location: "C:\\Users\\foo\\app", kind: "wsl" });
+      await Promise.resolve();
+    });
+
+    expect(resolveShellSpawn).toHaveBeenCalledWith(
+      "C:\\Users\\foo\\app",
+      undefined,
+      undefined,
+      "wsl"
+    );
+    const tab = allTabs().find((t) => t.spawned);
+    expect(tab?.connectionType).toBe("wsl");
+    expect(tab?.config.type).toBe("wsl");
+    expect(tab?.config.config).toEqual(WSL_SPAWN.settings);
+    // WSL uses a real starting directory, not a post-connect cd.
+    expect(tab?.initialCommand).toBeUndefined();
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens an SSH tab from the saved connection and cd's into the target after connect", async () => {
+    resolveShellSpawn.mockResolvedValue(SSH_SPAWN);
+    await mountHook();
+
+    await act(async () => {
+      emit!({ location: "/srv/app", connection: "Prod/Web", kind: "ssh" });
+      await Promise.resolve();
+    });
+
+    expect(resolveShellSpawn).toHaveBeenCalledWith("/srv/app", "Prod/Web", undefined, "ssh");
+    const tab = allTabs().find((t) => t.spawned);
+    expect(tab?.connectionType).toBe("ssh");
+    expect(tab?.config.type).toBe("ssh");
+    expect(tab?.config.config).toEqual(SSH_SPAWN.settings);
+    // SSH has no start cwd → cd runs after connect via the tab's initialCommand.
+    expect(tab?.initialCommand).toBe("cd '/srv/app'");
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces an error toast when SSH resolution fails (unknown connection)", async () => {
+    resolveShellSpawn.mockRejectedValue("SSH connection 'nope' not found");
+    await mountHook();
+
+    await act(async () => {
+      emit!({ location: "/srv/app", connection: "nope", kind: "ssh" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("not found");
+    expect(allTabs().some((t) => t.spawned)).toBe(false);
+  });
+});

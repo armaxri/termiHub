@@ -227,4 +227,144 @@ mod tests {
             container::DEFAULT_MOUNT_TARGET
         );
     }
+
+    // ---- WSL / SSH shell-spawn resolution (#1511) --------------------------
+
+    use crate::terminal::backend::ConnectionConfig;
+
+    fn saved_conn(
+        id: &str,
+        name: &str,
+        type_id: &str,
+        settings: serde_json::Value,
+    ) -> SavedConnection {
+        SavedConnection {
+            id: id.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: type_id.to_string(),
+                settings,
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        }
+    }
+
+    fn wsl_request(location: Option<&str>, connection: Option<&str>) -> SpawnRequest {
+        SpawnRequest {
+            location: location.map(str::to_string),
+            connection: connection.map(str::to_string),
+            kind: SpawnKind::Wsl,
+            ..SpawnRequest::default()
+        }
+    }
+
+    fn ssh_request(location: Option<&str>, connection: Option<&str>) -> SpawnRequest {
+        SpawnRequest {
+            location: location.map(str::to_string),
+            connection: connection.map(str::to_string),
+            kind: SpawnKind::Ssh,
+            ..SpawnRequest::default()
+        }
+    }
+
+    #[test]
+    fn wsl_spawn_uses_default_distro_and_mount_path() {
+        // No --connection → the system default distro; a Windows home converts to
+        // its /mnt/ form (location None falls back to the home dir).
+        let home = Path::new(r"C:\Users\foo");
+        let req = wsl_request(None, None);
+        let spawn = resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu")).expect("resolves");
+        assert_eq!(spawn.session_type, "wsl");
+        assert_eq!(spawn.settings["distribution"], "Ubuntu");
+        assert_eq!(spawn.settings["startingDirectory"], "/mnt/c/Users/foo");
+        assert!(spawn.cd_path.is_none());
+    }
+
+    #[test]
+    fn wsl_spawn_prefers_saved_connection_distribution() {
+        // A --connection pointing at a saved WSL connection wins over the default.
+        let home = Path::new(r"C:\Users\foo");
+        let conns = vec![saved_conn(
+            "Work/Debian box",
+            "Debian box",
+            "wsl",
+            serde_json::json!({ "distribution": "Debian" }),
+        )];
+        let req = wsl_request(None, Some("Work/Debian box"));
+        let spawn = resolve_shell_spawn_with(&req, home, &conns, Some("Ubuntu")).expect("resolves");
+        assert_eq!(spawn.settings["distribution"], "Debian");
+    }
+
+    #[test]
+    fn wsl_spawn_without_any_distro_is_an_error() {
+        // No connection and no default distro (e.g. a non-Windows host) → error.
+        let home = Path::new("/home/user");
+        let req = wsl_request(None, None);
+        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("no distro");
+        assert!(err.contains("WSL distribution"), "err: {err}");
+    }
+
+    #[test]
+    fn ssh_spawn_maps_to_saved_connection_settings_and_cd_path() {
+        let home = Path::new("/home/user");
+        let ssh_settings = serde_json::json!({
+            "host": "example.com",
+            "port": 22,
+            "username": "me",
+        });
+        let conns = vec![saved_conn("Prod/Web", "Web", "ssh", ssh_settings.clone())];
+        let req = ssh_request(Some("/srv/app"), Some("Prod/Web"));
+        let spawn = resolve_shell_spawn_with(&req, home, &conns, None).expect("resolves");
+        assert_eq!(spawn.session_type, "ssh");
+        assert_eq!(spawn.settings, ssh_settings);
+        assert_eq!(spawn.cd_path.as_deref(), Some("/srv/app"));
+        assert_eq!(spawn.title, "Web (Spawned)");
+        assert!(spawn.spawned);
+    }
+
+    #[test]
+    fn ssh_spawn_without_connection_id_is_an_error() {
+        let home = Path::new("/home/user");
+        let req = ssh_request(Some("/srv/app"), None);
+        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("needs id");
+        assert!(err.contains("--connection"), "err: {err}");
+    }
+
+    #[test]
+    fn ssh_spawn_unknown_connection_is_an_error() {
+        let home = Path::new("/home/user");
+        let req = ssh_request(Some("/srv/app"), Some("nope"));
+        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("not found");
+        assert!(err.contains("not found"), "err: {err}");
+    }
+
+    #[test]
+    fn ssh_spawn_rejects_a_non_ssh_connection() {
+        let home = Path::new("/home/user");
+        let conns = vec![saved_conn(
+            "Local/Home",
+            "Home",
+            "local",
+            serde_json::json!({ "shell": "bash" }),
+        )];
+        let req = ssh_request(Some("/srv/app"), Some("Local/Home"));
+        let err = resolve_shell_spawn_with(&req, home, &conns, None).expect_err("wrong type");
+        assert!(err.contains("not an SSH connection"), "err: {err}");
+    }
+
+    #[test]
+    fn local_spawn_is_unchanged_by_the_dispatcher() {
+        // A local/auto kind still opens a local shell with a startingDirectory.
+        let home = Path::new("/home/user");
+        let req = SpawnRequest {
+            location: None,
+            kind: SpawnKind::Local,
+            ..SpawnRequest::default()
+        };
+        let spawn = resolve_shell_spawn_with(&req, home, &[], None).expect("resolves");
+        assert_eq!(spawn.session_type, "local");
+        assert_eq!(spawn.settings["startingDirectory"], "/home/user");
+    }
 }
