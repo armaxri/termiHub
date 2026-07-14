@@ -975,6 +975,29 @@ for #1348.
 4. Start another rename and press **Escape** (or click away with no change) →
    the edit is abandoned and no rename occurs.
 
+**File browser virtual scrolling — large directories (#1514).**
+
+1. Open the file browser on a directory with several thousand entries (e.g. a
+   large FTP/SFTP listing, or a local folder with a few thousand files).
+2. The list appears instantly and scrolls smoothly top-to-bottom with no freeze
+   or jank; only the visible rows are in the DOM (inspect the element tree — the
+   row count stays small and changes as you scroll). A single scrollbar (the
+   shared/global style) is used — no nested or second scrollbar appears.
+3. Multi-select still works: click a row, then Shift-click a far-off row (scroll
+   to reach it) → the whole range is selected; Ctrl/Cmd-click toggles individual
+   rows; the "N selected" indicator reflects the full selection. Ctrl/Cmd-A
+   selects the entire directory.
+4. Keyboard navigation still works: click a row, then use ArrowDown/ArrowUp,
+   Home/End, and type-ahead. Focus follows the active row and **End** (or a
+   type-ahead match far down) scrolls the previously off-screen focused row into
+   view and keeps focus on it.
+5. Drag a file from the OS (Finder/Explorer) onto the list → the upload/copy
+   drop still works. Start an inline rename (F2) on a row → the inline editor
+   appears in place and commit/cancel behave as before. Trigger a transfer and
+   confirm the transfer footer still renders below the list.
+
+See PR for #1514.
+
 **File multi-delete outcome reporting (#1394).**
 
 1. Open the file browser on a local or SFTP directory. Prepare at least one entry
