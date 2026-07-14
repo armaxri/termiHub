@@ -1414,6 +1414,31 @@ Raspberry Pi). See PR #1508 (#1329).
 8. Confirm the sudo password is never visible in the LogViewer (elevated-save DEBUG
    lines name the host/path only) and never written to workspace/tab state.
 
+### File editor SFTP-only read-only fallback (#1330)
+
+Verifies the graceful fallback for a read-only file on an SFTP-only / relayed
+connection (no exec channel, so no `sudo` path). See PR #<PR> (#1330).
+
+1. Open a file on an **SFTP-only** connection where the connecting user cannot
+   write it (e.g. a root-owned file, or one `chmod`/`chown`ed to another user). A
+   good source is a remote-agent SFTP relay or an SFTP-only jump, i.e. any
+   connection that does **not** expose a shell/exec channel.
+2. Confirm the **Read-only** badge appears and the banner reads that the file is
+   read-only **and sudo elevation isn't available on this connection**. Confirm
+   there is **no** "Edit with sudo" action and the **Save** button is **disabled**
+   (it stays disabled even after you type an edit).
+3. Click **Save a copy…** → a dialog opens pre-filled with the file's path. Change
+   it to a **writable** remote path (e.g. `~/hosts.copy`) and confirm → a success
+   toast appears and the copy exists on the host (`cat` it in a shell); the copy
+   contains your edited buffer, and the original file is unchanged.
+4. Click **Download** → choose a local destination in the save dialog → a pending
+   toast then a "Downloaded …" success toast; the file exists locally with the
+   remote contents.
+5. Dismiss the banner (×) → it disappears while the Read-only badge remains.
+6. Regression: open a read-only file on a full **SSH+shell** (exec-capable)
+   connection → the **Edit with sudo** action is shown (not the fallback), and no
+   "Save a copy…" / "Download" actions appear in the banner (see #1329).
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.

@@ -198,6 +198,7 @@ Fixed strings — match exactly.
 | `file-browser-transfers` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-up` | `src/components/Sidebar/FileBrowser.tsx` |
 | `file-browser-upload` | `src/components/Sidebar/FileBrowser.tsx` |
+| `file-editor-download` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-edit-with-sudo` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-readonly-badge` | `src/components/FileEditor/FileEditor.tsx` |
@@ -205,6 +206,7 @@ Fixed strings — match exactly.
 | `file-editor-readonly-banner-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-remote-badge` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save` | `src/components/FileEditor/FileEditor.tsx` |
+| `file-editor-save-copy` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error-dismiss` | `src/components/FileEditor/FileEditor.tsx` |
 | `file-editor-save-error-retry-sudo` | `src/components/FileEditor/FileEditor.tsx` |
@@ -357,6 +359,10 @@ Fixed strings — match exactly.
 | `rename-dialog-apply` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-cancel` | `src/components/Terminal/RenameDialog.tsx` |
 | `rename-dialog-input` | `src/components/Terminal/RenameDialog.tsx` |
+| `save-copy-cancel` | `src/components/FileEditor/SaveCopyDialog.tsx` |
+| `save-copy-dialog` | `src/components/FileEditor/SaveCopyDialog.tsx` |
+| `save-copy-input` | `src/components/FileEditor/SaveCopyDialog.tsx` |
+| `save-copy-submit` | `src/components/FileEditor/SaveCopyDialog.tsx` |
 | `save-workspace-confirm` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-description` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
 | `save-workspace-dialog` | `src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx` |
@@ -719,12 +725,8 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `server-dialog-proto-*` | `server-dialog-proto-${type}` | `src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx` |
 | `server-duplicate-*` | `server-duplicate-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-edit-*` | `server-edit-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-item-*` | `server-item-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-name-*` | `server-name-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-start-*` | `server-start-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-status-*` | `server-status-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `server-stop-*` | `server-stop-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
-| `server-type-*` | `server-type-${config.id}` | `src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx` |
 | `settings-nav-*` | `settings-nav-${cat.id}` | `src/components/Settings/SettingsNav.tsx` |
 | `shell-integration-entry-*` | `shell-integration-entry-${entry.id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
 | `shell-integration-entry-delete-*` | `shell-integration-entry-delete-${entry.id}` | `src/components/Settings/ShellIntegrationSettings.tsx` |
@@ -740,14 +742,10 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `tunnel-delete-*` | `tunnel-delete-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-duplicate-*` | `tunnel-duplicate-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-edit-*` | `tunnel-edit-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-item-*` | `tunnel-item-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-name-*` | `tunnel-name-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-reconnect-*` | `tunnel-reconnect-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-retry-*` | `tunnel-retry-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-start-*` | `tunnel-start-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-status-*` | `tunnel-status-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-stop-*` | `tunnel-stop-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
-| `tunnel-type-*` | `tunnel-type-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `tunnel-view-error-*` | `tunnel-view-error-${tunnel.id}` | `src/components/TunnelSidebar/TunnelListItem.tsx` |
 | `workspace-delete-*` | `workspace-delete-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-duplicate-*` | `workspace-duplicate-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
@@ -755,9 +753,7 @@ static prefix/suffix (e.g. a row keyed by name renders `file-row-<name>`).
 | `workspace-group-chip-*` | `workspace-group-chip-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-group-close-*` | `workspace-group-close-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
 | `workspace-group-rename-input-*` | `workspace-group-rename-input-${index}` | `src/components/WorkspaceEditor/WorkspaceEditor.tsx` |
-| `workspace-item-*` | `workspace-item-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 | `workspace-launch-*` | `workspace-launch-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
-| `workspace-name-*` | `workspace-name-${workspace.id}` | `src/components/WorkspaceSidebar/WorkspaceListItem.tsx` |
 
 ## Indirect test IDs
 
