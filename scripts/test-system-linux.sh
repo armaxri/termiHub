@@ -438,6 +438,13 @@ if [ "$WITH_FTP" -eq 1 ]; then
         echo "FTP FILE-BROWSER TESTS FAILED."
         TEST_EXIT=1
     fi
+
+    echo ""
+    echo "--- FTP transfer tests (ftp profile) ---"
+    if ! cargo test -p termihub-core --all-features --test ftp_transfer -- --nocapture; then
+        echo "FTP TRANSFER TESTS FAILED."
+        TEST_EXIT=1
+    fi
 fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
