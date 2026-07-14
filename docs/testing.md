@@ -1583,6 +1583,34 @@ termiHub FTP **client** end-to-end once the backend sub-issues
    FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
    plain-FTP insecure warning must appear only for TLS Mode = None.
 
+### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
+
+Verifies the shared transfer-queue model (queue / bounded concurrency /
+pause / resume / auto-retry / `REST` resume) and FTP up/download end-to-end.
+Requires an `ftp`-feature build (default) and the FTP fixture from the section
+above (`--profile ftp`, `127.0.0.1:2401`, `ftpuser` / `ftppass`). The live
+byte-exact + kill/resume Docker integration test is deferred to a follow-up;
+verify manually until it lands. See PR #<TBD>.
+
+1. **Concurrency cap + queue:** start **three** downloads of large files (e.g.
+   `pub/data/dataset-1m.bin` to three local paths) in quick succession. Confirm
+   at most **two** are `active` at once and the third shows `queued`; when one
+   finishes, the queued one promotes to `active` automatically.
+2. **Pause / resume:** pause an active download mid-flight. Confirm it stops
+   moving bytes (state `paused`) and a queued transfer takes its slot. Resume it
+   and confirm it continues from where it stopped (via `REST`) and completes to
+   the exact original byte size — not restarting from zero.
+3. **Cancel:** cancel a queued transfer (it just disappears) and an active one
+   (its partial local file is removed). Both leave browsing responsive.
+4. **Auto-retry / backoff:** start a transfer, then break the server mid-flight
+   (e.g. `docker pause` the `ftp-server` container). Confirm the transfer reports
+   `failed (n/3)` and auto-retries with increasing backoff; unpause the container
+   before the 3rd attempt and confirm it resumes and completes. Leave it paused
+   past 3 attempts to confirm it surfaces a permanent failure, then use retry to
+   restart it once the server is back.
+5. **Upload:** repeat 1–4 for uploads into `/uploads` as `ftpuser`, confirming
+   byte-exact results and that concurrent uploads use separate connections.
+
 ### Remote system monitoring
 
 #### Monitoring auto-reconnect on a mid-stream drop (#1230)
