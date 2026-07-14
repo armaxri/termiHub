@@ -49,6 +49,8 @@ podman compose -f tests/docker/docker-compose.yml up -d
 | Container              | Port     | Auth                  | Purpose                                                 |
 | ---------------------- | -------- | --------------------- | ------------------------------------------------------- |
 | `ssh-password`         | 2201     | `testuser`/`testpass` | Standard password auth (OpenSSH latest)                 |
+| `ssh-sudo`             | 2212     | `testuser`/`testpass` | Password-required sudoer + root-owned target (#1494)    |
+| `ssh-nosudo`           | 2213     | `testuser`/`testpass` | No `sudo` installed + root-owned target (#1494)         |
 | `ssh-sftp-only`        | 2211     | `testuser`/`testpass` | SFTP-only (`ForceCommand internal-sftp`, no exec)       |
 | `ssh-legacy`           | 2202     | password + keys       | Legacy OpenSSH 7.x compatibility                        |
 | `ssh-keys`             | 2203     | key only              | All key types (RSA, Ed25519, ECDSA)                     |
@@ -211,14 +213,20 @@ curl -k --ssl-reqd ftp://ftpuser:ftppass@127.0.0.1:2401/pub/  # explicit FTPS
 curl -k ftps://ftpuser:ftppass@127.0.0.1:2402/pub/            # implicit FTPS
 ```
 
-The app-level Rust integration test for the FTP file browser lives at
-[`core/tests/ftp_file_browser.rs`](../../core/tests/ftp_file_browser.rs) (gated
-behind the `ftp` feature; skips cleanly when the fixture is not up). Run it
-directly against the fixture with:
+The app-level Rust integration tests for the FTP backend live at
+[`core/tests/ftp_file_browser.rs`](../../core/tests/ftp_file_browser.rs) (listing
+
+- CRUD) and [`core/tests/ftp_transfer.rs`](../../core/tests/ftp_transfer.rs)
+  (byte-exact up/download + `REST` kill/resume + concurrent transfers) — both gated
+  behind the `ftp` feature and skipping cleanly when the fixture is not up. The
+  `REST`-based upload-resume path relies on `AllowStoreRestart on` in
+  [`ftp-server/proftpd.conf.tmpl`](ftp-server/proftpd.conf.tmpl). Run them directly
+  against the fixture with:
 
 ```bash
 docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
 cargo test -p termihub-core --features ftp --test ftp_file_browser -- --nocapture
+cargo test -p termihub-core --features ftp --test ftp_transfer -- --nocapture
 ```
 
 Or via the orchestration scripts, which start the `ftp` profile and run the

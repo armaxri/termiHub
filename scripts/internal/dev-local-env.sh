@@ -51,6 +51,8 @@ _thdl_port() {
     [ -z "${!var:-}" ] && export "$var"="$((base + TERMIHUB_TEST_PORT_OFFSET))"
 }
 _thdl_port TERMIHUB_TEST_SSH_PASSWORD_PORT   2201
+_thdl_port TERMIHUB_TEST_SSH_SUDO_PORT       2212
+_thdl_port TERMIHUB_TEST_SSH_NOSUDO_PORT     2213
 _thdl_port TERMIHUB_TEST_SSH_LEGACY_PORT     2202
 _thdl_port TERMIHUB_TEST_SSH_KEYS_PORT       2203
 _thdl_port TERMIHUB_TEST_SSH_BASTION_PORT    2204

@@ -13,7 +13,7 @@
 //! `openInTermiHub:userData:error:` on our provider with the selected
 //! file-system objects on an [`NSPasteboard`]. We read the selected paths and
 //! forward each into the **same** spawn flow the Quick Action bundles use: a
-//! [`SpawnRequest`] re-emitted as the [`SPAWN_REQUEST_EVENT`] Tauri event, which
+//! [`SpawnRequest`] re-emitted as the [`crate::spawn::SPAWN_REQUEST_EVENT`] Tauri event, which
 //! the running instance already handles (see `lib.rs`). This is the internal
 //! equivalent of the bundles' `termiHub spawn --location <path>` invocation — no
 //! separate spawn mechanism is introduced.
@@ -26,7 +26,7 @@
 //!
 //! [`NSServices`]: https://developer.apple.com/documentation/bundleresources/information_property_list/nsservices
 
-use crate::spawn::{SpawnRequest, SPAWN_REQUEST_EVENT};
+use crate::spawn::SpawnRequest;
 use anyhow::{Context, Result};
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
@@ -38,7 +38,7 @@ use objc2_app_kit::{NSApplication, NSPasteboard, NSUpdateDynamicServices};
 #[allow(deprecated)]
 use objc2_app_kit::NSFilenamesPboardType;
 use objc2_foundation::{NSArray, NSString};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 /// Map the file-system paths carried by a Services invocation into the spawn
 /// requests forwarded to the running instance.
@@ -106,12 +106,14 @@ impl ServicesProvider {
         unsafe { msg_send![super(this), init] }
     }
 
-    /// Emit one [`SPAWN_REQUEST_EVENT`] per selected path, reusing the running
+    /// Emit one [`crate::spawn::SPAWN_REQUEST_EVENT`] per selected path, reusing the running
     /// instance's existing spawn handling.
     fn forward_spawn_requests(&self, paths: &[String]) {
         let handle = &self.ivars().app_handle;
         for request in spawn_requests_from_paths(paths) {
-            if let Err(e) = handle.emit(SPAWN_REQUEST_EVENT, &request) {
+            // Focus the window and forward the request (#1365), reusing the
+            // shared spawn emit so Services-triggered spawns behave like IPC ones.
+            if let Err(e) = crate::spawn::handler::emit_spawn_request(handle, &request) {
                 tracing::warn!("failed to emit spawn-request from Services provider: {e}");
             }
         }

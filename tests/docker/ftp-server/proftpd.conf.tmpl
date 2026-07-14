@@ -26,6 +26,15 @@ MaxInstances          30
 User                  proftpd
 Group                 nogroup
 
+# Allow REST-based resume for BOTH directions so the transfer integration test
+# (#1507) can interrupt a RETR/STOR mid-flight and resume from the partial
+# offset. RetrieveRestart defaults on; StoreRestart defaults off, so enable it
+# explicitly for the upload-resume path. AllowOverwrite lets the resumed STOR
+# write over the partial file (anonymous stays read-only via its Limit WRITE).
+AllowRetrieveRestart  on
+AllowStoreRestart     on
+AllowOverwrite        on
+
 # Chroot every login to its landing directory; the fixture never needs a shell.
 DefaultRoot           ~
 RequireValidShell     off

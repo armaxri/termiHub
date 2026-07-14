@@ -8,11 +8,22 @@
 //! Directory listings prefer the machine-readable `MLSD` command and fall back
 //! to `LIST` (parsed by [`listing_parser`](super::listing_parser)) when the
 //! server does not support it.
+//!
+//! ## Robustness (issue #1339)
+//!
+//! Every operation runs through [`reconnect::run_with_reconnect`]: a transport
+//! failure (a dropped idle control connection, a transient network fault)
+//! transparently re-establishes the connection and retries, up to
+//! [`reconnect::MAX_RECONNECT_RETRIES`] times. Each reconnect also advances the
+//! data-channel fallback one step (extended passive → passive), so a server that
+//! rejects `EPSV` degrades gracefully to classic `PASV`.
 
+use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use futures_util::io::{AsyncReadExt, Cursor};
-use suppaftp::{AsyncRustlsFtpStream, FtpError};
+use suppaftp::{AsyncRustlsFtpStream, FtpError, Mode};
 use tokio::sync::Mutex;
 
 use crate::config::FtpConfig;
@@ -20,6 +31,7 @@ use crate::errors::FileError;
 use crate::files::{FileBrowser, FileEntry};
 
 use super::listing_parser::{parse_list, parse_mlsd, parse_mlsd_line};
+use super::reconnect;
 
 /// FTP-backed file browser for a single FTP/FTPS connection.
 ///
@@ -28,6 +40,12 @@ use super::listing_parser::{parse_list, parse_mlsd, parse_mlsd_line};
 pub(crate) struct FtpFileBrowser {
     config: FtpConfig,
     client: Arc<Mutex<Option<AsyncRustlsFtpStream>>>,
+    /// Ordered data-channel modes to try (`EPSV`→`PASV` for passive). The index
+    /// advances on each reconnect, so a passive-mode data failure degrades to
+    /// the more widely supported classic `PASV`.
+    data_modes: Vec<Mode>,
+    /// Current index into [`data_modes`](Self::data_modes).
+    mode_index: AtomicUsize,
 }
 
 /// Map a [`suppaftp`] error to a [`FileError`], tagging it with the operation.
@@ -38,23 +56,101 @@ fn map_err(op: &str, err: FtpError) -> FileError {
 impl FtpFileBrowser {
     /// Create a browser for `config`; no connection is opened until first use.
     pub(crate) fn new(config: FtpConfig) -> Self {
+        let data_modes = super::data_mode_chain(config.mode);
         Self {
             config,
             client: Arc::new(Mutex::new(None)),
+            data_modes,
+            mode_index: AtomicUsize::new(0),
         }
     }
 
-    /// Ensure the browsing control connection is established.
+    /// A clone of the shared control-connection handle, for the keep-alive task.
+    pub(crate) fn shared_client(&self) -> Arc<Mutex<Option<AsyncRustlsFtpStream>>> {
+        self.client.clone()
+    }
+
+    /// Test-only: forcibly shut the live control socket down to simulate a
+    /// mid-session control-connection drop. Returns `true` if a connection was
+    /// open and closed.
+    #[doc(hidden)]
+    pub(crate) async fn debug_drop_connection(&self) -> bool {
+        let guard = self.client.lock().await;
+        match guard.as_ref() {
+            Some(stream) => {
+                let _ = stream.get_ref().shutdown(std::net::Shutdown::Both);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The data-channel mode currently in effect (the reconnect fallback point).
+    fn current_mode(&self) -> Mode {
+        let last = self.data_modes.len().saturating_sub(1);
+        let idx = self.mode_index.load(Ordering::Relaxed).min(last);
+        self.data_modes.get(idx).copied().unwrap_or(Mode::Passive)
+    }
+
+    /// Ensure the browsing control connection is established (using the current
+    /// data-channel mode).
     async fn ensure_connected(&self) -> Result<(), FileError> {
         let mut guard = self.client.lock().await;
         if guard.is_some() {
             return Ok(());
         }
-        let stream = super::establish(&self.config)
+        let stream = super::establish_with_mode(&self.config, self.current_mode())
             .await
             .map_err(|e| FileError::OperationFailed(format!("FTP connection failed: {e}")))?;
         *guard = Some(stream);
         Ok(())
+    }
+
+    /// Re-establish the control connection after a drop, advancing the
+    /// data-channel fallback one step (`EPSV`→`PASV`) so a passive failure
+    /// degrades gracefully.
+    async fn reconnect(&self) -> Result<(), FtpError> {
+        let last = self.data_modes.len().saturating_sub(1);
+        let prev = self.mode_index.load(Ordering::Relaxed);
+        if prev < last {
+            self.mode_index.store(prev + 1, Ordering::Relaxed);
+        }
+        let mut guard = self.client.lock().await;
+        *guard = None;
+        let stream = super::establish_with_mode(&self.config, self.current_mode())
+            .await
+            .map_err(|e| {
+                FtpError::ConnectionError(std::io::Error::other(format!(
+                    "FTP reconnect failed: {e}"
+                )))
+            })?;
+        *guard = Some(stream);
+        Ok(())
+    }
+
+    /// Run `op` with the auto-reconnect retry policy, mapping the final error to
+    /// a [`FileError`] tagged with `op_name`.
+    async fn with_reconnect<T, Op, OpFut>(&self, op_name: &str, op: Op) -> Result<T, FileError>
+    where
+        Op: FnMut() -> OpFut,
+        OpFut: Future<Output = Result<T, FtpError>>,
+    {
+        self.ensure_connected().await?;
+        reconnect::run_with_reconnect(
+            reconnect::MAX_RECONNECT_RETRIES,
+            reconnect::is_connection_error,
+            reconnect::reconnect_backoff,
+            op,
+            || self.reconnect(),
+        )
+        .await
+        .map_err(|e| map_err(op_name, e))
+    }
+
+    /// Lock the shared stream, returning a retryable "not connected" error when
+    /// the slot is empty (so the retry driver reconnects).
+    async fn locked_stream(&self) -> tokio::sync::MutexGuard<'_, Option<AsyncRustlsFtpStream>> {
+        self.client.lock().await
     }
 }
 
@@ -74,94 +170,75 @@ fn split_parent(path: &str) -> (String, String) {
 #[async_trait::async_trait]
 impl FileBrowser for FtpFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
-        self.ensure_connected().await?;
-        let mut guard = self.client.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| FileError::OperationFailed("FTP not connected".to_string()))?;
-
-        // Prefer MLSD (machine-readable); fall back to LIST when unsupported.
-        match stream.mlsd(Some(path)).await {
-            Ok(lines) => Ok(parse_mlsd(&lines, path)),
-            Err(_) => {
-                let lines = stream
-                    .list(Some(path))
-                    .await
-                    .map_err(|e| map_err("LIST", e))?;
-                Ok(parse_list(&lines, path))
+        self.with_reconnect("LIST", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            // Prefer MLSD (machine-readable). A connection error propagates so the
+            // driver reconnects; a protocol error means MLSD is unsupported, so we
+            // fall back to LIST on the (still-live) connection.
+            match stream.mlsd(Some(path)).await {
+                Ok(lines) => Ok(parse_mlsd(&lines, path)),
+                Err(FtpError::ConnectionError(e)) => Err(FtpError::ConnectionError(e)),
+                Err(_) => {
+                    let lines = stream.list(Some(path)).await?;
+                    Ok(parse_list(&lines, path))
+                }
             }
-        }
+        })
+        .await
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
-        self.ensure_connected().await?;
-        let mut guard = self.client.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| FileError::OperationFailed("FTP not connected".to_string()))?;
-
-        let mut data_stream = stream
-            .retr_as_stream(path)
-            .await
-            .map_err(|e| map_err("RETR", e))?;
-        let mut buf = Vec::new();
-        data_stream
-            .read_to_end(&mut buf)
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("FTP read failed: {e}")))?;
-        stream
-            .finalize_retr_stream(data_stream)
-            .await
-            .map_err(|e| map_err("RETR", e))?;
-        Ok(buf)
+        self.with_reconnect("RETR", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            let mut data_stream = stream.retr_as_stream(path).await?;
+            let mut buf = Vec::new();
+            data_stream
+                .read_to_end(&mut buf)
+                .await
+                .map_err(FtpError::ConnectionError)?;
+            stream.finalize_retr_stream(data_stream).await?;
+            Ok(buf)
+        })
+        .await
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
-        self.ensure_connected().await?;
-        let mut guard = self.client.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| FileError::OperationFailed("FTP not connected".to_string()))?;
-
-        let mut cursor = Cursor::new(data);
-        stream
-            .put_file(path, &mut cursor)
-            .await
-            .map_err(|e| map_err("STOR", e))?;
-        Ok(())
+        self.with_reconnect("STOR", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            let mut cursor = Cursor::new(data);
+            stream.put_file(path, &mut cursor).await?;
+            Ok(())
+        })
+        .await
     }
 
     async fn delete(&self, path: &str) -> Result<(), FileError> {
-        self.ensure_connected().await?;
-        let mut guard = self.client.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| FileError::OperationFailed("FTP not connected".to_string()))?;
-
         // FTP deletes files with DELE and directories with RMD, and the trait
-        // does not tell us which. Try DELE first; on failure, treat it as a
-        // directory and try RMD.
-        match stream.rm(path).await {
-            Ok(()) => Ok(()),
-            Err(file_err) => stream.rmdir(path).await.map_err(|dir_err| {
-                FileError::OperationFailed(format!(
-                    "FTP delete failed (DELE: {file_err}; RMD: {dir_err})"
-                ))
-            }),
-        }
+        // does not tell us which. Try DELE first; on a *protocol* failure, treat
+        // it as a directory and try RMD. A connection error propagates so the
+        // retry driver reconnects rather than misfiring RMD on a dead stream.
+        self.with_reconnect("delete", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            match stream.rm(path).await {
+                Ok(()) => Ok(()),
+                Err(FtpError::ConnectionError(e)) => Err(FtpError::ConnectionError(e)),
+                Err(_) => stream.rmdir(path).await,
+            }
+        })
+        .await
     }
 
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
-        self.ensure_connected().await?;
-        let mut guard = self.client.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| FileError::OperationFailed("FTP not connected".to_string()))?;
-
-        stream
-            .rename(from, to)
-            .await
-            .map_err(|e| map_err("RNFR/RNTO", e))
+        self.with_reconnect("RNFR/RNTO", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            stream.rename(from, to).await
+        })
+        .await
     }
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
@@ -178,47 +255,43 @@ impl FileBrowser for FtpFileBrowser {
             });
         }
 
-        self.ensure_connected().await?;
         let (parent, base) = split_parent(path);
 
-        let mut guard = self.client.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| FileError::OperationFailed("FTP not connected".to_string()))?;
+        let found = self
+            .with_reconnect("stat", || async {
+                let mut guard = self.locked_stream().await;
+                let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
 
-        // Prefer MLST (single-entry machine listing).
-        if let Ok(line) = stream.mlst(Some(path)).await {
-            if let Some(entry) = parse_mlsd_line(line.as_bytes(), &parent) {
-                return Ok(entry);
-            }
-        }
+                // Prefer MLST (single-entry machine listing).
+                if let Ok(line) = stream.mlst(Some(path)).await {
+                    if let Some(entry) = parse_mlsd_line(line.as_bytes(), &parent) {
+                        return Ok(Some(entry));
+                    }
+                }
 
-        // Fall back to listing the parent and matching by name.
-        let entries = match stream.mlsd(Some(&parent)).await {
-            Ok(lines) => parse_mlsd(&lines, &parent),
-            Err(_) => {
-                let lines = stream
-                    .list(Some(&parent))
-                    .await
-                    .map_err(|e| map_err("LIST", e))?;
-                parse_list(&lines, &parent)
-            }
-        };
+                // Fall back to listing the parent and matching by name.
+                let entries = match stream.mlsd(Some(&parent)).await {
+                    Ok(lines) => parse_mlsd(&lines, &parent),
+                    Err(FtpError::ConnectionError(e)) => return Err(FtpError::ConnectionError(e)),
+                    Err(_) => {
+                        let lines = stream.list(Some(&parent)).await?;
+                        parse_list(&lines, &parent)
+                    }
+                };
+                Ok(entries.into_iter().find(|e| e.name == base))
+            })
+            .await?;
 
-        entries
-            .into_iter()
-            .find(|e| e.name == base)
-            .ok_or_else(|| FileError::NotFound(path.to_string()))
+        found.ok_or_else(|| FileError::NotFound(path.to_string()))
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
-        self.ensure_connected().await?;
-        let mut guard = self.client.lock().await;
-        let stream = guard
-            .as_mut()
-            .ok_or_else(|| FileError::OperationFailed("FTP not connected".to_string()))?;
-
-        stream.mkdir(path).await.map_err(|e| map_err("MKD", e))
+        self.with_reconnect("MKD", || async {
+            let mut guard = self.locked_stream().await;
+            let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+            stream.mkdir(path).await
+        })
+        .await
     }
 }
 
@@ -246,5 +319,34 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<FtpFileBrowser>();
         assert_send::<Box<dyn FileBrowser>>();
+    }
+
+    #[test]
+    fn passive_browser_starts_on_extended_passive_then_falls_back() {
+        // A passive-mode browser begins on EPSV; after a reconnect the fallback
+        // advances one step to classic PASV, and stays there.
+        let browser = FtpFileBrowser::new(FtpConfig::default());
+        assert_eq!(browser.current_mode(), Mode::ExtendedPassive);
+
+        // Simulate the reconnect fallback advance (without a live server).
+        browser.mode_index.store(1, Ordering::Relaxed);
+        assert_eq!(browser.current_mode(), Mode::Passive);
+
+        // Never advances past the last entry.
+        browser.mode_index.store(99, Ordering::Relaxed);
+        assert_eq!(browser.current_mode(), Mode::Passive);
+    }
+
+    #[test]
+    fn active_browser_has_single_mode() {
+        let cfg = FtpConfig {
+            mode: crate::config::FtpDataMode::Active,
+            ..FtpConfig::default()
+        };
+        let browser = FtpFileBrowser::new(cfg);
+        assert_eq!(browser.current_mode(), Mode::Active);
+        // No fallback exists; the mode is stable even if the index is bumped.
+        browser.mode_index.store(5, Ordering::Relaxed);
+        assert_eq!(browser.current_mode(), Mode::Active);
     }
 }
