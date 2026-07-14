@@ -6,8 +6,11 @@
 //! the target directory bind-mounted. The interactive picker that chooses "new
 //! container" (SI-3) and the frontend session/tab wiring are out of scope here.
 
+use std::path::Path;
+
 use tauri::State;
 
+use crate::connection::config::SavedConnection;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::shell_integration::ShellIntegrationSettings;
 use crate::spawn::container::{self, ContainerSpawn};
@@ -88,22 +91,32 @@ fn resolve_container_spawn_with(
     ))
 }
 
-/// Resolve a local/WSL/SSH spawn into local-shell session settings (#1365, SI-2).
+/// Resolve a local/WSL/SSH spawn into the correct backend session settings
+/// (#1365 for local, #1511 for WSL/SSH).
 ///
 /// The parallel of [`resolve_container_spawn`] for the "open a shell at the
-/// target directory" path. The requested `location` is resolved to a working
-/// directory (folder → itself, file → parent, missing → the home directory,
-/// symlinks resolved) which becomes the shell's `startingDirectory`; a WSL-kind
-/// spawn converts that directory to its `/mnt/` path. The returned [`ShellSpawn`]
-/// carries the camelCase local-shell settings, a `"… (Spawned)"` tab title,
-/// `spawned: true`, and a `missing` flag the frontend surfaces as a warning.
+/// target directory" path, dispatching on the spawn `kind`:
+///
+/// - **local** — the requested `location` becomes a local shell's
+///   `startingDirectory` (folder → itself, file → parent, missing → home,
+///   symlinks resolved).
+/// - **wsl** — the resolved directory is converted to its `/mnt/` form and a
+///   `wsl` session opens the distribution there (distribution from the saved WSL
+///   connection referenced by `--connection`, else the system default distro).
+/// - **ssh** — the saved SSH connection referenced by `--connection` is opened;
+///   its settings are used verbatim and the target `location` is returned as
+///   `cdPath` for the frontend to `cd` into after connect (SSH has no start cwd).
+///
+/// Returns an error string (surfaced as a toast) when an SSH/WSL spawn cannot be
+/// resolved to a connection/distribution.
 #[tauri::command]
 pub fn resolve_shell_spawn(
+    manager: State<'_, ConnectionManager>,
     location: Option<String>,
     connection: Option<String>,
     entry_id: Option<String>,
     kind: Option<String>,
-) -> ShellSpawn {
+) -> Result<ShellSpawn, String> {
     let kind = kind
         .as_deref()
         .and_then(SpawnKind::from_wire)
@@ -116,7 +129,134 @@ pub fn resolve_shell_spawn(
         ..SpawnRequest::default()
     };
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    handler::build_shell_spawn(&request, &home)
+    let connections = all_saved_connections(&manager);
+    resolve_shell_spawn_with(
+        &request,
+        &home,
+        &connections,
+        default_wsl_distribution().as_deref(),
+    )
+}
+
+/// Gather every saved connection (main store + external files) so a spawn's
+/// `--connection <id>` can be resolved regardless of which file it lives in.
+/// Mirrors the flattening in `load_connections_and_folders`.
+fn all_saved_connections(manager: &ConnectionManager) -> Vec<SavedConnection> {
+    let mut connections = manager.get_all().map(|f| f.connections).unwrap_or_default();
+    for source in manager.load_external_sources() {
+        connections.extend(source.connections);
+    }
+    connections
+}
+
+/// The system default WSL distribution (the first installed one), used when a
+/// WSL spawn does not reference a saved WSL connection. Windows-only; `None`
+/// elsewhere (a WSL spawn on a non-Windows host must name a connection).
+fn default_wsl_distribution() -> Option<String> {
+    #[cfg(windows)]
+    {
+        termihub_core::session::shell::detect_wsl_distros()
+            .into_iter()
+            .next()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Pure resolution shared by the Tauri command and its tests: dispatch on the
+/// spawn `kind` and build the matching backend settings.
+fn resolve_shell_spawn_with(
+    req: &SpawnRequest,
+    home: &Path,
+    connections: &[SavedConnection],
+    default_wsl_distro: Option<&str>,
+) -> Result<ShellSpawn, String> {
+    match req.kind {
+        SpawnKind::Ssh => resolve_ssh_spawn(req, connections),
+        SpawnKind::Wsl => {
+            let distribution = resolve_wsl_distribution(req, connections, default_wsl_distro)?;
+            Ok(handler::build_wsl_spawn(req, home, &distribution))
+        }
+        // Local / Auto (and any unexpected kind) open a local shell — the #1365
+        // path, unchanged.
+        _ => Ok(handler::build_shell_spawn(req, home)),
+    }
+}
+
+/// Resolve the WSL distribution for a spawn: the saved WSL connection referenced
+/// by `--connection` (if it names a non-empty distribution), otherwise the
+/// system default distro. Errors when neither is available.
+fn resolve_wsl_distribution(
+    req: &SpawnRequest,
+    connections: &[SavedConnection],
+    default_wsl_distro: Option<&str>,
+) -> Result<String, String> {
+    if let Some(id) = req
+        .connection
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Some(conn) = connections.iter().find(|c| c.id == id) {
+            if conn.config.type_id == "wsl" {
+                if let Some(distro) = conn
+                    .config
+                    .settings
+                    .get("distribution")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    return Ok(distro.to_string());
+                }
+            }
+        }
+    }
+
+    default_wsl_distro
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            "no WSL distribution available — install one, or point --connection at a saved WSL connection"
+                .to_string()
+        })
+}
+
+/// Resolve an SSH spawn to a saved SSH connection referenced by `--connection`.
+/// Errors with a clear message when the id is missing, unknown, or not SSH.
+fn resolve_ssh_spawn(
+    req: &SpawnRequest,
+    connections: &[SavedConnection],
+) -> Result<ShellSpawn, String> {
+    let id = req
+        .connection
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            "an SSH spawn requires a saved connection (--connection <id>)".to_string()
+        })?;
+
+    let conn = connections
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| format!("SSH connection '{id}' not found"))?;
+
+    if conn.config.type_id != "ssh" {
+        return Err(format!(
+            "connection '{id}' is not an SSH connection (type: {})",
+            conn.config.type_id
+        ));
+    }
+
+    Ok(handler::build_ssh_spawn(
+        req.location.as_deref(),
+        &conn.config.settings,
+        &conn.name,
+    ))
 }
 
 /// Drain the cold-start pending spawn, if any (#1365).

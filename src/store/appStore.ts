@@ -162,6 +162,7 @@ import {
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
 import { frontendLog } from "@/utils/frontendLog";
+import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
 import {
   createLeafPanel,
@@ -217,6 +218,12 @@ export interface AddTabOptions {
    * (#1446). Defaults to `false`.
    */
   spawned?: boolean;
+  /**
+   * Command to send after the terminal session connects (via `send_input`).
+   * Used by an SSH spawn to `cd` into the target directory, since SSH cannot
+   * set a start cwd at spawn (#1511).
+   */
+  initialCommand?: string;
 }
 
 /** Return a new Record with `key` removed. */
@@ -365,10 +372,12 @@ interface AppState {
    */
   openSpawnedContainer: (spawn: ContainerSpawn) => string;
   /**
-   * Open a local-shell session tab for a resolved external local/WSL/SSH spawn
-   * (#1365, SI-2). Reuses the standard {@link addTab} open path with the spawn's
-   * shell settings (the resolved target as `startingDirectory`) + tab title and
-   * marks the tab `spawned` (no saved connection id). Returns the created tab id.
+   * Open a session tab for a resolved external local/WSL/SSH spawn (#1365 local,
+   * #1511 WSL/SSH). Branches on the spawn's `type`: a `local` shell or `wsl`
+   * distribution opens at the resolved `startingDirectory`; an `ssh` saved
+   * connection opens and `cd`s into `cdPath` after connect (via the tab's
+   * `initialCommand`). Reuses the standard {@link addTab} open path and marks the
+   * tab `spawned` (no saved connection id). Returns the created tab id.
    */
   openSpawnedShell: (spawn: ShellSpawn) => string;
 
@@ -1248,7 +1257,8 @@ function createTab(
   contentType: TabContentType = "terminal",
   sessionId: string | null = null,
   persistentConnectionId?: string,
-  spawned?: boolean
+  spawned?: boolean,
+  initialCommand?: string
 ): TerminalTab {
   tabCounter++;
   return {
@@ -1262,6 +1272,7 @@ function createTab(
     isActive: true,
     ...(persistentConnectionId ? { persistentConnectionId } : {}),
     ...(spawned ? { spawned: true } : {}),
+    ...(initialCommand ? { initialCommand } : {}),
   };
 }
 
@@ -2082,8 +2093,15 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     addTab: (title, connectionType, config, options) => {
-      const { panelId, contentType, terminalOptions, sessionId, persistentConnectionId, spawned } =
-        options ?? {};
+      const {
+        panelId,
+        contentType,
+        terminalOptions,
+        sessionId,
+        persistentConnectionId,
+        spawned,
+        initialCommand,
+      } = options ?? {};
       let createdTabId = "";
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
@@ -2102,7 +2120,8 @@ export const useAppStore = create<AppState>((set, get) => {
           contentType,
           sessionId ?? null,
           persistentConnectionId,
-          spawned
+          spawned,
+          initialCommand
         );
         createdTabId = newTab.id;
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
@@ -2145,13 +2164,22 @@ export const useAppStore = create<AppState>((set, get) => {
         { contentType: "terminal", spawned: true }
       ),
 
-    openSpawnedShell: (spawn) =>
-      get().addTab(
+    openSpawnedShell: (spawn) => {
+      // The resolved backend type decides which session opens: a local shell, a
+      // WSL distribution, or an SSH saved connection (#1511). Legacy payloads
+      // without a `type` are treated as local (#1365).
+      const sessionType = spawn.type ?? "local";
+      // SSH cannot set a start cwd at spawn, so `cd` into the target after the
+      // session connects, via the tab's `initialCommand` (Terminal.tsx runs it
+      // through `send_input`). Local/WSL set a real startingDirectory instead.
+      const initialCommand = spawn.cdPath ? `cd ${quotePath(spawn.cdPath)}` : undefined;
+      return get().addTab(
         spawn.title,
-        "local",
-        { type: "local", config: spawn.settings },
-        { contentType: "terminal", spawned: true }
-      ),
+        sessionType,
+        { type: sessionType, config: spawn.settings },
+        { contentType: "terminal", spawned: true, initialCommand }
+      );
+    },
 
     openSettingsTab: () =>
       set((state) => {

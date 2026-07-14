@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-use super::{SpawnKind, SpawnRequest, SPAWN_REQUEST_EVENT};
+use super::{SpawnRequest, SPAWN_REQUEST_EVENT};
 
 /// A spawn target resolved to a concrete working directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,13 +37,23 @@ pub struct ResolvedLocation {
     pub missing: bool,
 }
 
-/// A resolved shell spawn: the local-shell settings JSON to hand to
-/// `create_connection("local", …)` plus a display title carrying the "Spawned"
+/// A resolved shell spawn: the backend settings JSON to hand to
+/// `create_connection(type, …)` plus a display title carrying the "Spawned"
 /// marker for the tab badge. Mirrors [`ContainerSpawn`](super::container::ContainerSpawn).
+///
+/// The [`session_type`](ShellSpawn::session_type) discriminator tells the
+/// frontend which backend to open: a `"local"` shell (`startingDirectory`), a
+/// `"wsl"` distribution (`distribution` + `startingDirectory` in its `/mnt/`
+/// form), or an `"ssh"` session opened from a saved connection's settings — the
+/// latter carrying a [`cd_path`](ShellSpawn::cd_path) to `cd` into after connect,
+/// since SSH cannot set a start cwd at spawn (#1511).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellSpawn {
-    /// Local-shell backend settings (camelCase JSON) for the spawned session.
+    /// Backend session type to open: `"local"`, `"wsl"`, or `"ssh"`.
+    #[serde(rename = "type")]
+    pub session_type: String,
+    /// Backend settings (camelCase JSON) for the spawned session.
     pub settings: serde_json::Value,
     /// Human-readable tab title, e.g. `"Shell: project (Spawned)"`.
     pub title: String,
@@ -53,6 +63,12 @@ pub struct ShellSpawn {
     /// `true` when the requested path was missing and home was substituted, so
     /// the frontend can surface a warning.
     pub missing: bool,
+    /// For an SSH spawn: the absolute path to `cd` into once the session
+    /// connects (SSH cannot set a start cwd at spawn, so the frontend runs the
+    /// `cd` via `send_input`). `None` for local/WSL spawns, which set a real
+    /// starting directory. (#1511)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cd_path: Option<String>,
 }
 
 /// Cold-start pending spawn slot.
@@ -132,9 +148,21 @@ pub fn windows_path_to_wsl_path(win_path: &str) -> Option<String> {
     }
 }
 
-/// Build the resolved [`ShellSpawn`] for a spawn request, resolving its target
-/// against `home`. For a WSL-kind spawn the resolved directory is converted to
-/// its `/mnt/` path so the distribution opens in the right place.
+/// Best-effort tab title for a resolved directory: its final path component,
+/// falling back to `fallback` for a root/empty path.
+fn spawn_title(cwd: &Path, fallback: &str) -> String {
+    let name = cwd
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| fallback.to_string());
+    format!("{name} (Spawned)")
+}
+
+/// Build a resolved **local-shell** [`ShellSpawn`] for a spawn request, resolving
+/// its target against `home`. The resolved directory becomes the shell's
+/// `startingDirectory` (the `core/src/backends/local_shell.rs` `cwd` path), so
+/// the session opens `cd`'d to the target without a fragile post-start `cd`.
 pub fn build_shell_spawn(req: &SpawnRequest, home: &Path) -> ShellSpawn {
     let resolved = resolve_spawn_location(req.location.as_deref(), home);
     if resolved.missing {
@@ -144,35 +172,91 @@ pub fn build_shell_spawn(req: &SpawnRequest, home: &Path) -> ShellSpawn {
         );
     }
 
-    let native = resolved.cwd.to_string_lossy().into_owned();
-    // A WSL spawn lands in the distribution's `/mnt/<drive>` view of the Windows
-    // directory; a non-convertible path is used unchanged.
-    let starting_directory = match req.kind {
-        SpawnKind::Wsl => windows_path_to_wsl_path(&native).unwrap_or(native),
-        _ => native,
-    };
+    let starting_directory = resolved.cwd.to_string_lossy().into_owned();
 
     // Serialised into the exact camelCase keys the local-shell backend parses
     // (`startingDirectory`, `shellIntegration`); the shell itself is left to the
-    // system default. This is the `core/src/backends/local_shell.rs` `cwd` path,
-    // so the session opens `cd`'d to the target without a post-start `cd`.
+    // system default.
     let settings = json!({
         "startingDirectory": starting_directory,
         "shellIntegration": true,
     });
 
-    let name = resolved
-        .cwd
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Shell".to_string());
-
     ShellSpawn {
+        session_type: "local".to_string(),
         settings,
-        title: format!("{name} (Spawned)"),
+        title: spawn_title(&resolved.cwd, "Shell"),
         spawned: true,
         missing: resolved.missing,
+        cd_path: None,
+    }
+}
+
+/// Build a resolved **WSL** [`ShellSpawn`] for a spawn request against `home`,
+/// opening the given `distribution` at the target directory (#1511).
+///
+/// The resolved Windows directory is converted to its `/mnt/<drive>` form so the
+/// distribution opens in the right place; a non-convertible path is used
+/// unchanged. The distribution is resolved by the caller — from the saved WSL
+/// connection referenced by `--connection`, or the system default distro.
+pub fn build_wsl_spawn(req: &SpawnRequest, home: &Path, distribution: &str) -> ShellSpawn {
+    let resolved = resolve_spawn_location(req.location.as_deref(), home);
+    if resolved.missing {
+        tracing::warn!(
+            requested = ?req.location,
+            "WSL spawn target not found; opening the home directory"
+        );
+    }
+
+    let native = resolved.cwd.to_string_lossy().into_owned();
+    let starting_directory = windows_path_to_wsl_path(&native).unwrap_or(native);
+
+    // The WSL backend parses `distribution` + `startingDirectory` (camelCase).
+    let settings = json!({
+        "distribution": distribution,
+        "startingDirectory": starting_directory,
+    });
+
+    ShellSpawn {
+        session_type: "wsl".to_string(),
+        settings,
+        title: spawn_title(&resolved.cwd, "WSL"),
+        spawned: true,
+        missing: resolved.missing,
+        cd_path: None,
+    }
+}
+
+/// Build a resolved **SSH** [`ShellSpawn`] from a saved SSH connection's settings
+/// (#1511).
+///
+/// SSH cannot set a start cwd at spawn, so the target `location` (if any) is
+/// carried in [`ShellSpawn::cd_path`] for the frontend to `cd` into via
+/// `send_input` once the session connects. The saved connection's `settings` are
+/// used verbatim (host, auth, port, …); `connection_name` names the tab.
+pub fn build_ssh_spawn(
+    location: Option<&str>,
+    ssh_settings: &serde_json::Value,
+    connection_name: &str,
+) -> ShellSpawn {
+    let cd_path = location
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let name = if connection_name.trim().is_empty() {
+        "SSH".to_string()
+    } else {
+        connection_name.trim().to_string()
+    };
+
+    ShellSpawn {
+        session_type: "ssh".to_string(),
+        settings: ssh_settings.clone(),
+        title: format!("{name} (Spawned)"),
+        spawned: true,
+        missing: false,
+        cd_path,
     }
 }
 
@@ -214,6 +298,7 @@ pub fn take_pending_spawn(pending: &PendingSpawn) -> Option<SpawnRequest> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::SpawnKind;
     use super::*;
     use std::fs;
 
