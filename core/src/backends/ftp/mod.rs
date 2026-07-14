@@ -11,6 +11,7 @@
 
 mod file_browser;
 mod listing_parser;
+pub(crate) mod reconnect;
 mod transfer;
 
 pub use transfer::{
@@ -18,6 +19,7 @@ pub use transfer::{
 };
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use file_browser::FtpFileBrowser;
 
@@ -26,6 +28,8 @@ use futures_rustls::rustls::{ClientConfig, RootCertStore};
 use futures_rustls::TlsConnector;
 use suppaftp::types::{FileType, FormatControl};
 use suppaftp::{AsyncRustlsConnector, AsyncRustlsFtpStream, FtpError, Mode};
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
 use crate::config::{FtpConfig, FtpDataMode, FtpTlsMode, FtpTransferType};
@@ -55,6 +59,10 @@ pub struct Ftp {
     /// own control connection (opened lazily) so it can offer the `&self`-based
     /// [`FileBrowser`] API independently of this session's mutable stream.
     browser: Option<FtpFileBrowser>,
+    /// Background keep-alive task sending periodic `NOOP`s on the browsing
+    /// connection; aborted on [`disconnect`](ConnectionType::disconnect) and on
+    /// drop so no task outlives the session.
+    keep_alive: Option<JoinHandle<()>>,
 }
 
 impl Ftp {
@@ -63,6 +71,82 @@ impl Ftp {
         Self {
             client: None,
             browser: None,
+            keep_alive: None,
+        }
+    }
+
+    /// Test-only hook: forcibly close the file browser's control socket to
+    /// simulate a mid-session control-connection drop, so integration tests can
+    /// assert the auto-reconnect path recovers. Returns `true` when a live
+    /// connection was closed.
+    #[doc(hidden)]
+    pub async fn debug_drop_browsing_connection(&self) -> bool {
+        match &self.browser {
+            Some(browser) => browser.debug_drop_connection().await,
+            None => false,
+        }
+    }
+}
+
+impl Drop for Ftp {
+    fn drop(&mut self) {
+        if let Some(handle) = self.keep_alive.take() {
+            handle.abort();
+        }
+    }
+}
+
+/// Build the actionable connect-timeout error message for `host:port`.
+///
+/// A bare "timed out" is unhelpful; this names the endpoint and suggests the
+/// common causes (wrong host/port, server down, firewall) so the user has
+/// something to check (concept: "surface a clear error with suggestions").
+fn connection_timeout_message(host: &str, port: u16, secs: u64) -> String {
+    format!(
+        "FTP connection to {host}:{port} timed out after {secs}s. Check that the host \
+         and port are correct, the server is running, and no firewall is blocking the \
+         connection."
+    )
+}
+
+/// Ordered list of suppaftp data-channel [`Mode`]s to attempt for `mode`.
+///
+/// For passive connections we prefer **extended passive** (`EPSV`, RFC 2428):
+/// it is the modern command, works over IPv6, and returns only a port (no
+/// address), sidestepping the NAT address-rewriting pitfalls of classic `PASV`.
+/// Servers that predate or disable `EPSV` reject it, so classic `PASV` follows
+/// as the graceful fallback. Active mode has no alternate.
+pub(crate) fn data_mode_chain(mode: FtpDataMode) -> Vec<Mode> {
+    match mode {
+        FtpDataMode::Passive => vec![Mode::ExtendedPassive, Mode::Passive],
+        FtpDataMode::Active => vec![Mode::Active],
+    }
+}
+
+/// Periodic `NOOP` keep-alive for the browsing control connection.
+///
+/// Every `interval`, when the connection is idle (the lock is free) and
+/// established, a `NOOP` is sent to stop the server dropping it. A failed `NOOP`
+/// means the connection is already dead, so the stream is dropped and the next
+/// file operation re-establishes it via the reconnect path. The task runs until
+/// the [`Ftp`] backend aborts its handle.
+async fn keep_alive_loop(client: Arc<Mutex<Option<AsyncRustlsFtpStream>>>, interval: Duration) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // The first tick fires immediately; consume it so the first NOOP waits a
+    // full interval rather than firing right after connect.
+    ticker.tick().await;
+    loop {
+        ticker.tick().await;
+        // `try_lock` so keep-alive never contends with an in-flight operation.
+        let Ok(mut guard) = client.try_lock() else {
+            continue;
+        };
+        if let Some(stream) = guard.as_mut() {
+            if let Err(e) = stream.noop().await {
+                debug!("FTP keep-alive NOOP failed; dropping idle connection: {e}");
+                *guard = None;
+            }
         }
     }
 }
@@ -98,9 +182,27 @@ fn build_tls_connector() -> Result<AsyncRustlsConnector, SessionError> {
     ))))
 }
 
-/// Establish the control connection: TCP → optional TLS → auth → mode →
-/// transfer type → initial `CWD`.
+/// Establish the control connection using the preferred data-channel mode for
+/// `config` (the first entry of [`data_mode_chain`] — extended passive for
+/// passive connections).
 async fn establish(config: &FtpConfig) -> Result<AsyncRustlsFtpStream, SessionError> {
+    let mode = data_mode_chain(config.mode)
+        .into_iter()
+        .next()
+        .unwrap_or(Mode::Passive);
+    establish_with_mode(config, mode).await
+}
+
+/// Establish the control connection with an explicit data-channel `mode`: TCP →
+/// optional TLS → auth → mode → transfer type → initial `CWD`.
+///
+/// Taking the mode explicitly lets the reconnect path downgrade extended passive
+/// (`EPSV`) to classic passive (`PASV`) on a re-establish without re-reading the
+/// config.
+async fn establish_with_mode(
+    config: &FtpConfig,
+    mode: Mode,
+) -> Result<AsyncRustlsFtpStream, SessionError> {
     let addr = format!("{}:{}", config.host, config.port);
 
     // TCP connect + optional TLS negotiation.
@@ -126,11 +228,8 @@ async fn establish(config: &FtpConfig) -> Result<AsyncRustlsFtpStream, SessionEr
             .map_err(map_ftp_err)?,
     };
 
-    // Data-channel mode (passive/active).
-    stream.set_mode(match config.mode {
-        FtpDataMode::Passive => Mode::Passive,
-        FtpDataMode::Active => Mode::Active,
-    });
+    // Data-channel mode (passive/extended-passive/active).
+    stream.set_mode(mode);
 
     // Authenticate.
     if config.anonymous {
@@ -331,6 +430,21 @@ fn transfer_group() -> SettingsGroup {
                     },
                 )
             },
+            SettingsField {
+                default: Some(serde_json::json!(60)),
+                description: Some(
+                    "Send a periodic NOOP to keep an idle connection alive (0 disables it)"
+                        .to_string(),
+                ),
+                ..base_field(
+                    "keepAliveSecs",
+                    "Keep-alive (s)",
+                    FieldType::Number {
+                        min: Some(0.0),
+                        max: None,
+                    },
+                )
+            },
         ],
     }
 }
@@ -395,18 +509,32 @@ impl ConnectionType for Ftp {
         let stream = tokio::time::timeout(config.timeout(), establish(&config))
             .await
             .map_err(|_| {
-                SessionError::SpawnFailed(format!(
-                    "FTP connect timed out after {}s",
-                    config.timeout_secs
+                SessionError::SpawnFailed(connection_timeout_message(
+                    &config.host,
+                    config.port,
+                    config.timeout_secs,
                 ))
             })??;
 
+        // Bind the browser and start the idle keep-alive task (if enabled) on its
+        // shared control connection.
+        let keep_alive_interval = config.keep_alive_interval();
+        let browser = FtpFileBrowser::new(config);
+        if let Some(interval) = keep_alive_interval {
+            let shared = browser.shared_client();
+            self.keep_alive = Some(tokio::spawn(keep_alive_loop(shared, interval)));
+        }
+
         self.client = Some(stream);
-        self.browser = Some(FtpFileBrowser::new(config));
+        self.browser = Some(browser);
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
+        // Stop the keep-alive task first so it never touches a closing stream.
+        if let Some(handle) = self.keep_alive.take() {
+            handle.abort();
+        }
         // Drop the browser (closing its own control connection, if opened).
         self.browser = None;
         if let Some(mut client) = self.client.take() {
@@ -635,6 +763,45 @@ mod tests {
         let ftp = Ftp::new();
         assert!(ftp.write(b"ignored").is_ok());
         assert!(ftp.resize(80, 24).is_ok());
+    }
+
+    #[test]
+    fn data_mode_chain_prefers_epsv_then_pasv_for_passive() {
+        // Passive connections try EPSV first, then fall back to classic PASV.
+        assert_eq!(
+            data_mode_chain(FtpDataMode::Passive),
+            vec![Mode::ExtendedPassive, Mode::Passive]
+        );
+    }
+
+    #[test]
+    fn data_mode_chain_active_has_no_fallback() {
+        assert_eq!(data_mode_chain(FtpDataMode::Active), vec![Mode::Active]);
+    }
+
+    #[test]
+    fn establish_uses_extended_passive_as_first_choice() {
+        // `establish` selects the head of the chain; for the default (passive)
+        // config that is extended passive (EPSV).
+        let first = data_mode_chain(FtpConfig::default().mode)
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(first, Mode::ExtendedPassive);
+    }
+
+    #[test]
+    fn connect_timeout_message_is_actionable() {
+        // The connect-timeout message names the endpoint and suggests remedies.
+        let msg = connection_timeout_message("ftp.example.com", 21, 30);
+        assert!(msg.contains("ftp.example.com:21"), "names host:port: {msg}");
+        assert!(msg.contains("30s"), "names the timeout: {msg}");
+        let lower = msg.to_lowercase();
+        assert!(lower.contains("firewall"), "suggests firewall check: {msg}");
+        assert!(
+            lower.contains("server is running"),
+            "suggests server check: {msg}"
+        );
     }
 
     #[test]
