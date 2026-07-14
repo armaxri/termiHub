@@ -1710,6 +1710,23 @@ termiHub FTP **client** end-to-end once the backend sub-issues
    FTPS** (TLS Mode = Implicit, port 2402); accept the self-signed cert. The
    plain-FTP insecure warning must appear only for TLS Mode = None.
 
+### FTP symlink icon, navigation, and target in properties (#1513)
+
+Verifies the file browser's symbolic-link handling. Parser population and the
+frontend rendering/navigation are covered by unit tests
+(`cargo test -p termihub-core --lib backends::ftp`, `pnpm test FileBrowser`);
+this manual step confirms it end-to-end against a real FTP server whose `/pub`
+tree contains a symlink (create one on the host, e.g. `ln -s data linkdir` and
+`ln -s data/dataset-1k.bin linkfile` under the served root).
+
+1. Open the FTP connection and browse to the directory holding the symlinks.
+   Each symlink row must show the distinct **link-badge icon** (not a plain
+   file/folder glyph) and, for `ls -l`-style listings, an inline `→ target`
+   hint after the name (hovering shows the full `Symbolic link → target` title).
+2. Double-click (or select + Enter) the directory symlink `linkdir` — the
+   browser must **follow** it and list the target directory's contents.
+3. Confirm a non-symlink file shows no link icon and no `→ target` hint.
+
 ### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
 
 Verifies the shared transfer-queue model (queue / bounded concurrency /

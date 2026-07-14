@@ -159,6 +159,23 @@
   color: var(--text-accent);
 }
 
+/* Symbolic links use the accent colour so they read apart from plain files. */
+.file-browser__icon--symlink {
+  color: var(--text-accent);
+}
+
+/* Inline link target shown after a symlink's name (the "→ target" hint). */
+.file-browser__symlink-target {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 .file-browser__name {
   flex: 1;
   overflow: hidden;
