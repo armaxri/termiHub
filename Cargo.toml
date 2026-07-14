@@ -2,6 +2,22 @@
 members = ["core", "src-tauri", "agent"]
 resolver = "2"
 
+# Dev/test builds keep file:line backtraces but drop full DWARF. A clean
+# `cargo build --workspace` target/debug measures 6.7 GB with Cargo's default
+# `debug = true` and 4.5 GB here (9.4 GB -> 6.5 GB once test binaries are built),
+# which is what makes several parallel checkouts fit on one disk — see
+# docs/testing.md -> "Parallel test isolation". Release builds are unaffected:
+# every shipping artifact is built with `--release`.
+#
+# `line-tables-only` keeps symbolised file/line backtraces across the whole
+# stack, dependencies included, which is the debugging story this repo actually
+# documents (docs/contributing.md -> "Process exit codes": RUST_BACKTRACE=1).
+# Step-debugging through dependency code degrades; override locally with
+# `RUSTFLAGS="-C debuginfo=2"` or a `[profile.dev]` in `.cargo/config.toml` if
+# you need it. See https://github.com/armaxri/termiHub/issues/1537.
+[profile.dev]
+debug = "line-tables-only"
+
 [workspace.dependencies]
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
