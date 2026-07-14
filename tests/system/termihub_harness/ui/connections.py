@@ -307,6 +307,42 @@ class ConnectionsUi(HarnessMixin):
             "connection-editor-save-connect" if connect else "connection-editor-save"
         )
 
+    def create_ftp_connection(
+        self,
+        name: str,
+        *,
+        host: str = "ftp.example.com",
+        port: int = 21,
+        tls_mode: str = "none",
+        connect: bool = False,
+    ) -> None:
+        """Fill the editor for an FTP connection and save (or Save & Connect).
+
+        ``tls_mode`` selects the native ``field-tlsMode`` dropdown: ``"none"`` for
+        plain FTP (the schema default), ``"explicit"`` / ``"implicit"`` for FTPS.
+        Only host/port/tlsMode are required by the backend schema, so
+        username/password are left empty — enough to save a connection and drive
+        the pre-connect insecure-FTP warning flow (#1338). That warning modal is
+        raised on the sidebar connect path (double-click) for plain FTP, so tests
+        save here (``connect=False``) and connect via :meth:`connect_connection`.
+        """
+        self.open_new_connection_editor()
+        self.driver.type("connection-editor-name-input", name)
+        self.select_connection_type("ftp")
+        self.wait(
+            lambda: self.driver.exists("field-host"), what="the FTP connection fields"
+        )
+        self.driver.type("field-host", str(host))
+        self.driver.type("field-port", str(port))
+        if tls_mode:
+            self._select_when_available(
+                "field-tlsMode", tls_mode, what=f"the {tls_mode!r} TLS-mode option"
+            )
+        self.driver.click(
+            "connection-editor-save-connect" if connect else "connection-editor-save"
+        )
+        self.require_connection(name)
+
     def open_serial_editor(self) -> None:
         """Open the editor and switch it to the Serial type, awaiting its fields.
 

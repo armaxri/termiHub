@@ -693,6 +693,7 @@ pub fn run() {
             commands::agent::probe_remote_agent,
             commands::agent::deploy_agent,
             commands::agent::update_agent,
+            commands::agent::update_agent_force,
             // Logs
             commands::logs::get_logs,
             commands::logs::clear_logs,
