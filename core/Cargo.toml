@@ -101,4 +101,6 @@ ftp = [
     "futures-util/io",
     "dep:webpki-roots",
     "dep:tracing",
+    # Local-file streaming for FTP transfers (RETR → local, local → STOR).
+    "tokio/fs",
 ]

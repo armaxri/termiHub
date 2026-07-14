@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 compile_error!("spawn IPC requires a Unix or Windows target");
 
 pub mod container;
+pub mod handler;
 pub mod ipc_client;
 pub mod ipc_server;
 pub mod registry;
@@ -60,7 +61,7 @@ pub enum SpawnKind {
 impl SpawnKind {
     /// Parse a wire/CLI token (`container|local|wsl|ssh|auto`) into a kind.
     /// Returns `None` for unrecognised tokens so callers can degrade gracefully.
-    fn from_wire(token: &str) -> Option<Self> {
+    pub fn from_wire(token: &str) -> Option<Self> {
         match token {
             "container" => Some(Self::Container),
             "local" => Some(Self::Local),

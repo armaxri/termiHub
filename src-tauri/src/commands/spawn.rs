@@ -11,7 +11,8 @@ use tauri::State;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::shell_integration::ShellIntegrationSettings;
 use crate::spawn::container::{self, ContainerSpawn};
-use crate::spawn::SpawnRequest;
+use crate::spawn::handler::{self, PendingSpawn, ShellSpawn};
+use crate::spawn::{SpawnKind, SpawnRequest};
 
 /// The saved per-entry container preferences (image + mount target) looked up
 /// for a spawn's `--entry-id`, if any.
@@ -85,6 +86,48 @@ fn resolve_container_spawn_with(
         saved_image.as_deref(),
         saved_mount.as_deref(),
     ))
+}
+
+/// Resolve a local/WSL/SSH spawn into local-shell session settings (#1365, SI-2).
+///
+/// The parallel of [`resolve_container_spawn`] for the "open a shell at the
+/// target directory" path. The requested `location` is resolved to a working
+/// directory (folder → itself, file → parent, missing → the home directory,
+/// symlinks resolved) which becomes the shell's `startingDirectory`; a WSL-kind
+/// spawn converts that directory to its `/mnt/` path. The returned [`ShellSpawn`]
+/// carries the camelCase local-shell settings, a `"… (Spawned)"` tab title,
+/// `spawned: true`, and a `missing` flag the frontend surfaces as a warning.
+#[tauri::command]
+pub fn resolve_shell_spawn(
+    location: Option<String>,
+    connection: Option<String>,
+    entry_id: Option<String>,
+    kind: Option<String>,
+) -> ShellSpawn {
+    let kind = kind
+        .as_deref()
+        .and_then(SpawnKind::from_wire)
+        .unwrap_or_default();
+    let request = SpawnRequest {
+        location,
+        connection,
+        entry_id,
+        kind,
+        ..SpawnRequest::default()
+    };
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    handler::build_shell_spawn(&request, &home)
+}
+
+/// Drain the cold-start pending spawn, if any (#1365).
+///
+/// A spawn handed to a freshly-launched instance before the UI is ready is
+/// parked in [`PendingSpawn`] (no event listener exists yet); the frontend calls
+/// this once its `spawn-request` subscription is registered to pick it up and
+/// process it through the same path as a live event.
+#[tauri::command]
+pub fn take_pending_spawn(pending: State<'_, PendingSpawn>) -> Option<SpawnRequest> {
+    handler::take_pending_spawn(&pending)
 }
 
 #[cfg(test)]
