@@ -1014,7 +1014,7 @@ saved-connection settings + post-connect `cd`) is covered by unit tests
 (`src-tauri/src/spawn/handler.rs`, `src-tauri/src/commands/spawn.rs`,
 `src/hooks/useSpawnRequests.test.ts`). A live end-to-end run needs a real WSL
 distro / SSH host and a built app, so the paths below are manual. Referenced by
-PR #1513.
+PR #1529.
 
 **WSL spawn opens a distribution at the converted path (Windows).**
 
