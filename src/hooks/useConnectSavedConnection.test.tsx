@@ -84,7 +84,7 @@ beforeEach(() => {
   addTabSpy = vi.fn(() => "tab-1");
   useAppStore.setState({
     ...useAppStore.getInitialState(),
-    addTab: addTabSpy as unknown as (typeof useAppStore.getState)["addTab"],
+    addTab: addTabSpy as unknown as ReturnType<typeof useAppStore.getState>["addTab"],
     credentialStoreStatus: { mode: "master_password", status: "unlocked" },
   });
 });
