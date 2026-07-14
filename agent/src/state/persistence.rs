@@ -39,9 +39,9 @@ pub struct UpdateState {
 /// The deferred apply (SI-6, #1352) is wired: the agent applies this when its
 /// last session disconnects, or immediately via `agent.request_deferred_update`
 /// when it is idle — see [`crate::session::manager::SessionManager`] and the
-/// `crate::update::apply` module. (Auto-applying a *self-update* staged by the
-/// background timer on idle is still staging-only; that wiring is tracked
-/// separately.)
+/// `crate::update::apply` module. A *self-update* staged by the background timer
+/// now flows through the same path and auto-applies on idle (#1401), gated on
+/// the connection's update strategy; a failed apply keeps this record for retry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingUpdate {
     /// Target version (release tag semver, e.g. `"0.3.0"`).

@@ -835,32 +835,58 @@ impl SessionManager {
         }
     }
 
-    /// Consume the pending update (clearing it from persisted state) and apply
-    /// it. A no-op when nothing is pending.
+    /// Record the timestamp of the most recent self-update poll (#1401).
     ///
-    /// The pending update is cleared **before** the apply so a failed or
-    /// re-execed apply can never trigger an apply loop. On a successful Unix
-    /// apply the process re-execs and this never returns.
-    async fn apply_pending_update(&self) -> anyhow::Result<()> {
-        let pending = {
-            let mut state = self.state.lock().await;
-            let taken = state.update.pending_update.take();
-            if taken.is_some() {
-                state.save_to(&self.state_path);
-            }
-            taken
-        };
+    /// Owned here so the self-update timer and the deferred-apply path share a
+    /// single in-memory + persisted `update` state; a direct write from the
+    /// timer would be clobbered by the next session-close persist.
+    pub async fn record_update_check_time(&self, timestamp: String) {
+        let mut state = self.state.lock().await;
+        state.update.last_check_time = Some(timestamp);
+        state.save_to(&self.state_path);
+    }
 
-        match pending {
-            Some(pending) => {
-                info!(
-                    "Applying deferred agent update (version {:?}) from {}",
-                    pending.version, pending.binary_path
-                );
-                self.update_applier.apply(&pending)
-            }
-            None => Ok(()),
-        }
+    /// Record a staged pending update in the shared agent state **without**
+    /// applying it (#1401).
+    ///
+    /// Used by the self-update timer when the connection's update strategy does
+    /// not auto-apply on idle (coordinated), so a later coordinated apply — or
+    /// an explicit `agent.request_deferred_update` — can consume it.
+    pub async fn stage_pending_update(&self, binary_path: String, version: String) {
+        let mut state = self.state.lock().await;
+        state.update.pending_update = Some(PendingUpdate {
+            version,
+            binary_path,
+            staged_at: Utc::now().to_rfc3339(),
+        });
+        state.save_to(&self.state_path);
+    }
+
+    /// Apply the pending update, clearing it from persisted state **only on
+    /// success**. A no-op when nothing is pending.
+    ///
+    /// The update is applied first and the pending record is cleared afterwards,
+    /// so a failed apply KEEPS the pending update and a later cycle (the next
+    /// last-disconnect, or the next self-update poll) can retry (#1401). On a
+    /// successful Unix apply the process re-execs and this never returns, so the
+    /// clear only runs in tests / on the non-Unix path. Retaining on failure
+    /// cannot cause a tight apply loop: applies fire only on discrete
+    /// transitions (a session closing to zero, or a 24h poll), never in a spin.
+    async fn apply_pending_update(&self) -> anyhow::Result<()> {
+        let pending = { self.state.lock().await.update.pending_update.clone() };
+        let Some(pending) = pending else {
+            return Ok(());
+        };
+        info!(
+            "Applying deferred agent update (version {:?}) from {}",
+            pending.version, pending.binary_path
+        );
+        self.update_applier.apply(&pending)?;
+        // Success (test / non-unix path): consume the pending update.
+        let mut state = self.state.lock().await;
+        state.update.pending_update = None;
+        state.save_to(&self.state_path);
+        Ok(())
     }
 }
 

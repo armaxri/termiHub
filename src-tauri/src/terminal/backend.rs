@@ -51,6 +51,18 @@ pub enum UpdateStrategy {
     Deferred,
 }
 
+impl UpdateStrategy {
+    /// Lowercase CLI token passed to the agent via `--update-strategy` (#1401),
+    /// matching the agent-side `UpdateStrategy::from_cli` parser.
+    pub fn as_cli_str(self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::Coordinated => "coordinated",
+            Self::Deferred => "deferred",
+        }
+    }
+}
+
 /// SSH transport configuration for a remote agent (no session details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,8 +90,10 @@ pub struct RemoteAgentConfig {
     pub external_connection_files: Vec<ExternalAgentFile>,
     /// Whether the agent may check GitHub and update itself in the background.
     ///
-    /// Opt-in (`false` by default). The self-update mechanism (SI-8) is not yet
-    /// implemented; this flag persists the user's preference until it lands.
+    /// Opt-in (`false` by default). When enabled the agent polls for a newer
+    /// release, stages a SHA-256-verified binary while idle (#1355) and
+    /// auto-applies it once its last session disconnects (#1401), honoring
+    /// [`Self::update_strategy`].
     #[serde(default)]
     pub allow_self_update: bool,
     /// How this agent's binary is updated when a newer desktop version deploys.
@@ -143,12 +157,18 @@ impl RemoteAgentConfig {
     pub fn agent_exec_command(&self) -> String {
         let path = self.agent_path();
         // Opt the agent into its background GitHub self-update check only when
-        // the connection enables it (#1355); off by default.
+        // the connection enables it (#1355); off by default. When enabled, also
+        // pass the configured update strategy so the agent knows whether a
+        // staged self-update may auto-apply on idle (#1401).
         let args = if self.allow_self_update {
-            "--stdio --allow-self-update"
+            format!(
+                "--stdio --allow-self-update --update-strategy {}",
+                self.update_strategy.as_cli_str()
+            )
         } else {
-            "--stdio"
+            "--stdio".to_string()
         };
+        let args = args.as_str();
         if crate::terminal::agent_install::is_windows_path(path) {
             return windows_agent_command(path, args);
         }
