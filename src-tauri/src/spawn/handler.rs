@@ -70,7 +70,37 @@ pub struct PendingSpawn(pub Mutex<Option<SpawnRequest>>);
 /// - Existing file → the file's parent directory, with symlinks resolved.
 /// - Missing path → `home`, flagged `missing = true`.
 pub fn resolve_spawn_location(location: Option<&str>, home: &Path) -> ResolvedLocation {
-    todo!("resolve_spawn_location")
+    let trimmed = location.map(str::trim).filter(|s| !s.is_empty());
+    let Some(loc) = trimmed else {
+        return ResolvedLocation {
+            cwd: home.to_path_buf(),
+            missing: false,
+        };
+    };
+
+    // `canonicalize` both resolves symlinks and requires the target to exist, so
+    // a missing path surfaces as an error and falls back to home.
+    match std::fs::canonicalize(loc) {
+        Ok(canon) => {
+            let cwd = if canon.is_dir() {
+                canon
+            } else {
+                // A file resolves to its parent directory.
+                canon
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| home.to_path_buf())
+            };
+            ResolvedLocation {
+                cwd,
+                missing: false,
+            }
+        }
+        Err(_) => ResolvedLocation {
+            cwd: home.to_path_buf(),
+            missing: true,
+        },
+    }
 }
 
 /// Convert a Windows absolute path to its WSL `/mnt/` equivalent.
@@ -80,19 +110,70 @@ pub fn resolve_spawn_location(location: Option<&str>, home: &Path) -> ResolvedLo
 /// `core/src/backends/wsl.rs::windows_path_to_wsl_path` so WSL spawns land in the
 /// distribution-visible mount path.
 pub fn windows_path_to_wsl_path(win_path: &str) -> Option<String> {
-    todo!("windows_path_to_wsl_path")
+    // Parsed from the raw string (not `std::path::Component`) so the conversion
+    // is host-independent — `Path::components` only recognises a drive `Prefix`
+    // on Windows targets, which would make this untestable on macOS/Linux.
+    let bytes = win_path.as_bytes();
+    let drive = match bytes.first() {
+        Some(c) if c.is_ascii_alphabetic() => (*c as char).to_ascii_lowercase(),
+        _ => return None,
+    };
+    if bytes.get(1) != Some(&b':') {
+        return None;
+    }
+    // Strip the `C:` prefix, normalise separators, and trim leading/trailing
+    // slashes so the join below never produces `//` or a trailing `/`.
+    let rest = win_path[2..].replace('\\', "/");
+    let rest = rest.trim_matches('/');
+    if rest.is_empty() {
+        Some(format!("/mnt/{drive}"))
+    } else {
+        Some(format!("/mnt/{drive}/{rest}"))
+    }
 }
 
 /// Build the resolved [`ShellSpawn`] for a spawn request, resolving its target
 /// against `home`. For a WSL-kind spawn the resolved directory is converted to
 /// its `/mnt/` path so the distribution opens in the right place.
 pub fn build_shell_spawn(req: &SpawnRequest, home: &Path) -> ShellSpawn {
-    todo!("build_shell_spawn")
-}
+    let resolved = resolve_spawn_location(req.location.as_deref(), home);
+    if resolved.missing {
+        tracing::warn!(
+            requested = ?req.location,
+            "spawn target not found; opening the home directory"
+        );
+    }
 
-/// The home directory, falling back to `.` when it cannot be determined.
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
+    let native = resolved.cwd.to_string_lossy().into_owned();
+    // A WSL spawn lands in the distribution's `/mnt/<drive>` view of the Windows
+    // directory; a non-convertible path is used unchanged.
+    let starting_directory = match req.kind {
+        SpawnKind::Wsl => windows_path_to_wsl_path(&native).unwrap_or(native),
+        _ => native,
+    };
+
+    // Serialised into the exact camelCase keys the local-shell backend parses
+    // (`startingDirectory`, `shellIntegration`); the shell itself is left to the
+    // system default. This is the `core/src/backends/local_shell.rs` `cwd` path,
+    // so the session opens `cd`'d to the target without a post-start `cd`.
+    let settings = json!({
+        "startingDirectory": starting_directory,
+        "shellIntegration": true,
+    });
+
+    let name = resolved
+        .cwd
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Shell".to_string());
+
+    ShellSpawn {
+        settings,
+        title: format!("{name} (Spawned)"),
+        spawned: true,
+        missing: resolved.missing,
+    }
 }
 
 /// Focus the main window, best-effort. Logged (not fatal) on failure so a spawn

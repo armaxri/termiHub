@@ -61,7 +61,7 @@ pub enum SpawnKind {
 impl SpawnKind {
     /// Parse a wire/CLI token (`container|local|wsl|ssh|auto`) into a kind.
     /// Returns `None` for unrecognised tokens so callers can degrade gracefully.
-    fn from_wire(token: &str) -> Option<Self> {
+    pub fn from_wire(token: &str) -> Option<Self> {
         match token {
             "container" => Some(Self::Container),
             "local" => Some(Self::Local),

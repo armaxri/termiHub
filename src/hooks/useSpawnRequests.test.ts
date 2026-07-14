@@ -13,9 +13,14 @@ vi.mock("@/services/events", () => ({
 }));
 
 const resolveContainerSpawn = vi.fn();
+const resolveShellSpawn = vi.fn();
+const takePendingSpawn = vi.fn();
 vi.mock("@/services/api", () => ({
   resolveContainerSpawn: (location: string, entryId?: string, image?: string, mount?: string) =>
     resolveContainerSpawn(location, entryId, image, mount),
+  resolveShellSpawn: (location?: string, connection?: string, entryId?: string, kind?: string) =>
+    resolveShellSpawn(location, connection, entryId, kind),
+  takePendingSpawn: () => takePendingSpawn(),
 }));
 
 vi.mock("@/components/ui", () => ({
@@ -35,7 +40,7 @@ import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { SpawnRequestPayload } from "@/services/events";
-import type { ContainerSpawn } from "@/services/api";
+import type { ContainerSpawn, ShellSpawn } from "@/services/api";
 import type { TerminalTab } from "@/types/terminal";
 
 const SAMPLE_SPAWN: ContainerSpawn = {
@@ -58,6 +63,13 @@ function containerRequest(overrides: Partial<SpawnRequestPayload> = {}): SpawnRe
   };
 }
 
+const SAMPLE_SHELL_SPAWN: ShellSpawn = {
+  settings: { startingDirectory: "/home/user/app", shellIntegration: true },
+  title: "app (Spawned)",
+  spawned: true,
+  missing: false,
+};
+
 /** Collect every terminal tab across the live root panel. */
 function allTabs(): TerminalTab[] {
   return getAllLeaves(useAppStore.getState().rootPanel).flatMap((leaf) => leaf.tabs);
@@ -75,6 +87,10 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
     emit = undefined;
     resolveContainerSpawn.mockReset();
     resolveContainerSpawn.mockResolvedValue(SAMPLE_SPAWN);
+    resolveShellSpawn.mockReset();
+    resolveShellSpawn.mockResolvedValue(SAMPLE_SHELL_SPAWN);
+    takePendingSpawn.mockReset();
+    takePendingSpawn.mockResolvedValue(null);
     vi.clearAllMocks();
   });
 
@@ -174,7 +190,7 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
     expect(allTabs().some((t) => t.spawned)).toBe(false);
   });
 
-  it("ignores a non-container spawn (SI-2 owns local/WSL/SSH)", async () => {
+  it("opens a shell tab for a non-container spawn (SI-2 local/WSL/SSH)", async () => {
     await mountHook();
 
     await act(async () => {
@@ -182,9 +198,19 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
       await Promise.resolve();
     });
 
+    // A non-container spawn is routed to the shell resolver, not the container one.
     expect(resolveContainerSpawn).not.toHaveBeenCalled();
-    expect(allTabs().some((t) => t.spawned)).toBe(false);
-    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(resolveShellSpawn).toHaveBeenCalledWith(
+      "/home/user/app",
+      undefined,
+      undefined,
+      undefined
+    );
+    const tab = allTabs().find((t) => t.spawned);
+    expect(tab?.connectionType).toBe("local");
+    expect(tab?.config.type).toBe("local");
+    expect(tab?.config.config).toEqual(SAMPLE_SHELL_SPAWN.settings);
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
   });
 
   it("unsubscribes on unmount", async () => {
@@ -208,6 +234,10 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
     emit = undefined;
     resolveContainerSpawn.mockReset();
     resolveContainerSpawn.mockResolvedValue(SAMPLE_SPAWN);
+    resolveShellSpawn.mockReset();
+    resolveShellSpawn.mockResolvedValue(SAMPLE_SHELL_SPAWN);
+    takePendingSpawn.mockReset();
+    takePendingSpawn.mockResolvedValue(null);
     vi.clearAllMocks();
   });
 
@@ -245,18 +275,20 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
     );
   });
 
-  it("ignores an explicit local/WSL/SSH kind even when container fields are present", async () => {
+  it("routes an explicit local kind to the shell resolver even when container fields are present", async () => {
     await mountHook();
 
     // Container fields present but the authoritative kind says local → SI-2's
-    // job, not ours. The explicit discriminator wins over field presence.
+    // shell open path, not the container one. The discriminator wins over
+    // field presence.
     await act(async () => {
       emit!(containerRequest({ kind: "local" }));
       await Promise.resolve();
     });
 
     expect(resolveContainerSpawn).not.toHaveBeenCalled();
-    expect(allTabs().some((t) => t.spawned)).toBe(false);
+    expect(resolveShellSpawn).toHaveBeenCalledWith("/home/user/app", undefined, undefined, "local");
+    expect(allTabs().find((t) => t.spawned)?.connectionType).toBe("local");
   });
 
   it("falls back to presence inference for an auto kind (container)", async () => {
@@ -275,7 +307,7 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
     );
   });
 
-  it("falls back to presence inference for an auto kind (non-container)", async () => {
+  it("falls back to presence inference for an auto kind (non-container → shell)", async () => {
     await mountHook();
 
     await act(async () => {
@@ -284,7 +316,8 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
     });
 
     expect(resolveContainerSpawn).not.toHaveBeenCalled();
-    expect(allTabs().some((t) => t.spawned)).toBe(false);
+    expect(resolveShellSpawn).toHaveBeenCalledWith("/home/user/app", undefined, undefined, "auto");
+    expect(allTabs().find((t) => t.spawned)?.connectionType).toBe("local");
   });
 
   it("unsubscribes on unmount", async () => {
@@ -293,5 +326,105 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
     // Re-create the root so afterEach's unmount is a no-op.
     root = createRoot(container);
     expect(unlisten).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useSpawnRequests — shell spawn wiring (#1365, SI-2)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    emit = undefined;
+    resolveContainerSpawn.mockReset();
+    resolveContainerSpawn.mockResolvedValue(SAMPLE_SPAWN);
+    resolveShellSpawn.mockReset();
+    resolveShellSpawn.mockResolvedValue(SAMPLE_SHELL_SPAWN);
+    takePendingSpawn.mockReset();
+    takePendingSpawn.mockResolvedValue(null);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  async function mountHook(): Promise<void> {
+    function Harness() {
+      useSpawnRequests();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    // Two microtask flushes: subscribe, then drain the pending spawn.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("opens a shell tab at the resolved directory and confirms with a toast", async () => {
+    await mountHook();
+
+    await act(async () => {
+      emit!({ location: "/home/user/app", kind: "local" });
+      await Promise.resolve();
+    });
+
+    const tab = allTabs().find((t) => t.spawned);
+    expect(tab?.connectionType).toBe("local");
+    expect(tab?.config.config).toEqual(SAMPLE_SHELL_SPAWN.settings);
+    expect(tab?.title).toBe(SAMPLE_SHELL_SPAWN.title);
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it("warns with an info toast when the target path was missing", async () => {
+    resolveShellSpawn.mockResolvedValue({
+      ...SAMPLE_SHELL_SPAWN,
+      settings: { startingDirectory: "/home/user", shellIntegration: true },
+      missing: true,
+    });
+    await mountHook();
+
+    await act(async () => {
+      emit!({ location: "/no/such/dir", kind: "local" });
+      await Promise.resolve();
+    });
+
+    expect(allTabs().some((t) => t.spawned)).toBe(true);
+    expect(vi.mocked(toast.info)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a recoverable error toast when shell resolution fails", async () => {
+    resolveShellSpawn.mockRejectedValue("boom");
+    await mountHook();
+
+    await act(async () => {
+      emit!({ location: "/home/user/app", kind: "local" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("boom");
+    expect(allTabs().some((t) => t.spawned)).toBe(false);
+  });
+
+  it("drains and opens a cold-start pending spawn once subscribed", async () => {
+    // A spawn parked before the UI was ready is picked up via take_pending_spawn.
+    takePendingSpawn.mockResolvedValue({ location: "/home/user/app", kind: "local" });
+    await mountHook();
+
+    expect(takePendingSpawn).toHaveBeenCalledTimes(1);
+    const tab = allTabs().find((t) => t.spawned);
+    expect(tab?.connectionType).toBe("local");
+    expect(tab?.config.config).toEqual(SAMPLE_SHELL_SPAWN.settings);
   });
 });
