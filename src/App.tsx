@@ -3,6 +3,7 @@ import type { ErrorInfo, ReactNode } from "react";
 import { ActivityBar } from "@/components/ActivityBar";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
+import { TransferQueue } from "@/components/TransferQueue";
 import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
@@ -274,6 +275,7 @@ function App() {
             {layoutConfig.activityBarPosition === "right" && <ActivityBar />}
           </div>
           <ShellIntegrationBanner />
+          <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />
           <CustomizeLayoutDialog />

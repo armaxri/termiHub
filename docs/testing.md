@@ -1891,6 +1891,37 @@ verify manually until it lands. See PR #1509.
 5. **Upload:** repeat 1–4 for uploads into `/uploads` as `ftpuser`, confirming
    byte-exact results and that concurrent uploads use separate connections.
 
+### Transfer Queue panel: rows, controls, minimized state (#1337)
+
+Verifies the connection-type-agnostic Transfer Queue panel UI docked above the
+status bar. Use the FTP fixture from the section above (or an SFTP session) to
+drive real transfers. See PR #1530.
+
+1. **Panel appears with a live row:** start a download of a large file. Confirm
+   the panel docks above the status bar with one row showing the direction
+   arrow, file name, remote path, an animating progress bar, a rising percent,
+   and a live throughput (e.g. `112 KB/s`). The header summary reads
+   `N active …`.
+2. **Per-state controls:** while active the row shows **Pause** + **Cancel**.
+   Pause it → the row turns `paused` (amber bar) and shows **Resume** +
+   **Cancel**; Resume returns it to `active`. Let one complete → it stays as a
+   green `done` row with a **Remove** control. Break the server mid-flight to get
+   a `failed (n/3)` row (red bar, error tooltip) showing **Retry** + **Remove**.
+   Cancel an active transfer → it becomes a `cancelled` row with **Retry** +
+   **Remove**. Confirm every control shows pending feedback and a success/error
+   toast.
+3. **Footer actions:** with a mix of completed and active rows, click **Clear
+   Completed** → only the `done` rows disappear; failed/cancelled/active stay.
+   Click **Cancel All** → every in-progress transfer is cancelled.
+4. **Minimize / restore:** click **Minimize** in the panel header → the panel
+   collapses and a status-bar indicator shows `N transferring` with a count
+   badge. Click the indicator → the panel re-expands. Confirm the indicator
+   disappears when the queue is emptied.
+5. **Visual review (light + dark):** switch themes and confirm the bar colours
+   (accent/amber/green/red), status text colours, and count badge match the
+   concept mockup (`docs/concepts/backlog/ftp-client.html`), with no raw scroll
+   bar or off-token colours.
+
 ### Remote system monitoring
 
 #### Monitoring auto-reconnect on a mid-stream drop (#1230)

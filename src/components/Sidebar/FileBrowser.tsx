@@ -924,6 +924,16 @@ export function FileBrowser() {
     overscan: ROW_OVERSCAN,
     // Key rows by path so selection/focus survive scroll-driven remounts.
     getItemKey: (index) => displayEntries[index]?.path ?? index,
+    // Reset the `isScrolling` flag from the native `scrollend` event where the
+    // platform supports it, rather than the default 150ms debounce. The debounce
+    // arms a `setTimeout` on every scroll that react-virtual's cleanup never
+    // clears, so unmounting within that window leaves the timer to later fire a
+    // state update on a torn-down tree — harmless in the running app, but under
+    // jsdom (once the environment is disposed) it surfaces as an unhandled
+    // "window is not defined" that fails the whole test run. Where `scrollend`
+    // is unavailable react-virtual transparently falls back to the debounce, so
+    // this is a safe, strictly-better opt-in.
+    useScrollendEvent: true,
   });
 
   // Roving-tabindex keyboard navigation over the displayed rows. The hook owns

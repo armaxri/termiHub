@@ -103,7 +103,13 @@ import {
   detachPersistentTab as apiDetachPersistentTab,
   saveShellIntegrationSettings,
 } from "@/services/api";
-import type { ConnectionTypeInfo, ContainerSpawn, ShellSpawn } from "@/services/api";
+import type {
+  ConnectionTypeInfo,
+  ContainerSpawn,
+  ShellSpawn,
+  TransferProgress,
+} from "@/services/api";
+import { transferEntryFromProgress, type TransferEntry } from "@/types/transfer";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { EmbeddedServerConfig, ServerState as EmbeddedServerState } from "@/types/embeddedServer";
@@ -680,6 +686,30 @@ interface AppState {
   applyTransferProgress: (progress: TransferState) => void;
   /** Request cancellation of an in-flight transfer (`sftp_cancel_transfer`). */
   cancelTransfer: (transferId: string) => Promise<void>;
+
+  /**
+   * Transfer Queue panel rows keyed by `transferId` (Transfer Queue panel,
+   * Epic #1331 / #1337). Unlike {@link transfers} (which clears terminal rows),
+   * this queue **retains** completed/failed/cancelled rows until the user clears
+   * or removes them, so the panel can offer Retry / Remove / Clear Completed.
+   * Fed by the same `transfer-progress` event via
+   * {@link applyTransferProgressToQueue}.
+   */
+  transferQueue: Record<string, TransferEntry>;
+  /** Whether the Transfer Queue panel is collapsed to its status-bar indicator. */
+  transferQueueMinimized: boolean;
+  /** Insert (or replace) a queue row keyed by its id. */
+  addTransfer: (entry: TransferEntry) => void;
+  /** Merge a partial patch into an existing queue row (no-op for unknown ids). */
+  updateTransfer: (id: string, patch: Partial<TransferEntry>) => void;
+  /** Remove a single queue row (per-row Remove control). */
+  removeTransfer: (id: string) => void;
+  /** Remove every `completed` row (footer Clear Completed); failed/cancelled stay. */
+  clearCompleted: () => void;
+  /** Collapse/expand the panel to/from its status-bar indicator. */
+  setTransferQueueMinimized: (minimized: boolean) => void;
+  /** Fold a `transfer-progress` event into the queue (upsert, retaining terminal rows). */
+  applyTransferProgressToQueue: (progress: TransferProgress) => void;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -3367,6 +3397,8 @@ export const useAppStore = create<AppState>((set, get) => {
     sftpSessions: {},
     sftpLastConfig: null,
     transfers: {},
+    transferQueue: {},
+    transferQueueMinimized: false,
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
@@ -3548,6 +3580,40 @@ export const useAppStore = create<AppState>((set, get) => {
         throw err;
       }
     },
+
+    // --- Transfer Queue panel slice (#1337) ---
+
+    addTransfer: (entry: TransferEntry) =>
+      set((state) => ({ transferQueue: { ...state.transferQueue, [entry.id]: entry } })),
+
+    updateTransfer: (id: string, patch: Partial<TransferEntry>) =>
+      set((state) => {
+        const existing = state.transferQueue[id];
+        if (!existing) return {};
+        return { transferQueue: { ...state.transferQueue, [id]: { ...existing, ...patch } } };
+      }),
+
+    removeTransfer: (id: string) =>
+      set((state) => {
+        if (!(id in state.transferQueue)) return {};
+        return { transferQueue: omitKey(state.transferQueue, id) };
+      }),
+
+    clearCompleted: () =>
+      set((state) => ({
+        transferQueue: Object.fromEntries(
+          Object.entries(state.transferQueue).filter(([, t]) => t.state !== "completed")
+        ),
+      })),
+
+    setTransferQueueMinimized: (minimized: boolean) => set({ transferQueueMinimized: minimized }),
+
+    applyTransferProgressToQueue: (progress: TransferProgress) =>
+      set((state) => {
+        const prev = state.transferQueue[progress.transferId];
+        const entry = transferEntryFromProgress(progress, prev, Date.now());
+        return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
+      }),
 
     retrySftp: async () => {
       const config = useAppStore.getState().sftpLastConfig;

@@ -26,6 +26,20 @@ if (typeof Element !== "undefined") {
     Element.prototype.scrollIntoView = () => {};
   }
 
+  // @tanstack/react-virtual resets its `isScrolling` flag either from the native
+  // `scrollend` event (when the environment advertises `onscrollend` and the
+  // virtualizer opts in via `useScrollendEvent`) or, as a fallback, from a 150ms
+  // debounced `setTimeout` that its cleanup never clears. That leaked timer fires
+  // after the FileBrowser unmounts and — once jsdom has torn the environment down
+  // between test files — throws an unhandled "window is not defined" that fails
+  // the whole run. jsdom does not implement `onscrollend`, so advertise it here
+  // (before any react-virtual module loads) to steer the FileBrowser virtualizer
+  // onto the timer-free scrollend path, leaving nothing pending past teardown.
+  if (typeof window !== "undefined" && !("onscrollend" in window)) {
+    (window as unknown as { onscrollend: ((this: Window, ev: Event) => void) | null }).onscrollend =
+      null;
+  }
+
   // jsdom does no layout, so scroll containers report size 0 and a windowing
   // library (@tanstack/react-virtual, used by the FileBrowser) would render an
   // empty window under test. The virtualizer measures its scroll element via
@@ -107,6 +121,10 @@ if (typeof Element !== "undefined") {
       if (typeof y === "number") this.scrollTop = y;
     }
     this.dispatchEvent(new Event("scroll"));
+    // Mirror a real browser's scroll → scrollend sequence so the virtualizer's
+    // scrollend-driven `isScrolling` reset runs synchronously (see the
+    // `onscrollend` shim above) and never arms the leaked debounce timer.
+    this.dispatchEvent(new Event("scrollend"));
   };
 }
 

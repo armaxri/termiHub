@@ -43,13 +43,18 @@ function toastTerminalPhase(progress: TransferProgress): void {
  */
 export function useTransferEvents(): void {
   const applyTransferProgress = useAppStore((s) => s.applyTransferProgress);
+  const applyTransferProgressToQueue = useAppStore((s) => s.applyTransferProgressToQueue);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 
     const setup = async () => {
       unlisten = await onTransferProgress((progress) => {
+        // Feed both consumers from the single `transfer-progress` subscription:
+        // the transient #1247 `transfers` map (clears terminal rows) and the
+        // persistent #1337 Transfer Queue panel (retains terminal rows).
         applyTransferProgress(progress);
+        applyTransferProgressToQueue(progress);
         toastTerminalPhase(progress);
       });
     };
@@ -59,5 +64,5 @@ export function useTransferEvents(): void {
     return () => {
       unlisten?.();
     };
-  }, [applyTransferProgress]);
+  }, [applyTransferProgress, applyTransferProgressToQueue]);
 }
