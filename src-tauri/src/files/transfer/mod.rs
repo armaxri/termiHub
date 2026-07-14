@@ -28,6 +28,10 @@ use tracing::{debug, info, warn};
 
 use crate::utils::errors::TerminalError;
 
+pub mod retry;
+pub mod scheduler;
+pub mod state;
+
 /// Chunk size for the copy loop. Large enough to keep SFTP round-trips
 /// amortised, small enough that cancel latency stays sub-second.
 const CHUNK_SIZE: usize = 256 * 1024;
