@@ -673,7 +673,7 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
    * Mock a read-only remote file on a connection with **no** exec channel
    * (SFTP-only / relayed), recording any Save-a-copy / Download backend calls.
    */
-  function mockSftpOnlyReadonly(): {
+  function mockSftpOnlyReadonly(home?: string): {
     writeCalls: Array<Record<string, unknown>>;
     downloadCalls: Array<Record<string, unknown>>;
   } {
@@ -683,6 +683,11 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
       if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
       if (cmd === "sftp_has_exec_capability") return Promise.resolve(false);
       if (cmd === "sftp_check_writable") return Promise.resolve("readOnly");
+      if (cmd === "sftp_realpath") {
+        return home !== undefined
+          ? Promise.resolve(home)
+          : Promise.reject(new Error("no realpath"));
+      }
       if (cmd === "sftp_write_file_content") {
         writeCalls.push((args ?? {}) as Record<string, unknown>);
         return Promise.resolve(undefined);
@@ -720,6 +725,36 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
     // The fallback actions are offered instead.
     expect(query("file-editor-save-copy")).not.toBeNull();
     expect(query("file-editor-download")).not.toBeNull();
+  });
+
+  it("pre-fills Save a copy with the file's basename under the remote home (#1535)", async () => {
+    mockSftpOnlyReadonly("/home/user");
+    render(REMOTE_RO_META);
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-save-copy") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // The read-only original is /etc/hosts; the default should point at the
+    // writable home, not the original path the save would fail on.
+    const input = docQuery("save-copy-input") as HTMLInputElement;
+    expect(input.value).toBe("/home/user/hosts");
+  });
+
+  it("falls back to a .copy sibling when the remote home can't be resolved (#1535)", async () => {
+    mockSftpOnlyReadonly(); // realpath rejects
+    render(REMOTE_RO_META);
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-save-copy") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const input = docQuery("save-copy-input") as HTMLInputElement;
+    expect(input.value).toBe("/etc/hosts.copy");
   });
 
   it("writes the buffer to the chosen writable remote path via Save a copy", async () => {

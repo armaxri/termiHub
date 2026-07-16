@@ -18,9 +18,7 @@ describe("suggestedSaveCopyPath", () => {
 
   it("falls back to a same-directory .copy sibling when home is unknown", () => {
     expect(suggestedSaveCopyPath("/etc/nginx/nginx.conf")).toBe("/etc/nginx/nginx.conf.copy");
-    expect(suggestedSaveCopyPath("/etc/nginx/nginx.conf", null)).toBe(
-      "/etc/nginx/nginx.conf.copy"
-    );
+    expect(suggestedSaveCopyPath("/etc/nginx/nginx.conf", null)).toBe("/etc/nginx/nginx.conf.copy");
     expect(suggestedSaveCopyPath("/etc/nginx/nginx.conf", "")).toBe("/etc/nginx/nginx.conf.copy");
     expect(suggestedSaveCopyPath("/etc/nginx/nginx.conf", "   ")).toBe(
       "/etc/nginx/nginx.conf.copy"

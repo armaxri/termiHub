@@ -19,6 +19,7 @@ import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { resolveLanguage } from "@/utils/languageMapping";
 import { getBasename } from "@/utils/formatters";
+import { suggestedSaveCopyPath } from "@/utils/saveCopyPath";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { getMonacoTheme } from "@/utils/monacoCustomLanguages";
 import { getCurrentTheme, onThemeChange } from "@/themes";
@@ -31,6 +32,7 @@ import {
   sftpHasExecCapability,
   sftpCheckWritable,
   sftpDownload,
+  sftpRealpath,
   storeCredential,
   resolveCredential,
   removeCredential,
@@ -170,6 +172,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // it locally.
   const [saveCopyDialogOpen, setSaveCopyDialogOpen] = useState(false);
   const [saveCopyBusy, setSaveCopyBusy] = useState(false);
+  // Connecting user's resolved remote home directory, used to pre-fill the
+  // "Save a copy…" dialog with a likely-writable destination (#1535). Null
+  // until resolved (or if resolution fails / the file is local).
+  const [remoteHome, setRemoteHome] = useState<string | null>(null);
 
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -276,6 +282,38 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       cancelled = true;
     };
   }, [meta.isRemote, meta.sftpSessionId]);
+
+  // Resolve the connecting user's remote home directory so the "Save a copy…"
+  // dialog can default to a likely-writable destination there (#1535). Passing
+  // "." to realpath yields the session's home. Best-effort: a failure just
+  // leaves home null and the dialog falls back to a same-directory sibling.
+  useEffect(() => {
+    let cancelled = false;
+    if (!meta.isRemote || !meta.sftpSessionId || meta.scratch) {
+      setRemoteHome(null);
+      return;
+    }
+    const sessionId = meta.sftpSessionId;
+    sftpRealpath(sessionId, ".")
+      .then((home) => {
+        if (cancelled) return;
+        setRemoteHome(home);
+        frontendLog("file_editor", `resolved remote home for sftp session ${sessionId}: ${home}`);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRemoteHome(null);
+        frontendLog(
+          "file_editor",
+          `remote home resolution failed for sftp session ${sessionId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [meta.isRemote, meta.sftpSessionId, meta.scratch]);
 
   // Probe the connecting user's actual write access to this remote file, in
   // parallel with the content read (it never blocks the load; a failure just
@@ -945,7 +983,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       />
       <SaveCopyDialog
         open={saveCopyDialogOpen}
-        defaultPath={effectivePath}
+        defaultPath={suggestedSaveCopyPath(effectivePath, remoteHome)}
         busy={saveCopyBusy}
         onSubmit={handleSaveCopySubmit}
         onCancel={() => setSaveCopyDialogOpen(false)}
