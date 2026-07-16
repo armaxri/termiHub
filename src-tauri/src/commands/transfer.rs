@@ -86,6 +86,7 @@ pub async fn ftp_download(
             &session_id,
             TransferDirection::Download,
             &file_name,
+            &remote_path,
             0,
         );
         let registry = (*registry).clone();
@@ -145,6 +146,7 @@ pub async fn ftp_upload(
             &session_id,
             TransferDirection::Upload,
             &file_name,
+            &remote_path,
             0,
         );
         let registry = (*registry).clone();
