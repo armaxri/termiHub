@@ -63,3 +63,9 @@ docs/concepts/_assets/.preview/
 # Python bytecode (e.g. scripts/*.py imported by tests)
 __pycache__/
 *.pyc
+
+# Generated data-testid catalog — a local, regenerated reference for system-test
+# authors, NOT committed. A single global committed file went stale on every
+# open branch whenever any testid changed on develop, breaking unrelated PRs'
+# CI (#1528). CI regenerates and verifies coverage instead of diffing it.
+tests/system/testid-catalog.md

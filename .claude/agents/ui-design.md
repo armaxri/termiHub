@@ -97,14 +97,13 @@ wrap motion in `@media (prefers-reduced-motion: reduce)`; use the shared enter/e
 - Debug logging goes through `frontendLog` (LogViewer), never `console.*`.
 - **TDD**: write/adjust the Vitest test first, watch it fail, then implement.
   A design change ships with at least a unit test or documented manual test.
-- **`data-testid` catalog**: adding, removing, or renaming ANY `data-testid`
-  (migrating a dialog to `Modal` adds `modal-close`; primitives forward the
-  hook) changes `tests/system/testid-catalog.md`. The autoformat PostToolUse
-  hook regenerates it automatically after each `.ts`/`.tsx` edit (#1084), so it
-  usually stays fresh on its own — just **commit the catalog change** alongside
-  your edit. If you edited outside the hook, regenerate manually with
-  `python scripts/build-testid-catalog.py`. CI fails on a stale catalog (both
-  the "Frontend Code Quality" catalog check and the "System-Test machinery" job).
+- **`data-testid` catalog**: `tests/system/testid-catalog.md` is a generated
+  reference of every `data-testid` for system-test authors. It is a local,
+  git-ignored artifact (not committed) — the autoformat PostToolUse hook
+  refreshes it after each `.ts`/`.tsx` edit, or regenerate it by hand with
+  `python scripts/build-testid-catalog.py`. **Do not commit it** (#1528). A
+  stale catalog no longer breaks CI; instead CI regenerates it from source and
+  verifies coverage in the "System-Test machinery" job.
 - Run `./scripts/check.sh` (lint/format/clippy mirror of CI) and `./scripts/test.sh`
   before declaring done. Formatting is auto-applied by the PostToolUse hook.
 

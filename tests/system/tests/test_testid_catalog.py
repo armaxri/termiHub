@@ -1,23 +1,23 @@
 """Unit tests for the data-testid catalog generator (#899).
 
 Loads ``scripts/build-testid-catalog.py`` directly (it is a script, not a
-package) and exercises its pure classification/scanning helpers, plus an
-end-to-end ``--check`` that guards the committed catalog against drift. No app
-build or Docker is involved.
+package) and exercises its pure classification/scanning helpers, plus a
+generate-and-verify pass that renders the catalog from the live ``src/`` tree
+and asserts known ids are covered. The catalog is no longer committed, so there
+is nothing to diff against and nothing to go stale (#1528); consistency is
+verified by regenerating in-memory here instead. No app build or Docker is
+involved.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "build-testid-catalog.py"
-CATALOG = REPO_ROOT / "tests" / "system" / "testid-catalog.md"
 
 
 def _load_module():
@@ -143,32 +143,29 @@ def test_collect_attributes_forwarded_prop_to_consumer_file(tmp_path, monkeypatc
         assert rel in literal[tid]["files"]
 
 
-# ── committed catalog stays in sync ─────────────────────────────────────────
+# ── generate-and-verify against the live source tree (#1528) ─────────────────
 
 
-def test_committed_catalog_is_up_to_date():
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--check"],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-    )
-    assert result.returncode == 0, (
-        f"{CATALOG.name} is stale — run `python scripts/build-testid-catalog.py`.\n"
-        f"{result.stderr}"
-    )
+@pytest.fixture(scope="module")
+def generated_catalog() -> str:
+    """The catalog rendered from the live ``src/`` tree.
+
+    The catalog is not committed, so freshness is meaningless — instead we scan
+    the real source and assert the generator still covers the ids system-test
+    authors rely on. A regression in the scanner (e.g. dropping forwarded props)
+    fails here without any dependence on a checked-in file that could go stale.
+    """
+    return mod.render(mod.collect())
 
 
-def test_catalog_contains_a_known_literal_id():
-    text = CATALOG.read_text(encoding="utf-8")
-    assert "`connection-editor-save`" in text
-    assert "`file-row-*`" in text
+def test_catalog_contains_a_known_literal_id(generated_catalog: str):
+    assert "`connection-editor-save`" in generated_catalog
+    assert "`file-row-*`" in generated_catalog
 
 
-def test_catalog_contains_forwarded_sidebar_prop_ids():
+def test_catalog_contains_forwarded_sidebar_prop_ids(generated_catalog: str):
     # Ids forwarded through SidebarListItem/SidebarStatusDot props must appear in
     # the catalog even though they are never written as a literal data-testid.
-    text = CATALOG.read_text(encoding="utf-8")
     for pattern in (
         "`server-item-*`",
         "`server-name-*`",
@@ -181,4 +178,4 @@ def test_catalog_contains_forwarded_sidebar_prop_ids():
         "`tunnel-status-*`",
         "`tunnel-type-*`",
     ):
-        assert pattern in text, f"{pattern} missing from catalog"
+        assert pattern in generated_catalog, f"{pattern} missing from catalog"

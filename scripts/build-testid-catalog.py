@@ -20,11 +20,19 @@ Each id is classified as:
 Usage::
 
     python scripts/build-testid-catalog.py            # (re)write the catalog
-    python scripts/build-testid-catalog.py --check     # verify it is up to date (CI)
     python scripts/build-testid-catalog.py --stdout    # print, don't write
 
-The catalog lives at ``tests/system/testid-catalog.md``. Run ``--check`` in CI so
-the catalog never silently drifts from the source.
+The catalog lives at ``tests/system/testid-catalog.md`` and is a **local,
+regenerated artifact** — it is git-ignored, not committed. It used to be a
+checked-in file guarded by a ``--check`` freshness gate in CI, but a single
+global generated file goes stale on *every* branch the moment any testid changes
+on ``develop``, so an unrelated PR's ``--check`` would fail until it merged
+``develop`` (#1528, the same churn per-branch fragments removed for
+``CHANGELOG.md``). Instead of diffing a committed file, CI now regenerates the
+catalog from source and verifies coverage in
+``tests/system/tests/test_testid_catalog.py``. Regenerate locally whenever you
+want a fresh reference (the autoformat hook also refreshes it after ``.ts``/
+``.tsx`` edits).
 
 Requires: Python 3.8+ (standard library only).
 """
@@ -289,7 +297,8 @@ def render(buckets: "dict[str, dict]") -> str:
         "source — the #1 authoring error when porting system tests (#899).",
         "",
         "- **Regenerate:** `python scripts/build-testid-catalog.py`",
-        "- **Verify freshness (CI):** `python scripts/build-testid-catalog.py --check`",
+        "- **Not committed:** a local, git-ignored artifact; CI regenerates and "
+        "verifies coverage instead of diffing it (#1528).",
     ]
 
     lines += _section(
@@ -334,13 +343,7 @@ def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(
         description="Generate the data-testid catalog for system-test authors."
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--check",
-        action="store_true",
-        help="verify the committed catalog is up to date; exit 1 if stale (CI).",
-    )
-    group.add_argument(
+    parser.add_argument(
         "--stdout",
         action="store_true",
         help="print the catalog to stdout instead of writing the file.",
@@ -351,19 +354,6 @@ def main(argv: "list[str] | None" = None) -> int:
 
     if args.stdout:
         sys.stdout.write(content)
-        return 0
-
-    if args.check:
-        current = CATALOG_PATH.read_text(encoding="utf-8") if CATALOG_PATH.exists() else ""
-        if current != content:
-            rel = CATALOG_PATH.relative_to(REPO_ROOT).as_posix()
-            print(
-                f"ERROR: {rel} is out of date.\n"
-                "Regenerate it with: python scripts/build-testid-catalog.py",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"{CATALOG_PATH.relative_to(REPO_ROOT).as_posix()} is up to date.")
         return 0
 
     # Force LF newlines so regenerating on Windows (e.g. from the autoformat
