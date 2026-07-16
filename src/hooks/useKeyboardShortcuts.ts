@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import {
   processKeyEvent,
   onChordStateChange,
@@ -9,6 +8,7 @@ import {
   isEventFromTerminal,
   getActionScope,
 } from "@/services/keybindings";
+import { CONTEXT_COMMANDS } from "@/services/contextCommands";
 import {
   activeContextFromTab,
   isEventFromTextInput,
@@ -18,6 +18,11 @@ import {
 /**
  * Global keyboard shortcuts for the application.
  * Uses the KeybindingService's chord-aware processKeyEvent() for matching.
+ *
+ * Context-bound actions (focus-panel, tab close/next/prev, terminal find/clear)
+ * are executed via the shared {@link CONTEXT_COMMANDS} registry so the keyboard
+ * handler and the command palette run identical logic against the focused
+ * panel/terminal.
  */
 export function useKeyboardShortcuts() {
   // Capture-phase interception for zoom-panel: must fire before Monaco (and other
@@ -35,13 +40,6 @@ export function useKeyboardShortcuts() {
     window.addEventListener("keydown", handleZoomCapture, { capture: true });
     return () => window.removeEventListener("keydown", handleZoomCapture, { capture: true });
   }, []);
-
-  const addTab = useAppStore((s) => s.addTab);
-  const rootPanel = useAppStore((s) => s.rootPanel);
-  const activePanelId = useAppStore((s) => s.activePanelId);
-  const closeTab = useAppStore((s) => s.closeTab);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
-  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
 
   useEffect(() => {
     // Wire chord state changes to the store for StatusBar display
@@ -67,8 +65,6 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      const allLeaves = getAllLeaves(rootPanel);
-
       // Context-aware routing: when an editor or input surface owns this combo,
       // step aside (no preventDefault) so the focused widget handles it. The
       // setting lets users restore the old global-first behavior. Global-scoped
@@ -82,56 +78,25 @@ export function useKeyboardShortcuts() {
         }
       }
 
+      // Context-bound actions (focus-panel, tab close/next/prev, terminal
+      // find/clear) run through the shared registry so palette and keyboard
+      // behaviour stay identical. Availability is resolved inside run().
+      if (action in CONTEXT_COMMANDS) {
+        e.preventDefault();
+        CONTEXT_COMMANDS[action].run();
+        return;
+      }
+
       switch (action) {
         case "toggle-sidebar":
           e.preventDefault();
-          toggleSidebar();
+          useAppStore.getState().toggleSidebar();
           break;
 
         case "new-terminal":
           e.preventDefault();
-          addTab("Terminal", "local");
+          useAppStore.getState().addTab("Terminal", "local");
           break;
-
-        case "close-tab": {
-          e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          if (!panel?.activeTabId) break;
-          const tabId = panel.activeTabId;
-          const confirmEnabled = useAppStore.getState().settings.confirmCloseTabOnShortcut ?? true;
-          if (confirmEnabled) {
-            const activeTab = panel.tabs.find((t) => t.id === tabId);
-            useAppStore.getState().setPendingShortcutCloseConfirm({
-              kind: "tab",
-              tabId,
-              panelId: panel.id,
-              label: activeTab?.title ?? "this tab",
-            });
-          } else {
-            closeTab(tabId, panel.id);
-          }
-          break;
-        }
-
-        case "next-tab": {
-          e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          if (!panel || panel.tabs.length < 2) break;
-          const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
-          const nextIdx = (currentIdx + 1) % panel.tabs.length;
-          setActiveTab(panel.tabs[nextIdx].id, panel.id);
-          break;
-        }
-
-        case "prev-tab": {
-          e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          if (!panel || panel.tabs.length < 2) break;
-          const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
-          const prevIdx = (currentIdx - 1 + panel.tabs.length) % panel.tabs.length;
-          setActiveTab(panel.tabs[prevIdx].id, panel.id);
-          break;
-        }
 
         case "show-shortcuts":
           e.preventDefault();
@@ -147,16 +112,6 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           useAppStore.getState().setCommandPaletteOpen(true);
           break;
-
-        case "clear-terminal": {
-          e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          const tabId = panel?.activeTabId;
-          if (tabId) {
-            window.dispatchEvent(new CustomEvent("termihub:clear-terminal", { detail: { tabId } }));
-          }
-          break;
-        }
 
         case "split-right":
           e.preventDefault();
@@ -187,38 +142,6 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           useAppStore.getState().zoomReset();
           break;
-
-        case "focus-up":
-        case "focus-down":
-        case "focus-left":
-        case "focus-right": {
-          e.preventDefault();
-          const dir = action.replace("focus-", "") as FocusDirection;
-          const currentPanel = allLeaves.find((p) => p.id === activePanelId);
-          if (!currentPanel) break;
-          const target = findAdjacentLeaf(rootPanel, currentPanel.id, dir);
-          if (target) {
-            useAppStore.getState().setActivePanel(target.id);
-            if (target.activeTabId) {
-              window.dispatchEvent(
-                new CustomEvent("termihub:focus-terminal", {
-                  detail: { tabId: target.activeTabId },
-                })
-              );
-            }
-          }
-          break;
-        }
-
-        case "find-in-terminal": {
-          e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          const activeTab = panel?.tabs.find((t) => t.id === panel.activeTabId);
-          if (activeTab?.contentType === "terminal") {
-            useAppStore.getState().toggleTerminalSearch(activeTab.id);
-          }
-          break;
-        }
 
         case "new-tab-group":
           e.preventDefault();
@@ -270,5 +193,5 @@ export function useKeyboardShortcuts() {
       window.removeEventListener("keydown", handleKeyDown);
       cancelChord();
     };
-  }, [addTab, rootPanel, activePanelId, closeTab, setActiveTab, toggleSidebar]);
+  }, []);
 }
