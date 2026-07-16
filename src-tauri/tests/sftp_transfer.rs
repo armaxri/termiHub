@@ -153,6 +153,7 @@ async fn cancel_mid_transfer_cleans_up_partial_file() {
         session_id: "s".to_string(),
         direction: TransferDirection::Download,
         file_name: "100mb.bin".to_string(),
+        path: "/home/testuser/sftp-test/large-files/100mb.bin".to_string(),
         total: 100 * 1024 * 1024,
     };
 
@@ -275,6 +276,7 @@ async fn browsing_stays_live_during_transfer() {
         session_id: "s".to_string(),
         direction: TransferDirection::Download,
         file_name: "100mb.bin".to_string(),
+        path: "/home/testuser/sftp-test/large-files/100mb.bin".to_string(),
         total: 100 * 1024 * 1024,
     };
 
