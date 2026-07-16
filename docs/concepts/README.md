@@ -89,6 +89,7 @@ These features have something built, but there are meaningful gaps. See the
 | [unified-test-system.md](partial/unified-test-system.md)                             | WebdriverIO E2E tests + YAML manual runner (separate systems)                                        | Shared test inventory, WebdriverIO ↔ YAML bridge                                                                                       |
 | [webdriverio-unified-testing.md](partial/webdriverio-unified-testing.md)             | WebdriverIO E2E tests                                                                                | `@guided`/`@automated` tag system, guided-mode runner                                                                                  |
 | [ui-modernization.html](partial/ui-modernization.html)                               | Shared token'd primitives (`src/components/ui/`), toast hub, guardrails — all 5 phases (#1059–#1063) | Full screen migration / token adoption still ratcheting; concept ledger not re-synced                                                  |
+| [shell-context-menu-integration.html](partial/shell-context-menu-integration.html)   | Spawn core (IPC + `termiHub spawn` CLI), external-trigger open + focus + toast, config model, Windows/macOS/Linux registration, settings panel, Docker/Podman container spawn (#1364–#1372) | In-app Session Picker dialog (#1366); the `termihub://spawn` deep-link source (deliberately deferred)                                  |
 
 ---
 
@@ -107,7 +108,6 @@ Not started yet — realistic and planned for the near to medium term.
 | [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                                                                  |
 | [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                                                                    |
 | [remote-agent-update-strategy.html](backlog/remote-agent-update-strategy.html)                         | Deliver updated agent binaries to remote hosts                                                                                              |
-| [shell-context-menu-integration.html](backlog/shell-context-menu-integration.html)                     | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                                                                   |
 
 ---
 
