@@ -107,6 +107,11 @@ impl UpdateStrategy {
 pub struct UpdateConfig {
     /// Master gate — when `false` the background task is never spawned.
     pub allow_self_update: bool,
+    /// Delay before the *first* check runs. Zero in production (the first check
+    /// fires immediately on spawn); the live-agent integration test
+    /// (`agent/tests/self_update_integration.rs`) uses a non-zero value so it can
+    /// establish a session before the poll fires. See [`UpdateConfig::from_env`].
+    pub initial_delay: Duration,
     /// Interval between checks.
     pub check_interval: Duration,
     /// GitHub `releases/latest` API URL.
@@ -127,17 +132,42 @@ pub struct UpdateConfig {
 
 impl UpdateConfig {
     /// Build the production configuration for the current agent process.
+    ///
+    /// Three optional environment variables let an integration test point a
+    /// **live** agent at a mock GitHub server without any real network or a
+    /// host-arch-specific asset; all three are unset in production, where the
+    /// defaults below reproduce the shipping behaviour exactly:
+    ///
+    /// - `TERMIHUB_AGENT_UPDATE_API_URL` — override the `releases/latest` URL.
+    /// - `TERMIHUB_AGENT_UPDATE_ASSET_SUFFIX` — force the published asset suffix
+    ///   (e.g. `linux-x64`) regardless of the host architecture, so the mock can
+    ///   advertise a downloadable asset the running test binary matches.
+    /// - `TERMIHUB_AGENT_UPDATE_INITIAL_DELAY_MS` — delay the first poll so the
+    ///   test can open a session first (see [`UpdateConfig::initial_delay`]).
+    ///
+    /// See `agent/tests/self_update_integration.rs`.
     pub fn from_env(
         allow_self_update: bool,
         update_strategy: UpdateStrategy,
         current_version: &str,
     ) -> Self {
+        let api_url = std::env::var("TERMIHUB_AGENT_UPDATE_API_URL")
+            .unwrap_or_else(|_| github::releases_latest_url(DEFAULT_REPO));
+        let asset_suffix = std::env::var("TERMIHUB_AGENT_UPDATE_ASSET_SUFFIX")
+            .ok()
+            .or_else(|| current_asset_suffix().map(str::to_string));
+        let initial_delay = std::env::var("TERMIHUB_AGENT_UPDATE_INITIAL_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::ZERO);
         Self {
             allow_self_update,
+            initial_delay,
             check_interval: DEFAULT_CHECK_INTERVAL,
-            api_url: github::releases_latest_url(DEFAULT_REPO),
+            api_url,
             current_version: current_version.to_string(),
-            asset_suffix: current_asset_suffix().map(str::to_string),
+            asset_suffix,
             staging_dir: AgentState::config_dir().join("updates"),
             user_agent: format!("termihub-agent/{current_version}"),
             update_strategy,
@@ -186,7 +216,12 @@ pub fn spawn_self_update_task(
             }
         };
 
-        let mut interval = tokio::time::interval(config.check_interval);
+        // First tick fires after `initial_delay` (zero in production → immediate),
+        // then every `check_interval`. The delay lets the integration test open a
+        // session before the poll runs, so the never-interrupt guarantee can be
+        // exercised deterministically.
+        let start = tokio::time::Instant::now() + config.initial_delay;
+        let mut interval = tokio::time::interval_at(start, config.check_interval);
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
@@ -438,6 +473,7 @@ mod tests {
     ) -> UpdateConfig {
         UpdateConfig {
             allow_self_update: true,
+            initial_delay: Duration::ZERO,
             check_interval: DEFAULT_CHECK_INTERVAL,
             api_url,
             current_version: "0.2.1".to_string(),
