@@ -1104,6 +1104,78 @@ instead of silently falling back into **Local Sessions**. Requires Docker/Podman
    NOT have moved into **Local Sessions** — and that its **Kill** button (and the
    section **Kill All**) still terminates it. After killing, the row disappears.
 
+### Shell-integration registration — per-OS file-manager entries (SI-5/6/7)
+
+The "Open in termiHub" **registration** subsystem (`src-tauri/src/spawn/registry.rs`, epic #1363)
+is heavily unit-tested for the artefacts it writes and losslessly removes — Windows registry keys
+(#1368), macOS `.workflow` bundles / `NSServices` (#1369/#1409), and Linux `.desktop` / Nautilus /
+KDE / Thunar files (#1370/#1397). What **cannot** be automated is whether a real OS file manager
+actually surfaces the entry on right-click, the full install → click → uninstall round-trip through
+that file manager, and the binary-path **staleness banner**. Those are consolidated here as one
+per-OS manual pass. All registration is **user-level — it must never prompt for admin/elevation.**
+See the concept
+[`shell-context-menu-integration.html`](../docs/concepts/partial/shell-context-menu-integration.html)
+and [ADR-12](architecture.md#adr-12-multi-instance-with-a-spawn-ipc-rendezvous).
+
+**Common setup (all platforms).**
+
+1. Build and launch the app. Open **Settings → Shell Integration**.
+2. Ensure at least one entry exists (e.g. the default "Open in termiHub", target: folders). Add a
+   second named entry so the multi-entry surfaces are exercised.
+3. Click **Install** (or run `termiHub install-shell-integration` from a terminal). Confirm it
+   completes **without any elevation/UAC/sudo prompt** and the panel shows the entries as installed.
+
+**Windows (SI-5, #1368).**
+
+1. After installing, right-click a **folder** in Explorer → confirm an **Open in termiHub** entry
+   (with the app icon) appears; right-click **empty space inside a folder** (Background) and the
+   **folder itself** per the entry's targets.
+2. With **three or more** entries configured, confirm they collapse into a single **cascading
+   submenu** rather than cluttering the top level.
+3. Mark an entry **Extended** in settings and re-install → it appears only under
+   **Shift**+right-click, not the normal menu.
+4. Click an entry → the running termiHub window comes to the foreground and opens a session tab
+   `cd`'d into that directory (per the spawn manual tests above).
+5. Click **Uninstall** (or `termiHub uninstall-shell-integration`) → confirm **every** entry is gone
+   from all three right-click contexts and no orphan `HKCU\Software\Classes\…\shell\termihub_*` keys
+   remain (`reg query` under `Directory`, `Directory\Background`, `*`).
+
+**macOS (SI-6, #1369/#1409).**
+
+1. After installing, in **Finder** select a folder → **right-click → Quick Actions** (or the
+   **Services** submenu) → confirm the **Open in termiHub** entry appears. It may require toggling it
+   on once in **System Settings → Keyboard → Keyboard Shortcuts → Services**.
+2. Trigger it → the running app focuses and opens a tab `cd`'d into the selection; verify the
+   app-level entry also appears in the application **Services** menu (served by the native
+   `NSServices` provider), not only as a per-entry Quick Action.
+3. Click **Uninstall** → confirm the `~/Library/Services/*.workflow` bundles termiHub created are
+   removed and the Quick Action disappears from Finder (a Finder/`pbs` refresh or re-login may be
+   needed for the menu cache).
+
+**Linux (SI-7, #1370/#1397).**
+
+1. After installing on a box with **Nautilus (GNOME)**, **Dolphin/KDE**, and/or **Thunar (XFCE)**,
+   right-click a folder in each installed file manager → confirm the **Open in termiHub** action
+   appears. Only file managers actually detected on the machine should have been written to.
+2. Trigger it → the running app focuses and opens a tab `cd`'d into the directory.
+3. Confirm the generated launchers reference the themed `termihub` icon and that the XDG
+   `.desktop` "Open With" entry also lists termiHub.
+4. Click **Uninstall** → confirm the termiHub-owned files are removed
+   (`~/.local/share/applications/termihub-*.desktop`, Nautilus scripts, KDE
+   `kservices5`/`kio/servicemenus` entries, and termiHub's actions removed from Thunar's shared
+   `uca.xml`) while **foreign** entries in `uca.xml` are left intact.
+
+**Binary-path staleness banner (all platforms, #1367/#1371).**
+
+1. With shell integration installed, **move or rename** the app binary/bundle (or copy a portable
+   install to a new folder and launch it from there) so the running exe path no longer matches the
+   `registeredExePath` written at install time.
+2. Launch termiHub from the new location → confirm a **reinstall banner** appears noting the
+   registration points at a stale path.
+3. Re-install from the banner (or Settings) → the banner clears and the context-menu entries now
+   launch the app from its new location. This is the documented mitigation for the portable-mode
+   tension (registration writes absolute exe paths into system-global locations).
+
 ### Native-dialog → Modal migration (#1348)
 
 Verifies the three flows that previously used native `window.prompt` /
