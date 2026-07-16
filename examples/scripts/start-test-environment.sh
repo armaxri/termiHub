@@ -31,10 +31,10 @@ echo "Building and starting test containers..."
 docker compose -f "$DOCKER_DIR/docker-compose.yml" up -d --build
 
 # --- Wait for SSH to be ready ---
-echo "Waiting for SSH server on port 2222..."
+echo "Waiting for SSH server on port 2214..."
 MAX_WAIT=30
 WAITED=0
-while ! nc -z 127.0.0.1 2222 2>/dev/null; do
+while ! nc -z 127.0.0.1 2214 2>/dev/null; do
     sleep 1
     WAITED=$((WAITED + 1))
     if [ "$WAITED" -ge "$MAX_WAIT" ]; then
@@ -50,7 +50,7 @@ echo "==========================================="
 echo "  Test Environment Running"
 echo "==========================================="
 echo ""
-echo "  SSH:    127.0.0.1:2222"
+echo "  SSH:    127.0.0.1:2214"
 echo "  Telnet: 127.0.0.1:2323"
 echo ""
 echo "  Username: testuser"
