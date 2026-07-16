@@ -213,16 +213,19 @@ args) without side effects. See
 
 Stale selectors are the most common authoring error.
 **[`scripts/build-testid-catalog.py`](../scripts/build-testid-catalog.py)** scans
-`src/**` for every `data-testid` and writes a checked-in catalog at
-[`tests/system/testid-catalog.md`](../tests/system/testid-catalog.md), so an
-author can confirm an id (and its exact form) without spelunking components.
-Dynamic ids (`file-row-${name}`, `${testIdPrefix}-download`) are rendered as `*`
-glob patterns (`file-row-*`, `*-download`); prop-supplied ids are listed as
-**indirect**. CI runs `--check` so the catalog never drifts.
+`src/**` for every `data-testid` and writes a catalog at
+`tests/system/testid-catalog.md`, so an author can confirm an id (and its exact
+form) without spelunking components. Dynamic ids (`file-row-${name}`,
+`${testIdPrefix}-download`) are rendered as `*` glob patterns (`file-row-*`,
+`*-download`); prop-supplied ids are listed as **indirect**. The catalog is a
+**local, git-ignored artifact** — not committed. A single global committed file
+went stale on every open branch the moment any testid changed on `develop`,
+breaking unrelated PRs' CI (#1528); CI now regenerates the catalog from source
+and verifies coverage instead of diffing a checked-in file.
 
 ```sh
-python scripts/build-testid-catalog.py            # regenerate
-python scripts/build-testid-catalog.py --check     # CI freshness gate
+python scripts/build-testid-catalog.py            # regenerate the local catalog
+python scripts/build-testid-catalog.py --stdout    # print without writing
 ```
 
 **Impact:** kills the #1 source of "element not found". **Effort:** medium.

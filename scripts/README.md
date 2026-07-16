@@ -21,7 +21,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `release-check`           | Validate release readiness — version consistency, changelog (incl. unconsolidated `docs/changes/` fragments), tests, quality checks, git state, branch, and code markers                                                                                                                                                             |
 | `smoke-test`              | Post-install smoke test — launches the built app, verifies basic UI functionality, and confirms clean shutdown                                                                                                                                                                                                                       |
 | `test-manual.py`          | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports                                                                                                                                                                                                           |
-| `build-testid-catalog.py` | Scan `src/**` for every `data-testid` into a checked-in catalog (`tests/system/testid-catalog.md`) so test authors confirm a selector without reading components; `--check` gates freshness in CI                                                                                                                                    |
+| `build-testid-catalog.py` | Scan `src/**` for every `data-testid` into a local, git-ignored catalog (`tests/system/testid-catalog.md`) so test authors confirm a selector without reading components; not committed — CI regenerates and verifies coverage instead of diffing it (#1528)                                                                      |
 
 ## Typical workflow
 
@@ -86,8 +86,7 @@ python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume pre
 # data-testid catalog (for system-test authors)
 # The autoformat PostToolUse hook regenerates this automatically after a source
 # .tsx edit (#1084); run it by hand only when editing outside that flow.
-python scripts/build-testid-catalog.py            # Regenerate tests/system/testid-catalog.md
-python scripts/build-testid-catalog.py --check    # Verify it is up to date (CI gate)
+python scripts/build-testid-catalog.py            # Regenerate the local (git-ignored) catalog
 python scripts/build-testid-catalog.py --stdout   # Print without writing
 
 # Post-install smoke test

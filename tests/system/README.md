@@ -102,8 +102,10 @@ running container runtime (`CONTAINER_CMD=podman` to force Podman).
 ## Confirming a `data-testid` — the catalog
 
 Stale or dynamic selectors are the #1 authoring error when porting a test. Before
-guessing, check [`testid-catalog.md`](testid-catalog.md) — a generated index of
-**every** `data-testid` the app renders, scanned from `src/**`:
+guessing, regenerate and check `testid-catalog.md` — a generated index of
+**every** `data-testid` the app renders, scanned from `src/**`. It is a local,
+git-ignored artifact (not committed): run the generator to produce it, or let the
+autoformat hook refresh it after a `.ts`/`.tsx` edit.
 
 - **Literal** ids match exactly (`connection-editor-save`).
 - **Dynamic** ids show a `*` glob for the interpolated part — a row keyed by name
@@ -112,11 +114,12 @@ guessing, check [`testid-catalog.md`](testid-catalog.md) — a generated index o
 - **Indirect** ids are passed in by a prop at the call site; the real id is
   defined where the component is used, not at the `data-testid`.
 
-Regenerate it after adding or renaming ids (CI fails otherwise):
+Regenerate it whenever you want a fresh reference (the catalog is not committed,
+so a stale one never breaks CI):
 
 ```sh
-python scripts/build-testid-catalog.py            # rewrite the catalog
-python scripts/build-testid-catalog.py --check     # what CI runs
+python scripts/build-testid-catalog.py            # rewrite the local catalog
+python scripts/build-testid-catalog.py --stdout    # print without writing
 ```
 
 ## Setup (manual, if you prefer)
