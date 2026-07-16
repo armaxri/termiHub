@@ -1904,6 +1904,25 @@ tree contains a symlink (create one on the host, e.g. `ln -s data linkdir` and
    browser must **follow** it and list the target directory's contents.
 3. Confirm a non-symlink file shows no link icon and no `→ target` hint.
 
+### Docker, WSL, and SFTP symlink icon and target (#1523)
+
+Extends the #1513 symlink handling to the Docker, WSL, and SFTP browsers. The
+Docker `find`/`stat` parsers are covered by unit tests
+(`cargo test -p termihub-core --all-features --lib backends::docker`); the SFTP
+`readlink` and WSL `symlink_metadata` paths need a live server/distribution, so
+confirm them manually. In each case, on the host create a symlink to a file and
+one to a directory (e.g. `ln -s data linkdir` and `ln -s data/file.bin linkfile`).
+
+1. **Docker** — connect to a running container, browse to a directory holding
+   symlinks. Each link row shows the distinct **link-badge icon** and an inline
+   `→ target` hint; a directory symlink follows into the target on double-click.
+2. **SFTP (SSH)** — browse an SSH connection's directory containing symlinks.
+   Each link row shows the link-badge icon and the `→ target` hint (resolved via
+   a best-effort `readlink`); a plain file shows neither.
+3. **WSL** (Windows only) — browse a WSL distribution's directory containing
+   symlinks. Each link row shows the link-badge icon and, where the target could
+   be read, the `→ target` hint.
+
 ### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
 
 Verifies the shared transfer-queue model (queue / bounded concurrency /
