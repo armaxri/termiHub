@@ -31,10 +31,15 @@ describe("buildCommands", () => {
     expect(ids).toContain("toggle-sidebar");
     expect(ids).toContain("open-settings");
     expect(ids).toContain("zoom-in");
-    // …while the palette's own shortcut and context-bound actions are not.
+    // …as are the context-bound commands added in #1527…
+    expect(ids).toContain("close-tab");
+    expect(ids).toContain("next-tab");
+    expect(ids).toContain("prev-tab");
+    expect(ids).toContain("focus-up");
+    expect(ids).toContain("clear-terminal");
+    expect(ids).toContain("find-in-terminal");
+    // …while the palette's own shortcut has no runner and stays out.
     expect(ids).not.toContain("command-palette");
-    expect(ids).not.toContain("close-tab");
-    expect(ids).not.toContain("focus-up");
   });
 
   it("runs the matching store action", () => {
@@ -43,5 +48,25 @@ describe("buildCommands", () => {
     const cmd = buildCommands().find((c) => c.id === "toggle-sidebar");
     cmd!.run();
     expect(toggleSidebar).toHaveBeenCalledOnce();
+  });
+
+  it("marks store-only commands as always available", () => {
+    const cmd = buildCommands().find((c) => c.id === "toggle-sidebar");
+    expect(cmd!.available).toBe(true);
+  });
+
+  it("marks context-bound commands unavailable when no target applies", () => {
+    // Fresh state: empty active panel, single leaf, no terminal — every
+    // context-bound command is a no-op and reports itself unavailable.
+    const commands = buildCommands();
+    for (const id of ["close-tab", "next-tab", "focus-up", "clear-terminal", "find-in-terminal"]) {
+      expect(commands.find((c) => c.id === id)!.available).toBe(false);
+    }
+  });
+
+  it("marks a context-bound command available once its target exists", () => {
+    useAppStore.getState().addTab("Shell", "local");
+    const available = buildCommands().find((c) => c.id === "close-tab")!.available;
+    expect(available).toBe(true);
   });
 });
