@@ -32,6 +32,18 @@
   border-left-color: var(--accent-color);
 }
 
+/* Context-bound command with no applicable target: shown for discoverability
+   but visibly inert (it does nothing on Enter/click). */
+.command-palette__item--disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.command-palette__item--disabled .command-palette__icon,
+.command-palette__item--disabled .command-palette__accelerator {
+  color: var(--text-disabled);
+}
+
 .command-palette__icon {
   display: inline-flex;
   flex-shrink: 0;

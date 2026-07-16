@@ -639,8 +639,11 @@ Give each parallel checkout a distinct row:
 | dev3     | `1450`     | `2252`           | `termihub-test-3` | `3000`             |
 
 Note the different step per key: `test_port_offset` jumps by **1000** (it is
-added to _every_ base test port, and the base ports span `2201…8080`, so the step
-must exceed that whole span or ranges would overlap); `dev_port` and
+added to _every_ base test port; the scheme is collision-free **not** because
+`1000` exceeds the `2201…8080` base-port span — it does not — but because no two
+base ports differ by an exact multiple of `1000`, so no checkout's offset port
+ever lands on another checkout's. Keep that invariant in mind when adding a base
+port); `dev_port` and
 `dev_agent_port` step by **10** (`dev_port` reserves `dev_port + 1` for Vite HMR);
 and `compose_project` just increments its numeric suffix (a name, not a port
 range). With offset `1000` the SSH containers move to `3201…3211`, telnet to
@@ -667,13 +670,15 @@ every entry point honours. The resolver lives in two mirrored forms:
   fixtures so the harness publishes/looks up the same offset ports and runs
   `compose` under the same project name.
 
-| Resource                         | Base (offset 0)                 | Derivation                                                                 |
-| -------------------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| Docker container / network names | `termihub-*` / `termihub-*-net` | Prefixed with `compose_project` (`COMPOSE_PROJECT_NAME`).                  |
-| SSH / telnet / HTTP host ports   | `2201–2211`, `2301`, `8080`     | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`. |
-| SSH-tunnel test ports            | `18081–18088`                   | `base + test_port_offset`.                                                 |
-| Virtual serial device paths      | `/tmp/termihub-serial-{a,b}`    | Suffixed with `compose_project`.                                           |
-| `tauri-driver` (E2E) port        | `4444`                          | `4444 + test_port_offset`.                                                 |
+| Resource                         | Base (offset 0)                    | Derivation                                                                    |
+| -------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| Docker container / network names | `termihub-*` / `termihub-*-net`    | Prefixed with `compose_project` (`COMPOSE_PROJECT_NAME`).                     |
+| SSH / telnet / HTTP host ports   | `2201–2213`, `2301`, `8080`        | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
+| FTP / FTPS host ports            | `2401`, `2402`, PASV `30000–30019` | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
+| Quick-start (E2E) host ports     | `2214` (SSH), `2323` (telnet)      | `base + test_port_offset`, published by `examples/docker/docker-compose.yml`. |
+| SSH-tunnel test ports            | `18081–18088`                      | `base + test_port_offset`.                                                    |
+| Virtual serial device paths      | `/tmp/termihub-serial-{a,b}`       | Suffixed with `compose_project`.                                              |
+| `tauri-driver` (E2E) port        | `4444`                             | `4444 + test_port_offset`.                                                    |
 
 The Rust integration tests reach the jump-host target through its **Compose
 service-name network alias** (`ssh-jumphost-target`, `ssh-jumphost-bastion`),

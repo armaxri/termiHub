@@ -19,6 +19,12 @@ type PaletteEntry =
       label: string;
       /** Effective accelerator string, or null. */
       accelerator: string | null;
+      /**
+       * Whether the command has an applicable target in the current context.
+       * Context-bound commands (focus-panel, tab close/next/prev, terminal
+       * find/clear) are disabled and non-activatable when false.
+       */
+      available: boolean;
       /** Activate the entry. */
       run: () => void;
     }
@@ -45,6 +51,11 @@ export function CommandPalette(): React.ReactElement {
   const open = useAppStore((s) => s.commandPaletteOpen);
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const connections = useAppStore((s) => s.connections);
+  // Context-bound command availability depends on live panel/terminal state;
+  // subscribe so the entry list (and its disabled affordances) recompute when
+  // the focused panel, its tabs, or the active panel change.
+  const rootPanel = useAppStore((s) => s.rootPanel);
+  const activePanelId = useAppStore((s) => s.activePanelId);
   const { connect } = useConnectSavedConnection();
 
   const [query, setQuery] = useState("");
@@ -59,6 +70,7 @@ export function CommandPalette(): React.ReactElement {
       key: `command:${cmd.id}`,
       label: cmd.label,
       accelerator: cmd.accelerator,
+      available: cmd.available,
       run: cmd.run,
     }));
     const connectionEntries: PaletteEntry[] = connections.map((conn) => ({
@@ -69,7 +81,12 @@ export function CommandPalette(): React.ReactElement {
       connection: conn,
     }));
     return [...commandEntries, ...connectionEntries];
-  }, [connections]);
+    // buildCommands() reads live panel/terminal state via the store to compute
+    // each context command's availability; rootPanel and activePanelId are listed
+    // so the entries (and their disabled affordances) recompute when focus moves,
+    // even though they are not referenced directly in this closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections, rootPanel, activePanelId]);
 
   // Ranked results. An empty query returns every entry in declaration order.
   const results = useMemo<PaletteEntry[]>(() => {
@@ -103,6 +120,10 @@ export function CommandPalette(): React.ReactElement {
   const activate = useCallback(
     (entry: PaletteEntry | undefined) => {
       if (!entry) return;
+      // A context-bound command with no applicable target is inert: leave the
+      // palette open so the user sees it did nothing (and why, via the disabled
+      // affordance) rather than silently dismissing.
+      if (entry.kind === "command" && !entry.available) return;
       // Close first so the palette never stacks over a follow-on dialog (e.g.
       // the password prompt a connect may trigger).
       setOpen(false);
@@ -174,40 +195,45 @@ export function CommandPalette(): React.ReactElement {
             aria-label="Commands and connections"
             ref={listRef}
           >
-            {results.map((entry, index) => (
-              <li
-                key={entry.key}
-                data-index={index}
-                role="option"
-                aria-selected={index === activeIndex}
-                className={`command-palette__item${
-                  index === activeIndex ? " command-palette__item--active" : ""
-                }`}
-                onMouseMove={() => setActiveIndex(index)}
-                onClick={() => activate(entry)}
-                data-testid={`command-palette-item-${entry.key}`}
-              >
-                <span className="command-palette__icon" aria-hidden="true">
+            {results.map((entry, index) => {
+              const disabled = entry.kind === "command" && !entry.available;
+              return (
+                <li
+                  key={entry.key}
+                  data-index={index}
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  aria-disabled={disabled || undefined}
+                  className={`command-palette__item${
+                    index === activeIndex ? " command-palette__item--active" : ""
+                  }${disabled ? " command-palette__item--disabled" : ""}`}
+                  title={disabled ? "Unavailable in the current context" : undefined}
+                  onMouseMove={() => setActiveIndex(index)}
+                  onClick={() => activate(entry)}
+                  data-testid={`command-palette-item-${entry.key}`}
+                >
+                  <span className="command-palette__icon" aria-hidden="true">
+                    {entry.kind === "command" ? (
+                      <TerminalSquare size={16} />
+                    ) : (
+                      <ConnectionIcon
+                        config={entry.connection.config}
+                        customIcon={entry.connection.icon}
+                        size={16}
+                      />
+                    )}
+                  </span>
+                  <span className="command-palette__label">{entry.label}</span>
                   {entry.kind === "command" ? (
-                    <TerminalSquare size={16} />
+                    entry.accelerator ? (
+                      <span className="command-palette__accelerator">{entry.accelerator}</span>
+                    ) : null
                   ) : (
-                    <ConnectionIcon
-                      config={entry.connection.config}
-                      customIcon={entry.connection.icon}
-                      size={16}
-                    />
+                    <span className="command-palette__type">{entry.connection.config.type}</span>
                   )}
-                </span>
-                <span className="command-palette__label">{entry.label}</span>
-                {entry.kind === "command" ? (
-                  entry.accelerator ? (
-                    <span className="command-palette__accelerator">{entry.accelerator}</span>
-                  ) : null
-                ) : (
-                  <span className="command-palette__type">{entry.connection.config.type}</span>
-                )}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

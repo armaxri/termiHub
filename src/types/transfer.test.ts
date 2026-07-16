@@ -128,6 +128,27 @@ describe("transferEntryFromProgress", () => {
     expect(entry.attempt).toBe(2);
     expect(entry.maxAttempts).toBe(3);
   });
+
+  it("takes the remote path from the event payload (#1531)", () => {
+    const entry = transferEntryFromProgress(
+      progress({ path: "/uploads/data.csv", transferred: 10 }),
+      undefined,
+      0
+    );
+    expect(entry.path).toBe("/uploads/data.csv");
+  });
+
+  it("prefers the event's path over a stale previous entry path", () => {
+    const prev: TransferEntry = {
+      ...transferEntryFromProgress(progress({ path: "/old/path.txt" }), undefined, 0),
+    };
+    const entry = transferEntryFromProgress(
+      progress({ path: "/new/path.txt", transferred: 20 }),
+      prev,
+      0
+    );
+    expect(entry.path).toBe("/new/path.txt");
+  });
 });
 
 describe("formatThroughput", () => {

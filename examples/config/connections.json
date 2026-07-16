@@ -11,12 +11,12 @@
   "connections": [
     {
       "id": "conn-docker-ssh",
-      "name": "Docker SSH (port 2222)",
+      "name": "Docker SSH (port 2214)",
       "config": {
         "type": "ssh",
         "config": {
           "host": "127.0.0.1",
-          "port": 2222,
+          "port": 2214,
           "username": "testuser",
           "authMethod": "password",
           "password": null,
@@ -28,12 +28,12 @@
     },
     {
       "id": "conn-docker-ssh-x11",
-      "name": "Docker SSH + X11 (port 2222)",
+      "name": "Docker SSH + X11 (port 2214)",
       "config": {
         "type": "ssh",
         "config": {
           "host": "127.0.0.1",
-          "port": 2222,
+          "port": 2214,
           "username": "testuser",
           "authMethod": "password",
           "password": null,

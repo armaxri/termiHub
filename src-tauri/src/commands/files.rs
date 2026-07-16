@@ -156,6 +156,7 @@ pub async fn sftp_download(
         session_id,
         direction: TransferDirection::Download,
         file_name: file_name_of(&remote_path),
+        path: remote_path.clone(),
         total,
     };
     let registry = (*registry).clone();
@@ -204,6 +205,7 @@ pub async fn sftp_upload(
         session_id,
         direction: TransferDirection::Upload,
         file_name: file_name_of(&local_path),
+        path: remote_path.clone(),
         total,
     };
     let registry = (*registry).clone();
