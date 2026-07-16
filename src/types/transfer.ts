@@ -44,7 +44,7 @@ export interface TransferEntry {
   direction: TransferDirection;
   /** Display name (file name). */
   name: string;
-  /** Remote path, when the backend supplies one (SFTP events currently do not). */
+  /** Remote path, when the backend supplies one (SFTP and FTP events now do, #1531). */
   path?: string;
   /** Derived lifecycle state. */
   state: TransferQueueState;
@@ -93,8 +93,9 @@ export function stateFromPhase(phase: TransferProgress["phase"]): TransferQueueS
  * byte/time delta against `prev` while the transfer is `active`.
  *
  * `prev` is the existing entry for this id (if any); it seeds the throughput
- * delta and preserves fields the event does not carry (`path`). `now` is the
- * current wall-clock ms (injected for deterministic tests).
+ * delta and preserves fields a given event may omit — the remote `path` is
+ * taken from the event when present (#1531) and otherwise carried over from
+ * `prev`. `now` is the current wall-clock ms (injected for deterministic tests).
  */
 export function transferEntryFromProgress(
   progress: TransferProgress,
@@ -134,7 +135,7 @@ export function transferEntryFromProgress(
     sessionId: progress.sessionId,
     direction: progress.direction,
     name: progress.fileName,
-    path: prev?.path,
+    path: progress.path ?? prev?.path,
     state,
     transferred: progress.transferred,
     totalBytes,
