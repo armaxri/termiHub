@@ -33,6 +33,9 @@ pub struct TransferSnapshot {
     pub session_id: String,
     pub direction: TransferDirection,
     pub file_name: String,
+    /// Remote path of the transferred file (#1531), for the Transfer Queue row.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub path: String,
     pub state: TransferStateTag,
     pub transferred: u64,
     pub total: u64,
@@ -69,6 +72,9 @@ pub struct TransferHandle {
     pub session_id: String,
     pub direction: TransferDirection,
     pub file_name: String,
+    /// Remote path of the transferred file (#1531), surfaced in snapshots and
+    /// `transfer-progress` events.
+    pub path: String,
     /// Hard-cancel primitive checked by the copy loop at each boundary.
     pub token: CancellationToken,
     control: Mutex<HandleControl>,
@@ -152,6 +158,7 @@ impl TransferHandle {
             session_id: self.session_id.clone(),
             direction: self.direction,
             file_name: self.file_name.clone(),
+            path: self.path.clone(),
             state: c.state.tag(),
             transferred: c.transferred,
             total: c.total,
@@ -285,6 +292,7 @@ impl TransferRegistry {
         session_id: &str,
         direction: TransferDirection,
         file_name: &str,
+        path: &str,
         total: u64,
     ) -> Arc<TransferHandle> {
         let handle = Arc::new(TransferHandle {
@@ -292,6 +300,7 @@ impl TransferRegistry {
             session_id: session_id.to_string(),
             direction,
             file_name: file_name.to_string(),
+            path: path.to_string(),
             token: CancellationToken::new(),
             control: Mutex::new(HandleControl {
                 state: TransferState::Queued,
@@ -540,7 +549,14 @@ mod tests {
     // --- Rich queue model (#1336) ---
 
     fn enq(reg: &TransferRegistry, id: &str, session: &str) -> Arc<TransferHandle> {
-        reg.enqueue(id, session, TransferDirection::Download, id, 100)
+        reg.enqueue(
+            id,
+            session,
+            TransferDirection::Download,
+            id,
+            &format!("/remote/{id}"),
+            100,
+        )
     }
 
     #[test]
@@ -552,6 +568,10 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].transfer_id, "a");
         assert_eq!(list[0].state, TransferStateTag::Queued);
+        assert_eq!(
+            list[0].path, "/remote/a",
+            "the remote path is carried into the snapshot (#1531)"
+        );
     }
 
     #[test]
