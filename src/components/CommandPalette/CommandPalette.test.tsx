@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { getAllLeaves } from "@/utils/panelTree";
 import { CommandPalette } from "./CommandPalette";
 import type { SavedConnection } from "@/types/connection";
 
@@ -139,5 +140,41 @@ describe("CommandPalette", () => {
   it("shows an empty state when nothing matches", () => {
     typeInto("zzzznomatch");
     expect(document.querySelector(".command-palette__empty")).not.toBeNull();
+  });
+
+  it("surfaces a context-bound command disabled when no target applies", () => {
+    // The initial state has an empty active panel, so Close Tab has no target.
+    typeInto("close tab");
+    expect(activeLabel()).toBe("Close Tab");
+    const active = document.querySelector('[role="option"][aria-selected="true"]');
+    expect(active?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("does not run a disabled context command on Enter and keeps the palette open", () => {
+    typeInto("close tab");
+    keydown("Enter");
+    expect(useAppStore.getState().commandPaletteOpen).toBe(true);
+  });
+
+  it("runs an available context command on Enter and closes", () => {
+    // Give the active panel a focused terminal so Find in Terminal has a target.
+    act(() => {
+      const id = useAppStore
+        .getState()
+        .addTab("Shell", "local", undefined, { contentType: "terminal" });
+      const panel = getAllLeaves(useAppStore.getState().rootPanel).find((p) =>
+        p.tabs.some((t) => t.id === id)
+      )!;
+      useAppStore.getState().setActivePanel(panel.id);
+      useAppStore.getState().setActiveTab(id, panel.id);
+    });
+    const toggleSpy = vi.spyOn(useAppStore.getState(), "toggleTerminalSearch");
+
+    typeInto("find in terminal");
+    expect(activeLabel()).toBe("Find in Terminal");
+    keydown("Enter");
+
+    expect(toggleSpy).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().commandPaletteOpen).toBe(false);
   });
 });
