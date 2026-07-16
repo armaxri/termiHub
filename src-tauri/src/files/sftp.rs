@@ -313,6 +313,16 @@ impl SftpSession {
                     let full_path = format!("{}/{}", path.trim_end_matches('/'), name);
                     let permissions = meta.permissions.map(format_permissions);
                     let writable = permissions.as_deref().and_then(writable_from_permissions);
+                    // `read_dir` returns lstat-style attributes, so this flags
+                    // the link itself. Resolve the target with a best-effort
+                    // `readlink` only for link rows — a plain file never
+                    // triggers the extra round-trip.
+                    let is_symlink = meta.is_symlink();
+                    let symlink_target = if is_symlink {
+                        self.sftp.read_link(full_path.clone()).await.ok()
+                    } else {
+                        None
+                    };
                     result.push(FileEntry {
                         name,
                         path: full_path,
@@ -324,10 +334,8 @@ impl SftpSession {
                             .unwrap_or_default(),
                         permissions,
                         writable,
-                        // `read_dir` returns lstat-style attributes, so this
-                        // flags the link itself; SFTP carries no cheap target.
-                        is_symlink: meta.is_symlink(),
-                        symlink_target: None,
+                        is_symlink,
+                        symlink_target,
                     });
                 }
                 Ok::<Vec<FileEntry>, TerminalError>(result)

@@ -191,7 +191,10 @@ impl FileBrowser for DockerFileBrowser {
                 "-path",
                 path,
                 "-printf",
-                "%f\t%y\t%s\t%T@\t%m\n",
+                // `%y` is the entry's own type (`l` for a symlink); `%Y` is the
+                // type after following the link (so a symlink-to-dir still lists
+                // as a directory); `%l` is the link target (empty for non-links).
+                "%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n",
             ],
         )
         .await?;
@@ -258,7 +261,11 @@ impl FileBrowser for DockerFileBrowser {
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---
 
-/// Parse the output of `find -printf '%f\t%y\t%s\t%T@\t%m\n'`.
+/// Parse the output of `find -printf '%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n'`.
+///
+/// The trailing `%Y` (type after following links) and `%l` (link target) fields
+/// let the browser distinguish symlinks from the `%y` own-type field and report
+/// the link target, matching the FTP/local behavior (#1513, #1523).
 fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, FileError> {
     let mut entries = Vec::new();
     let parent = if parent_path.ends_with('/') {
@@ -271,16 +278,31 @@ fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, 
         if line.is_empty() {
             continue;
         }
-        let fields: Vec<&str> = line.splitn(5, '\t').collect();
-        if fields.len() < 5 {
+        // The final `%l` field is empty for non-links, so a non-symlink row ends
+        // in a trailing tab; `splitn(7, …)` still yields 7 fields (last empty).
+        let fields: Vec<&str> = line.splitn(7, '\t').collect();
+        if fields.len() < 7 {
             continue;
         }
 
         let name = fields[0].to_string();
-        let is_directory = fields[1] == "d";
+        let own_type = fields[1];
         let size: u64 = fields[2].parse().unwrap_or(0);
         let mtime_float: f64 = fields[3].parse().unwrap_or(0.0);
         let mode: u32 = u32::from_str_radix(fields[4].trim(), 8).unwrap_or(0);
+        // `%Y` follows the link, so a symlink-to-dir still lists as a directory
+        // (matching the local browser); it falls back to the own type otherwise.
+        let is_directory = fields[5] == "d";
+        // `%y` reports the entry's own type; `l` marks a symbolic link.
+        let is_symlink = own_type == "l";
+        // `%l` carries the target only for links; map the empty non-link value
+        // (and a link whose target could not be read) to `None`.
+        let symlink_target = if is_symlink {
+            let target = fields[6];
+            (!target.is_empty()).then(|| target.to_string())
+        } else {
+            None
+        };
 
         let path = format!("{parent}{name}");
         let modified = chrono_from_epoch(mtime_float as u64);
@@ -295,9 +317,8 @@ fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, 
             permissions,
             // Writability is derived only for the desktop SFTP browser (#1324).
             writable: None,
-            // The `ls` capture does not distinguish links cheaply (see #1513).
-            is_symlink: false,
-            symlink_target: None,
+            is_symlink,
+            symlink_target,
         });
     }
 
@@ -318,7 +339,8 @@ fn parse_stat_output(output: &str, path: &str) -> Result<FileEntry, FileError> {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| fields[0].to_string());
-    let is_directory = fields[1].contains("directory");
+    let file_type = fields[1];
+    let is_directory = file_type.contains("directory");
     let size: u64 = fields[2].parse().unwrap_or(0);
     let mtime: u64 = fields[3].parse().unwrap_or(0);
     let mode: u32 = u32::from_str_radix(fields[4].trim(), 8).unwrap_or(0);
@@ -332,8 +354,9 @@ fn parse_stat_output(output: &str, path: &str) -> Result<FileEntry, FileError> {
         permissions: Some(format_permissions(mode)),
         // Writability is derived only for the desktop SFTP browser (#1324).
         writable: None,
-        // `stat -c` capture does not surface link status cheaply (see #1513).
-        is_symlink: false,
+        // `stat` does not dereference by default, so `%F` reports "symbolic
+        // link" for a link itself; the target is not carried by this capture.
+        is_symlink: file_type.contains("symbolic link"),
         symlink_target: None,
     })
 }
@@ -471,8 +494,10 @@ mod tests {
 
     #[test]
     fn parse_find_output_basic() {
-        let output = "readme.md\tf\t1024\t1705321845.0\t644\n\
-                       src\td\t4096\t1705321845.0\t755\n";
+        // Columns: %f %y %s %T@ %m %Y %l — a plain file/dir has an empty %l
+        // (trailing tab) and %Y == %y.
+        let output = "readme.md\tf\t1024\t1705321845.0\t644\tf\t\n\
+                       src\td\t4096\t1705321845.0\t755\td\t\n";
         let entries = parse_find_output(output, "/project").unwrap();
         assert_eq!(entries.len(), 2);
 
@@ -482,11 +507,14 @@ mod tests {
         assert!(!file.is_directory);
         assert_eq!(file.size, 1024);
         assert_eq!(file.permissions.as_deref(), Some("rw-r--r--"));
+        assert!(!file.is_symlink);
+        assert_eq!(file.symlink_target, None);
 
         let dir = &entries[1];
         assert_eq!(dir.name, "src");
         assert!(dir.is_directory);
         assert_eq!(dir.permissions.as_deref(), Some("rwxr-xr-x"));
+        assert!(!dir.is_symlink);
     }
 
     #[test]
@@ -497,9 +525,51 @@ mod tests {
 
     #[test]
     fn parse_find_output_trailing_slash() {
-        let output = "file.txt\tf\t100\t1000000.0\t644\n";
+        let output = "file.txt\tf\t100\t1000000.0\t644\tf\t\n";
         let entries = parse_find_output(output, "/dir/").unwrap();
         assert_eq!(entries[0].path, "/dir/file.txt");
+    }
+
+    #[test]
+    fn parse_find_output_symlink_with_target() {
+        // A symlink: own type %y == `l`, followed type %Y resolves to the target
+        // kind, and %l carries the link target.
+        let output = "link\tl\t7\t1705321845.0\t777\tf\t/etc/target\n";
+        let entries = parse_find_output(output, "/project").unwrap();
+        assert_eq!(entries.len(), 1);
+
+        let link = &entries[0];
+        assert_eq!(link.name, "link");
+        assert!(link.is_symlink, "is_symlink");
+        assert_eq!(link.symlink_target.as_deref(), Some("/etc/target"));
+        // %Y == `f` (target is a regular file), so it does not list as a dir.
+        assert!(!link.is_directory);
+    }
+
+    #[test]
+    fn parse_find_output_symlink_to_directory_lists_as_dir() {
+        // A symlink-to-dir: %y == `l` but %Y == `d`, so it stays navigable as a
+        // directory while still being flagged a symlink.
+        let output = "linkdir\tl\t7\t1705321845.0\t777\td\t/var/data\n";
+        let entries = parse_find_output(output, "/project").unwrap();
+        let link = &entries[0];
+        assert!(link.is_symlink);
+        assert!(
+            link.is_directory,
+            "symlink-to-dir should list as a directory"
+        );
+        assert_eq!(link.symlink_target.as_deref(), Some("/var/data"));
+    }
+
+    #[test]
+    fn parse_find_output_broken_symlink_has_no_target() {
+        // A symlink whose target find could not resolve: %l may still carry the
+        // raw target, but an empty %l maps to None rather than an empty string.
+        let output = "broken\tl\t7\t1705321845.0\t777\tN\t\n";
+        let entries = parse_find_output(output, "/project").unwrap();
+        let link = &entries[0];
+        assert!(link.is_symlink);
+        assert_eq!(link.symlink_target, None);
     }
 
     // --- parse_stat_output tests ---
@@ -521,6 +591,17 @@ mod tests {
         assert_eq!(result.name, "log");
         assert!(result.is_directory);
         assert_eq!(result.permissions.as_deref(), Some("rwxr-xr-x"));
+        assert!(!result.is_symlink);
+    }
+
+    #[test]
+    fn parse_stat_output_symlink() {
+        // `stat -c %F` reports "symbolic link" for a link without dereferencing.
+        let output = "/project/link\tsymbolic link\t7\t1705321845\t777\n";
+        let result = parse_stat_output(output, "/project/link").unwrap();
+        assert_eq!(result.name, "link");
+        assert!(result.is_symlink, "is_symlink");
+        assert!(!result.is_directory);
     }
 
     #[test]

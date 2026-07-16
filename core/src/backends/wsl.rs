@@ -127,8 +127,38 @@ fn map_io_error(e: std::io::Error, path: &str) -> FileError {
     }
 }
 
+/// Derive `(is_symlink, symlink_target)` for a UNC path.
+///
+/// `symlink_metadata` does not follow the link, so it reveals whether the path
+/// itself is a symbolic link (a WSL symlink surfaces as a reparse point over
+/// the UNC mount); `read_link` then reads the target best-effort. Any failure
+/// degrades to `(false, None)` / `None` so a broken or unreadable link still
+/// lists (#1523).
+fn read_symlink_unc(unc_path: &str) -> (bool, Option<String>) {
+    let is_symlink = std::fs::symlink_metadata(unc_path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    if is_symlink {
+        let target = std::fs::read_link(unc_path)
+            .ok()
+            .map(|t| t.to_string_lossy().into_owned());
+        (true, target)
+    } else {
+        (false, None)
+    }
+}
+
 /// Build a `FileEntry` from filesystem metadata.
-fn entry_from_metadata(name: String, path: String, metadata: &std::fs::Metadata) -> FileEntry {
+///
+/// `unc_path` is the Windows UNC path backing this entry; it is used to detect
+/// symlink status and read the link target (the `metadata` argument follows the
+/// link, so it cannot report link status on its own).
+fn entry_from_metadata(
+    name: String,
+    path: String,
+    metadata: &std::fs::Metadata,
+    unc_path: &str,
+) -> FileEntry {
     use crate::files::utils::chrono_from_epoch;
 
     let modified = metadata
@@ -141,6 +171,8 @@ fn entry_from_metadata(name: String, path: String, metadata: &std::fs::Metadata)
         })
         .unwrap_or_default();
 
+    let (is_symlink, symlink_target) = read_symlink_unc(unc_path);
+
     FileEntry {
         name,
         path,
@@ -151,9 +183,8 @@ fn entry_from_metadata(name: String, path: String, metadata: &std::fs::Metadata)
         permissions: None,
         // No permission info over UNC → writability is unknown.
         writable: None,
-        // Link status over UNC is not resolved here (see #1513).
-        is_symlink: false,
-        symlink_target: None,
+        is_symlink,
+        symlink_target,
     }
 }
 
@@ -179,7 +210,9 @@ impl FileBrowser for WslFileBrowser {
                     .metadata()
                     .map_err(|e| map_io_error(e, &linux_parent))?;
                 let full_path = WslFileBrowser::join_linux_path(&linux_parent, &name);
-                result.push(entry_from_metadata(name, full_path, &metadata));
+                let entry_unc = entry.path();
+                let entry_unc = entry_unc.to_string_lossy();
+                result.push(entry_from_metadata(name, full_path, &metadata, &entry_unc));
             }
 
             result.sort_by(|a, b| {
@@ -252,7 +285,7 @@ impl FileBrowser for WslFileBrowser {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| linux_path.clone());
-            Ok(entry_from_metadata(name, linux_path, &metadata))
+            Ok(entry_from_metadata(name, linux_path, &metadata, &unc_path))
         })
         .await
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
@@ -1193,6 +1226,7 @@ mod tests {
             "test.txt".to_string(),
             "/home/user/test.txt".to_string(),
             &metadata,
+            &file_path.to_string_lossy(),
         );
 
         assert_eq!(entry.name, "test.txt");
@@ -1202,6 +1236,9 @@ mod tests {
         assert!(!entry.modified.is_empty());
         // Permissions are None (UNC paths don't expose Unix permissions)
         assert!(entry.permissions.is_none());
+        // A regular file is not a symlink and carries no target.
+        assert!(!entry.is_symlink);
+        assert_eq!(entry.symlink_target, None);
     }
 
     #[test]
@@ -1215,10 +1252,53 @@ mod tests {
             "subdir".to_string(),
             "/home/user/subdir".to_string(),
             &metadata,
+            &sub.to_string_lossy(),
         );
 
         assert_eq!(entry.name, "subdir");
         assert!(entry.is_directory);
+        assert!(!entry.is_symlink);
+    }
+
+    /// `read_symlink_unc` reports a regular file as a non-link with no target.
+    #[test]
+    fn read_symlink_unc_regular_file_is_not_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("real.txt");
+        std::fs::write(&file_path, "hi").unwrap();
+
+        let (is_symlink, target) = super::read_symlink_unc(&file_path.to_string_lossy());
+        assert!(!is_symlink);
+        assert_eq!(target, None);
+    }
+
+    /// `read_symlink_unc` flags a symlink and reads its target. WSL symlinks
+    /// surface as reparse points over the UNC mount; here a real filesystem
+    /// symlink stands in. Creating a symlink on Windows needs privilege, so the
+    /// test degrades to a no-op if creation is not permitted.
+    #[test]
+    fn read_symlink_unc_flags_symlink_with_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.txt");
+        std::fs::write(&real, "hi").unwrap();
+        let link = dir.path().join("link.txt");
+
+        #[cfg(windows)]
+        let created = std::os::windows::fs::symlink_file(&real, &link).is_ok();
+        #[cfg(unix)]
+        let created = std::os::unix::fs::symlink(&real, &link).is_ok();
+
+        if !created {
+            eprintln!("symlink creation not permitted — skipping");
+            return;
+        }
+
+        let (is_symlink, target) = super::read_symlink_unc(&link.to_string_lossy());
+        assert!(is_symlink, "link.txt should be flagged as a symlink");
+        assert!(
+            target.as_deref().unwrap_or_default().ends_with("real.txt"),
+            "target should point at real.txt, got {target:?}"
+        );
     }
 
     // -----------------------------------------------------------------------
