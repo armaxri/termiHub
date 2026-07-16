@@ -6,8 +6,9 @@ export interface SaveCopyDialogProps {
   /** Whether the dialog is open (controlled). */
   open: boolean;
   /**
-   * Suggested initial remote path. The user edits it to point at a writable
-   * location — the original file is read-only, so saving over it would fail.
+   * Suggested initial remote path, pre-filled to a likely-writable destination
+   * (the remote home, or a `.copy` sibling — see {@link suggestedSaveCopyPath})
+   * so the user can usually save without editing. Stays fully editable (#1535).
    */
   defaultPath: string;
   /** True while the parent writes the copy (drives the pending state). */
