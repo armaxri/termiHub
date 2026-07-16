@@ -1965,7 +1965,7 @@ drive real transfers. See PR #1530.
    disappears when the queue is emptied.
 5. **Visual review (light + dark):** switch themes and confirm the bar colours
    (accent/amber/green/red), status text colours, and count badge match the
-   concept mockup (`docs/concepts/backlog/ftp-client.html`), with no raw scroll
+   concept mockup (`docs/concepts/partial/ftp-client.html`), with no raw scroll
    bar or off-token colours.
 
 ### Remote system monitoring
