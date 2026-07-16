@@ -3,7 +3,8 @@ services:
     build: .
     ports:
       # Offset per checkout (docs/testing.md "Parallel test isolation"); a bare
-      # `docker compose up` keeps the historical 2222/2323.
-      - "${TERMIHUB_TEST_E2E_SSH_PORT:-2222}:22" # SSH
+      # `docker compose up` uses 2214/2323. SSH is 2214 (not 2222) so it does not
+      # clash with the dev agent's 2222 at test_port_offset 0 (#1536).
+      - "${TERMIHUB_TEST_E2E_SSH_PORT:-2214}:22" # SSH
       - "${TERMIHUB_TEST_E2E_TELNET_PORT:-2323}:23" # Telnet
     restart: unless-stopped

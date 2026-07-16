@@ -109,6 +109,11 @@ pub struct TransferProgress {
     pub session_id: String,
     pub direction: TransferDirection,
     pub file_name: String,
+    /// Remote path of the transferred file (e.g. `/uploads/data.csv`), so the
+    /// Transfer Queue row can show it alongside the file name (#1531). Omitted
+    /// from the payload when empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub path: String,
     pub transferred: u64,
     pub total: u64,
     /// Legacy phase (#1245) — kept for backward compatibility.
@@ -146,6 +151,7 @@ impl TransferProgress {
             session_id: snap.session_id.clone(),
             direction: snap.direction,
             file_name: snap.file_name.clone(),
+            path: snap.path.clone(),
             transferred: snap.transferred,
             total: snap.total,
             phase,
@@ -183,6 +189,9 @@ pub struct TransferContext {
     pub session_id: String,
     pub direction: TransferDirection,
     pub file_name: String,
+    /// Remote path of the transferred file, surfaced in `transfer-progress`
+    /// so the Transfer Queue row can show it alongside the file name (#1531).
+    pub path: String,
     pub total: u64,
 }
 
@@ -198,6 +207,7 @@ impl TransferContext {
             session_id: self.session_id.clone(),
             direction: self.direction,
             file_name: self.file_name.clone(),
+            path: self.path.clone(),
             transferred,
             total: self.total,
             phase,

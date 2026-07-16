@@ -722,6 +722,9 @@ export interface TransferProgress {
   sessionId: string;
   direction: "download" | "upload";
   fileName: string;
+  /** Remote path of the transferred file (e.g. `/uploads/data.csv`), when the
+   * backend supplies one — shown in the Transfer Queue row (#1531). */
+  path?: string;
   transferred: number;
   total: number;
   phase: TransferPhase;
@@ -748,6 +751,8 @@ export interface TransferSnapshot {
   sessionId: string;
   direction: "download" | "upload";
   fileName: string;
+  /** Remote path of the transferred file, when the backend supplies one (#1531). */
+  path?: string;
   state: TransferQueueState;
   transferred: number;
   total: number;
