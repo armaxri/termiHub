@@ -341,18 +341,18 @@ The system is authoritative: its concept lives at [`docs/concepts/partial/ui-mod
 
 ### Level 2: Backend Modules
 
-| Module         | Location                    | Responsibility                                                                                                                                                      |
-| -------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Terminal**   | `src-tauri/src/terminal/`   | Agent manager (deploy, version check, setup), remote backend proxy, X11 forwarding, cross-platform X server provisioning orchestrator (`xserver/`), JSON-RPC client |
-| **Session**    | `src-tauri/src/session/`    | Desktop `SessionManager` — wraps core `ConnectionType` instances, manages lifecycle via the registry                                                                |
-| **Connection** | `src-tauri/src/connection/` | Config persistence, CRUD operations, connection file I/O                                                                                                            |
-| **Tunnel**     | `src-tauri/src/tunnel/`     | SSH tunnel manager — local, remote, and dynamic (SOCKS5) forwarding with session pooling, auto-start, and `tunnels.json` persistence                                |
-| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — master password backend, Argon2id + AES-256-GCM encryption, auto-lock                                                                |
-| **Files**      | `src-tauri/src/files/`      | Local and SFTP file browsing, upload/download                                                                                                                       |
-| **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime)                                                                                                            |
-| **Commands**   | `src-tauri/src/commands/`   | Tauri IPC command handlers (session, connection, agent, files, monitoring, credentials, tunnels, logs)                                                              |
+| Module         | Location                    | Responsibility                                                                                                                                                                           |
+| -------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal**   | `src-tauri/src/terminal/`   | Agent manager (deploy, version check, setup), remote backend proxy, X11 forwarding, cross-platform X server provisioning orchestrator (`xserver/`), JSON-RPC client                      |
+| **Session**    | `src-tauri/src/session/`    | Desktop `SessionManager` — wraps core `ConnectionType` instances, manages lifecycle via the registry                                                                                     |
+| **Connection** | `src-tauri/src/connection/` | Config persistence, CRUD operations, connection file I/O                                                                                                                                 |
+| **Tunnel**     | `src-tauri/src/tunnel/`     | SSH tunnel manager — local, remote, and dynamic (SOCKS5) forwarding with session pooling, auto-start, and `tunnels.json` persistence                                                     |
+| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — master password backend, Argon2id + AES-256-GCM encryption, auto-lock                                                                                     |
+| **Files**      | `src-tauri/src/files/`      | Local and SFTP file browsing, upload/download                                                                                                                                            |
+| **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime)                                                                                                                                 |
+| **Commands**   | `src-tauri/src/commands/`   | Tauri IPC command handlers (session, connection, agent, files, monitoring, credentials, tunnels, logs)                                                                                   |
 | **Spawn**      | `src-tauri/src/spawn/`      | "Open in termiHub" spawn rendezvous — `SpawnRequest` wire types, per-user IPC transport (named pipe / Unix socket), CLI classifier, and per-OS file-manager registration (`registry.rs`) |
-| **Utils**      | `src-tauri/src/utils/`      | Shell detection, Docker detection, VS Code detection, env expansion, error helpers                                                                                  |
+| **Utils**      | `src-tauri/src/utils/`      | Shell detection, Docker detection, VS Code detection, env expansion, error helpers                                                                                                       |
 
 ### Level 2: Shared Core Modules
 
@@ -1435,7 +1435,7 @@ converge on this one path.
 **Rationale:**
 
 - **Preserves the existing sync model.** The `connections.json` file-watch that keeps multiple
-  windows consistent is untouched; the spawn socket is an *additive* rendezvous, not a replacement
+  windows consistent is untouched; the spawn socket is an _additive_ rendezvous, not a replacement
   for how instances coordinate.
 - **One code path, three sources.** Classifying argv pre-init and funnelling everything through
   `SpawnRequest` means the context menu, the CLI, and a later deep link share the same transport,
