@@ -387,11 +387,11 @@
       <header class="concept-header">
         <h1>FTP Client Sessions</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Partial · implemented (sidebar browsing pending #1335)</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/518">#518</a></span
           >
-          <span><code>docs/concepts/backlog/ftp-client.html</code></span>
+          <span><code>docs/concepts/partial/ftp-client.html</code></span>
         </div>
       </header>
 
@@ -1400,13 +1400,24 @@ flowchart LR
           <code>core/Cargo.toml</code>:
         </p>
         <pre><code>[dependencies]
-suppaftp = { version = "6", features = ["async-native-tls"] }
+suppaftp = { version = "6", default-features = false, features = ["async-rustls", ...] }
 </code></pre>
         <p>
           <code>suppaftp</code> supports FTP, FTPS (explicit and implicit), passive and active mode,
-          and async operations via <code>async-native-tls</code>. It handles the FTP protocol
-          details, including <code>PASV</code>/<code>EPSV</code>, <code>REST</code>,
+          and async operations. It handles the FTP protocol details, including
+          <code>PASV</code>/<code>EPSV</code>, <code>REST</code>,
           <code>MLSD</code>/<code>LIST</code>, and TLS negotiation.
+        </p>
+        <p>
+          <strong>TLS backend — resolved to <code>async-rustls</code>.</strong> This concept
+          originally proposed the <code>async-native-tls</code> feature. Implementation (<a
+            href="https://github.com/armaxri/termiHub/issues/1332"
+            >#1332</a
+          >) instead selected <code>async-rustls</code> so FTPS shares termiHub's existing
+          <strong>rustls</strong> / <code>russh</code> stack rather than pulling in a second,
+          platform-native TLS implementation (OpenSSL / SChannel / Secure Transport). This is a
+          deliberate <em>design-reality</em> reconciliation — the concept is updated to match —
+          recorded as divergence&nbsp;#6 in the sync ledger below.
         </p>
 
         <h3>New backend: <code>core/src/backends/ftp/</code></h3>
@@ -1841,8 +1852,16 @@ registry.register(Box::new(FtpBackend::new()));
 
         <h3>Implementation Status</h3>
         <p>
-          Not started — this is a <code>backlog/</code> concept. Once implementation begins, run
-          <code>/sync-concept ftp-client</code> after each change to keep the sync ledger current.
+          <strong>Partially implemented</strong> — this concept now lives under
+          <code>partial/</code>. The FTP/FTPS backend, listing parsers, file-browser CRUD, shared
+          Transfer Queue (model + panel), insecure-FTP warning, schema-conditional editor, and
+          robustness (keep-alive, reconnect, encoding fallback) have all landed under epic #1331
+          (sub-issues #1332, #1334, #1336–#1339, #1513). The one remaining piece is
+          <strong>#1335 (SI-4)</strong>: the connection-type-agnostic file-browser session layer
+          that wires an FTP session's <code>file_browser()</code> into the sidebar tree the way SFTP
+          is today. Until it merges, FTP file operations run through the backend and Transfer Queue
+          rather than the sidebar. Run <code>/sync-concept ftp-client</code> after each further
+          change to keep the sync ledger current.
         </p>
       </section>
 
@@ -1857,8 +1876,16 @@ registry.register(Box::new(FtpBackend::new()));
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (concept not yet implemented) ·
-          <strong>Status:</strong> diverged (entirely missing — backlog feature)
+          <strong>Last synced:</strong> 2026-07-16 at commit <code>dba98550</code> ·
+          <strong>Status:</strong> diverged (partially implemented — one open functional gap, #1335)
+        </p>
+        <p>
+          Synced as part of #1340 (SI-9, docs / changelog / concept wrap-up). Because #1340 is a
+          docs-only issue (feature logic SI-1..SI-8 is out of scope), code was <em>not</em> changed
+          here; the one functional divergence (#1) is tracked by open sub-issue #1335, and the
+          skeleton/illustrative divergences (#2–#5) are reconciled by documenting the as-built code
+          in this ledger. Divergence #6 (TLS backend) is a design-reality concept edit, applied
+          above.
         </p>
 
         <h3>Open divergences</h3>
@@ -1876,10 +1903,22 @@ registry.register(Box::new(FtpBackend::new()));
             <tbody>
               <tr>
                 <td>1</td>
-                <td>Entire feature (per concept)</td>
-                <td>Not implemented — backlog</td>
+                <td>
+                  FTP sessions open into the file-browser sidebar tree; browsing dispatches through
+                  the connection type's <code>file_browser()</code>.
+                </td>
+                <td>
+                  The <code>Ftp</code> backend implements <code>file_browser()</code>, but the
+                  sidebar still dispatches only via <code>SftpManager</code>/<code>sftp_*</code>
+                  commands (<code>src-tauri/src/commands/files.rs</code>), so an FTP session is not
+                  yet browsable in the sidebar.
+                </td>
                 <td>Missing</td>
-                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+                <td>
+                  Tracked by open sub-issue
+                  <a href="https://github.com/armaxri/termiHub/issues/1335">#1335</a> (SI-4) —
+                  protocol-agnostic file-browser session layer. Fix code there, then re-sync.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -1897,9 +1936,62 @@ registry.register(Box::new(FtpBackend::new()));
             </thead>
             <tbody>
               <tr>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>2026-07-16</td>
+                <td>2</td>
+                <td>
+                  <strong>Registration location.</strong> Concept skeleton registers the backend in
+                  <code>core/src/backends/mod.rs</code>; as built it is registered in
+                  <code>src-tauri/src/session/registry.rs::build_desktop_registry()</code> behind
+                  the <code>ftp</code> cargo feature (desktop-only). Concept skeleton is
+                  illustrative — documented as-built, no code change.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-16</td>
+                <td>3</td>
+                <td>
+                  <strong><code>write</code>/<code>resize</code> are sync.</strong> Concept skeleton
+                  shows <code>async fn write</code>/<code>async fn resize</code>; the real
+                  <code>ConnectionType</code> trait defines them as sync <code>fn</code>. FTP
+                  implements both as no-ops (FTP has no interactive terminal). Documented as-built,
+                  no code change.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-16</td>
+                <td>4</td>
+                <td>
+                  <strong>Transfer queue placement.</strong> Concept places the queue in
+                  <code>core/src/backends/ftp/transfer.rs</code>. As built, the
+                  connection-type-agnostic queue lives in
+                  <code>src-tauri/src/files/transfer/</code>, extending the pre-existing
+                  cancellable-transfer registry (#1245) rather than an FTP-specific queue; FTP is
+                  one producer (<code>files/transfer/ftp.rs</code>). This is the better design
+                  (shared across protocols) — see architecture ADR-12. Documented as-built, no code
+                  change.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-16</td>
+                <td>5</td>
+                <td>
+                  <strong>Port auto-adjust is frontend logic.</strong> The schema
+                  <code>Condition</code> supports <code>equals</code> show/hide only, so the control
+                  port (990 implicit / 21 otherwise) is auto-adjusted in the editor frontend
+                  (#1338), not by the schema. Documented as-built, no code change.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-16</td>
+                <td>6</td>
+                <td>
+                  <strong
+                    >TLS backend <code>async-rustls</code>, not
+                    <code>async-native-tls</code>.</strong
+                  >
+                  Design-reality reconciliation to share termiHub's rustls/russh stack (#1332). The
+                  concept's dependency section is updated to match. Concept edited.
+                </td>
               </tr>
             </tbody>
           </table>
