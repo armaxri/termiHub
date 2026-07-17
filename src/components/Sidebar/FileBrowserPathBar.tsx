@@ -74,7 +74,12 @@ export function FileBrowserPathBar({ currentPath, onNavigate }: FileBrowserPathB
 
   return (
     <div className="file-browser__path-bar">
-      <nav className="file-browser__breadcrumbs" aria-label="Path" title={currentPath}>
+      <nav
+        className="file-browser__breadcrumbs"
+        aria-label="Path"
+        title={currentPath}
+        data-testid="file-browser-current-path"
+      >
         {crumbs.map((crumb, i) => (
           <span className="file-browser__crumb-group" key={crumb.path}>
             {i > 0 && <ChevronRight size={11} className="file-browser__crumb-sep" aria-hidden />}

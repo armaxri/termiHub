@@ -7,8 +7,9 @@ and create files/folders via the inline toolbar inputs. It builds on
 both alongside :class:`~termihub_harness.SystemTest`.
 
 This is the local counterpart to :class:`~termihub_harness.ui.SftpUi` (remote SFTP
-browsing): both read ``file-browser-current-path`` and ``file-row-<name>``, but a
-local browser needs no password prompt and follows the terminal's CWD.
+browsing): both read ``file-browser-current-path`` and ``file-row-<name>`` — via
+the shared :class:`FileBrowserPathReads` — but a local browser needs no password
+prompt and follows the terminal's CWD.
 """
 
 from __future__ import annotations
@@ -26,11 +27,47 @@ def file_row_testid(name: str) -> str:
     return f"file-row-{name}"
 
 
-class FilesUi(HarnessMixin):
+class FileBrowserPathReads(HarnessMixin):
+    """Read the path the file browser currently shows.
+
+    Shared by :class:`FilesUi` (local) and :class:`~termihub_harness.ui.SftpUi`
+    (remote): the two drive different backends but render the **same**
+    ``FileBrowserPathBar``, so the read belongs in one place. It used to be
+    copy-pasted into both, which is how it went stale in both at once (#1568).
+
+    The bar is a breadcrumb: its text is the path *segmented* into per-crumb
+    buttons, so ``get_text`` would yield the labels run together rather than a
+    path. The nav's ``title`` — the tooltip the user sees — is the full path
+    verbatim, so that is what these read.
+
+    Deliberately **not** the store's ``currentPath``: that field is the SFTP
+    browser's path only. ``useFileBrowser`` picks currentPath from one of three
+    sub-hooks (local / sftp / session) by mode, so reading the store would
+    silently return the wrong path for a local browser. The bar renders whichever
+    mode is active, so reading the bar is correct for every mode.
+    """
+
+    CURRENT_PATH = "file-browser-current-path"
+
+    def file_browser_path(self) -> str:
+        """The path currently shown in the file browser (empty if none)."""
+        if not self.driver.exists(self.CURRENT_PATH):
+            return ""
+        return self.driver.get_attribute(self.CURRENT_PATH, "title") or ""
+
+    def wait_for_path_contains(self, needle: str, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
+        """Poll until the displayed path contains ``needle``; return the full path."""
+        return self.wait(
+            lambda: (lambda p: p if needle in p else None)(self.file_browser_path()),
+            timeout=timeout,
+            what=f"{needle!r} in the file-browser path",
+        )
+
+
+class FilesUi(FileBrowserPathReads):
     """Drive and read the local file browser for the active terminal."""
 
     # Stable file-browser toolbar / inline-input testids (entry-name-free).
-    CURRENT_PATH = "file-browser-current-path"
     UP = "file-browser-up"
     REFRESH = "file-browser-refresh"
     NEW_FILE = "file-browser-new-file"
@@ -48,26 +85,12 @@ class FilesUi(HarnessMixin):
         """Show the Files sidebar for the active local terminal; return its path.
 
         The local browser follows the terminal's CWD and needs no password, so it
-        is ready once ``file-browser-current-path`` renders a non-empty path.
+        is ready once the path bar renders a non-empty path.
         """
         self.switch_to_files_sidebar()
         return self.wait(
-            lambda: self.driver.get_text(self.CURRENT_PATH) or None,
+            lambda: self.file_browser_path() or None,
             what="the local file-browser path",
-        )
-
-    def file_browser_path(self) -> str:
-        """The path currently shown in the file browser (empty if none)."""
-        if not self.driver.exists(self.CURRENT_PATH):
-            return ""
-        return self.driver.get_text(self.CURRENT_PATH)
-
-    def wait_for_path_contains(self, needle: str, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
-        """Poll until the displayed path contains ``needle``; return the full path."""
-        return self.wait(
-            lambda: (lambda p: p if needle in p else None)(self.file_browser_path()),
-            timeout=timeout,
-            what=f"{needle!r} in the file-browser path",
         )
 
     # -- entries -----------------------------------------------------------------
