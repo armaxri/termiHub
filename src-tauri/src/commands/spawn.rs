@@ -168,8 +168,11 @@ pub fn resolve_shell_spawn(
         .filter(|k| !matches!(k, SpawnKind::Auto))
         .or_else(|| entry.map(|e| e.spawn_kind))
         .unwrap_or_default();
-    let shell = shell
-        .or_else(|| entry.and_then(ShellEntry::resolved_shell).map(str::to_string));
+    let shell = shell.or_else(|| {
+        entry
+            .and_then(ShellEntry::resolved_shell)
+            .map(str::to_string)
+    });
     let request = SpawnRequest {
         location,
         connection,

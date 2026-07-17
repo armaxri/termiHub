@@ -1149,7 +1149,12 @@ mod imp {
     /// Explorer `placeholder` (`%1` / `%V`) is wrapped in quotes for the command
     /// line.
     fn command_line(exe_path: &str, entry: &ShellEntry, placeholder: &str) -> String {
-        spawn_command_line(exe_path, &entry.id, entry.spawn_kind, &format!("\"{placeholder}\""))
+        spawn_command_line(
+            exe_path,
+            &entry.id,
+            entry.spawn_kind,
+            &format!("\"{placeholder}\""),
+        )
     }
 
     /// True for any registry key name termiHub owns (entry keys and the submenu

@@ -184,7 +184,11 @@ impl ShellEntry {
     /// encoding, not the wire value `resolve_shell_spawn` takes), the shell name
     /// verbatim otherwise. `None` when nothing is saved.
     pub fn resolved_shell(&self) -> Option<&str> {
-        let shell = self.shell.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+        let shell = self
+            .shell
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
         match self.spawn_kind {
             SpawnKind::Wsl => Some(shell.strip_prefix("wsl:").unwrap_or(shell)),
             _ => Some(shell),
@@ -897,7 +901,8 @@ mod tests {
     /// shape so a frontend rename cannot drift silently.
     #[test]
     fn picked_target_deserializes_the_frontend_union() {
-        let local: PickedTarget = serde_json::from_str(r#"{"kind":"local","shell":"fish"}"#).unwrap();
+        let local: PickedTarget =
+            serde_json::from_str(r#"{"kind":"local","shell":"fish"}"#).unwrap();
         assert_eq!(
             local,
             PickedTarget::Local {

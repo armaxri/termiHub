@@ -674,7 +674,7 @@ describe("applySpawnChoice — folding a picker choice back into its request (SI
   });
 });
 
-describe("useSpawnChoiceHandler — persisting \"Remember this choice\" (#1561)", () => {
+describe('useSpawnChoiceHandler — persisting "Remember this choice" (#1561)', () => {
   /** Render the hook and hand back its confirm handler. */
   function choiceHandler(): (req: SpawnRequestPayload, choice: SpawnChoice) => Promise<void> {
     let handler!: ReturnType<typeof useSpawnChoiceHandler>;

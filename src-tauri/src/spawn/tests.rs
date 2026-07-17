@@ -332,10 +332,18 @@ async fn ipc_server_client_round_trip() {
 #[test]
 fn a_remembered_container_entry_parses_back_as_a_container_spawn() {
     // Exactly the tokens registration writes for a remembered container entry.
-    let args: Vec<String> = ["spawn", "--entry-id", "open", "--kind", "container", "--location", "/proj"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let args: Vec<String> = [
+        "spawn",
+        "--entry-id",
+        "open",
+        "--kind",
+        "container",
+        "--location",
+        "/proj",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
 
     let req = parse_spawn_args(&args);
 
@@ -365,10 +373,18 @@ fn an_un_remembered_entry_still_parses_as_auto() {
 /// pre-#1561 code lost to the connection/first-installed-distro fallback.
 #[test]
 fn a_remembered_wsl_entry_parses_back_as_a_wsl_spawn() {
-    let args: Vec<String> = ["spawn", "--entry-id", "open", "--kind", "wsl", "--location", "/proj"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let args: Vec<String> = [
+        "spawn",
+        "--entry-id",
+        "open",
+        "--kind",
+        "wsl",
+        "--location",
+        "/proj",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
 
     assert_eq!(parse_spawn_args(&args).kind, SpawnKind::Wsl);
 }
