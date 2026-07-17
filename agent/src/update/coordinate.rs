@@ -399,6 +399,12 @@ mod tests {
 
     /// A registry restart mid-wait must not be read as "everyone left" — that
     /// would cut the peers off precisely when we cannot see them.
+    ///
+    /// The poll count is the load-bearing assertion, not the outcome: code that
+    /// wrongly treats the first `None` as an ack returns the *same*
+    /// `AllDisconnected` this test wants, and is only distinguishable by having
+    /// stopped polling early. Asserting the whole script was consumed is what
+    /// makes this test able to fail.
     #[tokio::test(start_paused = true)]
     async fn a_blinking_registry_mid_wait_is_not_an_ack() {
         let host = ScriptedHost::new(vec![
@@ -412,6 +418,12 @@ mod tests {
         let outcome = coordinate_update(&host, "self", envelope(), ACK_TIMEOUT).await;
 
         assert_eq!(outcome, CoordinationOutcome::AllDisconnected { notified: 1 });
+        assert_eq!(
+            host.polls(),
+            5,
+            "must poll through both blind polls and the peer's last sighting \
+             rather than reading an unanswered poll as a disconnect"
+        );
     }
 
     /// When the view is down for the whole window, the peers we knew about are

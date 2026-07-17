@@ -61,7 +61,7 @@ use crate::state::persistence::AgentState;
 pub use apply::{
     prune_applied_pending_update, should_apply_deferred_update, SystemUpdateApplier, UpdateApplier,
 };
-pub use coordinate::{coordinate_update, CoordinationOutcome, PeerCoordinator, ACK_TIMEOUT};
+pub use coordinate::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
 pub use test_hook::TestPendingUpdate;
 
