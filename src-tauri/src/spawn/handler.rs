@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-use super::{SpawnRequest, SPAWN_REQUEST_EVENT};
+use super::{SpawnRequest, SPAWN_PICKER_REQUESTED_EVENT, SPAWN_REQUEST_EVENT};
 
 /// A spawn target resolved to a concrete working directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +163,12 @@ fn spawn_title(cwd: &Path, fallback: &str) -> String {
 /// its target against `home`. The resolved directory becomes the shell's
 /// `startingDirectory` (the `core/src/backends/local_shell.rs` `cwd` path), so
 /// the session opens `cd`'d to the target without a fragile post-start `cd`.
-pub fn build_shell_spawn(req: &SpawnRequest, home: &Path) -> ShellSpawn {
+///
+/// `shell` names the specific shell to open (as detected by
+/// `detect_available_shells`) — the Session Picker's choice (SI-3, #1366). When
+/// `None`, the shell is left to the system default, which is every non-picked
+/// spawn's behaviour.
+pub fn build_shell_spawn(req: &SpawnRequest, home: &Path, shell: Option<&str>) -> ShellSpawn {
     let resolved = resolve_spawn_location(req.location.as_deref(), home);
     if resolved.missing {
         tracing::warn!(
@@ -175,12 +180,16 @@ pub fn build_shell_spawn(req: &SpawnRequest, home: &Path) -> ShellSpawn {
     let starting_directory = resolved.cwd.to_string_lossy().into_owned();
 
     // Serialised into the exact camelCase keys the local-shell backend parses
-    // (`startingDirectory`, `shellIntegration`); the shell itself is left to the
-    // system default.
-    let settings = json!({
+    // (`shell`, `startingDirectory`, `shellIntegration`). A blank `shell` is
+    // dropped rather than sent as an empty string, which the backend would treat
+    // as a real (and unlaunchable) shell name instead of "use the default".
+    let mut settings = json!({
         "startingDirectory": starting_directory,
         "shellIntegration": true,
     });
+    if let Some(shell) = shell.map(str::trim).filter(|s| !s.is_empty()) {
+        settings["shell"] = json!(shell);
+    }
 
     ShellSpawn {
         session_type: "local".to_string(),
@@ -270,12 +279,27 @@ pub fn focus_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// Focus the main window and deliver a spawn request to the frontend over the
-/// shared [`SPAWN_REQUEST_EVENT`]. Used for warm spawns (a running instance
-/// reached over IPC or the macOS Services provider).
+/// Focus the main window and deliver a spawn request to the frontend. Used for
+/// warm spawns (a running instance reached over IPC or the macOS Services
+/// provider).
+///
+/// A `--pick` request goes to [`SPAWN_PICKER_REQUESTED_EVENT`] so the frontend
+/// opens the Session Picker instead of spawning straight away (SI-3, #1366);
+/// every other request keeps the existing [`SPAWN_REQUEST_EVENT`] path.
 pub fn emit_spawn_request<R: Runtime>(app: &AppHandle<R>, req: &SpawnRequest) -> tauri::Result<()> {
     focus_main_window(app);
-    app.emit(SPAWN_REQUEST_EVENT, req)
+    app.emit(spawn_event_for(req), req)
+}
+
+/// The frontend event a request is delivered on: the picker for `--pick`, the
+/// direct spawn path otherwise. Shared by the warm-spawn emit above and pinned
+/// by unit tests so the routing rule has a single definition.
+pub fn spawn_event_for(req: &SpawnRequest) -> &'static str {
+    if req.pick {
+        SPAWN_PICKER_REQUESTED_EVENT
+    } else {
+        SPAWN_REQUEST_EVENT
+    }
 }
 
 /// Park a cold-start spawn request so the frontend drains it once ready, and
@@ -301,6 +325,21 @@ mod tests {
     use super::super::SpawnKind;
     use super::*;
     use std::fs;
+
+    #[test]
+    fn pick_requests_route_to_the_picker_event() {
+        // `--pick` carries no decision yet: it must reach the picker, never the
+        // direct-spawn consumer that would open a session immediately.
+        let picking = SpawnRequest {
+            pick: true,
+            ..SpawnRequest::default()
+        };
+        assert_eq!(spawn_event_for(&picking), SPAWN_PICKER_REQUESTED_EVENT);
+
+        // Everything else keeps the pre-#1366 direct path.
+        let direct = SpawnRequest::default();
+        assert_eq!(spawn_event_for(&direct), SPAWN_REQUEST_EVENT);
+    }
 
     #[test]
     fn none_location_resolves_to_home_not_missing() {
@@ -387,7 +426,7 @@ mod tests {
             kind: SpawnKind::Local,
             ..SpawnRequest::default()
         };
-        let spawn = build_shell_spawn(&req, &home);
+        let spawn = build_shell_spawn(&req, &home, None);
         assert_eq!(spawn.session_type, "local");
         assert!(spawn.spawned);
         assert!(!spawn.missing);
@@ -408,7 +447,7 @@ mod tests {
             kind: SpawnKind::Local,
             ..SpawnRequest::default()
         };
-        let spawn = build_shell_spawn(&req, &home);
+        let spawn = build_shell_spawn(&req, &home, None);
         assert!(spawn.missing);
         assert_eq!(
             spawn.settings["startingDirectory"],

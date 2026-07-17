@@ -1,0 +1,134 @@
+/* Session Picker (SI-3, issue 1366). Layout only — the dialog shell, buttons,
+   selects, inputs and toggles all come from src/components/ui/.
+   The issue ref is spelled out rather than hash-prefixed: the raw-hex ratchet in
+   src/styles/tokenDiscipline.test.ts reads a hash-prefixed 4-digit issue number
+   as a colour literal. */
+
+.spawn-picker__path {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding-bottom: var(--spacing-md);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.spawn-picker__path-text {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.spawn-picker__sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding-top: var(--spacing-md);
+}
+
+.spawn-picker__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.spawn-picker__section-label {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-label);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.spawn-picker__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.spawn-picker__row:hover {
+  background: var(--bg-hover);
+}
+
+.spawn-picker__row--selected {
+  background: var(--bg-active);
+}
+
+.spawn-picker__radio {
+  margin: 0;
+  accent-color: var(--accent-color);
+  flex: none;
+}
+
+.spawn-picker__row-icon {
+  display: flex;
+  color: var(--text-secondary);
+  flex: none;
+}
+
+.spawn-picker__row-label {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+
+.spawn-picker__row-hint {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-disabled);
+}
+
+/* Inline image + mount form, shown under the selected "New container…" row. */
+.spawn-picker__container-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-sm) var(--spacing-xl);
+}
+
+.spawn-picker__field-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.spawn-picker__empty {
+  margin: 0;
+  padding-top: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.spawn-picker__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  width: 100%;
+}
+
+.spawn-picker__footer-checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.spawn-picker__check {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.spawn-picker__footer-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}

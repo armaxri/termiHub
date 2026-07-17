@@ -32,6 +32,16 @@ mod tests;
 /// (#1409). Centralised so every producer stays in sync.
 pub const SPAWN_REQUEST_EVENT: &str = "spawn-request";
 
+/// Tauri event name emitted (to the frontend) for a [`SpawnRequest`] that asked
+/// for the interactive Session Picker via `--pick` (SI-3, #1366).
+///
+/// A picking request carries no decision yet, so it is routed away from
+/// [`SPAWN_REQUEST_EVENT`] — whose consumer opens a session immediately — and
+/// onto this event, whose consumer opens the picker and only then spawns. The
+/// payload is the same [`SpawnRequest`], so the picker keeps the request's
+/// `location`, `entry_id` and `new_window` context.
+pub const SPAWN_PICKER_REQUESTED_EVENT: &str = "spawn-picker-requested";
+
 /// Explicit discriminator for the kind of session a [`SpawnRequest`] targets
 /// (#1465).
 ///

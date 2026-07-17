@@ -14,6 +14,7 @@ import {
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
+import type { ContainerRuntime } from "@/types/spawn";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -157,18 +158,24 @@ export interface ContainerSpawn {
  * a "new container" tab with the target directory bind-mounted. When no explicit
  * image / mount is given, the backend honors the saved per-entry preference of
  * the entry addressed by `entryId` before falling back to the built-in defaults.
+ *
+ * `runtime` pins Docker or Podman — the Session Picker's choice (SI-3, #1366).
+ * Omit it to keep the pre-picker behaviour of auto-detecting whichever runtime
+ * is installed.
  */
 export async function resolveContainerSpawn(
   location: string,
   entryId?: string,
   containerImage?: string,
-  containerMount?: string
+  containerMount?: string,
+  runtime?: ContainerRuntime
 ): Promise<ContainerSpawn> {
   return await invoke<ContainerSpawn>("resolve_container_spawn", {
     location,
     entryId,
     containerImage,
     containerMount,
+    runtime: runtime ?? null,
   });
 }
 
@@ -213,6 +220,11 @@ export interface ShellSpawn {
  * - **ssh** — the saved SSH connection (`connection`) opened verbatim, with the
  *   target path returned as `cdPath` to `cd` into after connect.
  *
+ * `shell` names the specific target within the `kind` — a local shell name, or a
+ * WSL distribution — as chosen in the Session Picker (SI-3, #1366). It outranks
+ * the `connection` / system-default fallbacks. Omit it to keep the pre-picker
+ * behaviour of opening the system default.
+ *
  * Rejects (throws) an SSH/WSL spawn that cannot be resolved to a
  * connection/distribution, so the caller can surface an error toast.
  */
@@ -220,13 +232,15 @@ export async function resolveShellSpawn(
   location?: string,
   connection?: string,
   entryId?: string,
-  kind?: string
+  kind?: string,
+  shell?: string
 ): Promise<ShellSpawn> {
   return await invoke<ShellSpawn>("resolve_shell_spawn", {
     location,
     connection,
     entryId,
     kind,
+    shell: shell ?? null,
   });
 }
 
@@ -238,6 +252,36 @@ export async function resolveShellSpawn(
  */
 export async function takePendingSpawn(): Promise<SpawnRequestPayload | null> {
   return await invoke<SpawnRequestPayload | null>("take_pending_spawn");
+}
+
+/**
+ * The spawn targets available on this host (SI-3, #1366). Mirrors the Rust
+ * `SpawnOptions`: every list is "what exists right now", so the Session Picker
+ * renders a section per non-empty group. `wslDistros` is always empty off
+ * Windows, and an image list is only populated when its runtime is available.
+ */
+export interface SpawnOptions {
+  /** Local shells detected on this host (e.g. `"bash"`, `"zsh"`). */
+  shells: string[];
+  /** Installed WSL distributions. Always empty off Windows. */
+  wslDistros: string[];
+  /** Whether a usable Docker daemon responded. */
+  dockerAvailable: boolean;
+  /** Local Docker images (`repository:tag`). Empty unless `dockerAvailable`. */
+  dockerImages: string[];
+  /** Whether a usable Podman runtime responded. */
+  podmanAvailable: boolean;
+  /** Local Podman images (`repository:tag`). Empty unless `podmanAvailable`. */
+  podmanImages: string[];
+}
+
+/**
+ * Enumerate the spawn targets the Session Picker can offer (SI-3, #1366).
+ * Called when the picker opens so it reflects the host's live state — shells,
+ * WSL distributions and the images of whichever container runtimes respond.
+ */
+export async function listSpawnOptions(): Promise<SpawnOptions> {
+  return await invoke<SpawnOptions>("list_spawn_options");
 }
 
 /** Send input data to a terminal session */

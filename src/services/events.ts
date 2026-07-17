@@ -655,6 +655,22 @@ export async function onSpawnRequest(
 }
 
 /**
+ * Subscribe to `spawn-picker-requested` events (SI-3, #1366). Emitted instead of
+ * `spawn-request` when an invocation asked for the interactive Session Picker
+ * (`--pick`), so the target is chosen before anything is opened. The payload is
+ * the same {@link SpawnRequestPayload}, carrying the request's `location`,
+ * `entry_id` and `new_window` context into the picker. Returns the unlisten
+ * handle.
+ */
+export async function onSpawnPickerRequested(
+  callback: (payload: SpawnRequestPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SpawnRequestPayload>("spawn-picker-requested", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
  * Subscribe to connect-time X server download-consent prompts (#1116). Emitted
  * when opening an X11-forwarding SSH connection would need to download the X
  * dependency and the user has not consented yet; the connect pauses until the

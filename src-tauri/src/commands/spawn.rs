@@ -3,11 +3,12 @@
 //! Exposes the directory-mount container spawn resolution to the frontend: given
 //! a spawn `location` and optional image / mount overrides, returns the Docker
 //! settings + tab title the frontend uses to open a "new container" session with
-//! the target directory bind-mounted. The interactive picker that chooses "new
-//! container" (SI-3) and the frontend session/tab wiring are out of scope here.
+//! the target directory bind-mounted, plus the target enumeration
+//! ([`list_spawn_options`]) backing the interactive Session Picker (SI-3, #1366).
 
 use std::path::Path;
 
+use serde::Serialize;
 use tauri::State;
 
 use crate::connection::config::SavedConnection;
@@ -16,6 +17,7 @@ use crate::connection::shell_integration::ShellIntegrationSettings;
 use crate::spawn::container::{self, ContainerSpawn};
 use crate::spawn::handler::{self, PendingSpawn, ShellSpawn};
 use crate::spawn::{SpawnKind, SpawnRequest};
+use termihub_core::config::ContainerRuntime;
 
 /// The saved per-entry container preferences (image + mount target) looked up
 /// for a spawn's `--entry-id`, if any.
@@ -46,6 +48,10 @@ fn saved_container_prefs(
 /// `removeOnExit: false` so the container is stopped-not-removed on close), a
 /// `"… (Spawned)"` tab title, and `spawned: true` so the frontend can badge and
 /// track them separately from configured Docker connections.
+///
+/// `runtime` pins Docker or Podman — the Session Picker's choice of section
+/// (SI-3, #1366). Omitted (or unrecognised) leaves the pre-picker behaviour of
+/// auto-detecting whichever runtime is installed.
 #[tauri::command]
 pub fn resolve_container_spawn(
     manager: State<'_, ConnectionManager>,
@@ -53,6 +59,7 @@ pub fn resolve_container_spawn(
     entry_id: Option<String>,
     container_image: Option<String>,
     container_mount: Option<String>,
+    runtime: Option<String>,
 ) -> Result<ContainerSpawn, String> {
     let settings = manager.get_settings();
     resolve_container_spawn_with(
@@ -61,7 +68,19 @@ pub fn resolve_container_spawn(
         entry_id,
         container_image,
         container_mount,
+        container_runtime_from_wire(runtime.as_deref()),
     )
+}
+
+/// Map the frontend's runtime token onto a [`ContainerRuntime`]. Anything else —
+/// including no token at all — means "detect it", which is what every pre-picker
+/// spawn did.
+fn container_runtime_from_wire(token: Option<&str>) -> ContainerRuntime {
+    match token.map(str::trim) {
+        Some("docker") => ContainerRuntime::Docker,
+        Some("podman") => ContainerRuntime::Podman,
+        _ => ContainerRuntime::Auto,
+    }
 }
 
 /// Pure resolution shared by the Tauri command and its tests: validate the
@@ -72,6 +91,7 @@ fn resolve_container_spawn_with(
     entry_id: Option<String>,
     container_image: Option<String>,
     container_mount: Option<String>,
+    runtime: ContainerRuntime,
 ) -> Result<ContainerSpawn, String> {
     if location.as_deref().map(str::trim).unwrap_or("").is_empty() {
         return Err("a spawn location is required for a container spawn".to_string());
@@ -88,6 +108,7 @@ fn resolve_container_spawn_with(
         &request,
         saved_image.as_deref(),
         saved_mount.as_deref(),
+        runtime,
     ))
 }
 
@@ -116,6 +137,7 @@ pub fn resolve_shell_spawn(
     connection: Option<String>,
     entry_id: Option<String>,
     kind: Option<String>,
+    shell: Option<String>,
 ) -> Result<ShellSpawn, String> {
     let kind = kind
         .as_deref()
@@ -135,6 +157,7 @@ pub fn resolve_shell_spawn(
         &home,
         &connections,
         default_wsl_distribution().as_deref(),
+        shell.as_deref(),
     )
 }
 
@@ -172,27 +195,36 @@ fn resolve_shell_spawn_with(
     home: &Path,
     connections: &[SavedConnection],
     default_wsl_distro: Option<&str>,
+    shell: Option<&str>,
 ) -> Result<ShellSpawn, String> {
     match req.kind {
         SpawnKind::Ssh => resolve_ssh_spawn(req, connections),
         SpawnKind::Wsl => {
-            let distribution = resolve_wsl_distribution(req, connections, default_wsl_distro)?;
+            let distribution =
+                resolve_wsl_distribution(req, connections, default_wsl_distro, shell)?;
             Ok(handler::build_wsl_spawn(req, home, &distribution))
         }
         // Local / Auto (and any unexpected kind) open a local shell — the #1365
         // path, unchanged.
-        _ => Ok(handler::build_shell_spawn(req, home)),
+        _ => Ok(handler::build_shell_spawn(req, home, shell)),
     }
 }
 
-/// Resolve the WSL distribution for a spawn: the saved WSL connection referenced
-/// by `--connection` (if it names a non-empty distribution), otherwise the
-/// system default distro. Errors when neither is available.
+/// Resolve the WSL distribution for a spawn: the explicitly picked distribution
+/// (SI-3, #1366), else the saved WSL connection referenced by `--connection` (if
+/// it names a non-empty distribution), else the system default distro. Errors
+/// when none is available.
 fn resolve_wsl_distribution(
     req: &SpawnRequest,
     connections: &[SavedConnection],
     default_wsl_distro: Option<&str>,
+    picked: Option<&str>,
 ) -> Result<String, String> {
+    // A distribution the user chose in the picker outranks every fallback.
+    if let Some(distro) = picked.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(distro.to_string());
+    }
+
     if let Some(id) = req
         .connection
         .as_deref()
@@ -270,10 +302,189 @@ pub fn take_pending_spawn(pending: State<'_, PendingSpawn>) -> Option<SpawnReque
     handler::take_pending_spawn(&pending)
 }
 
+/// The spawn targets available on this host, as offered by the Session Picker
+/// (SI-3, #1366).
+///
+/// Every list is "what exists right now" — the picker renders a section per
+/// non-empty group, so an absent runtime simply drops its section rather than
+/// showing a disabled one. `wsl_distros` is always empty off Windows (the picker
+/// hides the WSL section there), and the image lists are only populated when the
+/// matching runtime reports itself available, so a stopped daemon costs one
+/// probe instead of a hanging `images` call.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnOptions {
+    /// Local shells detected on this host (e.g. `"bash"`, `"zsh"`, `"pwsh"`).
+    pub shells: Vec<String>,
+    /// Installed WSL distributions. Always empty off Windows.
+    pub wsl_distros: Vec<String>,
+    /// Whether a usable Docker daemon responded.
+    pub docker_available: bool,
+    /// Local Docker images (`repository:tag`). Empty unless `docker_available`.
+    pub docker_images: Vec<String>,
+    /// Whether a usable Podman runtime responded.
+    pub podman_available: bool,
+    /// Local Podman images (`repository:tag`). Empty unless `podman_available`.
+    pub podman_images: Vec<String>,
+}
+
+/// Enumerate the spawn targets the Session Picker can offer (SI-3, #1366).
+///
+/// Called when the picker opens, so it reflects the host's live state rather
+/// than a cached snapshot: shells and WSL distributions come from the same
+/// detection the connection editors use, and each container runtime is probed
+/// for availability before its images are listed.
+#[tauri::command]
+pub fn list_spawn_options() -> SpawnOptions {
+    let docker_available = crate::utils::docker_detect::is_docker_available();
+    let podman_available = crate::utils::docker_detect::is_podman_available();
+    SpawnOptions {
+        shells: termihub_core::session::shell::detect_available_shells(),
+        wsl_distros: wsl_distros(),
+        docker_available,
+        docker_images: if docker_available {
+            crate::utils::docker_detect::list_docker_images()
+        } else {
+            Vec::new()
+        },
+        podman_available,
+        podman_images: if podman_available {
+            crate::utils::docker_detect::list_podman_images()
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// Installed WSL distributions on Windows; an empty list everywhere else, where
+/// WSL cannot exist and the picker omits the section entirely.
+fn wsl_distros() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        termihub_core::session::shell::detect_wsl_distros()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::connection::shell_integration::{ShellEntry, ShellEntryVisibility, ShowForTargets};
+
+    // `list_spawn_options` reports whatever the host actually has, so the
+    // assertions below cover the invariants that must hold on every machine and
+    // every CI platform — never a concrete shell/image list, which would make
+    // the suite depend on the runner's installed software.
+
+    #[test]
+    fn list_spawn_options_holds_its_invariants() {
+        let options = list_spawn_options();
+
+        // An unavailable runtime must never report images: the picker uses the
+        // availability flag to decide whether to render the section at all.
+        if !options.docker_available {
+            assert!(options.docker_images.is_empty());
+        }
+        if !options.podman_available {
+            assert!(options.podman_images.is_empty());
+        }
+
+        // WSL exists only on Windows; elsewhere the section must stay empty so
+        // the picker hides it.
+        #[cfg(not(windows))]
+        assert!(options.wsl_distros.is_empty());
+    }
+
+    #[test]
+    fn a_picked_podman_runtime_reaches_the_session_settings() {
+        // Picking the Podman section must actually run Podman — auto-detection
+        // would silently prefer Docker on a host that has both.
+        let settings = ShellIntegrationSettings::default();
+        let spawn = resolve_container_spawn_with(
+            &settings,
+            Some("/proj".into()),
+            None,
+            None,
+            None,
+            container_runtime_from_wire(Some("podman")),
+        )
+        .expect("resolves");
+        assert_eq!(spawn.settings["runtime"], "podman");
+
+        // No pick keeps the pre-#1366 auto-detection.
+        let auto = resolve_container_spawn_with(
+            &settings,
+            Some("/proj".into()),
+            None,
+            None,
+            None,
+            container_runtime_from_wire(None),
+        )
+        .expect("resolves");
+        assert_eq!(auto.settings["runtime"], "auto");
+    }
+
+    #[test]
+    fn a_picked_shell_is_opened_instead_of_the_system_default() {
+        // The picker's whole point is choosing a specific shell, so the pick has
+        // to reach the backend settings rather than falling back to the default.
+        let home = Path::new("/tmp");
+        let req = SpawnRequest {
+            kind: SpawnKind::Local,
+            ..SpawnRequest::default()
+        };
+
+        let picked =
+            resolve_shell_spawn_with(&req, home, &[], None, Some("zsh")).expect("resolves");
+        assert_eq!(
+            picked.settings.get("shell").and_then(|v| v.as_str()),
+            Some("zsh")
+        );
+
+        // No pick (every pre-#1366 spawn) must not pin a shell at all.
+        let default = resolve_shell_spawn_with(&req, home, &[], None, None).expect("resolves");
+        assert!(default.settings.get("shell").is_none());
+
+        // A blank pick means "no choice", not a shell literally named "".
+        let blank = resolve_shell_spawn_with(&req, home, &[], None, Some("  ")).expect("resolves");
+        assert!(blank.settings.get("shell").is_none());
+    }
+
+    #[test]
+    fn a_picked_wsl_distribution_outranks_the_default() {
+        let home = Path::new("/tmp");
+        let req = SpawnRequest {
+            kind: SpawnKind::Wsl,
+            ..SpawnRequest::default()
+        };
+
+        let spawn = resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu"), Some("Debian"))
+            .expect("resolves");
+        assert_eq!(
+            spawn.settings.get("distribution").and_then(|v| v.as_str()),
+            Some("Debian")
+        );
+    }
+
+    #[test]
+    fn spawn_options_serialize_camel_case() {
+        // The frontend `SpawnOptions` type mirrors these keys; a rename here
+        // would silently strand the picker on `undefined`.
+        let json = serde_json::to_value(SpawnOptions::default()).expect("serializes");
+        for key in [
+            "shells",
+            "wslDistros",
+            "dockerAvailable",
+            "dockerImages",
+            "podmanAvailable",
+            "podmanImages",
+        ] {
+            assert!(json.get(key).is_some(), "missing key {key}");
+        }
+    }
 
     fn settings_with_entry(
         id: &str,
@@ -297,10 +508,24 @@ mod tests {
     #[test]
     fn requires_a_location() {
         let settings = ShellIntegrationSettings::default();
-        assert!(resolve_container_spawn_with(&settings, None, None, None, None).is_err());
-        assert!(
-            resolve_container_spawn_with(&settings, Some("  ".into()), None, None, None).is_err()
-        );
+        assert!(resolve_container_spawn_with(
+            &settings,
+            None,
+            None,
+            None,
+            None,
+            ContainerRuntime::Auto
+        )
+        .is_err());
+        assert!(resolve_container_spawn_with(
+            &settings,
+            Some("  ".into()),
+            None,
+            None,
+            None,
+            ContainerRuntime::Auto
+        )
+        .is_err());
     }
 
     #[test]
@@ -312,6 +537,7 @@ mod tests {
             None,
             Some("alpine".into()),
             None,
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert!(spawn.spawned);
@@ -329,6 +555,7 @@ mod tests {
             Some("e1".into()),
             None,
             None,
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert_eq!(spawn.settings["image"], "saved:9");
@@ -344,6 +571,7 @@ mod tests {
             Some("e1".into()),
             Some("node:20".into()),
             Some("/srv".into()),
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert_eq!(spawn.settings["image"], "node:20");
@@ -359,6 +587,7 @@ mod tests {
             Some("does-not-exist".into()),
             None,
             None,
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert_eq!(spawn.settings["image"], container::DEFAULT_CONTAINER_IMAGE);
@@ -415,7 +644,8 @@ mod tests {
         // its /mnt/ form (location None falls back to the home dir).
         let home = Path::new(r"C:\Users\foo");
         let req = wsl_request(None, None);
-        let spawn = resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu")).expect("resolves");
+        let spawn =
+            resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu"), None).expect("resolves");
         assert_eq!(spawn.session_type, "wsl");
         assert_eq!(spawn.settings["distribution"], "Ubuntu");
         assert_eq!(spawn.settings["startingDirectory"], "/mnt/c/Users/foo");
@@ -433,7 +663,8 @@ mod tests {
             serde_json::json!({ "distribution": "Debian" }),
         )];
         let req = wsl_request(None, Some("Work/Debian box"));
-        let spawn = resolve_shell_spawn_with(&req, home, &conns, Some("Ubuntu")).expect("resolves");
+        let spawn =
+            resolve_shell_spawn_with(&req, home, &conns, Some("Ubuntu"), None).expect("resolves");
         assert_eq!(spawn.settings["distribution"], "Debian");
     }
 
@@ -442,7 +673,7 @@ mod tests {
         // No connection and no default distro (e.g. a non-Windows host) → error.
         let home = Path::new("/home/user");
         let req = wsl_request(None, None);
-        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("no distro");
+        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("no distro");
         assert!(err.contains("WSL distribution"), "err: {err}");
     }
 
@@ -456,7 +687,7 @@ mod tests {
         });
         let conns = vec![saved_conn("Prod/Web", "Web", "ssh", ssh_settings.clone())];
         let req = ssh_request(Some("/srv/app"), Some("Prod/Web"));
-        let spawn = resolve_shell_spawn_with(&req, home, &conns, None).expect("resolves");
+        let spawn = resolve_shell_spawn_with(&req, home, &conns, None, None).expect("resolves");
         assert_eq!(spawn.session_type, "ssh");
         assert_eq!(spawn.settings, ssh_settings);
         assert_eq!(spawn.cd_path.as_deref(), Some("/srv/app"));
@@ -468,7 +699,7 @@ mod tests {
     fn ssh_spawn_without_connection_id_is_an_error() {
         let home = Path::new("/home/user");
         let req = ssh_request(Some("/srv/app"), None);
-        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("needs id");
+        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("needs id");
         assert!(err.contains("--connection"), "err: {err}");
     }
 
@@ -476,7 +707,7 @@ mod tests {
     fn ssh_spawn_unknown_connection_is_an_error() {
         let home = Path::new("/home/user");
         let req = ssh_request(Some("/srv/app"), Some("nope"));
-        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("not found");
+        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("not found");
         assert!(err.contains("not found"), "err: {err}");
     }
 
@@ -490,7 +721,7 @@ mod tests {
             serde_json::json!({ "shell": "bash" }),
         )];
         let req = ssh_request(Some("/srv/app"), Some("Local/Home"));
-        let err = resolve_shell_spawn_with(&req, home, &conns, None).expect_err("wrong type");
+        let err = resolve_shell_spawn_with(&req, home, &conns, None, None).expect_err("wrong type");
         assert!(err.contains("not an SSH connection"), "err: {err}");
     }
 
@@ -503,7 +734,7 @@ mod tests {
             kind: SpawnKind::Local,
             ..SpawnRequest::default()
         };
-        let spawn = resolve_shell_spawn_with(&req, home, &[], None).expect("resolves");
+        let spawn = resolve_shell_spawn_with(&req, home, &[], None, None).expect("resolves");
         assert_eq!(spawn.session_type, "local");
         assert_eq!(spawn.settings["startingDirectory"], "/home/user");
     }
