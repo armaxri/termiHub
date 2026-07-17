@@ -14,6 +14,7 @@ import {
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
+import type { ContainerRuntime } from "@/types/spawn";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -157,18 +158,24 @@ export interface ContainerSpawn {
  * a "new container" tab with the target directory bind-mounted. When no explicit
  * image / mount is given, the backend honors the saved per-entry preference of
  * the entry addressed by `entryId` before falling back to the built-in defaults.
+ *
+ * `runtime` pins Docker or Podman — the Session Picker's choice (SI-3, #1366).
+ * Omit it to keep the pre-picker behaviour of auto-detecting whichever runtime
+ * is installed.
  */
 export async function resolveContainerSpawn(
   location: string,
   entryId?: string,
   containerImage?: string,
-  containerMount?: string
+  containerMount?: string,
+  runtime?: ContainerRuntime
 ): Promise<ContainerSpawn> {
   return await invoke<ContainerSpawn>("resolve_container_spawn", {
     location,
     entryId,
     containerImage,
     containerMount,
+    runtime: runtime ?? null,
   });
 }
 

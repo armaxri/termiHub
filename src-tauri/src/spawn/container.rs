@@ -12,7 +12,7 @@
 //! (SI-3) is out of scope.
 
 use serde::Serialize;
-use termihub_core::config::{DockerConfig, VolumeMount};
+use termihub_core::config::{ContainerRuntime, DockerConfig, VolumeMount};
 
 use super::SpawnRequest;
 
@@ -79,9 +79,19 @@ pub fn resolve_host_directory(location: &str) -> String {
 /// bind of `host_dir` → `mount`, the shell's working directory set to the mount
 /// (so it opens `cd`'d there), and `remove_on_exit = false` so closing the
 /// session stops — but does not remove — the container.
-pub fn build_spawn_docker_config(host_dir: &str, image: &str, mount: &str) -> DockerConfig {
+///
+/// `runtime` pins the container runtime — the Session Picker's Docker/Podman
+/// choice (SI-3, #1366). [`ContainerRuntime::Auto`] keeps the pre-picker
+/// behaviour of detecting whichever runtime is present.
+pub fn build_spawn_docker_config(
+    host_dir: &str,
+    image: &str,
+    mount: &str,
+    runtime: ContainerRuntime,
+) -> DockerConfig {
     DockerConfig {
         image: image.to_string(),
+        runtime,
         volumes: vec![VolumeMount {
             host_path: host_dir.to_string(),
             container_path: mount.to_string(),
@@ -102,12 +112,13 @@ pub fn build_container_spawn(
     req: &SpawnRequest,
     saved_image_pref: Option<&str>,
     saved_mount_pref: Option<&str>,
+    runtime: ContainerRuntime,
 ) -> ContainerSpawn {
     let image = resolve_container_image(req.container_image.as_deref(), saved_image_pref);
     let mount = resolve_mount_target(req.container_mount.as_deref(), saved_mount_pref);
     let host_dir = resolve_host_directory(req.location.as_deref().unwrap_or("."));
 
-    let config = build_spawn_docker_config(&host_dir, &image, &mount);
+    let config = build_spawn_docker_config(&host_dir, &image, &mount, runtime);
     // Serializing the config yields the exact camelCase JSON the Docker
     // backend's `parse_docker_settings` consumes, so there is one source of
     // truth for the field shape.
@@ -222,7 +233,12 @@ mod tests {
 
     #[test]
     fn spawn_config_mounts_dir_and_sets_working_dir() {
-        let cfg = build_spawn_docker_config("/home/user/proj", "alpine:3", "/workspace");
+        let cfg = build_spawn_docker_config(
+            "/home/user/proj",
+            "alpine:3",
+            "/workspace",
+            ContainerRuntime::Auto,
+        );
         assert_eq!(cfg.image, "alpine:3");
         assert_eq!(cfg.volumes.len(), 1);
         assert_eq!(cfg.volumes[0].host_path, "/home/user/proj");
@@ -233,7 +249,7 @@ mod tests {
 
     #[test]
     fn spawn_config_stops_not_removes_on_exit() {
-        let cfg = build_spawn_docker_config("/h", "img", "/workspace");
+        let cfg = build_spawn_docker_config("/h", "img", "/workspace", ContainerRuntime::Auto);
         assert!(
             !cfg.remove_on_exit,
             "spawned containers are stopped, not removed, on close"
@@ -245,7 +261,7 @@ mod tests {
     #[test]
     fn build_container_spawn_defaults_mount_and_image() {
         let req = req_with(Some("/home/user/app"), None, None);
-        let spawn = build_container_spawn(&req, None, None);
+        let spawn = build_container_spawn(&req, None, None, ContainerRuntime::Auto);
         assert!(spawn.spawned);
         assert!(spawn.title.contains("Spawned"), "title: {}", spawn.title);
         let vols = spawn
@@ -264,7 +280,7 @@ mod tests {
     #[test]
     fn build_container_spawn_honours_explicit_image_and_mount() {
         let req = req_with(Some("/data"), Some("node:20"), Some("/srv"));
-        let spawn = build_container_spawn(&req, None, None);
+        let spawn = build_container_spawn(&req, None, None, ContainerRuntime::Auto);
         assert_eq!(spawn.settings["image"], "node:20");
         assert_eq!(spawn.settings["workingDirectory"], "/srv");
         let vols = spawn
@@ -281,7 +297,12 @@ mod tests {
         // No explicit request image/mount → the saved per-entry preferences are
         // used (the #1447 wiring), ahead of the built-in defaults.
         let req = req_with(Some("/data"), None, None);
-        let spawn = build_container_spawn(&req, Some("saved:9"), Some("/saved"));
+        let spawn = build_container_spawn(
+            &req,
+            Some("saved:9"),
+            Some("/saved"),
+            ContainerRuntime::Auto,
+        );
         assert_eq!(spawn.settings["image"], "saved:9");
         assert_eq!(spawn.settings["workingDirectory"], "/saved");
         let vols = spawn
@@ -296,7 +317,12 @@ mod tests {
     fn build_container_spawn_explicit_beats_saved_prefs() {
         // Explicit request values win over the saved per-entry preferences.
         let req = req_with(Some("/data"), Some("node:20"), Some("/srv"));
-        let spawn = build_container_spawn(&req, Some("saved:9"), Some("/saved"));
+        let spawn = build_container_spawn(
+            &req,
+            Some("saved:9"),
+            Some("/saved"),
+            ContainerRuntime::Auto,
+        );
         assert_eq!(spawn.settings["image"], "node:20");
         assert_eq!(spawn.settings["workingDirectory"], "/srv");
     }
@@ -306,7 +332,7 @@ mod tests {
         // The produced settings must parse back into a DockerConfig cleanly so
         // the Docker backend's `parse_docker_settings` accepts them verbatim.
         let req = req_with(Some("/proj"), Some("alpine"), Some("/workspace"));
-        let spawn = build_container_spawn(&req, None, None);
+        let spawn = build_container_spawn(&req, None, None, ContainerRuntime::Auto);
         let parsed: DockerConfig =
             serde_json::from_value(spawn.settings).expect("settings parse as DockerConfig");
         assert_eq!(parsed.image, "alpine");

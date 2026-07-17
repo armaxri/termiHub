@@ -17,6 +17,7 @@ use crate::connection::shell_integration::ShellIntegrationSettings;
 use crate::spawn::container::{self, ContainerSpawn};
 use crate::spawn::handler::{self, PendingSpawn, ShellSpawn};
 use crate::spawn::{SpawnKind, SpawnRequest};
+use termihub_core::config::ContainerRuntime;
 
 /// The saved per-entry container preferences (image + mount target) looked up
 /// for a spawn's `--entry-id`, if any.
@@ -47,6 +48,10 @@ fn saved_container_prefs(
 /// `removeOnExit: false` so the container is stopped-not-removed on close), a
 /// `"… (Spawned)"` tab title, and `spawned: true` so the frontend can badge and
 /// track them separately from configured Docker connections.
+///
+/// `runtime` pins Docker or Podman — the Session Picker's choice of section
+/// (SI-3, #1366). Omitted (or unrecognised) leaves the pre-picker behaviour of
+/// auto-detecting whichever runtime is installed.
 #[tauri::command]
 pub fn resolve_container_spawn(
     manager: State<'_, ConnectionManager>,
@@ -54,6 +59,7 @@ pub fn resolve_container_spawn(
     entry_id: Option<String>,
     container_image: Option<String>,
     container_mount: Option<String>,
+    runtime: Option<String>,
 ) -> Result<ContainerSpawn, String> {
     let settings = manager.get_settings();
     resolve_container_spawn_with(
@@ -62,7 +68,19 @@ pub fn resolve_container_spawn(
         entry_id,
         container_image,
         container_mount,
+        container_runtime_from_wire(runtime.as_deref()),
     )
+}
+
+/// Map the frontend's runtime token onto a [`ContainerRuntime`]. Anything else —
+/// including no token at all — means "detect it", which is what every pre-picker
+/// spawn did.
+fn container_runtime_from_wire(token: Option<&str>) -> ContainerRuntime {
+    match token.map(str::trim) {
+        Some("docker") => ContainerRuntime::Docker,
+        Some("podman") => ContainerRuntime::Podman,
+        _ => ContainerRuntime::Auto,
+    }
 }
 
 /// Pure resolution shared by the Tauri command and its tests: validate the
@@ -73,6 +91,7 @@ fn resolve_container_spawn_with(
     entry_id: Option<String>,
     container_image: Option<String>,
     container_mount: Option<String>,
+    runtime: ContainerRuntime,
 ) -> Result<ContainerSpawn, String> {
     if location.as_deref().map(str::trim).unwrap_or("").is_empty() {
         return Err("a spawn location is required for a container spawn".to_string());
@@ -89,6 +108,7 @@ fn resolve_container_spawn_with(
         &request,
         saved_image.as_deref(),
         saved_mount.as_deref(),
+        runtime,
     ))
 }
 
@@ -379,6 +399,35 @@ mod tests {
     }
 
     #[test]
+    fn a_picked_podman_runtime_reaches_the_session_settings() {
+        // Picking the Podman section must actually run Podman — auto-detection
+        // would silently prefer Docker on a host that has both.
+        let settings = ShellIntegrationSettings::default();
+        let spawn = resolve_container_spawn_with(
+            &settings,
+            Some("/proj".into()),
+            None,
+            None,
+            None,
+            container_runtime_from_wire(Some("podman")),
+        )
+        .expect("resolves");
+        assert_eq!(spawn.settings["runtime"], "podman");
+
+        // No pick keeps the pre-#1366 auto-detection.
+        let auto = resolve_container_spawn_with(
+            &settings,
+            Some("/proj".into()),
+            None,
+            None,
+            None,
+            container_runtime_from_wire(None),
+        )
+        .expect("resolves");
+        assert_eq!(auto.settings["runtime"], "auto");
+    }
+
+    #[test]
     fn a_picked_shell_is_opened_instead_of_the_system_default() {
         // The picker's whole point is choosing a specific shell, so the pick has
         // to reach the backend settings rather than falling back to the default.
@@ -459,10 +508,24 @@ mod tests {
     #[test]
     fn requires_a_location() {
         let settings = ShellIntegrationSettings::default();
-        assert!(resolve_container_spawn_with(&settings, None, None, None, None).is_err());
-        assert!(
-            resolve_container_spawn_with(&settings, Some("  ".into()), None, None, None).is_err()
-        );
+        assert!(resolve_container_spawn_with(
+            &settings,
+            None,
+            None,
+            None,
+            None,
+            ContainerRuntime::Auto
+        )
+        .is_err());
+        assert!(resolve_container_spawn_with(
+            &settings,
+            Some("  ".into()),
+            None,
+            None,
+            None,
+            ContainerRuntime::Auto
+        )
+        .is_err());
     }
 
     #[test]
@@ -474,6 +537,7 @@ mod tests {
             None,
             Some("alpine".into()),
             None,
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert!(spawn.spawned);
@@ -491,6 +555,7 @@ mod tests {
             Some("e1".into()),
             None,
             None,
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert_eq!(spawn.settings["image"], "saved:9");
@@ -506,6 +571,7 @@ mod tests {
             Some("e1".into()),
             Some("node:20".into()),
             Some("/srv".into()),
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert_eq!(spawn.settings["image"], "node:20");
@@ -521,6 +587,7 @@ mod tests {
             Some("does-not-exist".into()),
             None,
             None,
+            ContainerRuntime::Auto,
         )
         .expect("resolves");
         assert_eq!(spawn.settings["image"], container::DEFAULT_CONTAINER_IMAGE);
