@@ -24,8 +24,13 @@ Reachable here, and covered:
 * a staged announcement surfaces the banner under a connected agent,
 * the banner's copy carries the agent name and the offered version,
 * an **unstaged** announcement folds into the store but shows no banner,
-* the event alone does not surface a banner on a *disconnected* agent,
-* Dismiss hides the banner, and it stays hidden for that agent.
+* the banner is gated on the agent being connected — and an update announced
+  while it was disconnected surfaces once it connects,
+* Dismiss hides the banner, and a freshly announced update re-arms it.
+
+Each "nothing renders" assertion is paired with a **positive control** that makes
+the same banner appear, because the store folds synchronously while React renders
+a tick later — an unpaired absence check could pass by looking too early.
 
 **Apply Now is not driven here**, because neither of its outcomes is assertable
 yet — both are left to the Vitest suite (``AgentUpdateBanner.test.tsx``):
@@ -75,6 +80,7 @@ class TestAgentUpdateBannerLive(
     """One app for the whole suite; each test creates its own uniquely-named agent."""
 
     NEW_VERSION = "9.9.9"
+    NEWER_VERSION = "9.9.10"
 
     @pytest.fixture(autouse=True)
     def _cleanup_between_tests(self):
@@ -138,9 +144,17 @@ class TestAgentUpdateBannerLive(
         assert update["staged"] is False
         self.wait_no_agent_update_banner(agent["id"])
 
-    def test_disconnected_agent_shows_no_banner(self):
-        # The banner hangs off a connected agent's row; a stale announcement for an
-        # agent that is not connected must not resurrect it.
+        # Positive control: the store folding is synchronous while React renders a
+        # tick later, so "no banner" alone could just be an early look. Announcing
+        # the *same* agent's update as staged must surface the banner — proving the
+        # event path was live throughout and that `staged` is what gated it.
+        self.announce_agent_update(agent["id"], available_version=self.NEW_VERSION)
+        assert self.NEW_VERSION in self.wait_agent_update_banner(agent["id"])
+
+    def test_banner_is_gated_on_the_agent_being_connected(self):
+        # The banner hangs off a *connected* agent's row (`AgentNode`), so an
+        # announcement for an agent that is not connected must not surface it —
+        # there is nothing to apply an update to.
         agent = self._create_agent("agent-banner-offline")
 
         self.announce_agent_update(agent["id"], available_version=self.NEW_VERSION)
@@ -151,15 +165,31 @@ class TestAgentUpdateBannerLive(
         )
         self.wait_no_agent_update_banner(agent["id"])
 
+        # Positive control (and real behaviour): the record is not discarded while
+        # disconnected, so connecting surfaces the already-announced update. This
+        # also proves the absence above was the connected-gate, not an early look.
+        self.connect_agent(agent["name"])
+        self.handle_password_prompt(SSH_PASSWORD)
+        self.wait_agent_connected(agent["name"])
+
+        assert self.NEW_VERSION in self.wait_agent_update_banner(agent["id"])
+
     # ── dismiss ──────────────────────────────────────────────────────────────────
-    def test_dismiss_hides_banner_and_it_stays_hidden(self):
+    def test_dismiss_hides_banner_but_a_fresh_update_re_arms_it(self):
         agent = self._create_and_connect("agent-banner-dismiss")
         self.announce_agent_update(agent["id"], available_version=self.NEW_VERSION)
         self.wait_agent_update_banner(agent["id"])
 
         self.dismiss_agent_update_banner(agent["id"])
 
-        # Dismissal is per-agent and sticky: re-announcing the same staged update
-        # must not nag the user again.
-        self.announce_agent_update(agent["id"], available_version=self.NEW_VERSION)
-        self.wait_no_agent_update_banner(agent["id"])
+        # Dismissing only suppresses the banner — the staged update itself stands
+        # (it still lands on the last disconnect), so the record survives.
+        assert self.agent_update_state(agent["id"]) is not None
+
+        # A *newly* announced update deliberately re-arms the banner
+        # (``setAgentUpdateAvailable`` clears the dismissed flag), so dismissing
+        # one version never silently swallows the next.
+        self.announce_agent_update(agent["id"], available_version=self.NEWER_VERSION)
+
+        text = self.wait_agent_update_banner(agent["id"])
+        assert self.NEWER_VERSION in text

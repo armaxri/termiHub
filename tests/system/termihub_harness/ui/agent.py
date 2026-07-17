@@ -376,9 +376,18 @@ class AgentUi(HarnessMixin):
         )
 
     def agent_update_state(self, agent_id: str) -> Optional[dict[str, Any]]:
-        """The store's folded ``agentUpdates[agent_id]`` record, if any."""
-        value = self.driver.get_state(f"agentUpdates.{agent_id}")
-        return value if isinstance(value, dict) else None
+        """The store's folded ``agentUpdates[agent_id]`` record, if any.
+
+        Reads the whole map and indexes here rather than asking for the
+        ``agentUpdates.<id>`` path: an unresolved path is a ``BridgeError``, not a
+        ``None``, and "no update announced yet" is an expected state this must be
+        able to report (mirrors :meth:`persistent_session_state`).
+        """
+        value = self.driver.get_state("agentUpdates")
+        if not isinstance(value, dict):
+            return None
+        entry = value.get(agent_id)
+        return entry if isinstance(entry, dict) else None
 
     def dismiss_agent_update_banner(self, agent_id: str) -> None:
         """Click the banner's Dismiss and wait for it to disappear."""
