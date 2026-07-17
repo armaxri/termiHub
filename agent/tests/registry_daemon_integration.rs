@@ -275,7 +275,10 @@ fn a_second_session_less_desktop_is_visible_to_the_first() {
     let dir = TempDir::new().expect("temp dir");
     let endpoint = unique_endpoint(&dir, "visible");
     let _registry = spawn_registry(&endpoint);
-    assert!(wait_for_endpoint(&endpoint), "registry never bound {endpoint}");
+    assert!(
+        wait_for_endpoint(&endpoint),
+        "registry never bound {endpoint}"
+    );
 
     // Two independent agent processes — the real topology: one agent process
     // per desktop, exactly as the SSH-exec transport produces.
@@ -604,9 +607,14 @@ fn a_broadcast_from_one_worker_reaches_another_workers_process() {
         "method": "agent.update_pending",
         "params": { "version": "9.9.9" },
     });
-    sender.send(MSG_BROADCAST, &serde_json::to_vec(&envelope).expect("encode"));
+    sender.send(
+        MSG_BROADCAST,
+        &serde_json::to_vec(&envelope).expect("encode"),
+    );
 
-    let (msg_type, payload) = receiver.recv().expect("the other worker must get the event");
+    let (msg_type, payload) = receiver
+        .recv()
+        .expect("the other worker must get the event");
     assert_eq!(msg_type, MSG_EVENT, "expected an EVENT frame");
     let got: Value = serde_json::from_slice(&payload).expect("decode envelope");
     assert_eq!(
@@ -643,7 +651,10 @@ fn a_broadcast_with_no_other_workers_is_harmless() {
         "method": "agent.update_pending",
         "params": {},
     });
-    lonely.send(MSG_BROADCAST, &serde_json::to_vec(&envelope).expect("encode"));
+    lonely.send(
+        MSG_BROADCAST,
+        &serde_json::to_vec(&envelope).expect("encode"),
+    );
 
     // The registry must still be serving: a later REGISTER on a fresh connection
     // proves the broadcast did not take it down.

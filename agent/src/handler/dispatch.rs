@@ -24,8 +24,6 @@ use crate::files::{FileBackend, FileError};
 use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
-use crate::registry_daemon::client::RegistryClient;
-use crate::registry_daemon::protocol::ClientRecord;
 use crate::protocol::methods::{
     AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentSettings,
     AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult, Capabilities,
@@ -40,6 +38,8 @@ use crate::protocol::methods::{
     SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
     SessionResizeParams,
 };
+use crate::registry_daemon::client::RegistryClient;
+use crate::registry_daemon::protocol::ClientRecord;
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,

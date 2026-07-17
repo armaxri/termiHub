@@ -102,6 +102,9 @@ enum Command {
     Register(Box<ClientRecord>),
     Deregister,
     List(oneshot::Sender<Vec<ClientRecord>>),
+    /// Constructed only by [`RegistryClient::broadcast`], whose production
+    /// caller lands with #1351 — see the note there.
+    #[allow(dead_code)]
     Broadcast(Box<BroadcastEnvelope>),
 }
 
@@ -167,9 +170,22 @@ impl RegistryClient {
     /// Fan a notification out to every *other* worker on this host.
     ///
     /// The cross-worker half of the notification path: the local per-process
-    /// channel can only reach this worker's own client, so anything that must
-    /// reach the host's other desktops goes through here.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// channel ([`io/tcp.rs`](crate::io::tcp)'s `mpsc`) is multi-producer but
+    /// **single-consumer**, so it can only ever reach this worker's own client.
+    /// Anything that must reach the host's *other* desktops goes through here.
+    ///
+    /// # No production caller yet
+    ///
+    /// #1574 deliberately ships the broadcast **substrate**; #1351 (coordinated
+    /// update notification) is the feature that sends one, and owns what gets
+    /// broadcast and when. So this is dead code on purpose until #1351 lands —
+    /// hence the `allow`, which should be removed with the first real caller.
+    ///
+    /// It is not untested: the registry's fan-out and this client's delivery are
+    /// unit-tested here and in [`super::process`], and
+    /// `agent/tests/registry_daemon_integration.rs` proves the round trip across
+    /// two processes on a real socket.
+    #[allow(dead_code)]
     pub fn broadcast(&self, envelope: BroadcastEnvelope) {
         let _ = self.cmd_tx.send(Command::Broadcast(Box::new(envelope)));
     }
@@ -249,7 +265,12 @@ async fn connect_or_spawn(config: &RegistryConfig) -> std::io::Result<(BoxedRead
     if let Err(e) = spawn_registry_daemon() {
         warn!("Failed to spawn registry daemon: {e}");
     }
-    ipc::connect_with_retry(&config.endpoint, SPAWN_CONNECT_TIMEOUT, CONNECT_POLL_INTERVAL).await
+    ipc::connect_with_retry(
+        &config.endpoint,
+        SPAWN_CONNECT_TIMEOUT,
+        CONNECT_POLL_INTERVAL,
+    )
+    .await
 }
 
 /// Spawn `termihub-agent --registry-daemon`, detached.
@@ -381,10 +402,9 @@ fn handle_frame(sup: &mut Supervisor, frame: crate::daemon::protocol::Frame) {
                 // Hand it to the worker's own notification channel — the last
                 // hop to this worker's client. A closed channel means the client
                 // is already gone; the event is simply not needed.
-                let _ = sup.notification_tx.send(JsonRpcNotification::new(
-                    envelope.method,
-                    envelope.params,
-                ));
+                let _ = sup
+                    .notification_tx
+                    .send(JsonRpcNotification::new(envelope.method, envelope.params));
             }
             Err(e) => warn!("Registry sent an undecodable event: {e}"),
         },
@@ -486,9 +506,13 @@ mod tests {
         let (mut sup, _rx) = supervisor();
         let mut sink: BoxedWriter = Box::new(tokio::io::sink());
 
-        handle_command(&mut sup, &mut sink, Command::Register(Box::new(record("a"))))
-            .await
-            .expect("register");
+        handle_command(
+            &mut sup,
+            &mut sink,
+            Command::Register(Box::new(record("a"))),
+        )
+        .await
+        .expect("register");
         assert_eq!(sup.desired, Some(record("a")));
 
         handle_command(&mut sup, &mut sink, Command::Deregister)

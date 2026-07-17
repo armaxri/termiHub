@@ -140,7 +140,10 @@ async fn main() -> anyhow::Result<()> {
             // `registry_daemon::client`), never by a user. Exits on its own once
             // it has been idle, and exits immediately — successfully — if
             // another registry already owns the endpoint.
-            info!("termihub-agent {} starting as the host-wide registry", VERSION);
+            info!(
+                "termihub-agent {} starting as the host-wide registry",
+                VERSION
+            );
             registry_daemon::process::run_registry_daemon().await
         }
         other => {

@@ -131,8 +131,9 @@ pub async fn connect(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
 
 #[cfg(unix)]
 #[allow(unused_imports)]
-pub use unix_impl::{endpoint_alive, open_daemon_log, open_registry_log, registry_endpoint,
-                    session_endpoint};
+pub use unix_impl::{
+    endpoint_alive, open_daemon_log, open_registry_log, registry_endpoint, session_endpoint,
+};
 #[cfg(windows)]
 #[allow(unused_imports)]
 pub use windows_impl::{endpoint_alive, registry_endpoint, session_endpoint};

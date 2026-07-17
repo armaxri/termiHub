@@ -139,9 +139,13 @@ mod tests {
     async fn register_payload_survives_the_session_daemon_framing() {
         let record = sample_record();
         let mut buf: Vec<u8> = Vec::new();
-        frames::write_frame_async(&mut buf, MSG_REGISTER, &serde_json::to_vec(&record).unwrap())
-            .await
-            .expect("write frame");
+        frames::write_frame_async(
+            &mut buf,
+            MSG_REGISTER,
+            &serde_json::to_vec(&record).unwrap(),
+        )
+        .await
+        .expect("write frame");
 
         let mut cursor = std::io::Cursor::new(buf);
         let frame = frames::read_frame_async(&mut cursor)
@@ -158,8 +162,15 @@ mod tests {
     #[test]
     fn registry_types_do_not_collide_with_session_daemon_types() {
         use crate::daemon::protocol as session;
-        let registry = [MSG_REGISTER, MSG_DEREGISTER, MSG_LIST, MSG_BROADCAST, MSG_ACK,
-                        MSG_CLIENTS, MSG_EVENT];
+        let registry = [
+            MSG_REGISTER,
+            MSG_DEREGISTER,
+            MSG_LIST,
+            MSG_BROADCAST,
+            MSG_ACK,
+            MSG_CLIENTS,
+            MSG_EVENT,
+        ];
         let session = [
             session::MSG_INPUT,
             session::MSG_RESIZE,
@@ -173,7 +184,10 @@ mod tests {
             session::MSG_READY,
         ];
         for r in registry {
-            assert!(!session.contains(&r), "type 0x{r:02x} is used by both roles");
+            assert!(
+                !session.contains(&r),
+                "type 0x{r:02x} is used by both roles"
+            );
         }
     }
 }

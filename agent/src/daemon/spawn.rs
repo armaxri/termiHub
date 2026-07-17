@@ -113,7 +113,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn configure_detached_stderr_redirects_into_the_supplied_log() {
-        let path = std::env::temp_dir().join(format!("termihub-spawn-test-{}.log", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("termihub-spawn-test-{}.log", std::process::id()));
         let log = std::fs::File::create(&path).expect("create log");
 
         let mut command = std::process::Command::new("sh");
