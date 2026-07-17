@@ -10,56 +10,84 @@
 //! image on first run. Skips gracefully (like the other backend integration
 //! tests) when no daemon is available, so it is safe in CI without Docker. Only
 //! compiled with `--features docker`, keeping it out of the default unit path.
+//!
+//! ## Why this observes through bollard, not the `docker` CLI (#1585)
+//!
+//! The daemon the backend talks to and the daemon the `docker` CLI talks to are
+//! *not* necessarily the same one. bollard resolves the daemon from
+//! `DOCKER_HOST` or the well-known `/var/run/docker.sock`; the `docker` CLI
+//! resolves it from its own *context* (`docker context ls`), which bollard does
+//! not read. On macOS with both Docker Desktop and Podman installed these
+//! diverge: `podman-mac-helper` points `/var/run/docker.sock` at the Podman
+//! machine socket, so the backend spawns into Podman while the CLI — on the
+//! `desktop-linux` context — reports on Docker Desktop and sees nothing.
+//!
+//! Shelling out to `docker ps` therefore asserted against the wrong daemon and
+//! failed reproducibly even though the spawn itself was fine. Observing through
+//! the same client the backend uses keeps the assertions honest, and doubles as
+//! a far more accurate pre-flight guard: it skips exactly when the backend
+//! itself could not work, rather than when some unrelated CLI cannot.
 
-use std::process::Command;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use bollard::container::{ListContainersOptions, RemoveContainerOptions};
 use termihub_core::backends::docker::Docker;
 use termihub_core::connection::ConnectionType;
 
-/// Whether a Docker/Podman CLI can reach a daemon (used for the pre-flight skip
-/// and for the stop-not-remove assertion via container listing).
-fn docker_cli_available() -> bool {
-    Command::new("docker")
-        .arg("info")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Build a client that reaches the same daemon the backend's `Auto` runtime
+/// path reaches, and confirm it is actually usable.
+///
+/// `Auto` uses `connect_with_local_defaults()` whenever that constructs, so
+/// mirroring it here means the assertions observe the daemon the spawn really
+/// landed in. Returns `None` when the daemon is absent *or* present-but-
+/// unreachable — both are cases the backend could not work in either, so both
+/// are legitimate skips.
+async fn observation_client() -> Option<bollard::Docker> {
+    let client = bollard::Docker::connect_with_local_defaults().ok()?;
+    // `connect_with_local_defaults` does not perform I/O — ping to prove the
+    // daemon is reachable and answering, not merely configured.
+    client.ping().await.ok()?;
+    Some(client)
 }
 
-/// List `(name, state)` for all containers named with the `termihub-` prefix.
-fn list_termihub_containers() -> Vec<(String, String)> {
-    let output = Command::new("docker")
-        .args([
-            "ps",
-            "-a",
-            "--filter",
-            "name=termihub-",
-            "--format",
-            "{{.Names}}\t{{.State}}",
-        ])
-        .output();
-    let Ok(output) = output else {
+/// List `(name, state)` for the containers **this test process** spawned.
+///
+/// The backend names containers `termihub-<millis>-<pid>`, so scoping to our
+/// own PID isolates this test from the `termihub-test-*` fixture containers and
+/// from any other checkout running the same test concurrently.
+async fn list_spawned_containers(client: &bollard::Docker) -> Vec<(String, String)> {
+    let suffix = format!("-{}", std::process::id());
+    let mut filters = HashMap::new();
+    filters.insert("name", vec!["termihub-"]);
+    let options = ListContainersOptions {
+        all: true,
+        filters,
+        ..Default::default()
+    };
+    let Ok(containers) = client.list_containers(Some(options)).await else {
         return Vec::new();
     };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let (name, state) = line.split_once('\t')?;
-            Some((name.trim().to_string(), state.trim().to_lowercase()))
+    containers
+        .into_iter()
+        .filter_map(|c| {
+            // The API returns names with a leading slash.
+            let name = c.names?.first()?.trim_start_matches('/').to_string();
+            let state = c.state?.to_lowercase();
+            name.ends_with(&suffix).then_some((name, state))
         })
         .collect()
 }
 
 #[tokio::test]
 async fn docker_spawn_mounts_directory_and_opens_cd_to_mount() {
-    if !docker_cli_available() {
+    let Some(client) = observation_client().await else {
         eprintln!(
-            "SKIPPED: no reachable Docker daemon \
+            "SKIPPED: no reachable container daemon \
              (directory-mount container spawn integration test, #1372)"
         );
         return;
-    }
+    };
 
     // A unique host directory with a marker file only visible if the bind mount
     // works inside the container.
@@ -67,11 +95,6 @@ async fn docker_spawn_mounts_directory_and_opens_cd_to_mount() {
     std::fs::create_dir_all(&host_dir).expect("create host dir");
     let marker_content = "termihub-1372-mounted-ok";
     std::fs::write(host_dir.join("mount-check.txt"), marker_content).expect("write marker");
-
-    let before: Vec<String> = list_termihub_containers()
-        .into_iter()
-        .map(|(n, _)| n)
-        .collect();
 
     // The exact settings shape the spawn path builds: single writable bind at
     // /workspace, working directory = mount, stopped-not-removed on close.
@@ -122,14 +145,15 @@ async fn docker_spawn_mounts_directory_and_opens_cd_to_mount() {
     // Give the daemon a moment to record the stopped state.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let new_containers: Vec<(String, String)> = list_termihub_containers()
-        .into_iter()
-        .filter(|(name, _)| !before.contains(name))
-        .collect();
+    let spawned = list_spawned_containers(&client).await;
 
     // Clean up before asserting so a failure never leaks a container or dir.
-    for (name, _) in &new_containers {
-        let _ = Command::new("docker").args(["rm", "-f", name]).output();
+    for (name, _) in &spawned {
+        let options = RemoveContainerOptions {
+            force: true,
+            ..Default::default()
+        };
+        let _ = client.remove_container(name, Some(options)).await;
     }
     let _ = std::fs::remove_dir_all(&host_dir);
 
@@ -142,13 +166,13 @@ async fn docker_spawn_mounts_directory_and_opens_cd_to_mount() {
         "shell should open cd'd into the mount target; output: {buf:?}"
     );
     assert_eq!(
-        new_containers.len(),
+        spawned.len(),
         1,
-        "spawn should create exactly one container; found: {new_containers:?}"
+        "spawn should create exactly one container; found: {spawned:?}"
     );
     assert_ne!(
-        new_containers[0].1, "running",
+        spawned[0].1, "running",
         "closing the session must stop (not remove) the container; state: {:?}",
-        new_containers[0]
+        spawned[0]
     );
 }
