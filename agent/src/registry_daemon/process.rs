@@ -82,7 +82,22 @@ impl RegistryState {
         guard.len()
     }
 
-    /// Fan `payload` out to every worker except `except_conn`.
+    /// Fan `payload` out to every worker **connection** except `except_conn`.
+    ///
+    /// Deliberately keyed to the connection, not the client: an unregistered
+    /// connection (mid `initialize`, or a client that deregistered but whose
+    /// process is still up) is reached too. This is the intentional resolution
+    /// of #1608, not an oversight — the fan-out targets connections while
+    /// [`clients`](Self::clients) / `agent.list_connections` targets registered
+    /// clients, and the two are meant to answer different questions:
+    ///
+    /// - A connection racing to register is *about to become a client*, and the
+    ///   one production broadcast — `agent.update_pending` (#1351) — is precisely
+    ///   the signal it must not miss, or it will spin up sessions the imminent
+    ///   binary swap is about to tear down. Skipping it would open that race.
+    /// - Reaching a connection with no client behind it is harmless: the worker
+    ///   dispatches on frame type, never on ACK ordering (#1610), and a departed
+    ///   client just drops the event on a closed channel (`client.rs`).
     ///
     /// Send failures are ignored: an unbounded channel only fails when the
     /// receiving task is gone, which means that worker is already tearing down
