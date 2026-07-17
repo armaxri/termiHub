@@ -1,5 +1,9 @@
 export default {
   extends: ["@commitlint/config-conventional"],
+  // Inherited rules from config-conventional are intentionally left in force. In
+  // particular `subject-case` requires a lowercase subject (it rejects sentence-case,
+  // start-case, pascal-case and upper-case) — see the commit-format notes in
+  // docs/contributing.md and .claude/CLAUDE.md. Only the type list is overridden below.
   rules: {
     // Keep in sync with the type lists in docs/contributing.md and .claude/CLAUDE.md.
     // `build` is part of the Conventional Commits spec and is already used in this
