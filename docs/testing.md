@@ -538,6 +538,7 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 | Monitoring          | `core/tests/monitoring.rs`                  | ssh-password:2201                          | CPU, memory, disk stats, stats under load                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Agent Deploy SFTP   | `src-tauri/src/utils/remote_exec.rs`        | ssh-password:2201                          | Uploads a file over SFTP and reads it back, exercising the agent auto-deploy `block_in_place` path from `spawn_blocking` (#828/#837). In the desktop crate: `cargo test -p termihub --lib agent_deploy`. Pinned to password auth; port via `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) — see [Parallel test isolation](#parallel-test-isolation)                                                                                                                                            |
 | Elevated Save SFTP  | `src-tauri/src/files/sftp.rs`               | ssh-sudo:2212, ssh-nosudo:2213             | Live `SftpSession::write_file_content_elevated` over real SSH (#1494/#1328): correct password → `Success` (root-owned file rewritten, owner/mode preserved), wrong password → `IncorrectPassword`, no-sudo → `Other`; every path confirms no `/tmp/termihub-*` temp leaks. In the desktop crate: `cargo test -p termihub --lib elevated_save`. Ports via `TERMIHUB_TEST_SSH_SUDO_PORT` (2212) / `TERMIHUB_TEST_SSH_NOSUDO_PORT` (2213) — see [Parallel test isolation](#parallel-test-isolation) |
+| Agent Self-Update   | `agent/tests/self_update_integration.rs`    | alpine (one case; self-managed)            | Live-agent self-update auto-apply-on-idle (#1401/#1534): a real `--allow-self-update` child agent polls a `wiremock` GitHub mock, driving poll -> download -> SHA-256-verify -> binary-swap -> re-exec. Asserts the deferred apply re-execs and returns, the `coordinated` gate stages without applying, an active session (shell + real Docker) is never cut, and a failed apply keeps `pending_update`. Unix-only; Docker case skips it.                                                       |
 | SSH Banner (system) | `tests/system/tests/test_ssh_banner.py`     | ssh-banner:2206                            | Pre-auth banner / MOTD display (ported from `ssh-banner.test.js`)                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | SSH Keys (system)   | `tests/system/tests/test_ssh_keys.py`       | ssh-keys:2203                              | Key-based auth flows (ported from `ssh-keys.test.js`)                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | SSH Infra (system)  | `tests/system/tests/test_ssh.py`            | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                                                                                                                                                                   |
@@ -1120,7 +1121,7 @@ that file manager, and the binary-path **staleness banner**. Those are consolida
 per-OS manual pass. All registration is **user-level — it must never prompt for admin/elevation.**
 See the concept
 [`shell-context-menu-integration.html`](../docs/concepts/partial/shell-context-menu-integration.html)
-and [ADR-12](architecture.md#adr-12-multi-instance-with-a-spawn-ipc-rendezvous).
+and [ADR-13](architecture.md#adr-13-multi-instance-with-a-spawn-ipc-rendezvous).
 
 **Common setup (all platforms).**
 
@@ -1981,6 +1982,25 @@ tree contains a symlink (create one on the host, e.g. `ln -s data linkdir` and
    browser must **follow** it and list the target directory's contents.
 3. Confirm a non-symlink file shows no link icon and no `→ target` hint.
 
+### Docker, WSL, and SFTP symlink icon and target (#1523)
+
+Extends the #1513 symlink handling to the Docker, WSL, and SFTP browsers. The
+Docker `find`/`stat` parsers are covered by unit tests
+(`cargo test -p termihub-core --all-features --lib backends::docker`); the SFTP
+`readlink` and WSL `symlink_metadata` paths need a live server/distribution, so
+confirm them manually. In each case, on the host create a symlink to a file and
+one to a directory (e.g. `ln -s data linkdir` and `ln -s data/file.bin linkfile`).
+
+1. **Docker** — connect to a running container, browse to a directory holding
+   symlinks. Each link row shows the distinct **link-badge icon** and an inline
+   `→ target` hint; a directory symlink follows into the target on double-click.
+2. **SFTP (SSH)** — browse an SSH connection's directory containing symlinks.
+   Each link row shows the link-badge icon and the `→ target` hint (resolved via
+   a best-effort `readlink`); a plain file shows neither.
+3. **WSL** (Windows only) — browse a WSL distribution's directory containing
+   symlinks. Each link row shows the link-badge icon and, where the target could
+   be read, the `→ target` hint.
+
 ### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
 
 Verifies the shared transfer-queue model (queue / bounded concurrency /
@@ -2037,7 +2057,7 @@ drive real transfers. See PR #1530.
    disappears when the queue is emptied.
 5. **Visual review (light + dark):** switch themes and confirm the bar colours
    (accent/amber/green/red), status text colours, and count badge match the
-   concept mockup (`docs/concepts/backlog/ftp-client.html`), with no raw scroll
+   concept mockup (`docs/concepts/partial/ftp-client.html`), with no raw scroll
    bar or off-token colours.
 
 ### Remote system monitoring

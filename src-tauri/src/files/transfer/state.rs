@@ -4,7 +4,7 @@
 //! no I/O, no async, no Tauri. That keeps every transition (valid and invalid)
 //! unit-testable without a live FTP/SFTP server, which is the high-value,
 //! macOS-runnable coverage called for by the concept
-//! (`docs/concepts/backlog/ftp-client.html`, "Transfer Queue State Machine").
+//! (`docs/concepts/partial/ftp-client.html`, "Transfer Queue State Machine").
 //!
 //! ```text
 //! [*] --> Queued
