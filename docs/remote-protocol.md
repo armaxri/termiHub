@@ -2,7 +2,7 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.3.0
+**Version**: 0.4.0
 **Status**: Draft
 **Issue**: #17, #360, #1349
 
@@ -266,12 +266,16 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 
 | Desktop Version | Agent Version | Compatible?                                         |
 | --------------- | ------------- | --------------------------------------------------- |
-| 0.3.0           | 0.3.0         | Yes                                                 |
+| 0.4.0           | 0.4.0         | Yes                                                 |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)     |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)             |
 | 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent) |
 | 0.2.0           | 0.3.0         | Yes (new method / field ignored)                    |
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)          |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                |
-| 1.0.0           | 0.3.0         | No (major mismatch)                                 |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                 |
+
+**0.4.0 (additive, minor)** — adds the [`agent.request_update`](#agentrequest_update) method and the [`agent.update_pending`](#agentupdate_pending) notification (#1351). Backwards compatible in both directions, but note what "compatible" means for a _coordinated_ update: a 0.3.0 desktop never receives `agent.update_pending`, so it gets the same hard cut it always did when another host updates the agent — it is not broken, it is merely not warned. That is the documented "older desktops remain hard-cut" behaviour, and it is why the agent proceeds on a timeout rather than waiting for an ack that such a desktop could never send.
 
 **0.3.0 (additive, minor)** — adds the read-only [`agent.list_connections`](#agentlist_connections) method and a `client_id` field in the `initialize` result (#1349). Both are backwards compatible: a 0.2.0 desktop ignores the extra field and never calls the new method; a 0.2.0 agent simply lacks them, so a 0.3.0 desktop falls back gracefully (an empty other-hosts list for the update guard).
 
@@ -828,6 +832,69 @@ Gracefully shut down the agent process. Active sessions are detached (left runni
 | -------- | --------------------- |
 | `-32007` | Agent not initialized |
 | `-32015` | Shutdown failed       |
+
+---
+
+### `agent.request_update`
+
+Request a **coordinated agent update** (#1351, SI-5). The agent broadcasts an [`agent.update_pending`](#agentupdate_pending) notification to every **other** client attached to the same host, gives them up to 10 seconds to disconnect cleanly, and then applies the update through exactly the same path as [`agent.request_deferred_update`](#agentrequest_deferred_update) — including its guarantee that active sessions are never interrupted.
+
+The difference between the two methods is the courtesy window, not the apply: `agent.request_deferred_update` cuts other hosts off without warning, `agent.request_update` tells them first.
+
+**The ack is the disconnect.** There is no ack message. The agent watches the host-wide client registry (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)) and proceeds as soon as the other clients are gone — a desktop acks by leaving. A desktop that ignores the notice, or that has already crashed, cannot hold the update hostage: when the window closes the agent proceeds anyway and reports who was still attached.
+
+Coordination is best-effort and never blocks the update. If the host-wide registry is unavailable, the agent proceeds immediately with `notifiedClients: 0` and `allAcked: false` — the same hard cut that predates this method — rather than failing.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.request_update",
+  "params": {
+    "binaryPath": "/opt/updates/termihub-agent",
+    "version": "0.4.0"
+  },
+  "id": 12
+}
+```
+
+| Param            | Type      | Required | Description                                                                                                                  |
+| ---------------- | --------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `binaryPath`     | `string`  | No       | Absolute path (on the agent host) to the new agent binary to stage. Omit to apply an update the agent already staged itself. |
+| `version`        | `string`  | No       | Target version label (bookkeeping only)                                                                                      |
+| `ackTimeoutSecs` | `integer` | No       | How long other hosts get to disconnect. Defaults to `10`.                                                                    |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "applied": false,
+    "activeSessions": 2,
+    "notifiedClients": 2,
+    "allAcked": true
+  },
+  "id": 12
+}
+```
+
+| Result Field       | Type       | Description                                                                                 |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------- |
+| `applied`          | `boolean`  | `true` if applied immediately (agent idle); `false` if deferred                             |
+| `activeSessions`   | `integer`  | Sessions still active (the update applies when they all disconnect)                         |
+| `notifiedClients`  | `integer`  | How many **other** hosts were sent the notice                                               |
+| `allAcked`         | `boolean`  | `true` if every notified host left in time (or there were none); `false` if any was cut off |
+| `remainingClients` | `string[]` | `client_id`s still attached when the window closed. Omitted when empty.                     |
+
+**Errors:** identical to [`agent.request_deferred_update`](#agentrequest_deferred_update) — the two share one apply path.
+
+| Code     | When                                                            |
+| -------- | --------------------------------------------------------------- |
+| `-32007` | Agent not initialized                                           |
+| `-32602` | `binaryPath` does not exist, or no update is staged to apply    |
+| `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix) |
 
 ---
 
@@ -1668,6 +1735,32 @@ Periodic system statistics for a monitored host. Sent at the interval specified 
 | `diskUsedKb`        | `integer`  | Root filesystem used in KB                   |
 | `diskUsedPercent`   | `number`   | Disk usage 0–100                             |
 | `osInfo`            | `string`   | OS name and version (e.g., `"Linux 5.15.0"`) |
+
+---
+
+### `agent.update_pending`
+
+Another host is updating this agent (#1351). Broadcast to every client **except** the one that called [`agent.request_update`](#agentrequest_update).
+
+The desktop should show the "being updated by another host" notice, suspend its sessions, and disconnect cleanly — then reconnect to the new version. **Disconnecting is the ack**: there is no reply to send. The agent waits up to 10 seconds for every notified client to go, then proceeds regardless, so a desktop that ignores this notice is simply cut off when the binary is swapped.
+
+Sessions themselves survive: they live in detached daemons and are recovered on the next connect (see [`agent.request_deferred_update`](#agentrequest_deferred_update)). The notice is about the _connection_ going away, not the work.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.update_pending",
+  "params": {
+    "requestedByVersion": "1.4.0",
+    "estimatedRestartSecs": 5
+  }
+}
+```
+
+| Param                  | Type      | Description                                                                             |
+| ---------------------- | --------- | --------------------------------------------------------------------------------------- |
+| `requestedByVersion`   | `string`  | Version of the desktop that requested the update. `"unknown"` if it could not be read.  |
+| `estimatedRestartSecs` | `integer` | How long the agent expects to be unavailable, for the notice's restart progress display |
 
 ---
 

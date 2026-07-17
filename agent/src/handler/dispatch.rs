@@ -25,32 +25,36 @@ use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
 use crate::protocol::methods::{
-    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentSettings,
-    AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult, Capabilities,
-    ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo, ConnectionListResult,
-    ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams, FilesListParams,
-    FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult, FilesRenameParams,
-    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
-    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
-    MonitoringUnsubscribeParams, NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams,
-    NetworkTracerouteParams, NetworkWolParams, SessionAttachParams, SessionCloseParams,
-    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
-    SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
-    SessionResizeParams,
+    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
+    AgentRequestUpdateResult, AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams,
+    AgentShutdownResult, Capabilities, ConnectionCreateParams, ConnectionDeleteParams,
+    ConnectionInfo, ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
+    FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
+    FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
+    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
+    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
+    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
+    SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult, SessionInputParams,
+    SessionListEntry, SessionListResult, SessionResizeParams, UpdatePendingNotification,
+    AGENT_UPDATE_PENDING,
 };
 use crate::registry_daemon::client::RegistryClient;
-use crate::registry_daemon::protocol::ClientRecord;
+use crate::registry_daemon::protocol::{BroadcastEnvelope, ClientRecord};
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
 };
+use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 
 /// The agent's protocol version.
 ///
 /// Bumped to 0.2.0 for the connection.* protocol migration (#360).
 /// Bumped to 0.3.0 for the additive `agent.list_connections` RPC and the
 /// `client_id` field in the `initialize` result (#1349).
-const AGENT_PROTOCOL_VERSION: &str = "0.3.0";
+/// Bumped to 0.4.0 for the additive `agent.request_update` RPC and the
+/// `agent.update_pending` notification (#1351).
+const AGENT_PROTOCOL_VERSION: &str = "0.4.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -363,6 +367,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_agent_shutdown(module)?;
     register_agent_settings_update(module)?;
     register_agent_request_deferred_update(module)?;
+    register_agent_request_update(module)?;
     register_agent_list_connections(module)?;
     Ok(())
 }
@@ -1335,6 +1340,133 @@ fn register_agent_settings_update(
     Ok(())
 }
 
+/// Map a deferred-update failure onto its JSON-RPC error.
+///
+/// Shared by `agent.request_deferred_update` and `agent.request_update`: both
+/// end in the same apply call, so they must fail identically — a coordinated
+/// update that reported a missing binary differently from a deferred one would
+/// be a difference with no meaning behind it.
+fn map_deferred_update_error(e: DeferredUpdateError) -> ErrorObjectOwned {
+    match e {
+        DeferredUpdateError::BinaryNotFound(path) => rpc_err(
+            errors::INVALID_PARAMS,
+            format!("Update binary not found: {path}"),
+        ),
+        DeferredUpdateError::NoPendingUpdate => {
+            rpc_err(errors::INVALID_PARAMS, "No pending update to apply")
+        }
+        DeferredUpdateError::ApplyFailed(err) => rpc_err(
+            errors::DEFERRED_UPDATE_FAILED,
+            format!("Failed to apply update: {err:#}"),
+        ),
+    }
+}
+
+/// How long the agent tells other hosts it expects to be unavailable.
+///
+/// The apply is an exec-replace of an already-staged, already-verified binary —
+/// no download, no unpack — so the honest figure is "a few seconds". Advertised
+/// only so the notice can show restart progress; nothing waits on it.
+const ESTIMATED_RESTART_SECS: u64 = 5;
+
+/// `agent.request_update` — a coordinated update (#1351, SI-5).
+///
+/// Tells every *other* host on this machine that an update is coming, gives them
+/// [`ACK_TIMEOUT`] to disconnect cleanly, then hands the actual swap to the same
+/// deferred-apply path as `agent.request_deferred_update`. The coordination is
+/// the whole difference: the deferred RPC cuts other hosts off without warning,
+/// this one asks first.
+///
+/// It still never interrupts an active session — that guarantee comes from the
+/// shared apply path, not from here.
+fn register_agent_request_update(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method("agent.request_update", |params, ctx, _ext| async move {
+        let p: AgentRequestUpdateParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.request_update", e))?;
+
+        let (session_manager, client_id, registry, requested_by_version) = {
+            let s = ctx.lock().await;
+            if !s.initialized {
+                return Err(not_initialized());
+            }
+            // The requester's own version, for the notice's "being updated by
+            // …" line. It is in this worker's own registry because `initialize`
+            // put it there, so no host-wide round trip is needed.
+            let version = s
+                .client_registry
+                .get(&s.client_id)
+                .map(|c| c.client_version)
+                .unwrap_or_else(|| "unknown".to_string());
+            (
+                s.session_manager.clone(),
+                s.client_id.clone(),
+                s.registry_client.get().cloned(),
+                version,
+            )
+        };
+
+        let timeout = p
+            .ack_timeout_secs
+            .map(Duration::from_secs)
+            .unwrap_or(ACK_TIMEOUT);
+
+        // No registry handle at all (a unit-test handler, or a worker whose
+        // transport never wired one) is the same situation as a registry that
+        // cannot answer: no host-wide view, so proceed as the pre-#1351 hard cut
+        // did rather than block an update on absent infrastructure.
+        let outcome = match registry {
+            Some(registry) => {
+                let notification = BroadcastEnvelope {
+                    origin_client_id: client_id.clone(),
+                    method: AGENT_UPDATE_PENDING.to_string(),
+                    params: serde_json::to_value(UpdatePendingNotification {
+                        requested_by_version,
+                        estimated_restart_secs: ESTIMATED_RESTART_SECS,
+                    })
+                    .unwrap_or_else(|_| json!({})),
+                };
+                coordinate_update(registry.as_ref(), &client_id, notification, timeout).await
+            }
+            None => {
+                debug!("Coordinated update: no registry handle on this worker; proceeding");
+                CoordinationOutcome::NoHostView
+            }
+        };
+
+        // Coordination is a courtesy, not a gate: every outcome proceeds. What
+        // differs is only what we can report about the hosts we were waiting on.
+        let apply = session_manager
+            .request_deferred_update(p.binary_path, p.version)
+            .await
+            .map_err(map_deferred_update_error)?;
+
+        let (applied, active_sessions) = match apply {
+            DeferredUpdateOutcome::Applying => (true, 0),
+            DeferredUpdateOutcome::Deferred { active_sessions } => (false, active_sessions),
+        };
+
+        let remaining_clients = match &outcome {
+            CoordinationOutcome::TimedOut { remaining, .. } => remaining.clone(),
+            _ => Vec::new(),
+        };
+
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(AgentRequestUpdateResult {
+                applied,
+                active_sessions,
+                notified_clients: outcome.notified(),
+                all_acked: outcome.all_acked(),
+                remaining_clients,
+            })
+            .unwrap_or_else(|_| json!({})),
+        )
+    })?;
+    Ok(())
+}
+
 /// `agent.request_deferred_update` — stage/apply a deferred agent update (#1352).
 ///
 /// Records the update and applies it immediately when the agent is idle (0
@@ -1355,19 +1487,7 @@ fn register_agent_request_deferred_update(
             let outcome = session_manager
                 .request_deferred_update(p.binary_path, p.version)
                 .await
-                .map_err(|e| match e {
-                    DeferredUpdateError::BinaryNotFound(path) => rpc_err(
-                        errors::INVALID_PARAMS,
-                        format!("Update binary not found: {path}"),
-                    ),
-                    DeferredUpdateError::NoPendingUpdate => {
-                        rpc_err(errors::INVALID_PARAMS, "No pending update to apply")
-                    }
-                    DeferredUpdateError::ApplyFailed(err) => rpc_err(
-                        errors::DEFERRED_UPDATE_FAILED,
-                        format!("Failed to apply update: {err:#}"),
-                    ),
-                })?;
+                .map_err(map_deferred_update_error)?;
 
             let result = match outcome {
                 DeferredUpdateOutcome::Applying => AgentRequestDeferredUpdateResult {
@@ -1792,6 +1912,83 @@ mod tests {
             handler.client_registry().is_empty(),
             "registry must be empty after the client disconnects"
         );
+    }
+
+    // ── agent.request_update (#1351) ───────────────────────────────
+
+    /// The coordinated update is a privileged operation on a shared host; it
+    /// must not be reachable before the caller has identified itself.
+    #[tokio::test]
+    async fn request_update_requires_initialization() {
+        let handler = make_handler();
+
+        let result = dispatch(&handler, "agent.request_update", json!({}), 1).await;
+
+        assert_eq!(
+            result["error"]["code"],
+            errors::NOT_INITIALIZED,
+            "uninitialized request_update must be rejected: {result}"
+        );
+    }
+
+    /// A handler with no registry wired (a lone worker, or a host whose registry
+    /// never came up) must still update rather than block on infrastructure it
+    /// does not have — and must not claim it notified anyone.
+    #[tokio::test]
+    async fn request_update_without_a_registry_proceeds_and_notifies_nobody() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(&handler, "agent.request_update", json!({}), 2).await;
+
+        // No binary staged, so the apply is what fails — the point is that it
+        // got as far as the apply instead of hanging for the ack window.
+        assert_eq!(
+            result["error"]["code"],
+            errors::INVALID_PARAMS,
+            "should reach the apply and report no pending update: {result}"
+        );
+    }
+
+    /// A bad `binaryPath` must fail exactly as `agent.request_deferred_update`
+    /// does — the two RPCs share one apply path, so they must share its errors.
+    #[tokio::test]
+    async fn request_update_reports_a_missing_binary_like_the_deferred_rpc() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let params = json!({"binaryPath": "/definitely/not/here/termihub-agent"});
+        let coordinated = dispatch(&handler, "agent.request_update", params.clone(), 2).await;
+        let deferred = dispatch(&handler, "agent.request_deferred_update", params, 3).await;
+
+        assert_eq!(coordinated["error"]["code"], errors::INVALID_PARAMS);
+        assert_eq!(
+            coordinated["error"]["code"], deferred["error"]["code"],
+            "coordinated and deferred must fail identically: {coordinated} vs {deferred}"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_update_rejects_malformed_params() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "agent.request_update",
+            json!({"ackTimeoutSecs": "soon"}),
+            2,
+        )
+        .await;
+
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS, "{result}");
+    }
+
+    /// The RPC must be advertised, and the bump is what tells an older desktop
+    /// that `agent.update_pending` may now arrive.
+    #[tokio::test]
+    async fn the_protocol_version_advertises_the_coordinated_update() {
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.4.0");
     }
 
     // ── agent.list_connections ─────────────────────────────────────

@@ -2,12 +2,17 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "url";
 
+import { resolveDevPort } from "./scripts/internal/dev-local.mjs";
+
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
-// Allow running multiple dev instances in parallel by setting TERMIHUB_DEV_PORT.
-// The HMR websocket uses devPort + 1. See scripts/dev.sh for how to configure this.
-// @ts-expect-error process is a nodejs global
-const devPort = parseInt(process.env.TERMIHUB_DEV_PORT ?? "1420", 10);
+// Per-checkout dev port: TERMIHUB_DEV_PORT > dev.local.json's dev_port > 1420.
+// Reading dev.local.json here (not just the env var) is what stops a bare
+// `pnpm tauri dev` from silently binding checkout 0's 1420 in every parallel
+// checkout (#1588). With no dev.local.json — a fresh clone, or CI — this is
+// still plain 1420. The HMR websocket uses devPort + 1.
+// See docs/testing.md → "Parallel test isolation".
+const devPort = resolveDevPort();
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({

@@ -1,18 +1,26 @@
 import React, { useEffect, useRef } from "react";
 import { Modal } from "./Modal";
 import { Button, ButtonVariant } from "./Button";
-import { Toggle } from "./Toggle";
+import { Checkbox } from "./Checkbox";
 import "./ui.css";
 
-/** Optional "don't ask again" opt-out rendered below a confirmation message. */
+/**
+ * Optional "don't ask again" opt-out rendered below a confirmation message.
+ *
+ * Drawn as a {@link Checkbox} rather than a {@link Toggle}: the opt-out is
+ * scoped to the confirmation, so it reads as "apply this when I press Confirm"
+ * — a switch would promise that it applied the moment it was flipped.
+ * Consumers are expected to honour that contract and defer the write to their
+ * `onConfirm`.
+ */
 export interface ConfirmDontAskAgain {
   /** Current checked state. */
   checked: boolean;
-  /** Called with the next value when the user flips the toggle. */
+  /** Called with the next value when the user ticks the checkbox. */
   onChange: (checked: boolean) => void;
   /** Visible label (defaults to "Don't ask again"). */
   label?: string;
-  /** Test hook forwarded to the toggle. */
+  /** Test hook forwarded to the checkbox. */
   "data-testid"?: string;
 }
 
@@ -30,7 +38,7 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
   /** Confirm button variant (defaults to "danger" for destructive actions). */
   confirmVariant?: ButtonVariant;
-  /** When provided, renders a "don't ask again" opt-out toggle. */
+  /** When provided, renders a "don't ask again" opt-out checkbox. */
   dontAskAgain?: ConfirmDontAskAgain;
   /** Invoked when the user confirms. */
   onConfirm: () => void;
@@ -42,7 +50,7 @@ export interface ConfirmDialogProps {
 
 /**
  * The single shared confirmation dialog for destructive/irreversible actions.
- * Composes {@link Modal} + {@link Button} (+ optional {@link Toggle}) so every
+ * Composes {@link Modal} + {@link Button} (+ optional {@link Checkbox}) so every
  * confirm surface shares one look, motion, and safe-default behavior: the
  * Cancel button is focused on open, and Enter confirms only when Cancel does
  * not hold focus. Prefer this over hand-rolling a per-feature confirm shell.
@@ -101,7 +109,7 @@ export function ConfirmDialog({
       {message}
       {dontAskAgain && (
         <label className="ui-confirm__ask-again">
-          <Toggle
+          <Checkbox
             checked={dontAskAgain.checked}
             onCheckedChange={dontAskAgain.onChange}
             aria-label={dontAskAgain.label ?? "Don't ask again"}

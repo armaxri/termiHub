@@ -435,6 +435,86 @@ pub struct AgentRequestDeferredUpdateResult {
     pub active_sessions: u32,
 }
 
+// ── agent.request_update ────────────────────────────────────────────
+
+/// Params for `agent.request_update` — a coordinated update (#1351, SI-5).
+///
+/// Same staging inputs as [`AgentRequestDeferredUpdateParams`], because the
+/// binary swap itself *is* the deferred path: coordination decides when it is
+/// polite to apply, not how. What this adds is the courtesy window — every other
+/// host is told first and given a chance to leave cleanly.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRequestUpdateParams {
+    /// Absolute path (on the agent host) to the new agent binary to stage.
+    /// Omit to apply an update the agent already staged itself (self-update).
+    #[serde(default)]
+    pub binary_path: Option<String>,
+    /// Optional target version label (bookkeeping only).
+    #[serde(default)]
+    pub version: Option<String>,
+    /// How long other hosts get to disconnect before the update proceeds
+    /// anyway. Omit for the default 10 s
+    /// ([`ACK_TIMEOUT`](crate::update::ACK_TIMEOUT)); tests use a short window
+    /// so they need not sit through it.
+    #[serde(default)]
+    pub ack_timeout_secs: Option<u64>,
+}
+
+/// Result of `agent.request_update`.
+///
+/// Reports the coordination outcome as well as the apply outcome, so the
+/// initiating desktop can say *"3 hosts were notified, 1 was still connected"*
+/// rather than only "done". `allAcked: false` is not an error — the update
+/// proceeded — it means someone got the hard cut.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRequestUpdateResult {
+    /// `true` if the update was applied immediately (agent was idle); `false`
+    /// if it was deferred until the last session disconnects.
+    pub applied: bool,
+    /// Number of sessions still active (0 when applied immediately).
+    pub active_sessions: u32,
+    /// How many *other* hosts were sent the `agent.update_pending` notice.
+    pub notified_clients: u32,
+    /// `true` when every notified host disconnected inside the window (or there
+    /// was nobody to notify); `false` when the window closed with hosts still
+    /// attached, or when no host-wide view was available.
+    pub all_acked: bool,
+    /// `client_id`s still attached when the window closed. Empty on the happy
+    /// path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining_clients: Vec<String>,
+}
+
+// ── agent.update_pending (notification payload) ─────────────────────
+
+/// JSON-RPC method name for the coordinated-update notice (#1351).
+///
+/// Broadcast (Agent → every *other* Desktop) when one host calls
+/// `agent.request_update`. The receiving desktop surfaces the "being updated by
+/// another host" notice, suspends its sessions, disconnects cleanly, and queues
+/// an auto-reconnect to the new version.
+///
+/// Its delivery path is the only one in the agent that is **cross-worker**: the
+/// per-process notification channel is single-consumer and can only ever reach
+/// this worker's own client, so this travels through the registry daemon's
+/// broadcast (ADR-11 / #1574) to reach the other hosts' workers.
+pub const AGENT_UPDATE_PENDING: &str = "agent.update_pending";
+
+/// Payload of an [`AGENT_UPDATE_PENDING`] notification.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePendingNotification {
+    /// Version of the desktop client that requested the update, so the notice
+    /// can name who is updating the agent. `"unknown"` when the requester's
+    /// record could not be read.
+    pub requested_by_version: String,
+    /// How long the agent expects to be unavailable, for the notice's restart
+    /// progress. An estimate, not a guarantee.
+    pub estimated_restart_secs: u64,
+}
+
 // ── network.port_scan ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
@@ -616,6 +696,90 @@ mod tests {
         let value = serde_json::to_value(&payload).unwrap();
         assert!(value.get("downloadUrl").is_none());
         assert_eq!(value["staged"], false);
+    }
+
+    #[test]
+    fn agent_update_pending_method_name() {
+        assert_eq!(AGENT_UPDATE_PENDING, "agent.update_pending");
+    }
+
+    /// The desktop reads these keys; the notification is broadcast verbatim, so
+    /// a casing slip here is invisible to the agent and fatal to the toast.
+    #[test]
+    fn update_pending_notification_serializes_camel_case() {
+        let payload = UpdatePendingNotification {
+            requested_by_version: "1.4.0".to_string(),
+            estimated_restart_secs: 5,
+        };
+        let value = serde_json::to_value(&payload).unwrap();
+        assert_eq!(value["requestedByVersion"], "1.4.0");
+        assert_eq!(value["estimatedRestartSecs"], 5);
+    }
+
+    #[test]
+    fn update_pending_notification_round_trips() {
+        let payload = UpdatePendingNotification {
+            requested_by_version: "1.4.0".to_string(),
+            estimated_restart_secs: 5,
+        };
+        let back: UpdatePendingNotification =
+            serde_json::from_value(serde_json::to_value(&payload).unwrap()).unwrap();
+        assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn request_update_params_accept_camel_case() {
+        let params: AgentRequestUpdateParams = serde_json::from_value(json!({
+            "binaryPath": "/tmp/termihub-agent",
+            "version": "0.4.0",
+            "ackTimeoutSecs": 3,
+        }))
+        .unwrap();
+        assert_eq!(params.binary_path.as_deref(), Some("/tmp/termihub-agent"));
+        assert_eq!(params.version.as_deref(), Some("0.4.0"));
+        assert_eq!(params.ack_timeout_secs, Some(3));
+    }
+
+    /// Every field is optional: `{}` means "apply what you already staged, with
+    /// the default window" — the self-update path.
+    #[test]
+    fn request_update_params_are_all_optional() {
+        let params: AgentRequestUpdateParams = serde_json::from_value(json!({})).unwrap();
+        assert!(params.binary_path.is_none());
+        assert!(params.version.is_none());
+        assert!(params.ack_timeout_secs.is_none());
+    }
+
+    #[test]
+    fn request_update_result_serializes_camel_case() {
+        let result = AgentRequestUpdateResult {
+            applied: true,
+            active_sessions: 0,
+            notified_clients: 2,
+            all_acked: false,
+            remaining_clients: vec!["b".to_string()],
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["applied"], true);
+        assert_eq!(value["activeSessions"], 0);
+        assert_eq!(value["notifiedClients"], 2);
+        assert_eq!(value["allAcked"], false);
+        assert_eq!(value["remainingClients"], json!(["b"]));
+    }
+
+    /// The happy path stays quiet: no `remainingClients` key rather than an
+    /// empty array the desktop would have to special-case.
+    #[test]
+    fn request_update_result_omits_empty_remaining_clients() {
+        let result = AgentRequestUpdateResult {
+            applied: true,
+            active_sessions: 0,
+            notified_clients: 1,
+            all_acked: true,
+            remaining_clients: Vec::new(),
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert!(value.get("remainingClients").is_none());
     }
 
     #[test]

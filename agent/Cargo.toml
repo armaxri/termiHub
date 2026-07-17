@@ -65,6 +65,10 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 tempfile = "3"
 serde_json = { workspace = true }
+# `start_paused` for the coordinated-update ack/timeout tests (#1351): the 10 s
+# window is asserted on virtual time, so the tests are instant and immune to
+# host load rather than sleeping and hoping.
+tokio = { version = "1", features = ["test-util"] }
 base64 = "0.22"
 # Mock GitHub Releases HTTP endpoints in self-update tests without real network.
 wiremock = "0.6"
