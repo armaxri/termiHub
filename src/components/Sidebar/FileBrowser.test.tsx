@@ -221,6 +221,145 @@ describe("FileBrowser – useFileBrowserSync", () => {
     expect(useAppStore.getState().fileBrowserMode).toBe("none");
   });
 
+  // --- Protocol-agnostic (session-layer) browsing for non-SSH types (#1335) ---
+
+  /** Register a desktop connection type that advertises the file-browser capability. */
+  function setFileBrowserCapableType(typeId: string, displayName: string) {
+    useAppStore.setState({
+      connectionTypes: [
+        {
+          typeId,
+          displayName,
+          icon: "folder",
+          schema: { groups: [] },
+          capabilities: {
+            monitoring: false,
+            fileBrowser: true,
+            resize: false,
+            persistent: false,
+          },
+        },
+      ],
+    });
+  }
+
+  it("sets fileBrowserMode to 'session' for an FTP tab and targets the tab's session", () => {
+    const ftpTab = makeTab({
+      connectionType: "ftp",
+      sessionId: "ftp-sess-1",
+      config: { type: "ftp", config: { host: "ftp.example.com", port: 21 } },
+    });
+    setActiveTab(ftpTab);
+    setFileBrowserCapableType("ftp", "FTP");
+
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+
+    // FTP must browse through the shared session layer, not the SSH-only
+    // SftpManager path — an `sftp_open` with an FTP config could never connect.
+    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
+  });
+
+  it("keeps fileBrowserMode on 'sftp' for an SSH tab (legacy SftpManager path)", async () => {
+    // 'sftp' mode auto-connects an SFTP session, so the SFTP command surface
+    // has to answer for real here rather than resolving undefined.
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "sftp_open") return Promise.resolve("sftp-sess-1");
+      if (cmd === "sftp_realpath") return Promise.resolve("/root");
+      if (cmd === "sftp_list_dir") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+
+    const sshTab = makeTab({
+      connectionType: "ssh",
+      sessionId: "ssh-sess-1",
+      config: { type: "ssh", config: { host: "example.com", port: 22, username: "root" } },
+    });
+    setActiveTab(sshTab);
+    setFileBrowserCapableType("ssh", "SSH");
+
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("sftp");
+  });
+
+  it("sets fileBrowserMode to 'none' for an FTP tab that has no session yet", () => {
+    const ftpTab = makeTab({
+      connectionType: "ftp",
+      sessionId: null,
+      config: { type: "ftp", config: { host: "ftp.example.com", port: 21 } },
+    });
+    setActiveTab(ftpTab);
+    setFileBrowserCapableType("ftp", "FTP");
+
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+  });
+
+  it("sets fileBrowserMode to 'none' for an FTP tab when the file browser is disabled", () => {
+    const ftpTab = makeTab({
+      connectionType: "ftp",
+      sessionId: "ftp-sess-1",
+      config: { type: "ftp", config: { host: "ftp.example.com", port: 21 } },
+    });
+    setActiveTab(ftpTab);
+    setFileBrowserCapableType("ftp", "FTP");
+    useAppStore.setState((s) => ({
+      settings: { ...s.settings, fileBrowserEnabled: false },
+    }));
+
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+  });
+
+  it("sets fileBrowserMode to 'session' for a Docker tab (shared session layer)", () => {
+    const dockerTab = makeTab({
+      connectionType: "docker",
+      sessionId: "docker-sess-1",
+      config: { type: "docker", config: { container: "web" } },
+    });
+    setActiveTab(dockerTab);
+    setFileBrowserCapableType("docker", "Docker");
+
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(useAppStore.getState().sessionFileBrowserId).toBe("docker-sess-1");
+  });
+
   it("sets fileBrowserMode to 'session' for remote-session tab when agent supports file browser", () => {
     const remoteTab = makeTab({
       connectionType: "remote-session",
