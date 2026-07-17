@@ -277,7 +277,10 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 <footer>
 ```
 
-**Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
+**Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `chore`, `ci`, `revert`
+
+This list is enforced by `commitlint.config.js` — a subject using any other type fails the
+Lint Commit Messages check.
 
 **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, etc.
 
@@ -324,6 +327,30 @@ handling. The keyword parser lives in
 [`scripts/internal/parse-issue-refs.mjs`](../scripts/internal/parse-issue-refs.mjs)
 (unit-tested in `parse-issue-refs.test.mjs`). Just keep using `Closes #N` in your
 PR descriptions — no manual close needed.
+
+The workflow runs on the `pull_request: closed` event, so it fires **a short
+while after** the merge, not instantly. An issue still showing as open seconds
+after you merge is normal — give it a minute before assuming the workflow failed.
+
+#### Mentioning an issue you do **not** want closed
+
+The parser only counts a keyword that is genuinely instructing a close. It
+ignores keywords that appear:
+
+- inside an inline code span (`` `Closes #123` ``) or a fenced code block;
+- inside a blockquote line (`> Closes #123`), e.g. when quoting another PR;
+- directly negated by the words in front of them ("this PR does not close #123").
+
+**Wrap the reference in backticks whenever a PR body needs to discuss a
+reference rather than act on it.** That is the reliable escape hatch. The
+negation handling is a convenience for the obvious phrasings — a regex cannot
+truly parse English negation, so it only looks a few words back and stops at the
+nearest sentence or line boundary. Do not lean on it for anything subtler than
+"does not close #N"; reach for backticks instead.
+
+To link an issue without closing it at all, use a non-keyword phrasing such as
+"Part of #123", "Follow-up to #123", or "See #123" — these have never closed
+anything.
 
 ---
 
