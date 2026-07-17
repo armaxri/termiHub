@@ -266,7 +266,16 @@ describe("FileBrowser – useFileBrowserSync", () => {
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
   });
 
-  it("keeps fileBrowserMode on 'sftp' for an SSH tab (legacy SftpManager path)", () => {
+  it("keeps fileBrowserMode on 'sftp' for an SSH tab (legacy SftpManager path)", async () => {
+    // 'sftp' mode auto-connects an SFTP session, so the SFTP command surface
+    // has to answer for real here rather than resolving undefined.
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "sftp_open") return Promise.resolve("sftp-sess-1");
+      if (cmd === "sftp_realpath") return Promise.resolve("/root");
+      if (cmd === "sftp_list_dir") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+
     const sshTab = makeTab({
       connectionType: "ssh",
       sessionId: "ssh-sess-1",
@@ -282,6 +291,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
         </TooltipProvider>
       );
     });
+    await flushAsync();
 
     expect(useAppStore.getState().fileBrowserMode).toBe("sftp");
   });
