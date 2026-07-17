@@ -74,9 +74,7 @@ describe("Checkbox", () => {
 
   it("reports a boolean when toggled out of the indeterminate state", () => {
     const onCheckedChange = vi.fn();
-    render(
-      <Checkbox data-testid="cb" checked="indeterminate" onCheckedChange={onCheckedChange} />
-    );
+    render(<Checkbox data-testid="cb" checked="indeterminate" onCheckedChange={onCheckedChange} />);
     act(() => checkbox().click());
     // The consumer's state is boolean; "indeterminate" must never be echoed back.
     expect(onCheckedChange).toHaveBeenCalledWith(true);
@@ -124,7 +122,9 @@ describe("Checkbox", () => {
 
   it("is disabled and does not fire onCheckedChange when disabled", () => {
     const onCheckedChange = vi.fn();
-    render(<Checkbox data-testid="cb" checked={false} disabled onCheckedChange={onCheckedChange} />);
+    render(
+      <Checkbox data-testid="cb" checked={false} disabled onCheckedChange={onCheckedChange} />
+    );
     const cb = checkbox();
     expect(cb.hasAttribute("disabled")).toBe(true);
     act(() => cb.click());
