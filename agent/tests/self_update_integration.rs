@@ -296,10 +296,16 @@ impl Client {
     /// is listening (it may still be mid-restart after a self-apply).
     fn connect(addr: &str, timeout: Duration) -> Option<Self> {
         let deadline = Instant::now() + timeout;
+        // Bound each handshake read to a fraction of the overall budget (#1579).
+        // A single stalled `initialize` read must not consume the entire
+        // `timeout` and leave no retry — the old flat 15s read matched the 15s
+        // caller budget exactly, so one stall was fatal. A third of the budget
+        // (capped at 5s) leaves several fresh-socket retries.
+        let handshake_read = (timeout / 3).min(Duration::from_secs(5));
         while Instant::now() < deadline {
             if let Ok(stream) = TcpStream::connect(addr) {
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(15)))
+                    .set_read_timeout(Some(handshake_read))
                     .expect("set read timeout");
                 let writer = stream.try_clone().expect("clone stream");
                 let mut client = Client {
@@ -312,6 +318,15 @@ impl Client {
                     json!({"protocolVersion": "0.3.0", "client": "self-update-it", "clientVersion": "0.1.0"}),
                 );
                 if resp.get("result").is_some() {
+                    // Handshake done: restore a generous read timeout for the
+                    // normal RPCs this client goes on to make, which can be
+                    // legitimately slow under load. Only the retry-until-ready
+                    // handshake above needed the tight bound.
+                    client
+                        .reader
+                        .get_ref()
+                        .set_read_timeout(Some(Duration::from_secs(15)))
+                        .expect("restore read timeout");
                     return Some(client);
                 }
             }
