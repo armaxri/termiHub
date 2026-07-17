@@ -98,6 +98,42 @@ const BESPOKE_BTN_ALLOWLIST: string[] = [];
  */
 const RAW_HEX_CSS_ALLOWLIST: string[] = [];
 
+/**
+ * Blank out `/* … *\/` comment bodies, keeping the newlines they spanned.
+ *
+ * These guards check CSS, not prose: an issue reference in a comment (`#1366`)
+ * is indistinguishable from a hex colour to a bare regex, so comments are
+ * removed before any pattern runs (#1563). Newlines are preserved so the
+ * line-based rules keep the file's line structure — a declaration sharing a
+ * line with a comment must still be seen.
+ *
+ * @param css Contents of a CSS file.
+ * @returns The same CSS with every comment body replaced by blanks.
+ */
+function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "));
+}
+
+/**
+ * True when `css` carries a standalone raw hex colour literal.
+ *
+ * `var(--token, #hex)` fallbacks are acceptable defensive defaults and are
+ * exempt: any line whose hex sits inside a `var(...)` fallback is ignored.
+ * Comments are ignored entirely (see `stripCssComments`).
+ *
+ * @param css Contents of a CSS file.
+ * @returns Whether any line declares a bare raw hex literal.
+ */
+function hasStandaloneRawHex(css: string): boolean {
+  // A line is exempt when its hex appears inside a var() fallback, e.g.
+  // `color: var(--color-error, #f44336);`.
+  const varFallbackRe = /var\([^)]*#[0-9a-f]/i;
+  const rawHexRe = /#[0-9a-f]{3,8}\b/i;
+  return stripCssComments(css)
+    .split("\n")
+    .some((line) => !varFallbackRe.test(line) && rawHexRe.test(line));
+}
+
 describe("CSS token discipline (#1059)", () => {
   it("finds component CSS files to scan", () => {
     expect(cssFiles.length).toBeGreaterThan(0);
@@ -108,7 +144,7 @@ describe("CSS token discipline (#1059)", () => {
     // Matches rgba(0,0,0,0.7) with any internal whitespace.
     const overlayRe = /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0?\.7\s*\)/i;
     for (const file of cssFiles) {
-      if (overlayRe.test(readFileSync(file, "utf8"))) {
+      if (overlayRe.test(stripCssComments(readFileSync(file, "utf8")))) {
         offenders.push(file);
       }
     }
@@ -122,7 +158,7 @@ describe("CSS token discipline (#1059)", () => {
       if (WHITE_ALLOWLIST.some((allowed) => file.endsWith(allowed))) {
         continue;
       }
-      if (whiteRe.test(readFileSync(file, "utf8"))) {
+      if (whiteRe.test(stripCssComments(readFileSync(file, "utf8")))) {
         offenders.push(file);
       }
     }
@@ -196,22 +232,72 @@ describe("Design-system regression guards (#1083)", () => {
    * empty after #1083 migrated the last standalone usages to tokens.
    */
   it("introduces no new standalone raw hex literals in component CSS", () => {
-    // A line is exempt when its hex appears inside a var() fallback, e.g.
-    // `color: var(--color-error, #f44336);`.
-    const varFallbackRe = /var\([^)]*#[0-9a-f]/i;
-    const rawHexRe = /#[0-9a-f]{3,8}\b/i;
     const offenders: string[] = [];
     for (const file of cssFiles) {
       if (toPosix(file).includes("/components/ui/")) continue;
       if (RAW_HEX_CSS_ALLOWLIST.some((allowed) => file.endsWith(allowed))) continue;
-      const lines = readFileSync(file, "utf8").split("\n");
-      const hasRawHex = lines.some((line) => !varFallbackRe.test(line) && rawHexRe.test(line));
-      if (hasRawHex) offenders.push(toPosix(file));
+      if (hasStandaloneRawHex(readFileSync(file, "utf8"))) offenders.push(toPosix(file));
     }
     expect(
       offenders,
       "Reference a token from src/styles/variables.css instead of a raw hex literal in: " +
         `${offenders.join(", ")}`
     ).toEqual([]);
+  });
+});
+
+/**
+ * The raw-hex guard must read CSS, not prose. A hash-prefixed issue reference in
+ * a comment (`#1366`) is indistinguishable from a hex literal to a bare regex,
+ * so the guard used to flag comments containing no colour at all (#1563).
+ */
+describe("raw-hex guard ignores comments (#1563)", () => {
+  it("allows a hash-prefixed issue reference in a comment", () => {
+    const css = `/* Session Picker (SI-3, #1366). Layout only — the dialog shell comes
+   from src/components/ui/. */
+.spawn-picker__path {
+  color: var(--text-secondary);
+}`;
+    expect(hasStandaloneRawHex(css)).toBe(false);
+  });
+
+  it("allows issue references across the whole hex alphabet and digit range", () => {
+    // #1e0a is a valid 4-digit issue number AND a valid 4-digit hex colour.
+    for (const ref of ["#123", "#1366", "#1447", "#1e0a", "#12345678"]) {
+      expect(hasStandaloneRawHex(`/* see ${ref} */\n.a {\n  color: var(--text);\n}`), ref).toBe(
+        false
+      );
+    }
+  });
+
+  it("still flags a standalone raw hex in a declaration", () => {
+    expect(hasStandaloneRawHex(".a {\n  background: #123456;\n}")).toBe(true);
+  });
+
+  it("still flags a raw hex on a line that also carries a comment", () => {
+    expect(hasStandaloneRawHex(".a {\n  background: #123456; /* brand red, #1366 */\n}")).toBe(
+      true
+    );
+  });
+
+  it("still flags a raw hex inside a multi-line comment's host file", () => {
+    const css = `/* A long header comment
+   spanning lines, citing #1366. */
+.a {
+  color: #abcdef;
+}`;
+    expect(hasStandaloneRawHex(css)).toBe(true);
+  });
+
+  it("keeps var() fallbacks exempt", () => {
+    expect(hasStandaloneRawHex(".a {\n  color: var(--color-error, #f44336);\n}")).toBe(false);
+  });
+
+  it("does not let a commented-out declaration mask a real one on the next line", () => {
+    const css = `/* background: #ff0000; */
+.a {
+  background: #00ff00;
+}`;
+    expect(hasStandaloneRawHex(css)).toBe(true);
   });
 });
