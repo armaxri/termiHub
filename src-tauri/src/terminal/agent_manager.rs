@@ -1602,6 +1602,30 @@ fn emit_agent_update_available(app_handle: &AppHandle, agent_id: &str, params: &
     );
 }
 
+/// Forward an agent's `agent.update_pending` notification to the frontend as the
+/// `remote-agent-update-pending` Tauri event (#1602). Broadcast by the agent to
+/// every *other* connected host when one host initiates a coordinated update
+/// (#1351): this desktop is being cut over, so the frontend surfaces the "being
+/// updated by another host" notice, suspends the affected session and queues an
+/// auto-reconnect. Tagged with the `agent_id` so the notice keys off it exactly
+/// like the deferred-update banner.
+fn emit_remote_agent_update_pending(app_handle: &AppHandle, agent_id: &str, params: &Value) {
+    let _ = app_handle.emit(
+        "remote-agent-update-pending",
+        serde_json::json!({
+            "agent_id": agent_id,
+            "requestedByVersion": params
+                .get("requestedByVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            "estimatedRestartSecs": params
+                .get("estimatedRestartSecs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        }),
+    );
+}
+
 // ── Async I/O task ───────────────────────────────────────────────────
 
 /// Main async I/O task for an agent connection.
@@ -1748,6 +1772,13 @@ async fn agent_io_task(
                                     Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
                                         if method == "agent.update_available" {
                                             emit_agent_update_available(
+                                                &app_handle,
+                                                &agent_id,
+                                                &params,
+                                            );
+                                        }
+                                        if method == "agent.update_pending" {
+                                            emit_remote_agent_update_pending(
                                                 &app_handle,
                                                 &agent_id,
                                                 &params,

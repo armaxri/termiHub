@@ -363,6 +363,48 @@ export async function onAgentUpdateAvailable(
   });
 }
 
+/**
+ * Payload of a `remote-agent-update-pending` event (#1602). The desktop backend
+ * forwards the agent's `agent.update_pending` JSON-RPC notification — broadcast
+ * by the agent to every *other* connected host when one host initiates a
+ * coordinated update (#1351) — tagged with the originating `agent_id`.
+ */
+interface RemoteAgentUpdatePendingPayload {
+  agent_id: string;
+  requestedByVersion: string;
+  estimatedRestartSecs: number;
+}
+
+/**
+ * A coordinated update in progress on an agent, initiated by another host,
+ * keyed to the agent whose connection is being cut over.
+ */
+export interface RemoteAgentUpdatePending {
+  agentId: string;
+  /** Version of the desktop that requested the update (`"unknown"` if unread). */
+  requestedByVersion: string;
+  /** How long the agent expects to be unavailable, for the restart progress. */
+  estimatedRestartSecs: number;
+}
+
+/**
+ * Subscribe to `agent.update_pending` notifications forwarded by the backend as
+ * `remote-agent-update-pending` Tauri events (#1602). Fires on a host *other*
+ * than the one initiating a coordinated update; the frontend suspends the
+ * affected session and queues an auto-reconnect. Returns the unlisten handle.
+ */
+export async function onRemoteAgentUpdatePending(
+  callback: (pending: RemoteAgentUpdatePending) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteAgentUpdatePendingPayload>("remote-agent-update-pending", (event) => {
+    callback({
+      agentId: event.payload.agent_id,
+      requestedByVersion: event.payload.requestedByVersion,
+      estimatedRestartSecs: event.payload.estimatedRestartSecs,
+    });
+  });
+}
+
 interface VscodeEditCompletePayload {
   remotePath: string;
   success: boolean;

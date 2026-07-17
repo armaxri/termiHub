@@ -147,7 +147,10 @@ class TestTransferQueueLiveTransfer(
             or self.driver.get_state("sftpStatus") == "connected",
             what="the SFTP browser or its password prompt",
         )
-        if self.driver.exists("password-prompt-input"):
+        # Gate on the store's liveness signal, not a stale DOM check: the SFTP
+        # session can auto-resolve the prompt from a cached credential, and
+        # ``handle_password_prompt`` then tolerates it closing under us (#1593).
+        if self.password_prompt_open():
             self.handle_password_prompt()
         self.wait(
             lambda: self.driver.get_state("sftpStatus") == "connected",
