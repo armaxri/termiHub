@@ -26,7 +26,9 @@ use termihub_core::session::traits::OutputSink;
 use crate::daemon::client::{DaemonClient, DaemonWriterHandle};
 use crate::daemon::transport::{endpoint_alive, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
-use crate::update::{should_apply_deferred_update, SystemUpdateApplier, UpdateApplier};
+use crate::update::{
+    prune_applied_pending_update, should_apply_deferred_update, SystemUpdateApplier, UpdateApplier,
+};
 
 /// Maximum number of concurrent sessions the agent supports.
 pub const MAX_SESSIONS: u32 = 20;
@@ -419,7 +421,20 @@ impl SessionManager {
         state_path: PathBuf,
         update_applier: Arc<dyn UpdateApplier>,
     ) -> Self {
-        let state = AgentState::load_from(&state_path);
+        let mut state = AgentState::load_from(&state_path);
+        // #1551: a successful Unix apply re-execs and never returns, so it can
+        // never clear its own `pending_update`. Sweep an already-applied record
+        // here, at startup, or it re-fires on the next last-session disconnect
+        // and re-execs the agent for nothing.
+        let current_exe = std::env::current_exe().ok();
+        if prune_applied_pending_update(
+            &mut state,
+            env!("CARGO_PKG_VERSION"),
+            current_exe.as_deref(),
+        ) {
+            info!("Cleared an already-applied pending agent update from persisted state");
+            state.save_to(&state_path);
+        }
         Self {
             sessions: Mutex::new(HashMap::new()),
             notification_tx,
@@ -869,8 +884,10 @@ impl SessionManager {
     /// so a failed apply KEEPS the pending update and a later cycle (the next
     /// last-disconnect, or the next self-update poll) can retry (#1401). On a
     /// successful Unix apply the process re-execs and this never returns, so the
-    /// clear only runs in tests / on the non-Unix path. Retaining on failure
-    /// cannot cause a tight apply loop: applies fire only on discrete
+    /// clear only runs in tests / on the non-Unix path; there, the re-execed
+    /// agent drops the already-applied record at startup instead — see
+    /// [`prune_applied_pending_update`] and `with_deps` (#1551). Retaining on
+    /// failure cannot cause a tight apply loop: applies fire only on discrete
     /// transitions (a session closing to zero, or a 24h poll), never in a spin.
     async fn apply_pending_update(&self) -> anyhow::Result<()> {
         let pending = { self.state.lock().await.update.pending_update.clone() };
@@ -1418,6 +1435,110 @@ mod tests {
             assert!(
                 mgr.pending_update_for_test().await.is_some(),
                 "a failed apply must keep pending_update for retry"
+            );
+        }
+
+        /// Regression test for #1551: an already-applied `pending_update` left
+        /// in `state.json` (the real Unix apply re-execs and never gets to clear
+        /// it) must be swept at startup, so the next last-session disconnect
+        /// does NOT re-apply it and re-exec the agent for nothing.
+        #[tokio::test]
+        async fn already_applied_pending_update_is_cleared_at_startup() {
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+
+            // A record for a version the running agent is already at or past —
+            // exactly what a successful apply leaves behind.
+            let mut seeded = AgentState::default();
+            seeded.update.pending_update = Some(PendingUpdate {
+                version: "0.0.1".to_string(),
+                binary_path: "/tmp/already-applied-agent".to_string(),
+                staged_at: "2026-07-17T09:00:00Z".to_string(),
+            });
+            seeded.save_to(&state_path);
+
+            let applied: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path.clone(),
+                Arc::new(RecordingApplier {
+                    applied: applied.clone(),
+                }),
+            );
+
+            // Swept from memory and from the persisted state on startup.
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "an already-applied pending update must be cleared at startup"
+            );
+            assert!(
+                AgentState::load_from(&state_path)
+                    .update
+                    .pending_update
+                    .is_none(),
+                "the cleared state must be persisted, not just in memory"
+            );
+
+            // The property that matters: no spurious apply/re-exec on the next
+            // idle transition.
+            mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            let ids: Vec<String> = mgr.list().await.into_iter().map(|s| s.id).collect();
+            mgr.close(&ids[0]).await;
+
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "an already-applied update must not re-apply (and re-exec) on the next idle"
+            );
+        }
+
+        /// A genuinely unapplied pending update (newer version, binary not the
+        /// running one) must survive startup and still apply on idle — the
+        /// #1551 sweep must not eat a legitimate retry.
+        #[tokio::test]
+        async fn unapplied_pending_update_survives_startup_and_still_applies() {
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+            let staged = tmp.path().join("staged-agent");
+            std::fs::write(&staged, b"A-GENUINELY-DIFFERENT-BINARY").unwrap();
+
+            let mut seeded = AgentState::default();
+            seeded.update.pending_update = Some(PendingUpdate {
+                version: "9.9.9".to_string(),
+                binary_path: staged.to_string_lossy().into_owned(),
+                staged_at: "2026-07-17T09:00:00Z".to_string(),
+            });
+            seeded.save_to(&state_path);
+
+            let applied: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path,
+                Arc::new(RecordingApplier {
+                    applied: applied.clone(),
+                }),
+            );
+
+            assert!(
+                mgr.pending_update_for_test().await.is_some(),
+                "an unapplied pending update must survive startup"
+            );
+
+            mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            let ids: Vec<String> = mgr.list().await.into_iter().map(|s| s.id).collect();
+            mgr.close(&ids[0]).await;
+
+            assert_eq!(
+                applied.lock().unwrap().len(),
+                1,
+                "a retained pending update must still apply on the next idle"
             );
         }
 
