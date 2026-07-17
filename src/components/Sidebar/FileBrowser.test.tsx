@@ -2071,3 +2071,147 @@ describe("FileBrowser – symlinks (#1513)", () => {
     expect(useAppStore.getState().localCurrentPath).toBe("/etc/target");
   });
 });
+
+// --- Editor tabs backed by the session layer (#1557) ---
+describe("FileBrowser – session-layer editor tabs (#1557)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve([]);
+      if (cmd === "session_list_files") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  function renderBrowser() {
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+  }
+
+  /** An editor tab carries a dummy local config; only its editorMeta matters here. */
+  function makeEditorTab(editorMeta: TerminalTab["editorMeta"]): TerminalTab {
+    return makeTab({
+      id: "tab-editor-1",
+      connectionType: "local",
+      contentType: "editor",
+      config: { type: "local", config: {} },
+      editorMeta,
+    });
+  }
+
+  it("puts a session-backed editor tab in 'session' mode, not 'sftp'", () => {
+    setActiveTab(
+      makeEditorTab({
+        filePath: "/srv/app/config.yml",
+        isRemote: true,
+        sessionBrowser: { sessionId: "ftp-sess-1", connectionType: "ftp" },
+      })
+    );
+
+    renderBrowser();
+
+    // Falling into "sftp" here would point the browser at an SftpManager
+    // session that does not exist for an FTP/Docker/agent-backed tab.
+    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
+  });
+
+  it("keeps an SFTP-backed editor tab in 'sftp' mode", () => {
+    setActiveTab(
+      makeEditorTab({
+        filePath: "/etc/hosts",
+        isRemote: true,
+        sftpSessionId: "sftp-sess-1",
+      })
+    );
+
+    renderBrowser();
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("sftp");
+  });
+
+  it("keeps a local editor tab in 'local' mode", () => {
+    setActiveTab(makeEditorTab({ filePath: "/home/me/notes.txt", isRemote: false }));
+
+    renderBrowser();
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("local");
+  });
+
+  it("opens a session-backed editor tab when a file is activated in session mode", async () => {
+    const ftpTab = makeTab({
+      connectionType: "ftp",
+      sessionId: "ftp-sess-1",
+      config: { type: "ftp", config: { host: "ftp.example.com", port: 21 } },
+    });
+    setActiveTab(ftpTab);
+    useAppStore.setState({
+      connectionTypes: [
+        {
+          typeId: "ftp",
+          displayName: "FTP",
+          icon: "folder",
+          schema: { groups: [] },
+          capabilities: {
+            monitoring: false,
+            fileBrowser: true,
+            resize: false,
+            persistent: false,
+          },
+        },
+      ],
+    });
+
+    renderBrowser();
+    await flushAsync();
+    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+
+    const entry: FileEntry = {
+      name: "config.yml",
+      path: "/srv/app/config.yml",
+      isDirectory: false,
+      size: 12,
+      modified: "2026-07-17T00:00:00Z",
+      permissions: "-rw-r--r--",
+      writable: true,
+    };
+    act(() => {
+      useAppStore.setState({ sessionFileEntries: [entry], sessionCurrentPath: "/srv/app" });
+    });
+
+    // Double-clicking a file is the same code path as the "Edit" context item.
+    const row = container.querySelector('[data-testid="file-row-config.yml"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    act(() => {
+      row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    await flushAsync();
+
+    const editorTab = (useAppStore.getState().rootPanel as LeafPanel).tabs.find(
+      (t) => t.contentType === "editor"
+    );
+    expect(editorTab).toBeDefined();
+    expect(editorTab?.editorMeta).toMatchObject({
+      filePath: "/srv/app/config.yml",
+      isRemote: true,
+      permissions: "-rw-r--r--",
+      sessionBrowser: { sessionId: "ftp-sess-1", connectionType: "ftp" },
+    });
+    // The session layer has no SftpManager session behind it.
+    expect(editorTab?.editorMeta?.sftpSessionId).toBeUndefined();
+  });
+});

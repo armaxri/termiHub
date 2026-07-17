@@ -204,7 +204,13 @@ pub async fn sftp_upload(
         transfer_id: transfer_id.clone(),
         session_id,
         direction: TransferDirection::Upload,
-        file_name: file_name_of(&local_path),
+        // Named for the *remote* path, not the local one, so the name always
+        // agrees with the `path` this row displays (#1573). Every honest
+        // upload caller builds `remote_path` as `<dir>/<basename of local>`,
+        // so this is unchanged for them — but an SFTP→SFTP paste uploads from
+        // a local temp copy (`/tmp/termihub-paste-<ts>-<name>`), and the
+        // destination name is the one the user actually knows the file by.
+        file_name: file_name_of(&remote_path),
         path: remote_path.clone(),
         total,
     };
@@ -535,4 +541,40 @@ pub fn write_cheatsheet(html: String, app: tauri::AppHandle) -> Result<String, S
         .to_str()
         .map(|s| s.to_string())
         .ok_or_else(|| "file path contains non-UTF-8 characters".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::file_name_of;
+
+    #[test]
+    fn names_a_file_by_its_basename() {
+        assert_eq!(file_name_of("/home/testuser/report.csv"), "report.csv");
+        assert_eq!(file_name_of("/report.csv"), "report.csv");
+        assert_eq!(file_name_of("report.csv"), "report.csv");
+    }
+
+    #[test]
+    fn falls_back_to_the_whole_path_when_there_is_no_basename() {
+        assert_eq!(file_name_of("/"), "/");
+        assert_eq!(file_name_of(""), "");
+        assert_eq!(file_name_of(".."), "..");
+    }
+
+    /// Both transfer directions name the row from the *remote* path, so the
+    /// name always agrees with the `path` cell beside it. Feeding an upload the
+    /// destination path — rather than the local temp copy an SFTP→SFTP paste
+    /// reads from — is what keeps the scratch name off the row (#1573).
+    #[test]
+    fn names_a_paste_upload_after_the_destination_not_the_temp_copy() {
+        let temp_local = "/tmp/termihub-paste-1784278708447-report.csv";
+        let remote_dest = "/home/testuser/dest/report.csv";
+
+        assert_eq!(file_name_of(remote_dest), "report.csv");
+        assert_eq!(
+            file_name_of(temp_local),
+            "termihub-paste-1784278708447-report.csv",
+            "the temp basename is what the row must NOT show",
+        );
+    }
 }

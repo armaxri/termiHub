@@ -32,10 +32,45 @@ export type TabContentType =
   | "workspace-editor"
   | "network-diagnostic";
 
+/**
+ * Reference to a session-layer file browser backing a remote editor tab (#1557).
+ *
+ * The session layer ({@link https://github.com/armaxri/termiHub/issues/1335})
+ * dispatches file reads/writes through `SessionManager` by session id, so any
+ * connection type whose backend implements the `FileBrowser` trait (FTP, Docker,
+ * agent sessions, ...) can back an editor tab. `connectionType` is carried for
+ * display/diagnostics; routing only needs `sessionId`.
+ */
+export interface EditorSessionRef {
+  sessionId: SessionId;
+  connectionType: ConnectionType;
+}
+
+/**
+ * Describes what an editor tab is editing.
+ *
+ * `isRemote` means "not on the local disk". Which remote transport backs the
+ * tab is then decided by exactly one of two mutually exclusive fields:
+ *
+ * - {@link sftpSessionId} — the legacy `SftpManager`/`sftp_*` path, used by SSH.
+ *   It is the only path that offers the SFTP-specific affordances (writability
+ *   probes, exec capability, elevated/sudo writes, realpath, download).
+ * - {@link sessionBrowser} — the protocol-agnostic session layer, used by every
+ *   other file-browser-capable type (#1557). It offers read and write only; the
+ *   SFTP-specific affordances above are gated on `sftpSessionId` and therefore
+ *   stay off for these tabs.
+ *
+ * A local tab (`isRemote: false`) carries neither.
+ */
 export interface EditorTabMeta {
   filePath: string;
   isRemote: boolean;
   sftpSessionId?: string;
+  /**
+   * Set when this remote editor tab is backed by the session layer rather than
+   * an `SftpManager` session. Mutually exclusive with {@link sftpSessionId}. (#1557)
+   */
+  sessionBrowser?: EditorSessionRef;
   /**
    * Unix permission string (e.g. `-rw-r--r--`) for a remote file, captured from
    * the file-browser listing when the editor was opened. Surfaced in the
