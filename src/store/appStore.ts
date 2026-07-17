@@ -109,6 +109,7 @@ import type {
   ShellSpawn,
   TransferProgress,
 } from "@/services/api";
+import type { SpawnRequestPayload } from "@/services/events";
 import { transferEntryFromProgress, type TransferEntry } from "@/types/transfer";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
@@ -386,6 +387,24 @@ interface AppState {
    * tab `spawned` (no saved connection id). Returns the created tab id.
    */
   openSpawnedShell: (spawn: ShellSpawn) => string;
+
+  // Session Picker (SI-3, #1366)
+  /**
+   * Whether the interactive Session Picker is showing. Raised by a `--pick`
+   * spawn arriving on `spawn-picker-requested`, which defers the decision to the
+   * user instead of opening a session outright.
+   */
+  spawnPickerVisible: boolean;
+  /**
+   * The request the visible picker is deciding, or `undefined` when it is
+   * closed. Carries the `location` the picker shows in its header, plus the
+   * `entry_id` / `new_window` context the confirmed choice inherits.
+   */
+  spawnPickerRequest: SpawnRequestPayload | undefined;
+  /** Show the Session Picker for `request`, replacing any request it was showing. */
+  showSpawnPicker: (request: SpawnRequestPayload) => void;
+  /** Close the Session Picker and drop the request it was deciding. */
+  hideSpawnPicker: () => void;
 
   // Persistent connection sessions
   /** Live state of all persistent connection sessions, keyed by connectionId. */
@@ -2210,6 +2229,12 @@ export const useAppStore = create<AppState>((set, get) => {
         { contentType: "terminal", spawned: true, initialCommand }
       );
     },
+
+    // Session Picker (SI-3, #1366)
+    spawnPickerVisible: false,
+    spawnPickerRequest: undefined,
+    showSpawnPicker: (request) => set({ spawnPickerVisible: true, spawnPickerRequest: request }),
+    hideSpawnPicker: () => set({ spawnPickerVisible: false, spawnPickerRequest: undefined }),
 
     openSettingsTab: () =>
       set((state) => {
