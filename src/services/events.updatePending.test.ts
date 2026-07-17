@@ -19,10 +19,7 @@ describe("onRemoteAgentUpdatePending (#1602)", () => {
 
     const result = await onRemoteAgentUpdatePending(vi.fn());
 
-    expect(mockedListen).toHaveBeenCalledWith(
-      "remote-agent-update-pending",
-      expect.any(Function)
-    );
+    expect(mockedListen).toHaveBeenCalledWith("remote-agent-update-pending", expect.any(Function));
     expect(result).toBe(unlisten);
   });
 

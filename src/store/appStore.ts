@@ -941,7 +941,11 @@ interface AppState {
    * once the agent's restart window has elapsed. Sessions survive in detached
    * daemons and are recovered on reconnect, so only the connection is suspended.
    */
-  handleAgentUpdatePending: (agentId: string, requestedByVersion: string, estimatedRestartSecs: number) => void;
+  handleAgentUpdatePending: (
+    agentId: string,
+    requestedByVersion: string,
+    estimatedRestartSecs: number
+  ) => void;
   /** Clear a recorded coordinated-update-pending notice for an agent. */
   clearAgentUpdatePending: (agentId: string) => void;
   addRemoteAgent: (agent: RemoteAgentDefinition) => void;
@@ -4192,8 +4196,7 @@ export const useAppStore = create<AppState>((set, get) => {
       // coordinated update — its reconnect is already queued.
       if (get().agentUpdatePending[agentId]) return;
 
-      const agentName =
-        get().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
+      const agentName = get().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
       const toastId = `agent-update-pending-${agentId}`;
 
       set((s) => ({

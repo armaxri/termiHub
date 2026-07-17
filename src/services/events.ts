@@ -396,16 +396,13 @@ export interface RemoteAgentUpdatePending {
 export async function onRemoteAgentUpdatePending(
   callback: (pending: RemoteAgentUpdatePending) => void
 ): Promise<UnlistenFn> {
-  return await listen<RemoteAgentUpdatePendingPayload>(
-    "remote-agent-update-pending",
-    (event) => {
-      callback({
-        agentId: event.payload.agent_id,
-        requestedByVersion: event.payload.requestedByVersion,
-        estimatedRestartSecs: event.payload.estimatedRestartSecs,
-      });
-    }
-  );
+  return await listen<RemoteAgentUpdatePendingPayload>("remote-agent-update-pending", (event) => {
+    callback({
+      agentId: event.payload.agent_id,
+      requestedByVersion: event.payload.requestedByVersion,
+      estimatedRestartSecs: event.payload.estimatedRestartSecs,
+    });
+  });
 }
 
 interface VscodeEditCompletePayload {

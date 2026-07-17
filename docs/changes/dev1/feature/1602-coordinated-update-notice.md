@@ -1,7 +1,7 @@
 ## Added
 
 - **Coordinated agent updates:** when one host updates a remote agent configured
-  with the *Coordinated* strategy, every other connected host now sees a "being
+  with the _Coordinated_ strategy, every other connected host now sees a "being
   updated by another host" notice instead of an unexplained disconnect. The
   affected connection is suspended (the clean disconnect is the acknowledgement
   the updating host waits for) and automatically reconnects to the new version
