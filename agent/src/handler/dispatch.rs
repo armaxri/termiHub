@@ -8,7 +8,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -38,6 +38,8 @@ use crate::protocol::methods::{
     SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
     SessionResizeParams,
 };
+use crate::registry_daemon::client::RegistryClient;
+use crate::registry_daemon::protocol::ClientRecord;
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
@@ -74,6 +76,9 @@ struct HandlerState {
     /// Agent-assigned id for this connection's client, generated once in
     /// [`AgentHandler::new`] so `initialize` and disconnect agree on the key.
     client_id: String,
+    /// This worker's handle to the host-wide registry daemon, when the
+    /// transport loop wired one up. See [`AgentHandler::registry_client`].
+    registry_client: Arc<OnceLock<Arc<RegistryClient>>>,
     /// Shared with [`AgentHandler::shutdown_flag`] so the transport loop can
     /// detect shutdown without re-locking the mutex after every request.
     shutdown_flag: Arc<AtomicBool>,
@@ -99,6 +104,12 @@ pub struct AgentHandler {
     /// `initialize` so [`deregister_client`](Self::deregister_client) removes
     /// the right entry.
     client_id: String,
+    /// This worker's handle to the host-wide registry daemon (ADR-11), shared
+    /// with [`HandlerState`]. Set once by the transport loop via
+    /// [`with_registry_client`](Self::with_registry_client); left empty by unit
+    /// tests, which is also the honest representation of a host where the
+    /// registry could not be reached.
+    registry_client: Arc<OnceLock<Arc<RegistryClient>>>,
 }
 
 impl AgentHandler {
@@ -110,6 +121,7 @@ impl AgentHandler {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let client_registry = Arc::new(ConnectionRegistry::new());
         let client_id = uuid::Uuid::new_v4().to_string();
+        let registry_client: Arc<OnceLock<Arc<RegistryClient>>> = Arc::new(OnceLock::new());
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -120,6 +132,7 @@ impl AgentHandler {
             agent_settings: AgentSettings::default(),
             client_registry: client_registry.clone(),
             client_id: client_id.clone(),
+            registry_client: registry_client.clone(),
             shutdown_flag: shutdown_flag.clone(),
         });
 
@@ -132,7 +145,25 @@ impl AgentHandler {
             shutdown_flag,
             client_registry,
             client_id,
+            registry_client,
         })
+    }
+
+    /// Attach this worker's host-wide registry handle (ADR-11).
+    ///
+    /// Called by the transport loops right after construction. Kept out of
+    /// [`new`](Self::new) deliberately: the registry is **optional
+    /// infrastructure**, so a handler without one must remain a fully working
+    /// handler — which is both what a registry-less host gets and what every
+    /// unit test exercises.
+    pub fn with_registry_client(self, client: Arc<RegistryClient>) -> Self {
+        let _ = self.registry_client.set(client);
+        self
+    }
+
+    /// This worker's registry handle, if one was attached.
+    fn registry(&self) -> Option<&Arc<RegistryClient>> {
+        self.registry_client.get()
     }
 
     /// Shared registry of the clients connected to this agent process.
@@ -145,13 +176,23 @@ impl AgentHandler {
         self.client_registry.clone()
     }
 
-    /// Remove this handler's client from the registry.
+    /// Remove this handler's client from the per-process registry **and** from
+    /// the host-wide one.
     ///
     /// Called by the transport loops (`io/stdio.rs`, `io/tcp.rs`) once the
-    /// connection ends, so a disconnected client no longer appears as connected.
-    /// A no-op if `initialize` never populated the entry.
+    /// connection ends, so a disconnected client no longer appears as connected
+    /// — to this worker or to any other worker on the host. A no-op if
+    /// `initialize` never populated the entry.
+    ///
+    /// The host-wide withdrawal is only the *prompt* path. If this worker is
+    /// killed outright and never gets here, the registry still drops the record
+    /// when the socket closes (see `registry_daemon::process`), so a crash
+    /// cannot leave a phantom client behind.
     pub fn deregister_client(&self) {
         self.client_registry.remove(&self.client_id);
+        if let Some(registry) = self.registry() {
+            registry.deregister();
+        }
     }
 
     /// Process a raw JSON-RPC request string and return the response string.
@@ -357,11 +398,27 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             // Record the connected client (additive to the single-client
             // settings above). One entry per agent process in `--stdio` mode.
             let client_id = s.client_id.clone();
-            s.client_registry.register(
+            let entry = s.client_registry.register(
                 client_id.clone(),
                 p.client.clone(),
                 p.client_version.clone(),
             );
+
+            // Announce the client host-wide too (ADR-11). This is bound to
+            // `initialize`, not to any session — which is exactly why a desktop
+            // holding **no sessions** is still visible and reachable, the case
+            // an agent binary swap would otherwise kill without warning.
+            // Fire-and-forget: a missing registry must never fail `initialize`.
+            if let Some(registry) = s.registry_client.get() {
+                registry.register(ClientRecord {
+                    client_id: entry.client_id.clone(),
+                    client: entry.client.clone(),
+                    client_version: entry.client_version.clone(),
+                    connected_since: entry.connected_since.to_rfc3339(),
+                    pid: std::process::id(),
+                });
+            }
+
             let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
                 s.session_manager.clone(),
@@ -1337,33 +1394,56 @@ fn register_agent_list_connections(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method("agent.list_connections", |_params, ctx, _ext| async move {
-        // Read-only: snapshot the per-process client registry. Requires
-        // `initialize` first so the caller is already recorded.
-        let registry = {
+        // Read-only. Requires `initialize` first so the caller is already
+        // recorded in both registries.
+        let (local_registry, host_registry) = {
             let s = ctx.lock().await;
             if !s.initialized {
                 return Err(not_initialized());
             }
-            s.client_registry.clone()
+            (s.client_registry.clone(), s.registry_client.get().cloned())
         };
 
-        // Full snapshot including the caller. Because of the per-process
-        // topology (one agent process per `--stdio` channel), in production
-        // this holds exactly the requesting desktop; the desktop-side update
-        // guard excludes its own `client_id` (from `initialize`) so a lone
-        // client is not mistaken for an "other host". A shared `--listen`
-        // process, or a future daemon-coordination layer, would surface the
-        // additional clients here.
-        let connections: Vec<ConnectionInfo> = registry
-            .list()
-            .into_iter()
-            .map(|c| ConnectionInfo {
-                client_id: c.client_id,
-                client: c.client,
-                client_version: c.client_version,
-                connected_since: c.connected_since.to_rfc3339(),
-            })
-            .collect();
+        // The host-wide set, from the registry daemon (ADR-11): every client
+        // attached to this host, whether or not it holds any sessions, and
+        // whether or not it is served by *this* worker process. Includes the
+        // caller — the desktop-side update guard excludes its own `client_id`
+        // (from `initialize`) so it is not mistaken for an "other host".
+        let host_wide = match host_registry {
+            Some(registry) => registry.list().await,
+            None => None,
+        };
+
+        // The registry is optional infrastructure, so its absence must never
+        // turn into a wrong answer. `None` means "no host-wide view" — not "no
+        // clients" — and the honest fallback is this process's own client, the
+        // one thing we can still say for certain. That is the pre-registry
+        // behaviour, so a registry-less host degrades to exactly what it had
+        // before rather than to an empty set.
+        let connections: Vec<ConnectionInfo> = match host_wide {
+            Some(clients) => clients
+                .into_iter()
+                .map(|c| ConnectionInfo {
+                    client_id: c.client_id,
+                    client: c.client,
+                    client_version: c.client_version,
+                    connected_since: c.connected_since,
+                })
+                .collect(),
+            None => {
+                debug!("Registry unavailable; reporting this process's clients only");
+                local_registry
+                    .list()
+                    .into_iter()
+                    .map(|c| ConnectionInfo {
+                        client_id: c.client_id,
+                        client: c.client,
+                        client_version: c.client_version,
+                        connected_since: c.connected_since.to_rfc3339(),
+                    })
+                    .collect()
+            }
+        };
 
         Ok::<_, ErrorObjectOwned>(
             serde_json::to_value(ConnectionListResult { connections }).unwrap(),

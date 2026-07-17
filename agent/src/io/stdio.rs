@@ -9,6 +9,7 @@ use crate::io::transport::run_transport_loop;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
 use crate::registry::build_registry;
+use crate::registry_daemon::client::{RegistryClient, RegistryConfig};
 use crate::session::definitions::{ConnectionStore, ConnectionStoreApi};
 use crate::session::manager::SessionManager;
 
@@ -30,6 +31,7 @@ pub async fn run_stdio_loop(
     let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
     let update_tx = notification_tx.clone();
     let test_update_tx = notification_tx.clone();
+    let registry_tx = notification_tx.clone();
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
         connection_store.clone(),
@@ -64,11 +66,22 @@ pub async fn run_stdio_loop(
         test_update.notify_attached(&test_update_tx, env!("CARGO_PKG_VERSION"));
     }
 
+    // Join the host-wide registry (ADR-11) so this worker's client is visible to
+    // the host's other desktops, and cross-worker broadcasts reach ours. Started
+    // before the loop and connected in the background: the registry is optional
+    // infrastructure, so this must not delay serving the client.
+    let registry_client = Arc::new(RegistryClient::start(
+        RegistryConfig::default(),
+        registry_tx,
+        shutdown.child_token(),
+    ));
+
     let handler = AgentHandler::new(
         session_manager.clone(),
         connection_store.clone() as Arc<dyn ConnectionStoreApi>,
         monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
-    )?;
+    )?
+    .with_registry_client(registry_client);
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();

@@ -3,6 +3,9 @@ pub mod docker_detect;
 pub mod download;
 pub mod errors;
 pub mod expand;
+/// Rotating, size-capped application log file written to the platform's
+/// conventional log directory (#1570).
+pub mod file_log;
 pub mod fs;
 pub mod log_capture;
 pub mod portable;

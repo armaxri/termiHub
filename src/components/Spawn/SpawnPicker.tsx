@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Container, Folder, Terminal } from "lucide-react";
-import { Button, Input, Modal, Select, Toggle } from "@/components/ui";
+import { Button, Checkbox, Input, Modal, Select } from "@/components/ui";
 import { listSpawnOptions, type SpawnOptions } from "@/services/api";
 import type { ContainerRuntime, SpawnChoice, SpawnTarget } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
@@ -228,7 +228,7 @@ export function SpawnPicker({
         <div className="spawn-picker__footer">
           <div className="spawn-picker__footer-checks">
             <label className="spawn-picker__check">
-              <Toggle
+              <Checkbox
                 checked={newWindow}
                 onCheckedChange={setNewWindow}
                 aria-label="Open in new window"
@@ -237,7 +237,7 @@ export function SpawnPicker({
               Open in new window
             </label>
             <label className="spawn-picker__check">
-              <Toggle
+              <Checkbox
                 checked={remember}
                 onCheckedChange={setRemember}
                 aria-label="Remember choice"
