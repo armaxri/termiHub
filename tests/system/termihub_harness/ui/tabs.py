@@ -64,6 +64,27 @@ class TabsUi(HarnessMixin):
         """Click the tab with the given id to make it active."""
         self.driver.click(f"tab-{tab_id}")
 
+    def switch_to_terminal_tab(self) -> dict[str, Any]:
+        """Activate the first open terminal tab and wait for it to focus.
+
+        ``ensure_terminal`` only *creates* a terminal when none exists — when one
+        is already open (the fresh app spawns one) it neither switches to it nor
+        changes the active tab. Tests that need a terminal tab to become the
+        *active* one (so an editor's status-bar items clear) must switch to it
+        explicitly; this walks the panel tree for a ``contentType == "terminal"``
+        tab, clicks it, and waits until it is the active tab.
+        """
+        term = next(
+            (t for t in self._all_tabs() if t.get("contentType") == "terminal"), None
+        )
+        assert term is not None, "expected an open terminal tab to switch to"
+        self.switch_to_tab(term["id"])
+        self.wait(
+            lambda: (self.active_tab() or {}).get("id") == term["id"],
+            what="the terminal tab to become active",
+        )
+        return term
+
     def close_tab(self, tab_id: str) -> None:
         """Close the tab with the given id, confirming any close dialog.
 
