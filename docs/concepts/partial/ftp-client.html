@@ -1904,20 +1904,26 @@ registry.register(Box::new(FtpBackend::new()));
               <tr>
                 <td>1</td>
                 <td>
-                  FTP sessions open into the file-browser sidebar tree; browsing dispatches through
-                  the connection type's <code>file_browser()</code>.
+                  FTP sessions open <em>directly into the file browser view — no terminal tab is
+                  created</em>; the tab body shows a non-terminal placeholder ("FTP sessions open
+                  into the file browser; there is no terminal output").
                 </td>
                 <td>
-                  The <code>Ftp</code> backend implements <code>file_browser()</code>, but the
-                  sidebar still dispatches only via <code>SftpManager</code>/<code>sftp_*</code>
-                  commands (<code>src-tauri/src/commands/files.rs</code>), so an FTP session is not
-                  yet browsable in the sidebar.
+                  Browsing itself is now wired (#1335): an FTP tab dispatches through the session
+                  layer, so <code>session_*</code> commands route file operations via the connection
+                  type's <code>file_browser()</code>. But an FTP connection still opens a
+                  <em>terminal</em> tab whose body is a dead terminal: the tab is what mints the
+                  session (<code>Terminal.tsx</code> → <code>create_connection</code>), and
+                  <code>Capabilities</code> has no flag saying a type lacks a terminal, so the UI
+                  cannot tell which types should skip the terminal body.
                 </td>
                 <td>Missing</td>
                 <td>
-                  Tracked by open sub-issue
-                  <a href="https://github.com/armaxri/termiHub/issues/1335">#1335</a> (SI-4) —
-                  protocol-agnostic file-browser session layer. Fix code there, then re-sync.
+                  Needs a decision before implementing: either add a <code>terminal</code> flag to
+                  <code>Capabilities</code> (a core change that also crosses the agent protocol) and
+                  render a non-terminal tab body from it, or special-case the <code>ftp</code> type
+                  in the frontend (cheaper, but not protocol-agnostic). Tracked by
+                  <a href="https://github.com/armaxri/termiHub/issues/1335">#1335</a> (SI-4).
                 </td>
               </tr>
             </tbody>
