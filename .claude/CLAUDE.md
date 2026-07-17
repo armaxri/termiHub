@@ -320,7 +320,7 @@ Use these skills with `/skill-name` during development:
 - **Never commit directly to `main` or `develop`**
 - **Never push directly to `main` or `develop`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
 - **Every change requires a PR targeting `develop`**: create a feature or bugfix branch, push it to `origin`, and open a pull request against `develop`. Only target `main` when the user explicitly requests it.
-- **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
+- **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `chore`, `ci`, `revert` (enforced by `commitlint.config.js`)
 - **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, `agent`, `credential`, `tunnel`, `workspace`, `network`, `embedded-servers`
 - **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase, never rebase branches
 - **Commit early and often** — commit as soon as a single logical topic is complete (a single topic = a single commit). Do not batch multiple topics into one commit. Each logical step gets its own commit:
