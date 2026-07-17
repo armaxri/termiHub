@@ -509,3 +509,144 @@ fn a_second_registry_exits_rather_than_stealing_a_live_endpoint() {
         "the live registry must keep its endpoint and its clients"
     );
 }
+
+// ── Raw registry-protocol worker ──────────────────────────────────────────────
+//
+// The broadcast fan-out has no production caller yet — #1351 owns the update
+// notification that will send one. Its unit tests cover the registry's routing
+// and the client's delivery, but neither crosses a process boundary, and the
+// issue's "Done when" is specifically that *#1351 could broadcast to a non-empty
+// set*. So these tests speak the registry's frame vocabulary directly over the
+// real socket: that is the substrate contract #1351 will build on, proven on the
+// wire rather than in a unit harness.
+
+/// Frame type/payload constants, duplicated rather than imported: `termihub-agent`
+/// is a binary crate, so an integration test cannot `use` its modules. Keeping
+/// them here also makes these tests a genuine *external* check of the wire
+/// format — if a refactor changes a type byte, this fails, which is the point.
+const MSG_REGISTER: u8 = 0x10;
+const MSG_BROADCAST: u8 = 0x13;
+const MSG_ACK: u8 = 0x90;
+const MSG_EVENT: u8 = 0x92;
+
+/// A worker speaking the registry protocol directly, standing in for the agent
+/// worker that #1351 will make broadcast.
+struct RawWorker {
+    stream: std::os::unix::net::UnixStream,
+}
+
+impl RawWorker {
+    fn connect(endpoint: &str) -> Self {
+        let stream = std::os::unix::net::UnixStream::connect(endpoint).expect("connect registry");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set read timeout");
+        Self { stream }
+    }
+
+    /// `[type: 1][length: 4 BE][payload]` — the session daemons' framing.
+    fn send(&mut self, msg_type: u8, payload: &[u8]) {
+        let mut frame = Vec::with_capacity(5 + payload.len());
+        frame.push(msg_type);
+        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        frame.extend_from_slice(payload);
+        self.stream.write_all(&frame).expect("write frame");
+        self.stream.flush().expect("flush frame");
+    }
+
+    fn recv(&mut self) -> Option<(u8, Vec<u8>)> {
+        use std::io::Read;
+        let mut header = [0u8; 5];
+        self.stream.read_exact(&mut header).ok()?;
+        let len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+        let mut payload = vec![0u8; len];
+        self.stream.read_exact(&mut payload).ok()?;
+        Some((header[0], payload))
+    }
+
+    /// Register and wait for the ACK, so the caller knows the registry has
+    /// recorded this worker before it asserts on fan-out.
+    fn register(&mut self, client_id: &str) {
+        let record = json!({
+            "client_id": client_id,
+            "client": "termihub-desktop",
+            "client_version": "1.2.3",
+            "connected_since": "2026-07-17T10:00:00+00:00",
+            "pid": std::process::id(),
+        });
+        self.send(MSG_REGISTER, &serde_json::to_vec(&record).expect("encode"));
+        let (msg_type, _) = self.recv().expect("registry must ACK a REGISTER");
+        assert_eq!(msg_type, MSG_ACK, "expected ACK for {client_id}");
+    }
+}
+
+/// The broadcast half of the "Done when": a notification from one worker reaches
+/// the *other* worker's process — across a real socket, not a channel — and is
+/// not echoed to its sender.
+///
+/// This is the set #1351 will broadcast an impending update to. Before the
+/// registry existed, `io/tcp.rs`'s `mpsc` was multi-producer/single-consumer, so
+/// a notification could not leave the process that raised it at all.
+#[test]
+fn a_broadcast_from_one_worker_reaches_another_workers_process() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "broadcast");
+    let _registry = spawn_registry(&endpoint);
+    assert!(wait_for_endpoint(&endpoint), "registry never bound");
+
+    let mut sender = RawWorker::connect(&endpoint);
+    let mut receiver = RawWorker::connect(&endpoint);
+    sender.register("desktop-a");
+    receiver.register("desktop-b");
+
+    let envelope = json!({
+        "origin_client_id": "desktop-a",
+        "method": "agent.update_pending",
+        "params": { "version": "9.9.9" },
+    });
+    sender.send(MSG_BROADCAST, &serde_json::to_vec(&envelope).expect("encode"));
+
+    let (msg_type, payload) = receiver.recv().expect("the other worker must get the event");
+    assert_eq!(msg_type, MSG_EVENT, "expected an EVENT frame");
+    let got: Value = serde_json::from_slice(&payload).expect("decode envelope");
+    assert_eq!(
+        got, envelope,
+        "the envelope must arrive byte-for-byte: the registry carries notifications, it does not interpret them"
+    );
+
+    // The sender must not receive its own broadcast. Its client already handled
+    // the event locally; echoing it back would double-deliver.
+    sender
+        .stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("shorten timeout");
+    assert!(
+        sender.recv().is_none(),
+        "a broadcast must never be echoed to its origin"
+    );
+}
+
+/// A broadcast with no peers must not fail the sender — the registry has to
+/// tolerate a host holding exactly one desktop, which is the common case.
+#[test]
+fn a_broadcast_with_no_other_workers_is_harmless() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "broadcast-alone");
+    let _registry = spawn_registry(&endpoint);
+    assert!(wait_for_endpoint(&endpoint), "registry never bound");
+
+    let mut lonely = RawWorker::connect(&endpoint);
+    lonely.register("desktop-a");
+
+    let envelope = json!({
+        "origin_client_id": "desktop-a",
+        "method": "agent.update_pending",
+        "params": {},
+    });
+    lonely.send(MSG_BROADCAST, &serde_json::to_vec(&envelope).expect("encode"));
+
+    // The registry must still be serving: a later REGISTER on a fresh connection
+    // proves the broadcast did not take it down.
+    let mut peer = RawWorker::connect(&endpoint);
+    peer.register("desktop-b");
+}
