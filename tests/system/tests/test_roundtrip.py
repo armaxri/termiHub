@@ -122,6 +122,45 @@ def test_get_value_round_trip(bridge):
         assert driver.get_value("field-port") == "22"
 
 
+def test_emit_event_round_trips_name_and_payload(bridge):
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        payload = {
+            "agent_id": "agent-1",
+            "currentVersion": "0.1.0",
+            "availableVersion": "0.2.0",
+            "staged": True,
+        }
+        driver.emit_event("agent-update-available", payload)
+
+        assert handler.recorded["events"] == [
+            {"event": "agent-update-available", "payload": payload}
+        ]
+
+
+def test_emit_event_without_payload_omits_the_key(bridge):
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.emit_event("credential-store-locked")
+
+        # A `None` payload is dropped on the wire, so the app emits a
+        # payload-less event — matching `JSON.stringify` omitting `undefined`.
+        assert handler.recorded["events"] == [
+            {"event": "credential-store-locked", "payload": None}
+        ]
+
+
+def test_emit_event_empty_name_raises_bridge_error(bridge):
+    with FakeApp(bridge.port, dispatcher_like()):
+        driver = bridge.wait_for_app(timeout=5)
+        with pytest.raises(BridgeError):
+            driver.emit_event("")
+
+
 def test_screenshot_round_trip(bridge):
     data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
     handler = dispatcher_like(screenshot=data_url)

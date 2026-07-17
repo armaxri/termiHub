@@ -293,6 +293,35 @@ export interface ScreenshotCommand {
   action: "screenshot";
 }
 
+/**
+ * Emit a Tauri event into the running app — the bridge's only non-DOM injector.
+ *
+ * Every other verb drives the UI from the outside (DOM events, terminal input),
+ * so UI that is reachable *only* via a backend-originated event cannot be tested
+ * at all. The deferred-update banner is the motivating case (#1520): it renders
+ * from the `agentUpdates` store slice, which is fed exclusively by the
+ * `agent-update-available` event an agent's 24h update timer raises — not
+ * replayed on attach, so no amount of clicking surfaces it.
+ *
+ * This dispatches `event` with `payload` through the same Tauri event bus the
+ * backend emits on, so the app's real `listen` subscriptions and store-folding
+ * hooks run untouched — the test injects the *stimulus*, not the state. Prefer
+ * it over reaching into the store: the app's own event handling stays covered.
+ *
+ * **Test-mode only.** Like every bridge verb this is reachable only while the
+ * bridge is installed ({@link isTestBridgeEnabled}); the live {@link TestBridge}
+ * additionally re-checks test mode before touching the bus, because this is the
+ * one verb whose blast radius reaches the backend. Unit tests inject a stub via
+ * the `emitEvent` dep.
+ */
+export interface EmitEventCommand {
+  action: "emitEvent";
+  /** Tauri event name, e.g. `"agent-update-available"`. */
+  event: string;
+  /** Event payload, serialized as-is; omit for a payload-less event. */
+  payload?: unknown;
+}
+
 /** A terminal viewport scroll position, returned by `getTerminalViewport`. */
 export interface TerminalViewport {
   /** Buffer line shown at the top of the visible area. */
@@ -322,7 +351,8 @@ export type BridgeCommand =
   | ScrollTerminalCommand
   | GetTerminalViewportCommand
   | GetStateCommand
-  | ScreenshotCommand;
+  | ScreenshotCommand
+  | EmitEventCommand;
 
 /** The discriminator literal of any {@link BridgeCommand}. */
 export type BridgeAction = BridgeCommand["action"];

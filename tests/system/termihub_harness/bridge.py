@@ -212,6 +212,35 @@ class Driver:
     def terminal_input(self, text: str, tab_id: Optional[str] = None) -> None:
         self._call({"action": "terminalInput", "text": text, "tabId": tab_id})
 
+    def emit_event(self, event: str, payload: Any = None) -> None:
+        """Emit a Tauri ``event`` with ``payload`` into the app (test mode only).
+
+        The bridge's only non-DOM injector: every other verb drives the UI from
+        the outside, so UI that renders *solely* from a backend-originated event
+        is otherwise unreachable. The motivating case is the deferred-update
+        banner (#1520), fed exclusively by the ``agent-update-available`` event
+        an agent's 24h update timer raises::
+
+            driver.emit_event(
+                "agent-update-available",
+                {
+                    "agent_id": agent_id,
+                    "currentVersion": "0.1.0",
+                    "availableVersion": "0.2.0",
+                    "staged": True,
+                },
+            )
+
+        The app's real ``listen`` subscriptions and store-folding hooks run, so
+        the test injects the *stimulus* and the event path stays covered — unlike
+        writing the store directly. Payload keys must match the event's wire
+        shape (the backend's ``snake_case``/``camelCase`` mix is deliberate).
+        """
+        # A ``None`` payload is dropped by `_call`, so the wire form omits the
+        # key and the app emits a payload-less event — matching the in-process
+        # client, where `JSON.stringify` omits `undefined`.
+        self._call({"action": "emitEvent", "event": event, "payload": payload})
+
     # ── Introspection ────────────────────────────────────────────────────────
     def exists(self, test_id: str) -> bool:
         return bool(self._call({"action": "exists", "testId": test_id}))
