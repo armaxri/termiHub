@@ -34,6 +34,7 @@
 use crate::connection::shell_integration::{
     DetectedFileManager, ShellEntry, ShellIntegrationSettings,
 };
+use crate::spawn::SpawnKind;
 use anyhow::Context;
 use std::path::Path;
 
@@ -291,15 +292,27 @@ fn uninstall() -> anyhow::Result<()> {
 // pins their exact output on every platform.
 
 /// The termiHub spawn command line a surface invokes:
-/// `"{exe_path}" spawn --entry-id {entry_id} --location {location}`.
+/// `"{exe_path}" spawn --entry-id {entry_id} --location {location}`, with
+/// ` --kind {kind}` appended when the entry has a remembered spawn kind (#1561).
 ///
 /// `location` is the *already-formatted* location token — the caller supplies
 /// whatever quoting or placeholder its surface needs (macOS passes the quoted
 /// `"$@"`, Windows the quoted `"%1"` / `"%V"`, Linux a bare `%f` or the quoted
 /// `"$1"`).
+///
+/// `kind` carries the entry's saved target into the invocation, so a
+/// context-menu click arrives already classified instead of as `auto` — which is
+/// what lets a remembered container entry actually spawn a container rather than
+/// falling through the presence-based inference to a local shell. [`SpawnKind::Auto`]
+/// (no remembered choice) emits no flag at all, keeping the pre-#1561 command
+/// line byte-for-byte.
 #[allow(dead_code)]
-fn spawn_command_line(exe_path: &str, entry_id: &str, location: &str) -> String {
-    format!(r#""{exe_path}" spawn --entry-id {entry_id} --location {location}"#)
+fn spawn_command_line(exe_path: &str, entry_id: &str, kind: SpawnKind, location: &str) -> String {
+    let kind_flag = match kind {
+        SpawnKind::Auto => String::new(),
+        kind => format!(" --kind {}", kind.to_wire()),
+    };
+    format!(r#""{exe_path}" spawn --entry-id {entry_id}{kind_flag} --location {location}"#)
 }
 
 /// Reduce an entry id to a single safe key/filename token: ASCII alphanumerics
@@ -366,19 +379,58 @@ mod shared_helper_tests {
     fn spawn_command_line_formats_exe_id_and_location_token() {
         // Linux desktop / KDE / Thunar: bare `%f` placeholder, no quoting.
         assert_eq!(
-            spawn_command_line("/opt/termihub/termiHub", "open", "%f"),
+            spawn_command_line("/opt/termihub/termiHub", "open", SpawnKind::Auto, "%f"),
             r#""/opt/termihub/termiHub" spawn --entry-id open --location %f"#
         );
         // macOS: the already-quoted `"$@"` token is passed through verbatim.
         assert_eq!(
-            spawn_command_line("/Applications/termiHub", "open", r#""$@""#),
+            spawn_command_line("/Applications/termiHub", "open", SpawnKind::Auto, r#""$@""#),
             r#""/Applications/termiHub" spawn --entry-id open --location "$@""#
         );
         // Windows: the caller pre-quotes the `%1` / `%V` placeholder.
         assert_eq!(
-            spawn_command_line(r"C:\termiHub.exe", "open", "\"%1\""),
+            spawn_command_line(r"C:\termiHub.exe", "open", SpawnKind::Auto, "\"%1\""),
             r#""C:\termiHub.exe" spawn --entry-id open --location "%1""#
         );
+    }
+
+    /// A remembered entry (#1561) carries its kind into the invocation, so the
+    /// click arrives already classified instead of as `auto`. Without this a
+    /// remembered container entry falls through the presence-based inference and
+    /// opens a local shell — the bug #1561 fixes.
+    #[test]
+    fn spawn_command_line_emits_a_remembered_kind() {
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", SpawnKind::Container, "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --kind container --location %f"#
+        );
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", SpawnKind::Wsl, "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --kind wsl --location %f"#
+        );
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", SpawnKind::Local, "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --kind local --location %f"#
+        );
+    }
+
+    /// The emitted `--kind` token must be one the CLI parser actually accepts —
+    /// otherwise registration writes a command line the app silently ignores.
+    #[test]
+    fn every_emitted_kind_round_trips_through_the_cli_parser() {
+        for kind in [
+            SpawnKind::Container,
+            SpawnKind::Local,
+            SpawnKind::Wsl,
+            SpawnKind::Ssh,
+            SpawnKind::Auto,
+        ] {
+            assert_eq!(
+                SpawnKind::from_wire(kind.to_wire()),
+                Some(kind),
+                "{kind:?} does not round-trip through the wire token"
+            );
+        }
     }
 
     #[test]
@@ -593,7 +645,7 @@ mod macos {
     /// The shell script the Quick Action runs: the spawn subcommand with the
     /// selected paths passed as positional arguments (the quoted `"$@"` token).
     fn shell_command(entry: &ShellEntry, exe_path: &str) -> String {
-        spawn_command_line(exe_path, &entry.id, r#""$@""#)
+        spawn_command_line(exe_path, &entry.id, entry.spawn_kind, r#""$@""#)
     }
 
     /// Escape the five XML predefined entities so arbitrary names / paths embed
@@ -774,7 +826,9 @@ mod macos {
     mod tests {
         use super::*;
         use crate::connection::shell_integration::{ShellEntryVisibility, ShowForTargets};
+        use crate::spawn::SpawnKind;
         use std::path::PathBuf;
+        use termihub_core::config::ContainerRuntime;
 
         const EXE: &str = "/Applications/termiHub.app/Contents/MacOS/termiHub";
 
@@ -840,6 +894,9 @@ mod macos {
                 show_for,
                 container_image: None,
                 container_mount: None,
+                spawn_kind: SpawnKind::Auto,
+                shell: None,
+                container_runtime: ContainerRuntime::Auto,
             }
         }
 
@@ -1092,7 +1149,12 @@ mod imp {
     /// Explorer `placeholder` (`%1` / `%V`) is wrapped in quotes for the command
     /// line.
     fn command_line(exe_path: &str, entry: &ShellEntry, placeholder: &str) -> String {
-        spawn_command_line(exe_path, &entry.id, &format!("\"{placeholder}\""))
+        spawn_command_line(
+            exe_path,
+            &entry.id,
+            entry.spawn_kind,
+            &format!("\"{placeholder}\""),
+        )
     }
 
     /// True for any registry key name termiHub owns (entry keys and the submenu
@@ -1263,6 +1325,8 @@ mod imp {
         use crate::connection::shell_integration::{
             ShellEntry, ShellEntryVisibility, ShowForTargets,
         };
+        use crate::spawn::SpawnKind;
+        use termihub_core::config::ContainerRuntime;
         use winreg::enums::*;
         use winreg::RegKey;
 
@@ -1332,6 +1396,9 @@ mod imp {
                 show_for,
                 container_image: None,
                 container_mount: None,
+                spawn_kind: SpawnKind::Auto,
+                shell: None,
+                container_runtime: ContainerRuntime::Auto,
             }
         }
 
@@ -1921,7 +1988,7 @@ mod linux {
                 .map(|entry| thunar::Action {
                     name: entry.name.clone(),
                     unique_id: format!("{THUNAR_ID_PREFIX}{}", slug(entry)),
-                    command: spawn_command_line(exe_path, &entry.id, "%f"),
+                    command: spawn_command_line(exe_path, &entry.id, entry.spawn_kind, "%f"),
                     directories: entry.show_for.folders || entry.show_for.folder_background,
                     other_files: entry.show_for.files,
                 })
@@ -2018,7 +2085,7 @@ mod linux {
              MimeType=inode/directory;\n\
              {DESKTOP_MARKER}\n",
             name = desktop_value(&entry.name),
-            exec = spawn_command_line(exe_path, &entry.id, "%f"),
+            exec = spawn_command_line(exe_path, &entry.id, entry.spawn_kind, "%f"),
         )
     }
 
@@ -2029,7 +2096,7 @@ mod linux {
             "#!/bin/sh\n\
              {NAUTILUS_MARKER}\n\
              {command}\n",
-            command = spawn_command_line(exe_path, &entry.id, "\"$1\""),
+            command = spawn_command_line(exe_path, &entry.id, entry.spawn_kind, "\"$1\""),
         )
     }
 
@@ -2049,7 +2116,7 @@ mod linux {
              Icon={ICON}\n\
              Exec={exec}\n",
             name = desktop_value(&entry.name),
-            exec = spawn_command_line(exe_path, &entry.id, "%f"),
+            exec = spawn_command_line(exe_path, &entry.id, entry.spawn_kind, "%f"),
         )
     }
 
@@ -2242,7 +2309,9 @@ mod linux {
         use crate::connection::shell_integration::{
             LinuxFileManagerToggles, ShellEntry, ShellEntryVisibility, ShowForTargets,
         };
+        use crate::spawn::SpawnKind;
         use std::sync::Mutex;
+        use termihub_core::config::ContainerRuntime;
 
         const EXE: &str = "/opt/termihub/termiHub";
 
@@ -2309,6 +2378,9 @@ mod linux {
                 show_for,
                 container_image: None,
                 container_mount: None,
+                spawn_kind: SpawnKind::Auto,
+                shell: None,
+                container_runtime: ContainerRuntime::Auto,
             }
         }
 

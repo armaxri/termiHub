@@ -10,7 +10,10 @@
 //! files / Quick Actions) and file-manager detection land in later epic issues.
 
 use serde::{Deserialize, Serialize};
+use termihub_core::config::ContainerRuntime;
 use termihub_core::files::utils::normalize_platform_path;
+
+use crate::spawn::SpawnKind;
 
 /// Windows context-menu visibility for a shell-integration entry.
 ///
@@ -78,6 +81,119 @@ pub struct ShellEntry {
     /// honored for a container spawn when no explicit `--container-mount` is given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_mount: Option<String>,
+    /// The kind of session this entry opens — the Session Picker's "Remember this
+    /// choice" writes the picked section here (SI-3, #1366 / #1561).
+    ///
+    /// [`SpawnKind::Auto`] (the default, and what every pre-#1561 `settings.json`
+    /// deserializes to) means "no remembered choice": the entry keeps the legacy
+    /// presence-based inference and registers a plain `spawn --entry-id …` command.
+    /// Anything else is authoritative — it is emitted as `--kind <token>` at
+    /// registration time and pins resolution for a context-menu click.
+    #[serde(default)]
+    pub spawn_kind: SpawnKind,
+    /// Saved per-entry shell preference in [`shell_to_command`]'s single-string
+    /// encoding: a local shell name (`"zsh"`, `"powershell"`, an absolute path) or
+    /// a WSL distribution as `"wsl:<distro>"` (e.g. `"wsl:Ubuntu-22.04"`).
+    ///
+    /// Honored for a [`SpawnKind::Local`] / [`SpawnKind::Wsl`] spawn when no
+    /// explicit shell is passed. `None` → no saved preference, so the spawn falls
+    /// back to the system default shell / default distribution.
+    ///
+    /// [`shell_to_command`]: termihub_core::session::shell::shell_to_command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// Saved per-entry container-runtime preference — the Docker/Podman section the
+    /// user picked. Same priority + forward-compat semantics as
+    /// [`container_image`](Self::container_image): honored for a container spawn
+    /// when no explicit runtime is given. [`ContainerRuntime::Auto`] (the default)
+    /// keeps the pre-picker behaviour of detecting whichever runtime is installed.
+    #[serde(default)]
+    pub container_runtime: ContainerRuntime,
+}
+
+/// A target picked in the interactive Session Picker, as the frontend's
+/// `SpawnTarget` discriminated union sends it (SI-3, #1366).
+///
+/// Mirrors `src/types/spawn.ts` field-for-field so a confirmed choice crosses the
+/// bridge without a translation table. Only used as the input to
+/// [`ShellEntry::remember`]; the persisted shape is [`ShellEntry`]'s own fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PickedTarget {
+    /// A local shell, by detected shell name (e.g. `"bash"`).
+    Local {
+        /// Shell name in [`shell_to_command`](termihub_core::session::shell::shell_to_command) encoding.
+        shell: String,
+    },
+    /// A WSL distribution, by name (e.g. `"Ubuntu-22.04"`).
+    Wsl {
+        /// Distribution name, *without* the `wsl:` prefix.
+        distro: String,
+    },
+    /// A new container bind-mounting the spawn location at `mount`.
+    Container {
+        /// Docker or Podman — the picker's choice of section.
+        runtime: ContainerRuntime,
+        /// Image reference (`repository:tag`).
+        image: String,
+        /// In-container mount target for the spawn location.
+        mount: String,
+    },
+}
+
+impl ShellEntry {
+    /// Save a picked target onto this entry — the write side of the Session
+    /// Picker's "Remember this choice" (#1561).
+    ///
+    /// Pins [`spawn_kind`](Self::spawn_kind) to the picked section so a later
+    /// context-menu click resolves to it authoritatively instead of re-inferring,
+    /// and records the section's own target: the shell (a WSL distro is stored in
+    /// `shell_to_command`'s `wsl:<distro>` encoding, so one field covers both shell
+    /// sections) or the container runtime + image + mount.
+    ///
+    /// Only the picked section's fields are written. A preference belonging to a
+    /// *different* section is left alone rather than cleared — `spawn_kind` already
+    /// makes it inert, and keeping it means remembering a local shell does not
+    /// silently discard the container image the user configured in Settings
+    /// (#1447).
+    pub fn remember(&mut self, target: PickedTarget) {
+        match target {
+            PickedTarget::Local { shell } => {
+                self.spawn_kind = SpawnKind::Local;
+                self.shell = Some(shell);
+            }
+            PickedTarget::Wsl { distro } => {
+                self.spawn_kind = SpawnKind::Wsl;
+                self.shell = Some(format!("wsl:{distro}"));
+            }
+            PickedTarget::Container {
+                runtime,
+                image,
+                mount,
+            } => {
+                self.spawn_kind = SpawnKind::Container;
+                self.container_runtime = runtime;
+                self.container_image = Some(image);
+                self.container_mount = Some(mount);
+            }
+        }
+    }
+
+    /// The entry's saved shell in the form the spawn resolver wants: a bare
+    /// distribution name for a WSL entry (the `wsl:` prefix is the storage
+    /// encoding, not the wire value `resolve_shell_spawn` takes), the shell name
+    /// verbatim otherwise. `None` when nothing is saved.
+    pub fn resolved_shell(&self) -> Option<&str> {
+        let shell = self
+            .shell
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        match self.spawn_kind {
+            SpawnKind::Wsl => Some(shell.strip_prefix("wsl:").unwrap_or(shell)),
+            _ => Some(shell),
+        }
+    }
 }
 
 /// Fallback behaviour when no entry resolves a spawn request.
@@ -315,6 +431,9 @@ mod tests {
             show_for: ShowForTargets::default(),
             container_image: None,
             container_mount: None,
+            spawn_kind: SpawnKind::Auto,
+            shell: None,
+            container_runtime: ContainerRuntime::Auto,
         }
     }
 
@@ -656,5 +775,152 @@ mod tests {
         assert!(json.contains("openInNewWindow"));
         assert!(json.contains("firstLaunchBannerDismissed"));
         assert!(json.contains("linuxFileManagers"));
+    }
+
+    // ── Remembered picked target (#1561) ─────────────────────────────────────
+
+    /// A `settings.json` written before #1561 knows nothing of the three new
+    /// fields. It must still load, and must load as "no remembered choice" — the
+    /// state that preserves every pre-#1561 behaviour.
+    #[test]
+    fn pre_1561_entry_deserializes_without_a_remembered_target() {
+        let json = r#"{
+            "id": "open",
+            "name": "Open in termiHub",
+            "containerImage": "alpine:3",
+            "containerMount": "/src"
+        }"#;
+        let entry: ShellEntry = serde_json::from_str(json).unwrap();
+
+        assert_eq!(entry.spawn_kind, SpawnKind::Auto);
+        assert_eq!(entry.shell, None);
+        assert_eq!(entry.container_runtime, ContainerRuntime::Auto);
+        // The pre-existing #1447 preferences must survive untouched.
+        assert_eq!(entry.container_image.as_deref(), Some("alpine:3"));
+        assert_eq!(entry.container_mount.as_deref(), Some("/src"));
+    }
+
+    /// An un-remembered entry must serialize to exactly the pre-#1561 JSON — no
+    /// new keys — so upgrading and downgrading round-trips a config unchanged.
+    #[test]
+    fn entry_without_a_remembered_target_serializes_no_new_keys() {
+        let entry = entry("open", None, ShellEntryVisibility::Always);
+        let json = serde_json::to_value(&entry).unwrap();
+
+        assert_eq!(json.get("shell"), None);
+        // `spawn_kind`/`container_runtime` are non-Option, so they always emit;
+        // pin their neutral values rather than their absence.
+        assert_eq!(json["spawnKind"], serde_json::json!("auto"));
+        assert_eq!(json["containerRuntime"], serde_json::json!("auto"));
+    }
+
+    #[test]
+    fn remember_local_shell_pins_kind_and_shell() {
+        let mut e = entry("open", None, ShellEntryVisibility::Always);
+        e.remember(PickedTarget::Local {
+            shell: "zsh".to_string(),
+        });
+
+        assert_eq!(e.spawn_kind, SpawnKind::Local);
+        assert_eq!(e.shell.as_deref(), Some("zsh"));
+        assert_eq!(e.resolved_shell(), Some("zsh"));
+    }
+
+    /// A WSL distro is stored in `shell_to_command`'s `wsl:<distro>` encoding —
+    /// one field for both shell sections — but the resolver wants the bare distro.
+    #[test]
+    fn remember_wsl_distro_encodes_the_wsl_prefix_and_strips_it_on_read() {
+        let mut e = entry("open", None, ShellEntryVisibility::Always);
+        e.remember(PickedTarget::Wsl {
+            distro: "Ubuntu-22.04".to_string(),
+        });
+
+        assert_eq!(e.spawn_kind, SpawnKind::Wsl);
+        assert_eq!(e.shell.as_deref(), Some("wsl:Ubuntu-22.04"));
+        assert_eq!(e.resolved_shell(), Some("Ubuntu-22.04"));
+    }
+
+    /// A local shell whose name happens to start with `wsl:` is not a thing, but a
+    /// local entry must never have a prefix stripped regardless — the encoding is
+    /// only interpreted for the WSL kind.
+    #[test]
+    fn resolved_shell_only_strips_the_prefix_for_a_wsl_entry() {
+        let mut e = entry("open", None, ShellEntryVisibility::Always);
+        e.spawn_kind = SpawnKind::Local;
+        e.shell = Some("wsl:weird".to_string());
+
+        assert_eq!(e.resolved_shell(), Some("wsl:weird"));
+    }
+
+    #[test]
+    fn remember_container_pins_runtime_image_and_mount() {
+        let mut e = entry("open", None, ShellEntryVisibility::Always);
+        e.remember(PickedTarget::Container {
+            runtime: ContainerRuntime::Podman,
+            image: "alpine:3".to_string(),
+            mount: "/workspace".to_string(),
+        });
+
+        assert_eq!(e.spawn_kind, SpawnKind::Container);
+        assert_eq!(e.container_runtime, ContainerRuntime::Podman);
+        assert_eq!(e.container_image.as_deref(), Some("alpine:3"));
+        assert_eq!(e.container_mount.as_deref(), Some("/workspace"));
+    }
+
+    /// Remembering one section must not silently discard another section's saved
+    /// preference — `spawn_kind` already makes it inert.
+    #[test]
+    fn remember_local_keeps_a_previously_saved_container_image() {
+        let mut e = entry("open", None, ShellEntryVisibility::Always);
+        e.container_image = Some("alpine:3".to_string());
+        e.remember(PickedTarget::Local {
+            shell: "bash".to_string(),
+        });
+
+        assert_eq!(e.container_image.as_deref(), Some("alpine:3"));
+        assert_eq!(e.spawn_kind, SpawnKind::Local);
+    }
+
+    /// A remembered target must survive a real save/load cycle, not just live in
+    /// memory — this is the whole point of "Remember this choice".
+    #[test]
+    fn a_remembered_target_round_trips_through_json() {
+        let mut e = entry("open", None, ShellEntryVisibility::Always);
+        e.remember(PickedTarget::Wsl {
+            distro: "Ubuntu-22.04".to_string(),
+        });
+
+        let json = serde_json::to_string(&e).unwrap();
+        let back: ShellEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back, e);
+        assert_eq!(back.resolved_shell(), Some("Ubuntu-22.04"));
+    }
+
+    /// The picker's `SpawnTarget` union crosses the bridge as-is; pin the wire
+    /// shape so a frontend rename cannot drift silently.
+    #[test]
+    fn picked_target_deserializes_the_frontend_union() {
+        let local: PickedTarget =
+            serde_json::from_str(r#"{"kind":"local","shell":"fish"}"#).unwrap();
+        assert_eq!(
+            local,
+            PickedTarget::Local {
+                shell: "fish".to_string()
+            }
+        );
+
+        let container: PickedTarget = serde_json::from_str(
+            r#"{"kind":"container","runtime":"podman","image":"alpine:3","mount":"/workspace"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            container,
+            PickedTarget::Container {
+                runtime: ContainerRuntime::Podman,
+                image: "alpine:3".to_string(),
+                mount: "/workspace".to_string(),
+            }
+        );
     }
 }

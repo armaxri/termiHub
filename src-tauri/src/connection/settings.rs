@@ -931,6 +931,8 @@ mod tests {
             ShellEntry, ShellEntryVisibility, ShellIntegrationFallback, ShellIntegrationSettings,
             ShowForTargets,
         };
+        use crate::spawn::SpawnKind;
+        use termihub_core::config::ContainerRuntime;
         let settings = AppSettings {
             shell_integration: ShellIntegrationSettings {
                 entries: vec![ShellEntry {
@@ -941,6 +943,9 @@ mod tests {
                     show_for: ShowForTargets::default(),
                     container_image: Some("alpine:3".to_string()),
                     container_mount: Some("/src".to_string()),
+                    spawn_kind: SpawnKind::Auto,
+                    shell: None,
+                    container_runtime: ContainerRuntime::Auto,
                 }],
                 fallback: ShellIntegrationFallback::SystemDefaultShell,
                 open_in_new_window: true,

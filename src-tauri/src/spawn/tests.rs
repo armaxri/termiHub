@@ -318,3 +318,73 @@ async fn ipc_server_client_round_trip() {
         let _ = std::fs::remove_file(endpoint.address());
     }
 }
+
+// ── Remembered entry kind survives the registration → click → parse chain (#1561) ──
+
+/// The bug #1561 fixes, pinned end to end at the seam that had none.
+///
+/// Registration used to emit only `spawn --entry-id <id> --location <path>`, so a
+/// context-menu click parsed to `kind: Auto` with no container fields — and the
+/// presence-based inference then classified it a **local shell**. An entry could
+/// therefore never spawn a container, no matter what was saved on it. The
+/// registered command line now carries the entry's remembered kind, so the click
+/// arrives already classified.
+#[test]
+fn a_remembered_container_entry_parses_back_as_a_container_spawn() {
+    // Exactly the tokens registration writes for a remembered container entry.
+    let args: Vec<String> = [
+        "spawn",
+        "--entry-id",
+        "open",
+        "--kind",
+        "container",
+        "--location",
+        "/proj",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+
+    let req = parse_spawn_args(&args);
+
+    assert_eq!(req.kind, SpawnKind::Container);
+    assert_eq!(req.entry_id.as_deref(), Some("open"));
+    assert_eq!(req.location.as_deref(), Some("/proj"));
+    // The saved image/mount are resolved from the entry by `resolve_container_spawn`,
+    // not carried on the command line — the kind is what routes it there at all.
+    assert_eq!(req.container_image, None);
+}
+
+/// The pre-#1561 command line — no `--kind` — must keep behaving exactly as it
+/// did, so an un-remembered entry is untouched by this change.
+#[test]
+fn an_un_remembered_entry_still_parses_as_auto() {
+    let args: Vec<String> = ["spawn", "--entry-id", "open", "--location", "/proj"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let req = parse_spawn_args(&args);
+
+    assert_eq!(req.kind, SpawnKind::Auto);
+}
+
+/// A remembered WSL entry must survive the same chain — the section that the
+/// pre-#1561 code lost to the connection/first-installed-distro fallback.
+#[test]
+fn a_remembered_wsl_entry_parses_back_as_a_wsl_spawn() {
+    let args: Vec<String> = [
+        "spawn",
+        "--entry-id",
+        "open",
+        "--kind",
+        "wsl",
+        "--location",
+        "/proj",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+
+    assert_eq!(parse_spawn_args(&args).kind, SpawnKind::Wsl);
+}

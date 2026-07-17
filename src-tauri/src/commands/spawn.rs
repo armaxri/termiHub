@@ -13,7 +13,7 @@ use tauri::State;
 
 use crate::connection::config::SavedConnection;
 use crate::connection::manager::ConnectionManager;
-use crate::connection::shell_integration::ShellIntegrationSettings;
+use crate::connection::shell_integration::{ShellEntry, ShellIntegrationSettings};
 use crate::spawn::container::{self, ContainerSpawn};
 use crate::spawn::handler::{self, PendingSpawn, ShellSpawn};
 use crate::spawn::{SpawnKind, SpawnRequest};
@@ -30,8 +30,7 @@ fn saved_container_prefs(
     settings: &ShellIntegrationSettings,
     entry_id: Option<&str>,
 ) -> SavedContainerPrefs {
-    entry_id
-        .and_then(|id| settings.entries.iter().find(|e| e.id == id))
+    saved_entry(settings, entry_id)
         .map(|e| (e.container_image.clone(), e.container_mount.clone()))
         .unwrap_or((None, None))
 }
@@ -72,6 +71,16 @@ pub fn resolve_container_spawn(
     )
 }
 
+/// Look up the entry addressed by `entry_id`, if any. An absent or unknown id
+/// yields `None`, so the spawn falls through to the request values and then the
+/// built-in defaults.
+fn saved_entry<'a>(
+    settings: &'a ShellIntegrationSettings,
+    entry_id: Option<&str>,
+) -> Option<&'a ShellEntry> {
+    entry_id.and_then(|id| settings.entries.iter().find(|e| e.id == id))
+}
+
 /// Map the frontend's runtime token onto a [`ContainerRuntime`]. Anything else —
 /// including no token at all — means "detect it", which is what every pre-picker
 /// spawn did.
@@ -97,6 +106,14 @@ fn resolve_container_spawn_with(
         return Err("a spawn location is required for a container spawn".to_string());
     }
     let (saved_image, saved_mount) = saved_container_prefs(settings, entry_id.as_deref());
+    // An explicitly requested runtime wins; otherwise fall back to the one the
+    // entry remembered (#1561), and only then to detection.
+    let runtime = match runtime {
+        ContainerRuntime::Auto => saved_entry(settings, entry_id.as_deref())
+            .map(|e| e.container_runtime.clone())
+            .unwrap_or_default(),
+        explicit => explicit,
+    };
     let request = SpawnRequest {
         location,
         entry_id,
@@ -139,10 +156,23 @@ pub fn resolve_shell_spawn(
     kind: Option<String>,
     shell: Option<String>,
 ) -> Result<ShellSpawn, String> {
+    let settings = manager.get_settings();
+    let entry = saved_entry(&settings.shell_integration, entry_id.as_deref());
+    // An explicitly requested kind/shell wins; otherwise fall back to whatever the
+    // entry remembered (#1561), and only then to the pre-picker defaults. A
+    // context-menu click carries no shell and (for an un-remembered entry) an
+    // `auto` kind, so this is what makes a remembered choice take effect.
     let kind = kind
         .as_deref()
         .and_then(SpawnKind::from_wire)
+        .filter(|k| !matches!(k, SpawnKind::Auto))
+        .or_else(|| entry.map(|e| e.spawn_kind))
         .unwrap_or_default();
+    let shell = shell.or_else(|| {
+        entry
+            .and_then(ShellEntry::resolved_shell)
+            .map(str::to_string)
+    });
     let request = SpawnRequest {
         location,
         connection,
@@ -372,7 +402,9 @@ fn wsl_distros() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connection::shell_integration::{ShellEntry, ShellEntryVisibility, ShowForTargets};
+    use crate::connection::shell_integration::{
+        PickedTarget, ShellEntry, ShellEntryVisibility, ShowForTargets,
+    };
 
     // `list_spawn_options` reports whatever the host actually has, so the
     // assertions below cover the invariants that must hold on every machine and
@@ -486,6 +518,151 @@ mod tests {
         }
     }
 
+    /// Settings holding a single entry with a remembered target (#1561) — what
+    /// the picker's "Remember this choice" writes.
+    fn settings_with_remembered(id: &str, target: PickedTarget) -> ShellIntegrationSettings {
+        let mut settings = settings_with_entry(id, None, None);
+        settings.entries[0].remember(target);
+        settings
+    }
+
+    #[test]
+    fn a_remembered_runtime_is_used_when_the_request_names_none() {
+        // A context-menu click carries no runtime, so without the entry fallback
+        // a remembered Podman pick would silently auto-detect — and run Docker.
+        let settings = settings_with_remembered(
+            "open",
+            PickedTarget::Container {
+                runtime: ContainerRuntime::Podman,
+                image: "alpine:3".to_string(),
+                mount: "/workspace".to_string(),
+            },
+        );
+        let spawn = resolve_container_spawn_with(
+            &settings,
+            Some("/proj".into()),
+            Some("open".into()),
+            None,
+            None,
+            ContainerRuntime::Auto,
+        )
+        .expect("resolves");
+
+        assert_eq!(spawn.settings["runtime"], "podman");
+        assert_eq!(spawn.settings["image"], "alpine:3");
+    }
+
+    #[test]
+    fn an_explicit_runtime_outranks_the_remembered_one() {
+        let settings = settings_with_remembered(
+            "open",
+            PickedTarget::Container {
+                runtime: ContainerRuntime::Podman,
+                image: "alpine:3".to_string(),
+                mount: "/workspace".to_string(),
+            },
+        );
+        let spawn = resolve_container_spawn_with(
+            &settings,
+            Some("/proj".into()),
+            Some("open".into()),
+            None,
+            None,
+            ContainerRuntime::Docker,
+        )
+        .expect("resolves");
+
+        assert_eq!(spawn.settings["runtime"], "docker");
+    }
+
+    /// An unknown entry id must not resurrect a stale preference.
+    #[test]
+    fn an_unknown_entry_id_keeps_runtime_auto_detection() {
+        let settings = settings_with_remembered(
+            "open",
+            PickedTarget::Container {
+                runtime: ContainerRuntime::Podman,
+                image: "alpine:3".to_string(),
+                mount: "/workspace".to_string(),
+            },
+        );
+        let spawn = resolve_container_spawn_with(
+            &settings,
+            Some("/proj".into()),
+            Some("deleted".into()),
+            None,
+            None,
+            ContainerRuntime::Auto,
+        )
+        .expect("resolves");
+
+        assert_eq!(spawn.settings["runtime"], "auto");
+    }
+
+    /// The #1561 read-side, end to end at the pure layer: a context-menu click on
+    /// a remembered local entry (`--kind local`, no `--shell`) must open the
+    /// remembered shell rather than the system default.
+    #[test]
+    fn a_remembered_local_shell_is_opened_for_a_context_menu_click() {
+        let settings = settings_with_remembered(
+            "open",
+            PickedTarget::Local {
+                shell: "fish".to_string(),
+            },
+        );
+        let entry = saved_entry(&settings, Some("open")).expect("entry exists");
+
+        assert_eq!(entry.spawn_kind, SpawnKind::Local);
+
+        let req = SpawnRequest {
+            location: Some("/proj".into()),
+            entry_id: Some("open".into()),
+            kind: entry.spawn_kind,
+            ..SpawnRequest::default()
+        };
+        let spawn = resolve_shell_spawn_with(
+            &req,
+            Path::new("/home/u"),
+            &[],
+            None,
+            entry.resolved_shell(),
+        )
+        .expect("resolves");
+
+        assert_eq!(spawn.settings["shell"], "fish");
+    }
+
+    /// A remembered WSL distro must reach the resolver as a bare distro name — the
+    /// `wsl:` storage prefix must not leak into the session settings. Without a
+    /// remembered distro this host has none, so the resolve would error.
+    #[test]
+    fn a_remembered_wsl_distro_is_opened_for_a_context_menu_click() {
+        let settings = settings_with_remembered(
+            "open",
+            PickedTarget::Wsl {
+                distro: "Ubuntu-22.04".to_string(),
+            },
+        );
+        let entry = saved_entry(&settings, Some("open")).expect("entry exists");
+        let req = SpawnRequest {
+            location: Some("/proj".into()),
+            entry_id: Some("open".into()),
+            kind: entry.spawn_kind,
+            ..SpawnRequest::default()
+        };
+        let spawn = resolve_shell_spawn_with(
+            &req,
+            Path::new("/home/u"),
+            &[],
+            // No default distro available: only the remembered pick can resolve.
+            None,
+            entry.resolved_shell(),
+        )
+        .expect("resolves from the remembered distro");
+
+        assert_eq!(spawn.settings["distribution"], "Ubuntu-22.04");
+    }
+
     fn settings_with_entry(
         id: &str,
         image: Option<&str>,
@@ -500,6 +677,9 @@ mod tests {
                 show_for: ShowForTargets::default(),
                 container_image: image.map(str::to_string),
                 container_mount: mount.map(str::to_string),
+                spawn_kind: SpawnKind::Auto,
+                shell: None,
+                container_runtime: ContainerRuntime::Auto,
             }],
             ..Default::default()
         }

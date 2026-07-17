@@ -11,6 +11,21 @@
 export type ContainerRuntime = "docker" | "podman";
 
 /**
+ * The container runtime *saved* on a shell-integration entry (#1561). Widens
+ * {@link ContainerRuntime} with `"auto"` — the default, meaning "no remembered
+ * preference, detect whichever runtime is installed". Mirrors the Rust
+ * `ContainerRuntime`, which carries the `Auto` variant the picker never offers.
+ */
+export type SavedContainerRuntime = ContainerRuntime | "auto";
+
+/**
+ * The kind of session a spawn targets — the wire tokens of the Rust `SpawnKind`.
+ * `"auto"` means "not explicitly stated": resolve by falling back to
+ * presence-based inference.
+ */
+export type SpawnKind = "container" | "local" | "wsl" | "ssh" | "auto";
+
+/**
  * The target a user picked, as a discriminated union on `kind`. The `kind`
  * values line up with the Rust `SpawnKind` wire tokens, so a choice maps onto a
  * spawn request without a translation table.

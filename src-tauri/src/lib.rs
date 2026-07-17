@@ -638,6 +638,7 @@ pub fn run() {
             commands::shell_integration::install_shell_integration,
             commands::shell_integration::uninstall_shell_integration,
             commands::shell_integration::save_shell_integration_settings,
+            commands::shell_integration::remember_spawn_choice,
             commands::spawn::list_spawn_options,
             commands::spawn::resolve_container_spawn,
             commands::spawn::resolve_shell_spawn,
