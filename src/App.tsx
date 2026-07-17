@@ -10,6 +10,7 @@ import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
+import { SpawnPicker } from "@/components/Spawn";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
 import { CommandPalette } from "@/components/CommandPalette/CommandPalette";
@@ -27,7 +28,7 @@ import { useTransferEvents } from "@/hooks/useTransferEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useAgentUpdateEvents } from "@/hooks/useAgentUpdateEvents";
-import { useSpawnRequests } from "@/hooks/useSpawnRequests";
+import { useSpawnChoiceHandler, useSpawnRequests } from "@/hooks/useSpawnRequests";
 import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
@@ -120,6 +121,10 @@ function App() {
   const { sidebarWidth, handleProps, isResizing } = useSidebarResize(layoutConfig.sidebarPosition);
   const unlockDialogOpen = useAppStore((s) => s.unlockDialogOpen);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
+  const spawnPickerVisible = useAppStore((s) => s.spawnPickerVisible);
+  const spawnPickerRequest = useAppStore((s) => s.spawnPickerRequest);
+  const hideSpawnPicker = useAppStore((s) => s.hideSpawnPicker);
+  const handleSpawnChoice = useSpawnChoiceHandler();
   const recoveryWarnings = useAppStore((s) => s.recoveryWarnings);
   const recoveryDialogOpen = useAppStore((s) => s.recoveryDialogOpen);
   const setRecoveryDialogOpen = useAppStore((s) => s.setRecoveryDialogOpen);
@@ -282,6 +287,17 @@ function App() {
           <ExportDialog />
           <ImportDialog />
           <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
+          <SpawnPicker
+            open={spawnPickerVisible}
+            location={spawnPickerRequest?.location}
+            defaultNewWindow={spawnPickerRequest?.new_window ?? false}
+            onConfirm={(choice) => {
+              const request = spawnPickerRequest;
+              hideSpawnPicker();
+              if (request) void handleSpawnChoice(request, choice);
+            }}
+            onCancel={hideSpawnPicker}
+          />
           <RecoveryDialog
             open={recoveryDialogOpen}
             onOpenChange={setRecoveryDialogOpen}

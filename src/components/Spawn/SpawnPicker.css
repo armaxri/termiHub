@@ -1,5 +1,8 @@
-/* Session Picker (SI-3, #1366). Layout only — the dialog shell, buttons,
-   selects, inputs and toggles all come from src/components/ui/. */
+/* Session Picker (SI-3, issue 1366). Layout only — the dialog shell, buttons,
+   selects, inputs and toggles all come from src/components/ui/.
+   The issue ref is spelled out rather than hash-prefixed: the raw-hex ratchet in
+   src/styles/tokenDiscipline.test.ts reads a hash-prefixed 4-digit issue number
+   as a colour literal. */
 
 .spawn-picker__path {
   display: flex;

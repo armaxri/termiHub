@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// A settable callback the mocked `onSpawnRequest` hands the event stream to, so
-// tests can drive `spawn-request` events directly (mirrors useTransferEvents).
+// Settable callbacks the mocked subscriptions hand their event streams to, so
+// tests can drive `spawn-request` / `spawn-picker-requested` events directly
+// (mirrors useTransferEvents).
 let emit: ((payload: SpawnRequestPayload) => void) | undefined;
+let emitPicker: ((payload: SpawnRequestPayload) => void) | undefined;
 const unlisten = vi.fn();
+const unlistenPicker = vi.fn();
 
 vi.mock("@/services/events", () => ({
   onSpawnRequest: vi.fn((cb: (payload: SpawnRequestPayload) => void) => {
     emit = cb;
     return Promise.resolve(unlisten);
+  }),
+  onSpawnPickerRequested: vi.fn((cb: (payload: SpawnRequestPayload) => void) => {
+    emitPicker = cb;
+    return Promise.resolve(unlistenPicker);
   }),
 }));
 
@@ -16,10 +23,20 @@ const resolveContainerSpawn = vi.fn();
 const resolveShellSpawn = vi.fn();
 const takePendingSpawn = vi.fn();
 vi.mock("@/services/api", () => ({
-  resolveContainerSpawn: (location: string, entryId?: string, image?: string, mount?: string) =>
-    resolveContainerSpawn(location, entryId, image, mount),
-  resolveShellSpawn: (location?: string, connection?: string, entryId?: string, kind?: string) =>
-    resolveShellSpawn(location, connection, entryId, kind),
+  resolveContainerSpawn: (
+    location: string,
+    entryId?: string,
+    image?: string,
+    mount?: string,
+    runtime?: string
+  ) => resolveContainerSpawn(location, entryId, image, mount, runtime),
+  resolveShellSpawn: (
+    location?: string,
+    connection?: string,
+    entryId?: string,
+    kind?: string,
+    shell?: string
+  ) => resolveShellSpawn(location, connection, entryId, kind, shell),
   takePendingSpawn: () => takePendingSpawn(),
 }));
 
@@ -35,7 +52,7 @@ vi.mock("@/components/ui", () => ({
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { useSpawnRequests } from "./useSpawnRequests";
+import { applySpawnChoice, useSpawnRequests } from "./useSpawnRequests";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -125,7 +142,8 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
       "/home/user/app",
       undefined,
       "alpine:3",
-      "/workspace"
+      "/workspace",
+      undefined
     );
   });
 
@@ -141,7 +159,8 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
       "/home/user/app",
       "entry-1",
       undefined,
-      "/workspace"
+      "/workspace",
+      undefined
     );
   });
 
@@ -202,6 +221,7 @@ describe("useSpawnRequests — container spawn wiring (#1446)", () => {
     expect(resolveContainerSpawn).not.toHaveBeenCalled();
     expect(resolveShellSpawn).toHaveBeenCalledWith(
       "/home/user/app",
+      undefined,
       undefined,
       undefined,
       undefined
@@ -271,7 +291,8 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
       "/home/user/app",
       undefined,
       "alpine:3",
-      "/workspace"
+      "/workspace",
+      undefined
     );
   });
 
@@ -287,7 +308,13 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
     });
 
     expect(resolveContainerSpawn).not.toHaveBeenCalled();
-    expect(resolveShellSpawn).toHaveBeenCalledWith("/home/user/app", undefined, undefined, "local");
+    expect(resolveShellSpawn).toHaveBeenCalledWith(
+      "/home/user/app",
+      undefined,
+      undefined,
+      "local",
+      undefined
+    );
     expect(allTabs().find((t) => t.spawned)?.connectionType).toBe("local");
   });
 
@@ -303,7 +330,8 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
       "/home/user/app",
       undefined,
       "alpine:3",
-      "/workspace"
+      "/workspace",
+      undefined
     );
   });
 
@@ -316,8 +344,44 @@ describe("useSpawnRequests — kind discriminator (#1465)", () => {
     });
 
     expect(resolveContainerSpawn).not.toHaveBeenCalled();
-    expect(resolveShellSpawn).toHaveBeenCalledWith("/home/user/app", undefined, undefined, "auto");
+    expect(resolveShellSpawn).toHaveBeenCalledWith(
+      "/home/user/app",
+      undefined,
+      undefined,
+      "auto",
+      undefined
+    );
     expect(allTabs().find((t) => t.spawned)?.connectionType).toBe("local");
+  });
+
+  // ---- Session Picker routing (SI-3, #1366) ------------------------------
+
+  it("raises the picker instead of spawning when a picker request arrives", async () => {
+    await mountHook();
+
+    await act(async () => {
+      emitPicker!({ location: "/home/user/app", pick: true });
+      await Promise.resolve();
+    });
+
+    // The whole point of --pick: decide first, resolve nothing yet.
+    expect(useAppStore.getState().spawnPickerVisible).toBe(true);
+    expect(useAppStore.getState().spawnPickerRequest?.location).toBe("/home/user/app");
+    expect(resolveShellSpawn).not.toHaveBeenCalled();
+    expect(resolveContainerSpawn).not.toHaveBeenCalled();
+  });
+
+  it("routes a drained cold-start pending spawn on its own pick flag", async () => {
+    // The cold-start path hands over the request itself, not the event that
+    // would have classified it, so `pick` has to be honored here too.
+    takePendingSpawn.mockResolvedValue({ location: "/home/user/app", pick: true });
+    await mountHook();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().spawnPickerVisible).toBe(true);
+    expect(resolveShellSpawn).not.toHaveBeenCalled();
   });
 
   it("unsubscribes on unmount", async () => {
@@ -497,7 +561,8 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
       "C:\\Users\\foo\\app",
       undefined,
       undefined,
-      "wsl"
+      "wsl",
+      undefined
     );
     const tab = allTabs().find((t) => t.spawned);
     expect(tab?.connectionType).toBe("wsl");
@@ -517,7 +582,13 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
       await Promise.resolve();
     });
 
-    expect(resolveShellSpawn).toHaveBeenCalledWith("/srv/app", "Prod/Web", undefined, "ssh");
+    expect(resolveShellSpawn).toHaveBeenCalledWith(
+      "/srv/app",
+      "Prod/Web",
+      undefined,
+      "ssh",
+      undefined
+    );
     const tab = allTabs().find((t) => t.spawned);
     expect(tab?.connectionType).toBe("ssh");
     expect(tab?.config.type).toBe("ssh");
@@ -540,5 +611,62 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
     expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("not found");
     expect(allTabs().some((t) => t.spawned)).toBe(false);
+  });
+});
+
+describe("applySpawnChoice — folding a picker choice back into its request (SI-3, #1366)", () => {
+  const REQUEST: SpawnRequestPayload = {
+    location: "/home/user/app",
+    entry_id: "entry-1",
+    pick: true,
+    kind: "auto",
+  };
+
+  it("pins the local kind and the picked shell", () => {
+    const { request, picked } = applySpawnChoice(REQUEST, {
+      target: { kind: "local", shell: "zsh" },
+      newWindow: false,
+      remember: false,
+    });
+
+    // The pick is explicit now, so the `auto` inference must not re-guess it.
+    expect(request.kind).toBe("local");
+    expect(picked).toEqual({ shell: "zsh" });
+    // The request's own context survives the fold.
+    expect(request.location).toBe("/home/user/app");
+    expect(request.entry_id).toBe("entry-1");
+  });
+
+  it("pins the wsl kind and carries the distribution as the picked shell", () => {
+    const { request, picked } = applySpawnChoice(REQUEST, {
+      target: { kind: "wsl", distro: "Ubuntu-22.04" },
+      newWindow: false,
+      remember: false,
+    });
+
+    expect(request.kind).toBe("wsl");
+    expect(picked).toEqual({ shell: "Ubuntu-22.04" });
+  });
+
+  it("pins the container kind with its image, mount and runtime", () => {
+    const { request, picked } = applySpawnChoice(REQUEST, {
+      target: { kind: "container", runtime: "podman", image: "alpine:3", mount: "/src" },
+      newWindow: false,
+      remember: false,
+    });
+
+    expect(request.kind).toBe("container");
+    expect(request.container_image).toBe("alpine:3");
+    expect(request.container_mount).toBe("/src");
+    expect(picked).toEqual({ runtime: "podman" });
+  });
+
+  it("applies the picker's new-window toggle over the request's", () => {
+    const { request } = applySpawnChoice(
+      { ...REQUEST, new_window: false },
+      { target: { kind: "local", shell: "bash" }, newWindow: true, remember: false }
+    );
+
+    expect(request.new_window).toBe(true);
   });
 });
