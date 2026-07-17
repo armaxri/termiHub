@@ -11,6 +11,8 @@ use tracing::debug;
 
 use crate::files::transfer::{TransferRegistry, TransferSnapshot};
 use crate::utils::errors::TerminalError;
+#[cfg(feature = "ftp")]
+use crate::utils::fs::file_name_of;
 
 /// Pause an in-flight transfer. Unknown ids are a no-op.
 #[tauri::command]
@@ -184,52 +186,5 @@ pub async fn ftp_upload(
         Err(TerminalError::ConnectionFailed(
             "FTP support is not built into this binary".to_string(),
         ))
-    }
-}
-
-/// Extract the display file name from a path (falls back to the whole path).
-#[cfg(feature = "ftp")]
-fn file_name_of(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string())
-}
-
-#[cfg(all(test, feature = "ftp"))]
-mod tests {
-    use super::file_name_of;
-
-    #[test]
-    fn names_a_file_by_its_basename() {
-        assert_eq!(file_name_of("/home/testuser/report.csv"), "report.csv");
-        assert_eq!(file_name_of("/report.csv"), "report.csv");
-        assert_eq!(file_name_of("report.csv"), "report.csv");
-    }
-
-    #[test]
-    fn falls_back_to_the_whole_path_when_there_is_no_basename() {
-        assert_eq!(file_name_of("/"), "/");
-        assert_eq!(file_name_of(""), "");
-        assert_eq!(file_name_of(".."), "..");
-    }
-
-    /// `ftp_upload` and `ftp_download` both name the row from the *remote* path,
-    /// so a row's name always agrees with the `path` cell beside it (#1594,
-    /// mirroring #1573 for SFTP). An honest local→remote upload has equal local
-    /// and remote basenames, so the row is unchanged; only a caller uploading
-    /// from a scratch/temp local copy the user never named would differ, and
-    /// naming from the remote path keeps that scratch name off the row.
-    #[test]
-    fn names_an_upload_after_the_remote_destination_not_the_local_source() {
-        let temp_local = "/tmp/termihub-paste-1784278708447-report.csv";
-        let remote_dest = "/home/testuser/dest/report.csv";
-
-        assert_eq!(file_name_of(remote_dest), "report.csv");
-        assert_eq!(
-            file_name_of(temp_local),
-            "termihub-paste-1784278708447-report.csv",
-            "the local scratch basename is what the row must NOT show",
-        );
     }
 }
