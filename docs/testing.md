@@ -1025,6 +1025,56 @@ manual.
    `--container-image`. Confirm this now opens a **local shell tab** `cd`'d to the
    directory (the SI-2 path below), not a container.
 
+### Session Picker dialog (SI-3, #1366)
+
+Rendering, section visibility, the inline container form, the confirm payload and
+cancel are covered by unit tests (`src/components/Spawn/SpawnPicker.test.tsx`,
+`src/hooks/useSpawnRequests.test.ts`), and the resolution of a picked target by
+Rust unit tests (`src-tauri/src/commands/spawn.rs`). What cannot be automated is
+**cross-platform option enumeration** — the picker reports whatever the host
+actually has — so the steps below are manual and platform-specific.
+
+**The picker enumerates this host's real targets.**
+
+1. With the built app already running, run `termiHub spawn --location ~/tmp/spawn --pick`
+   from another terminal.
+2. Confirm the app window is **focused** and the **Session Picker** opens — and
+   that **no session opens yet**.
+3. Confirm the header shows the resolved path (`~/tmp/spawn`, expanded).
+4. Confirm the **Local shells** section lists the shells this host really has and
+   nothing it does not (compare against the shells offered when creating a local
+   connection). The first is preselected.
+5. Confirm section presence matches the host:
+   - **WSL** — listed with each installed distribution on Windows; **absent
+     entirely** on macOS/Linux.
+   - **Docker** / **Podman** — a section appears only when that runtime's daemon
+     responds. Stop the Docker daemon, reopen the picker, and confirm the Docker
+     section is gone (not merely disabled).
+6. Select a **non-default** shell (e.g. `zsh` when `bash` is preselected) and
+   press **Open**. Confirm the tab opens that shell (`echo $0`), `cd`'d to the
+   target — not the system default.
+7. (Windows) Select a WSL distribution and press **Open**. Confirm the session
+   opens **that** distribution (`cat /etc/os-release`) at the `/mnt/`-converted
+   path, even when a saved WSL connection names a different one.
+
+**The inline container form and runtime pick.**
+
+1. Reopen the picker and select **Docker → New container…**. Confirm the row
+   expands an inline **Image** dropdown (listing local images plus `ubuntu:22.04`)
+   and a **Mount as** field defaulting to `/workspace`.
+2. Confirm selecting a different section **collapses** the form again.
+3. Pick an image, press **Open**, and confirm the container opens with the host
+   directory bind-mounted at the mount path (`pwd`, then read a marker file).
+4. (Both runtimes installed) Repeat via the **Podman** section and confirm the
+   container really runs under **Podman** (`podman ps` shows it; `docker ps` does
+   not) — auto-detection would otherwise have preferred Docker.
+
+**Cancel closes cleanly.**
+
+1. Reopen the picker and press **Cancel** (then repeat with **ESC**, and again by
+   clicking the scrim).
+2. Confirm the picker closes each time, **no session opens**, and no toast fires.
+
 ### External local/WSL/SSH spawn opens a shell tab (frontend consumption, #1365)
 
 The wiring (spawn event / cold-start drain → `resolve_shell_spawn` → focus window
