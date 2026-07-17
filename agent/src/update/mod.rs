@@ -47,7 +47,9 @@ use crate::protocol::methods::{UpdateAvailableNotification, AGENT_UPDATE_AVAILAB
 use crate::session::manager::SessionManager;
 use crate::state::persistence::AgentState;
 
-pub use apply::{should_apply_deferred_update, SystemUpdateApplier, UpdateApplier};
+pub use apply::{
+    prune_applied_pending_update, should_apply_deferred_update, SystemUpdateApplier, UpdateApplier,
+};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
 
 /// Default interval between self-update checks (24 hours).

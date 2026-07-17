@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { useAppStore, getActiveTab } from "@/store/appStore";
@@ -69,6 +70,16 @@ export function TestBridge() {
       screenshot: async () => {
         const { toPng } = await import("html-to-image");
         return toPng(document.body, { cacheBust: true });
+      },
+      // Inject a backend-originated event so UI reachable only via the event
+      // path (the deferred-update banner, #1520) can be driven by a test. The
+      // effect above already returns early outside test mode, but this is the
+      // one verb that reaches past the DOM into the Tauri backend, so re-check
+      // at the call site: the guarantee "inert outside the harness" then holds
+      // locally, independent of how the deps object was obtained.
+      emitEvent: async (event, payload) => {
+        if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
+        await emit(event, payload);
       },
     };
 

@@ -155,6 +155,7 @@ describe("ConnectionSettingsForm", () => {
       sendTerminalInput: async () => false,
       resizeWindow: async () => {},
       screenshot: async () => "data:image/png;base64,AAAA",
+      emitEvent: async () => {},
     };
     for (let i = 0; i < 3 && query("dynamic-field-keyPath") === null; i++) {
       await act(async () => {

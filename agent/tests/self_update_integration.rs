@@ -36,9 +36,10 @@
 //! test that stages a *copy of the same binary* cannot make the re-execed agent
 //! report a literally higher semver. The "new version" is therefore asserted
 //! where it is genuinely observable — the release tag the agent detects, and the
-//! `pending_update.version` it records — while the *apply itself* is proven
-//! structurally: the on-disk binary is atomically replaced (its inode changes)
-//! and the agent comes back alive on it. See the individual tests.
+//! `pending_update.version` a *coordinated* stage records — while the *apply
+//! itself* is proven structurally: the on-disk binary is atomically replaced
+//! (its inode changes) and the agent comes back alive on it. See the individual
+//! tests.
 //!
 //! Unix-only: the self-replace + re-exec (`apply_update_binary`) is Unix-only.
 
@@ -430,22 +431,82 @@ async fn deferred_strategy_auto_applies_on_idle_and_comes_back() {
         "re-execed agent did not report a version"
     );
 
-    // The detected release tag is preserved in the persisted `pending_update`.
+    // The applied update leaves no `pending_update` behind (#1551).
     //
-    // Note on the real Unix path: a successful `SystemUpdateApplier::apply`
-    // `execve`s the new binary and never returns, so the in-process
-    // "clear `pending_update` on success" step in `apply_pending_update` does
-    // *not* run, and no startup step clears an already-applied update. The record
-    // therefore persists across the re-exec — unlike the unit tests, whose
-    // injected (non-re-execing) applier lets the clear run. This is the real
-    // behaviour an end-to-end test pins; the version it carries is the update
-    // that was applied.
-    let pending = agent.state()["update"]["pending_update"].clone();
+    // A successful `SystemUpdateApplier::apply` `execve`s the new binary and
+    // never returns, so the in-process "clear `pending_update` on success" step
+    // in `apply_pending_update` cannot run on this path. The re-execed agent
+    // therefore sweeps the already-applied record at startup instead — here via
+    // the binary evidence: its own executable is byte-identical to the staged
+    // binary. Left in place, the record would re-fire on the next
+    // last-session disconnect and re-exec the agent for nothing.
+    let cleared = wait_until(Duration::from_secs(15), || {
+        agent.state()["update"]["pending_update"].is_null()
+    });
+    assert!(
+        cleared,
+        "a successful self-apply must leave no pending_update; state was {}\n{}",
+        agent.state(),
+        agent.stderr()
+    );
+}
+
+/// The #1551 property end to end: after a successful self-apply, taking the
+/// re-execed agent through a full session open → close (a last-session
+/// disconnect, the deferred-apply trigger) must NOT swap the binary again. A
+/// retained `pending_update` would re-apply the already-installed binary and
+/// re-exec, dropping this very connection every time the agent goes idle.
+#[tokio::test]
+async fn applied_update_does_not_re_exec_on_the_next_idle() {
+    let agent_bytes = std::fs::read(agent_binary()).expect("read agent bytes");
+    let server = MockServer::start().await;
+    mount_release(&server, &agent_bytes).await;
+
+    let agent = LiveAgent::spawn(&server, "deferred", Duration::from_millis(300));
+    let bin_inode_before = inode(&agent.bin_path).expect("binary present before apply");
+
+    // Let the self-apply happen (inode changes on the atomic replace).
+    let swapped = wait_until(Duration::from_secs(30), || {
+        inode(&agent.bin_path).is_some_and(|i| i != bin_inode_before)
+    });
+    assert!(
+        swapped,
+        "agent did not swap its binary on idle within 30s.\n--- agent stderr ---\n{}",
+        agent.stderr()
+    );
+
+    let mut client = Client::connect(&agent.addr, Duration::from_secs(30)).unwrap_or_else(|| {
+        panic!(
+            "agent did not come back after self-apply.\n{}",
+            agent.stderr()
+        )
+    });
+    let inode_after_apply = inode(&agent.bin_path).expect("binary present after apply");
+
+    // Drive a session through the idle transition that triggers a deferred apply.
+    let session_id = client.create_session("shell", json!({}));
+    assert!(
+        wait_until(Duration::from_secs(15), || client.session_count() >= 1),
+        "session did not become active in time"
+    );
+    client.close_session(&session_id);
+    assert!(
+        wait_until(Duration::from_secs(15), || client.session_count() == 0),
+        "session did not close in time"
+    );
+    // Give a spurious apply every chance to fire.
+    std::thread::sleep(Duration::from_millis(500));
+
     assert_eq!(
-        pending["version"],
-        NEWER_VERSION,
-        "persisted pending_update should carry the applied version; state was {}",
-        agent.state()
+        inode(&agent.bin_path),
+        Some(inode_after_apply),
+        "the last-session disconnect must not re-apply an already-applied update"
+    );
+    // Still the same process on the same connection — no re-exec cut it.
+    assert!(
+        !client.agent_version().is_empty(),
+        "agent connection must survive going idle after a self-apply.\n{}",
+        agent.stderr()
     );
 }
 
