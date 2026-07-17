@@ -27,11 +27,21 @@
 //! opened between the idle check and the apply, `request_deferred_update`
 //! re-checks and defers to the last-disconnect hook. A failed apply keeps the
 //! pending update so a later cycle can retry.
+//!
+//! # Test-only hook (#1546)
+//!
+//! [`TestPendingUpdate`] lets a system test arm a live agent with a
+//! `pending_update` and have it announce that update whenever a client attaches,
+//! making the desktop banner's deferred (busy) path reachable without the 24h
+//! timer or a real GitHub release. Env-gated and inert in production — see
+//! [`test_hook`] for the gate, the safety argument, and how it stays clear of
+//! the #1551 startup prune.
 
 mod apply;
 mod checksum;
 mod download;
 mod github;
+mod test_hook;
 mod version;
 
 use std::path::PathBuf;
@@ -51,6 +61,7 @@ pub use apply::{
     prune_applied_pending_update, should_apply_deferred_update, SystemUpdateApplier, UpdateApplier,
 };
 pub use github::{current_asset_suffix, DEFAULT_REPO};
+pub use test_hook::TestPendingUpdate;
 
 /// Default interval between self-update checks (24 hours).
 pub const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);

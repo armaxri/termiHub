@@ -29,6 +29,7 @@ pub async fn run_stdio_loop(
     let session_manager = Arc::new(SessionManager::new(notification_tx.clone(), registry));
     let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
     let update_tx = notification_tx.clone();
+    let test_update_tx = notification_tx.clone();
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
         connection_store.clone(),
@@ -51,6 +52,17 @@ pub async fn run_stdio_loop(
         update_tx,
         shutdown.child_token(),
     );
+
+    // Test-only (#1546): arm the deferred-update E2E hook when the env gate is
+    // set. Seeded AFTER `SessionManager::new` so the #1551 startup prune has
+    // already run and cannot sweep the record we just staged. `None` — and so a
+    // completely untouched code path — in production.
+    if let Some(test_update) = crate::update::TestPendingUpdate::from_env() {
+        test_update.seed(&session_manager).await;
+        // stdio serves exactly one client, which attaches as this loop starts;
+        // the channel is unbounded, so a send before the loop is delivered to it.
+        test_update.notify_attached(&test_update_tx, env!("CARGO_PKG_VERSION"));
+    }
 
     let handler = AgentHandler::new(
         session_manager.clone(),
