@@ -29,6 +29,7 @@ class FakeDriver implements Driver {
   pressedKeys: Array<{ key: string; testId?: string; modifiers?: KeyModifiers }> = [];
   dragTos: Array<{ from: string; to: string }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
+  events: Array<{ event: string; payload?: unknown }> = [];
   elements = new Map<string, { text?: string; value?: string }>();
   /** Keyed by `testId ?? ""`, then property name → computed value. */
   computedStyles = new Map<string, Record<string, string>>();
@@ -148,6 +149,10 @@ class FakeDriver implements Driver {
 
   async screenshot(): Promise<string> {
     return "data:image/png;base64,AAAA";
+  }
+
+  async emitEvent(event: string, payload?: unknown): Promise<void> {
+    this.events.push({ event, payload });
   }
 }
 

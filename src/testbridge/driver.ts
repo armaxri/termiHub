@@ -151,6 +151,15 @@ export interface Driver {
    * the DOM, so it does not capture the xterm GPU canvas or native OS dialogs.
    */
   screenshot(): Promise<string>;
+  /**
+   * Emit a Tauri `event` with `payload` into the app (test mode only).
+   *
+   * The only way to drive UI that renders solely from a backend-originated
+   * event, e.g. surfacing the deferred-update banner with an
+   * `agent-update-available` event. The app's real listeners and store-folding
+   * hooks run, so the event path itself stays covered.
+   */
+  emitEvent(event: string, payload?: unknown): Promise<void>;
 }
 
 /**
@@ -286,5 +295,9 @@ export class InAppBridgeDriver implements Driver {
 
   async screenshot(): Promise<string> {
     return this.send<string>({ action: "screenshot" });
+  }
+
+  async emitEvent(event: string, payload?: unknown): Promise<void> {
+    await this.send({ action: "emitEvent", event, payload });
   }
 }

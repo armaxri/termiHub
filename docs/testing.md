@@ -57,6 +57,13 @@ Selectors and UI-driving verbs live in the harness mixins (`tests/system/`); the
 bridge dispatcher in `src/testbridge/` exposes the DOM to those verbs. New E2E
 coverage is written as `pytest` tests there, not as native WebView specs.
 
+The dispatcher is otherwise **DOM-only**, so UI that renders solely from a
+backend-originated event needs `driver.emit_event(event, payload)` — a
+test-mode-gated verb that injects a Tauri event through the real event bus, so
+the app's own `listen` subscriptions and store-folding hooks still run. See
+[Injecting backend events](test-bridge.md#injecting-backend-events-emitevent)
+for the gating and payload rules.
+
 ## 2. Component Integration Tests
 
 **What it does**: Tests React components with backend integration

@@ -104,6 +104,7 @@ def dispatcher_like(
         "pressedKeys": [],
         "dragTos": [],
         "scrolls": [],
+        "events": [],
     }
 
     def handle(command: dict[str, Any]) -> dict[str, Any]:
@@ -171,6 +172,13 @@ def dispatcher_like(
             return {"ok": True, "action": "getValue", "value": values.get(command["testId"], "")}
         if action == "exists":
             return {"ok": True, "action": "exists", "value": True}
+        if action == "emitEvent":
+            if not command.get("event"):
+                return {"ok": False, "action": "emitEvent", "error": "event name is required"}
+            recorded["events"].append(
+                {"event": command["event"], "payload": command.get("payload")}
+            )
+            return {"ok": True, "action": "emitEvent"}
         if action == "screenshot":
             if screenshot is None:
                 return {"ok": False, "action": "screenshot", "error": "capture unavailable"}

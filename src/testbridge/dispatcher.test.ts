@@ -20,6 +20,7 @@ function setup(
     sendTerminalInput: async () => false,
     resizeWindow: async () => {},
     screenshot: async () => "data:image/png;base64,AAAA",
+    emitEvent: async () => {},
     ...overrides,
   };
   return { deps, container };
@@ -262,6 +263,60 @@ describe("dispatchCommand", () => {
       const res = await dispatchCommand({ action: "screenshot" }, deps);
       expect(res.ok).toBe(false);
       expect(res.error).toContain("capture unavailable");
+    });
+  });
+
+  describe("emitEvent", () => {
+    it("forwards the event name and payload to the injected emitEvent dep", async () => {
+      const emitEvent = vi.fn(async () => {});
+      const { deps } = setup(`<div></div>`, { emitEvent });
+
+      const payload = {
+        agent_id: "agent-1",
+        currentVersion: "0.1.0",
+        availableVersion: "0.2.0",
+        staged: true,
+      };
+      const res = await dispatchCommand(
+        { action: "emitEvent", event: "agent-update-available", payload },
+        deps
+      );
+
+      expect(res).toEqual({ ok: true, action: "emitEvent" });
+      expect(emitEvent).toHaveBeenCalledWith("agent-update-available", payload);
+    });
+
+    it("emits with an undefined payload when none is given", async () => {
+      const emitEvent = vi.fn(async () => {});
+      const { deps } = setup(`<div></div>`, { emitEvent });
+
+      const res = await dispatchCommand({ action: "emitEvent", event: "some-event" }, deps);
+
+      expect(res.ok).toBe(true);
+      expect(emitEvent).toHaveBeenCalledWith("some-event", undefined);
+    });
+
+    it("fails when the event name is empty", async () => {
+      const emitEvent = vi.fn(async () => {});
+      const { deps } = setup(`<div></div>`, { emitEvent });
+
+      const res = await dispatchCommand({ action: "emitEvent", event: "" }, deps);
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("event name");
+      expect(emitEvent).not.toHaveBeenCalled();
+    });
+
+    it("fails with the dep's error when emitting throws", async () => {
+      const emitEvent = vi.fn(async () => {
+        throw new Error("event bus unavailable");
+      });
+      const { deps } = setup(`<div></div>`, { emitEvent });
+
+      const res = await dispatchCommand({ action: "emitEvent", event: "boom" }, deps);
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("event bus unavailable");
     });
   });
 

@@ -35,6 +35,7 @@ function deps(): BridgeDeps {
     sendTerminalInput: async () => false,
     resizeWindow: async () => {},
     screenshot: async () => "data:image/png;base64,AAAA",
+    emitEvent: async () => {},
   };
 }
 

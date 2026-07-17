@@ -155,6 +155,7 @@ unmount.
 | `getTerminalViewport` | Read a terminal's `{ viewportY, baseY }` scroll position       |
 | `getState`            | Read app store state, optionally by dot-path                   |
 | `screenshot`          | Capture a PNG of the rendered app as a data URL (see below)    |
+| `emitEvent`           | Inject a Tauri event to drive event-only UI (see below)        |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -295,6 +296,44 @@ a test failed. Decode the data URL with `screenshot_to_png_bytes`.
 
 It fails (`ok: false`) when there is no active terminal, or when the target tab
 has no backend session bound (e.g. the shell has exited).
+
+### Injecting backend events (`emitEvent`)
+
+Every other verb drives the UI from the _outside_ — DOM events, terminal input.
+That leaves a gap: UI reachable **only** via a backend-originated event cannot be
+surfaced at all. The motivating case (#1520) is the deferred-update banner, which
+renders from the `agentUpdates` store slice fed exclusively by the
+`agent-update-available` event an agent's 24h update timer raises. It is not
+replayed on attach, so no amount of clicking brings it up.
+
+`emitEvent` dispatches through the same Tauri event bus the backend emits on, so
+the app's real `listen` subscriptions and store-folding hooks run untouched — the
+test injects the **stimulus**, not the state. Prefer it over writing the store
+directly: the app's own event handling stays covered.
+
+- `{ action: "emitEvent", event, payload? }` → `ok: true` once dispatched. An
+  empty `event` fails fast (`ok: false`) rather than surfacing an opaque plugin
+  error from the bus. Omit `payload` for a payload-less event.
+- Payload keys must match the event's wire shape — the backend's
+  `snake_case`/`camelCase` mix is deliberate, so copy it from the emitter.
+
+```ts
+await driver.emitEvent("agent-update-available", {
+  agent_id: agentId,
+  currentVersion: "0.1.0",
+  availableVersion: "0.2.0",
+  staged: true,
+});
+```
+
+The Python harness exposes the same verb as `driver.emit_event(event, payload=None)`.
+
+**Test-mode gating.** This is the bridge's only non-DOM injector — the one verb
+whose blast radius reaches the backend — so it is gated twice: the bridge as a
+whole is installed only under the opt-in signals above, and the live `TestBridge`
+**re-checks `isTestBridgeEnabled()` at the call site** before touching the bus.
+The guarantee "inert outside the harness" then holds locally, independent of how
+the deps object was obtained. Unit tests inject a stub via the `emitEvent` dep.
 
 ### Element-to-element drag (`dragTo`) and @dnd-kit
 

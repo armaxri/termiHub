@@ -12,10 +12,12 @@
 //! on other platforms it returns an error so the caller can surface it, keeping
 //! the whole crate compiling everywhere.
 
-#[cfg(unix)]
 use std::path::Path;
 
-use crate::state::persistence::PendingUpdate;
+use tracing::debug;
+
+use super::version;
+use crate::state::persistence::{AgentState, PendingUpdate};
 
 /// Decide whether a pending update should be applied right now.
 ///
@@ -25,6 +27,99 @@ use crate::state::persistence::PendingUpdate;
 /// is still running.
 pub fn should_apply_deferred_update(active_count: u32, has_pending: bool) -> bool {
     active_count == 0 && has_pending
+}
+
+/// Drop a `pending_update` that the running agent has **already applied** (#1551).
+///
+/// A successful Unix apply `execve`s the new binary and never returns, so the
+/// post-apply "clear pending_update" step in
+/// [`crate::session::manager::SessionManager::apply_pending_update`] never runs.
+/// Without this startup sweep the stale record re-fires on the next
+/// last-session disconnect: the agent re-applies the same, already-installed
+/// binary and re-execs, dropping the client connection every time it goes idle.
+///
+/// Clearing happens **at startup only** — never before the re-exec — so a
+/// *failed* apply still retains the record for a later retry.
+///
+/// Returns `true` when a record was dropped (the caller should persist).
+///
+/// An update counts as applied when either holds:
+///
+/// 1. **Version evidence** — `pending.version` is not newer than the version the
+///    running agent reports. The record is then either applied or obsolete, and
+///    dropping it is right in both cases.
+/// 2. **Binary evidence** — the running executable is byte-identical to the
+///    staged binary, i.e. this process *is* the staged build. This is what
+///    covers the case where the record's version cannot settle the question:
+///    an empty/unparsable version, or a staged build whose advertised tag the
+///    compiled-in `CARGO_PKG_VERSION` does not reflect.
+///
+/// Anything else — notably a staged binary that is genuinely newer and genuinely
+/// not the one running — is kept for retry.
+pub fn prune_applied_pending_update(
+    state: &mut AgentState,
+    current_version: &str,
+    current_exe: Option<&Path>,
+) -> bool {
+    let Some(pending) = state.update.pending_update.as_ref() else {
+        return false;
+    };
+    if !pending_update_is_applied(pending, current_version, current_exe) {
+        return false;
+    }
+    debug!(
+        "Dropping already-applied pending update (version {:?}) from agent state",
+        pending.version
+    );
+    state.update.pending_update = None;
+    true
+}
+
+/// Whether `pending` has already been applied to the running agent. See
+/// [`prune_applied_pending_update`] for the two forms of evidence.
+fn pending_update_is_applied(
+    pending: &PendingUpdate,
+    current_version: &str,
+    current_exe: Option<&Path>,
+) -> bool {
+    // A version that parses and is not newer proves the update is behind us.
+    if let Ok(false) = version::is_newer(&pending.version, current_version) {
+        return true;
+    }
+    // Otherwise: are we already running exactly those bytes?
+    match current_exe {
+        Some(exe) => files_identical(Path::new(&pending.binary_path), exe),
+        None => false,
+    }
+}
+
+/// Whether two paths are existing regular files with identical contents.
+///
+/// Compares lengths first so the (rare) SHA-256 pass only runs on a real
+/// candidate. Any I/O error means "cannot prove identical" → `false`, which
+/// keeps the pending update rather than dropping it on a guess.
+fn files_identical(a: &Path, b: &Path) -> bool {
+    let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
+        return false;
+    };
+    if !meta_a.is_file() || !meta_b.is_file() || meta_a.len() != meta_b.len() {
+        return false;
+    }
+    match (file_digest(a), file_digest(b)) {
+        (Some(da), Some(db)) => da == db,
+        _ => false,
+    }
+}
+
+/// SHA-256 of a file's contents, streamed so a large binary is never fully
+/// buffered. `None` on any I/O error.
+fn file_digest(path: &Path) -> Option<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).ok()?;
+    Some(hasher.finalize().into())
 }
 
 /// Applies a staged agent update by swapping the running binary and re-execing.
@@ -142,6 +237,125 @@ mod tests {
             !should_apply_deferred_update(1, false),
             "active + nothing pending → no apply"
         );
+    }
+
+    // ── Startup prune of an already-applied update (#1551) ───────────────
+
+    fn pending(version: &str, binary_path: &Path) -> PendingUpdate {
+        PendingUpdate {
+            version: version.to_string(),
+            binary_path: binary_path.to_string_lossy().into_owned(),
+            staged_at: "2026-07-17T09:00:00Z".to_string(),
+        }
+    }
+
+    fn state_with(pending: PendingUpdate) -> AgentState {
+        let mut state = AgentState::default();
+        state.update.pending_update = Some(pending);
+        state
+    }
+
+    #[test]
+    fn prune_drops_pending_update_not_newer_than_running_agent() {
+        // The agent restarted on 0.3.0 with a 0.3.0 record still staged: that
+        // update *is* the running agent, so the record must go.
+        let tmp = tempfile::tempdir().unwrap();
+        let staged = tmp.path().join("staged-agent");
+        std::fs::write(&staged, b"NEW").unwrap();
+
+        let mut state = state_with(pending("0.3.0", &staged));
+        assert!(prune_applied_pending_update(&mut state, "0.3.0", None));
+        assert!(state.update.pending_update.is_none());
+
+        // An older record is likewise behind the running agent.
+        let mut state = state_with(pending("v0.2.0", &staged));
+        assert!(prune_applied_pending_update(&mut state, "0.3.0", None));
+        assert!(state.update.pending_update.is_none());
+    }
+
+    #[test]
+    fn prune_drops_pending_update_whose_binary_is_the_running_one() {
+        // The record claims a newer version, but the running executable is
+        // byte-identical to the staged binary — this process already *is* the
+        // staged build (the shape the live-agent integration test exercises,
+        // where a copy of the same build is published as v9.9.9).
+        let tmp = tempfile::tempdir().unwrap();
+        let staged = tmp.path().join("staged-agent");
+        let running = tmp.path().join("running-agent");
+        std::fs::write(&staged, b"IDENTICAL-BYTES").unwrap();
+        std::fs::write(&running, b"IDENTICAL-BYTES").unwrap();
+
+        let mut state = state_with(pending("9.9.9", &staged));
+        assert!(prune_applied_pending_update(
+            &mut state,
+            "0.1.0",
+            Some(&running)
+        ));
+        assert!(state.update.pending_update.is_none());
+    }
+
+    #[test]
+    fn prune_keeps_a_genuinely_unapplied_update() {
+        // Newer version AND different bytes on disk → the apply has not
+        // happened (e.g. it failed). The record must survive for a retry.
+        let tmp = tempfile::tempdir().unwrap();
+        let staged = tmp.path().join("staged-agent");
+        let running = tmp.path().join("running-agent");
+        std::fs::write(&staged, b"NEW-BINARY").unwrap();
+        std::fs::write(&running, b"OLD-BINARY").unwrap();
+
+        let mut state = state_with(pending("9.9.9", &staged));
+        assert!(!prune_applied_pending_update(
+            &mut state,
+            "0.1.0",
+            Some(&running)
+        ));
+        assert!(
+            state.update.pending_update.is_some(),
+            "an unapplied update must be kept for retry"
+        );
+    }
+
+    #[test]
+    fn prune_keeps_update_with_unparsable_version_and_different_binary() {
+        // `agent.request_deferred_update` may stage a path with no version at
+        // all. With nothing to compare and different bytes running, keep it.
+        let tmp = tempfile::tempdir().unwrap();
+        let staged = tmp.path().join("staged-agent");
+        let running = tmp.path().join("running-agent");
+        std::fs::write(&staged, b"NEW-BINARY").unwrap();
+        std::fs::write(&running, b"OLD-BINARY").unwrap();
+
+        let mut state = state_with(pending("", &staged));
+        assert!(!prune_applied_pending_update(
+            &mut state,
+            "0.1.0",
+            Some(&running)
+        ));
+        assert!(state.update.pending_update.is_some());
+    }
+
+    #[test]
+    fn prune_keeps_update_when_staged_binary_is_gone() {
+        // Nothing can prove the update was applied → keep rather than guess.
+        let tmp = tempfile::tempdir().unwrap();
+        let running = tmp.path().join("running-agent");
+        std::fs::write(&running, b"OLD-BINARY").unwrap();
+
+        let mut state = state_with(pending("9.9.9", &tmp.path().join("vanished")));
+        assert!(!prune_applied_pending_update(
+            &mut state,
+            "0.1.0",
+            Some(&running)
+        ));
+        assert!(state.update.pending_update.is_some());
+    }
+
+    #[test]
+    fn prune_is_a_noop_without_a_pending_update() {
+        let mut state = AgentState::default();
+        assert!(!prune_applied_pending_update(&mut state, "0.1.0", None));
+        assert!(state.update.pending_update.is_none());
     }
 
     #[cfg(unix)]

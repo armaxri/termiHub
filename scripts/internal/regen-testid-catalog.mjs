@@ -1,18 +1,23 @@
 #!/usr/bin/env node
-// Regenerate tests/system/testid-catalog.md when a source file's `data-testid`
-// set may have changed, so a stale catalog never reaches CI (#1084).
+// Refresh tests/system/testid-catalog.md when a source file's testid set may
+// have changed, so the local reference stays current as you edit (#1084).
 //
-// Background: `scripts/build-testid-catalog.py` generates the catalog and the
-// "Frontend Code Quality" CI job verifies its freshness (`--check`, #899). A
-// stale catalog fails that job *and* the system-test machinery job, and used to
-// require a manual `python scripts/build-testid-catalog.py` per branch — easy to
-// forget, costing red CI runs (the whole of #1062 hit this repeatedly).
+// Background: `scripts/build-testid-catalog.py` generates the catalog (#899).
+// This helper does NOT generate one — it is the "when to regenerate" glue,
+// invoked from the autoformat PostToolUse hook (`autoformat.sh`) for every
+// edited `.ts`/`.tsx`, and it shells out to that same Python script. The
+// generator is the single source of truth for catalog *content*; there is no
+// second implementation to disagree with it (#1526).
 //
-// This helper is invoked from the autoformat PostToolUse hook
-// (`autoformat.sh`) for every edited `.ts`/`.tsx`. It self-gates: it only runs
-// the (Python) generator when the edited file is an app source file that
-// actually contains a `data-testid`. The catalog stays the single source of
-// truth in Python; this is just the "when to regenerate" glue.
+// The catalog is a local, git-ignored artifact: it is not committed and CI
+// regenerates it from source rather than diffing a checked-in copy (#1528). So
+// a missed refresh no longer reddens CI — it just leaves a stale reference for
+// whoever reads the catalog next.
+//
+// What this file *does* duplicate is the generator's notion of which files and
+// attributes carry a testid (SKIP_* and TESTID_ATTRS below). That copy can
+// drift from the scanner — it did when #1431 added the forwarding props — so
+// TESTID_ATTRS is pinned to the Python `_TESTID_ATTRS` by a unit test.
 //
 // The logic lives here (rather than inline in bash) so the two fragile parts —
 // the trigger predicate and locating a usable Python interpreter across
@@ -29,6 +34,54 @@ const SKIP_SUFFIXES = [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".d.ts"
 
 /** Path segments whose contents are tests/mocks/plumbing, not app UI. */
 const SKIP_DIR_PARTS = new Set(["__tests__", "test", "__mocks__", "testbridge"]);
+
+/**
+ * Attributes/props whose presence means the file may contribute a testid.
+ *
+ * Mirrors `_TESTID_ATTRS` in `scripts/build-testid-catalog.py`: the literal DOM
+ * attribute plus the shared sidebar shell's forwarding props, which consumers
+ * use instead of a raw `data-testid` (#1431). Gating on `data-testid` alone
+ * skipped those consumers entirely. A unit test pins this list to the Python
+ * one so the two cannot drift apart again (#1526).
+ */
+export const TESTID_ATTRS = ["data-testid", "testId", "nameTestId", "badgeTestId"];
+
+/** A JS identifier character — used for the word boundary before an attribute name. */
+const IDENT = /[A-Za-z0-9_$]/;
+
+/**
+ * Whether `contents` mentions any test-id attribute/prop from {@link TESTID_ATTRS}
+ * as a standalone name.
+ *
+ * The name must be delimited by non-identifier characters on both sides. This
+ * mirrors the Python scanner's boundary rules: it requires a non-identifier
+ * char before the name (so `testId` does not match inside `nameTestId`) and an
+ * `=` after it (so it does not match inside `testIdPrefix`). Checking for any
+ * non-identifier char rather than `=` specifically keeps the gate deliberately
+ * loose — `testId ={x}` and `testId\n  ={x}` still trigger — while still
+ * rejecting the identifier-substring false positives.
+ *
+ * @param {string} contents - The file's text contents.
+ * @returns {boolean}
+ */
+export function containsTestId(contents) {
+  return TESTID_ATTRS.some((attr) => {
+    let from = 0;
+    for (;;) {
+      const at = contents.indexOf(attr, from);
+      if (at < 0) {
+        return false;
+      }
+      const after = at + attr.length;
+      const boundedBefore = at === 0 || !IDENT.test(contents[at - 1]);
+      const boundedAfter = after >= contents.length || !IDENT.test(contents[after]);
+      if (boundedBefore && boundedAfter) {
+        return true;
+      }
+      from = after;
+    }
+  });
+}
 
 /** Interpreter candidates tried in order; the first that probes as real Python 3 wins. */
 export const PYTHON_CANDIDATES = [
@@ -47,7 +100,12 @@ export const PYTHON_CANDIDATES = [
  * catalog regeneration.
  *
  * True only for an app-source `.ts`/`.tsx` file under `src/` that is not a
- * test/spec/decl/mock and actually contains a `data-testid`.
+ * test/spec/decl/mock and mentions one of {@link TESTID_ATTRS}.
+ *
+ * Deliberately coarser than the Python scanner: it checks for the attribute
+ * name alone, not a full `name=<value>` match. A false positive costs one
+ * redundant (idempotent) generator run; a false negative leaves a stale
+ * catalog, so the gate errs toward regenerating.
  *
  * @param {string} filePath - Absolute or relative path to the edited file.
  * @param {string} contents - The file's text contents.
@@ -70,7 +128,7 @@ export function shouldRegenerate(filePath, contents) {
   if (dirParts.some((part) => SKIP_DIR_PARTS.has(part))) {
     return false;
   }
-  return contents.includes("data-testid");
+  return containsTestId(contents);
 }
 
 /**
