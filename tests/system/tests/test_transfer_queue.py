@@ -162,6 +162,8 @@ class TestTransferQueueLiveTransfer(
         the source to a local temp file and an upload to the destination — so the
         queue ends with two rows. Both must carry the remote path (#1531): the
         download's is the source path, the upload's is the destination path.
+        Both must also be named for the file the user pasted, never for the
+        internal temp copy the upload actually reads from (#1573).
         """
         name = f"payload-{unique_name('tq')}.bin"
         dest = f"destdir-{unique_name('tq')}"
@@ -215,14 +217,15 @@ class TestTransferQueueLiveTransfer(
         # Every row reaches 100%.
         assert [e["percent"] for e in entries] == [100, 100]
 
-        # Each row names its transfer's *source* basename: the backend derives
-        # `file_name` from the remote path on download and the local path on
-        # upload (`commands/files.rs::file_name_of`). A paste uploads from the
-        # local temp copy, so that row is named for the temp file — see the
-        # follow-up filed from this PR.
+        # Both rows name the file the user knows (#1573). The backend derives
+        # `file_name` from the remote path in both directions
+        # (`commands/files.rs::file_name_of`), so the name always agrees with
+        # the `path` cell in the same row. A paste uploads from a local temp
+        # copy (`/tmp/termihub-paste-<ts>-<name>`), and that internal name must
+        # never surface.
         assert by_direction["download"]["name"] == name
-        assert by_direction["upload"]["name"].startswith("termihub-paste-")
-        assert by_direction["upload"]["name"].endswith(name)
+        assert by_direction["upload"]["name"] == name
+        assert not by_direction["upload"]["name"].startswith("termihub-paste-")
 
         # The remote path from #1531 (PR #1543) reaches both rows: the download
         # reports the source path, the upload the destination path. Without the
