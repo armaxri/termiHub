@@ -58,6 +58,8 @@ use tempfile::TempDir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod common;
+
 /// Published asset suffix the mock release advertises. Forced via
 /// `TERMIHUB_AGENT_UPDATE_ASSET_SUFFIX` so the test is independent of the host
 /// architecture (the real `current_asset_suffix()` only resolves on Linux).
@@ -188,9 +190,6 @@ impl LiveAgent {
     fn spawn(server: &MockServer, strategy: &str, initial_delay: Duration) -> Self {
         let install_dir = TempDir::new().expect("install dir");
         let bin_path = install_dir.path().join("termihub-agent");
-        std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
-        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod agent copy");
 
         let config_home = TempDir::new().expect("config home");
         let port = reserve_port();
@@ -199,6 +198,14 @@ impl LiveAgent {
         let stderr_file = tempfile::NamedTempFile::new().expect("stderr file");
         let stderr_path = stderr_file.path().to_path_buf();
         let (stderr_handle, _keep) = stderr_file.keep().expect("persist stderr file");
+
+        // Everything from the copy to the spawn runs under the fork lock: a
+        // sibling thread forking mid-copy inherits our write fd and makes our
+        // own execve fail with ETXTBSY (#1597). See `common::fork_guard`.
+        let fork_guard = common::fork_guard();
+        std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod agent copy");
 
         let child = Command::new(&bin_path)
             .arg("--listen")
@@ -221,6 +228,9 @@ impl LiveAgent {
             .stderr(Stdio::from(stderr_handle))
             .spawn()
             .expect("spawn agent process");
+        // `spawn` returns only once the child has exec'd, so the inherited-fd
+        // window is closed here.
+        drop(fork_guard);
 
         LiveAgent {
             child,
@@ -420,12 +430,28 @@ impl Client {
 
 // ── Docker availability ─────────────────────────────────────────────────────
 
+/// Takes the fork lock even though it has nothing to do with the agent binary:
+/// this `fork` inherits any write fd a sibling thread's `fs::copy` currently
+/// holds, and that is enough to make *that* thread's `execve` fail with
+/// ETXTBSY. The hazard is the fork, not the binary (#1597).
+/// Forks under the fork lock even though it has nothing to do with the agent
+/// binary: this `fork` inherits any write fd a sibling thread's `fs::copy`
+/// currently holds, which is enough to make *that* thread's `execve` fail with
+/// ETXTBSY. The hazard is the fork, not the binary (#1597).
+///
+/// `spawn` + `wait` rather than `status()` so the lock covers only the
+/// fork-to-exec window, not the wait for `docker info` to finish.
 fn docker_available() -> bool {
-    Command::new("docker")
-        .arg("info")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    let child = {
+        let _fork_guard = common::fork_guard();
+        Command::new("docker")
+            .arg("info")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+    };
+    child
+        .and_then(|mut c| c.wait())
         .map(|s| s.success())
         .unwrap_or(false)
 }
@@ -676,11 +702,17 @@ async fn active_docker_session_is_never_interrupted() {
     }
     // Pre-pull so container start (and thus session activation) is fast enough to
     // beat the gated first poll deterministically.
-    let _ = Command::new("docker")
-        .args(["pull", "alpine:latest"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    // Fork under the lock, wait outside it — an image pull is far too long to
+    // hold the fork lock for. See `common::fork_guard` (#1597).
+    let pull = {
+        let _fork_guard = common::fork_guard();
+        Command::new("docker")
+            .args(["pull", "alpine:latest"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+    };
+    let _ = pull.and_then(|mut c| c.wait());
     assert_never_interrupts("docker", json!({"image": "alpine:latest"}), Some(60)).await;
 }
 

@@ -62,6 +62,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
+mod common;
+
 /// The hook's gate and its binary override — mirrored from
 /// `agent/src/update/test_hook.rs`.
 const HOOK_ENV: &str = "TERMIHUB_AGENT_TEST_PENDING_UPDATE";
@@ -128,15 +130,19 @@ impl LiveAgent {
     fn spawn(gate: Option<&str>) -> Self {
         let install_dir = TempDir::new().expect("install dir");
         let bin_path = install_dir.path().join("termihub-agent");
-        std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
-        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod agent copy");
-
         let config_home = TempDir::new().expect("config home");
 
         let stderr_file = tempfile::NamedTempFile::new().expect("stderr file");
         let stderr_path = stderr_file.path().to_path_buf();
         let (stderr_handle, _keep) = stderr_file.keep().expect("persist stderr file");
+
+        // Everything from the copy to the spawn runs under the fork lock: a
+        // sibling thread forking mid-copy inherits our write fd and makes our
+        // own execve fail with ETXTBSY (#1597). See `common::fork_guard`.
+        let fork_guard = common::fork_guard();
+        std::fs::copy(agent_binary(), &bin_path).expect("copy agent binary");
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod agent copy");
 
         let mut cmd = Command::new(&bin_path);
         cmd.arg("--listen")
@@ -160,6 +166,12 @@ impl LiveAgent {
         }
 
         let child = cmd.spawn().expect("spawn agent process");
+        // `spawn` returns only once the child has exec'd, so the inherited-fd
+        // window is closed here. Release before the log wait below, which blocks
+        // for as long as the agent takes to bind — holding it there would
+        // serialise the whole suite rather than just the hazard.
+        drop(fork_guard);
+
         let addr = read_listen_addr(&stderr_path);
         LiveAgent {
             child,
