@@ -12,6 +12,13 @@ function render(ui: React.ReactElement) {
   });
 }
 
+/** The "don't ask again" control rendered in the dialog body. */
+function dontAskAgain(): HTMLButtonElement {
+  return document.querySelector(
+    '[data-testid="confirm-dialog-dont-ask-again"]'
+  ) as HTMLButtonElement;
+}
+
 describe("ConfirmDialog", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -70,7 +77,7 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the don't-ask-again toggle and reports changes", () => {
+  it("renders the don't-ask-again checkbox and reports changes", () => {
     const onChange = vi.fn();
     render(
       <ConfirmDialog
@@ -82,11 +89,104 @@ describe("ConfirmDialog", () => {
         onCancel={vi.fn()}
       />
     );
-    const toggle = document.querySelector(
-      '[data-testid="confirm-dialog-dont-ask-again"]'
-    ) as HTMLElement;
-    expect(toggle).toBeTruthy();
-    act(() => toggle.click());
+    const box = dontAskAgain();
+    expect(box).toBeTruthy();
+    act(() => box.click());
     expect(onChange).toHaveBeenCalledWith(true);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  // The opt-out takes effect on Confirm, so it must read as a checkbox and not
+  // as a switch — a switch tells the user it applied the moment it was flipped.
+  it("exposes the don't-ask-again opt-out as a checkbox, not a switch", () => {
+    render(
+      <ConfirmDialog
+        open
+        title="T"
+        message="M"
+        dontAskAgain={{ checked: false, onChange: vi.fn() }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    const box = dontAskAgain();
+    expect(box.getAttribute("role")).toBe("checkbox");
+    expect(box.getAttribute("role")).not.toBe("switch");
+    expect(box.classList.contains("ui-checkbox")).toBe(true);
+    expect(box.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("reflects the checked state of the don't-ask-again opt-out", () => {
+    render(
+      <ConfirmDialog
+        open
+        title="T"
+        message="M"
+        dontAskAgain={{ checked: true, onChange: vi.fn() }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    expect(dontAskAgain().getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("labels the don't-ask-again opt-out with the custom label", () => {
+    render(
+      <ConfirmDialog
+        open
+        title="T"
+        message="M"
+        dontAskAgain={{ checked: false, onChange: vi.fn(), label: "Don't warn again" }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    expect(dontAskAgain().getAttribute("aria-label")).toBe("Don't warn again");
+    expect(document.querySelector(".ui-confirm__ask-again")?.textContent).toContain(
+      "Don't warn again"
+    );
+  });
+
+  // Clicking the wrapping <label> must reach the control exactly once: a label
+  // around a button can forward the click and re-toggle it straight back.
+  it("toggles once when the don't-ask-again label text is clicked", () => {
+    const onChange = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="T"
+        message="M"
+        dontAskAgain={{ checked: false, onChange }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    act(() => (document.querySelector(".ui-confirm__ask-again span") as HTMLElement).click());
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  // WAI-ARIA: Space activates a checkbox, Enter does not. Enter inside the
+  // dialog stays the confirm shortcut rather than ticking the opt-out.
+  it("confirms rather than ticking the opt-out when Enter is pressed on it", () => {
+    const onConfirm = vi.fn();
+    const onChange = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="T"
+        message="M"
+        dontAskAgain={{ checked: false, onChange }}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />
+    );
+    const box = dontAskAgain();
+    act(() => box.focus());
+    act(() => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 });
