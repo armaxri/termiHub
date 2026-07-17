@@ -183,64 +183,21 @@ pub trait DaemonLauncher: Send + Sync + 'static {
     ) -> Result<SessionBackend, anyhow::Error>;
 }
 
-/// Point a to-be-spawned daemon's stderr somewhere that outlives the agent.
+/// Open the per-session daemon log, where the platform provides one.
 ///
-/// The daemon must **not** inherit the agent's stderr: when the agent is reached
-/// over SSH that stderr is the exec channel of `termihub-agent --stdio`, and
-/// keeping it tethers the daemon's lifetime to the SSH connection — a disconnect
-/// tears the channel down and takes the persistent-session daemon with it (so a
-/// reconnect finds nothing to re-attach). A detached daemon owns its own stderr
-/// on every platform: on unix it logs to a per-session file in its socket dir
-/// (diagnostics without the coupling), falling back to null; elsewhere it is
-/// discarded to null (a Windows per-session log path is a future refinement).
-fn configure_daemon_stderr(command: &mut std::process::Command, session_id: &str) {
+/// On unix the daemon logs to a per-session file in its socket dir; elsewhere it
+/// is discarded to null (a Windows per-session log path is a future refinement).
+/// See [`crate::daemon::spawn::configure_detached_stderr`] for why it must never
+/// simply inherit the agent's stderr.
+fn daemon_log(session_id: &str) -> Option<std::fs::File> {
     #[cfg(unix)]
-    let stderr = match crate::daemon::transport::open_daemon_log(session_id) {
-        Some(file) => std::process::Stdio::from(file),
-        None => std::process::Stdio::null(),
-    };
-    #[cfg(not(unix))]
-    let stderr = {
-        let _ = session_id;
-        std::process::Stdio::null()
-    };
-    command.stderr(stderr);
-}
-
-/// Detach a to-be-spawned daemon so it outlives the agent that spawns it — the
-/// whole point of a *persistent* session.
-///
-/// On Windows: a new process group with no console window. On unix: a fresh
-/// session via `setsid`. Being merely orphaned (the agent never waits on the
-/// child) is **not** enough on unix, because the agent is typically launched
-/// over an SSH exec channel (`termihub-agent --stdio`); when that channel closes
-/// sshd sends SIGHUP to the whole session, killing any daemon still in it, so a
-/// reconnect would find no session to re-attach. `setsid` moves the daemon out
-/// of the SSH session's process group, immunising it against that hangup.
-/// (Detaching stderr from the same channel — see [`configure_daemon_stderr`] —
-/// is the other half of surviving the disconnect.)
-fn configure_daemon_detachment(command: &mut std::process::Command) {
-    #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::{
-            CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS,
-        };
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        crate::daemon::transport::open_daemon_log(session_id)
     }
-    #[cfg(unix)]
+    #[cfg(not(unix))]
     {
-        use std::os::unix::process::CommandExt;
-        // Safety: `setsid` is async-signal-safe and touches no shared state of
-        // the (forked, not-yet-exec'd) child before the following `exec`.
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        let _ = session_id;
+        None
     }
 }
 
@@ -271,8 +228,8 @@ impl DaemonLauncher for SystemDaemonLauncher {
             .env("TERMIHUB_BUFFER_SIZE", buffer_size_bytes.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null());
-        configure_daemon_stderr(&mut command, session_id);
-        configure_daemon_detachment(&mut command);
+        crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
+        crate::daemon::spawn::configure_detachment(&mut command);
 
         let mut child = command
             .spawn()
@@ -1169,31 +1126,8 @@ mod tests {
         Arc::new(crate::registry::build_registry())
     }
 
-    // ── daemon detachment (issue #995) ───────────────────────────────
-
-    #[cfg(unix)]
-    #[test]
-    fn configure_daemon_detachment_starts_a_new_session() {
-        // A persistent-session daemon must survive the agent (and its SSH exec
-        // channel) going away. On unix that requires the spawned child to leave
-        // the SSH session via `setsid` — otherwise sshd's SIGHUP on disconnect
-        // kills it and a reconnect finds nothing to re-attach. Assert the child a
-        // detachment-configured Command spawns is a session leader (its session id
-        // equals its pid), which only holds after `setsid`.
-        let mut command = std::process::Command::new("sleep");
-        command.arg("30");
-        configure_daemon_detachment(&mut command);
-        let mut child = command.spawn().expect("spawn sleep");
-        let pid = child.id() as libc::pid_t;
-        // Safety: `getsid` merely reads the session id of an existing pid.
-        let sid = unsafe { libc::getsid(pid) };
-        let _ = child.kill();
-        let _ = child.wait();
-        assert_eq!(
-            sid, pid,
-            "daemon child should be its own session leader (setsid)"
-        );
-    }
+    // The daemon-detachment test (#995) moved to `daemon::spawn` along with the
+    // helper it covers, which both daemon roles now share.
 
     // ── connect_or_daemon_exit (issue #847) ──────────────────────────
 

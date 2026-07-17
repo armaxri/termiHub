@@ -146,6 +146,18 @@ describe("SpawnPicker", () => {
     );
   });
 
+  it("renders the footer options as checkboxes, not switches", async () => {
+    await renderPicker();
+
+    // Both options only take effect when Open is pressed, so the design draws
+    // checkboxes (#1562). A switch would imply they apply immediately.
+    for (const id of ["spawn-picker-new-window", "spawn-picker-remember"]) {
+      const control = query(id) as HTMLElement;
+      expect(control.getAttribute("role")).toBe("checkbox");
+      expect(control.classList.contains("ui-checkbox")).toBe(true);
+    }
+  });
+
   it("cancels without confirming", async () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();

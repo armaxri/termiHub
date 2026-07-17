@@ -28,6 +28,17 @@
 use std::io;
 use std::time::Duration;
 
+/// Env var overriding the host-wide registry endpoint.
+///
+/// The registry endpoint is otherwise a fixed per-user path, which is exactly
+/// what makes it a rendezvous — workers find it without being told. That also
+/// means every agent of one user on one machine shares it, so tests (and
+/// side-by-side development checkouts) need a way to opt into an isolated one
+/// rather than fighting over the live socket. Mirrors the session daemon's
+/// existing `TERMIHUB_SOCKET_PATH`. A worker that sets it also passes it to any
+/// registry it spawns, via the inherited environment.
+pub const REGISTRY_ENDPOINT_ENV: &str = "TERMIHUB_REGISTRY_ENDPOINT";
+
 use termihub_core::ipc::{
     self, ListenerOptions, ListenerSecurity, LocalSocketListener, StaleReclaim,
 };
@@ -64,12 +75,36 @@ impl DaemonListener {
     /// (`0o700` socket dir + file on unix, per-user DACL on windows) and
     /// unconditionally reclaiming any stale endpoint left by a previous daemon.
     /// The endpoint appearing signals readiness to connecting clients.
+    ///
+    /// This is the **per-session** daemon policy: the endpoint path embeds a
+    /// unique session id, so exactly one daemon can ever want it and reclaiming
+    /// it unconditionally is safe. Roles whose endpoint is a *singleton*
+    /// rendezvous that several processes may race for must use
+    /// [`bind_singleton`](Self::bind_singleton) instead.
     pub async fn bind(endpoint: &str) -> io::Result<Self> {
+        Self::bind_with_reclaim(endpoint, StaleReclaim::Unconditional).await
+    }
+
+    /// Bind a listener at a **singleton** `endpoint` — one that any number of
+    /// processes may race to own (the host-wide registry daemon, ADR-11).
+    ///
+    /// Identical to [`bind`](Self::bind) but for the stale-reclaim policy:
+    /// [`StaleReclaim::IfProbeDead`] only clears the path when a connect probe
+    /// shows nothing is listening, so a **live** owner keeps it and this bind
+    /// fails with [`io::ErrorKind::AddrInUse`]. That is what makes a spawn race
+    /// safe: the loser sees `AddrInUse`, exits, and connects to the winner
+    /// instead of silently stealing the endpoint out from under it. On windows
+    /// `first_pipe_instance(true)` already rejects a live owner.
+    pub async fn bind_singleton(endpoint: &str) -> io::Result<Self> {
+        Self::bind_with_reclaim(endpoint, StaleReclaim::IfProbeDead).await
+    }
+
+    async fn bind_with_reclaim(endpoint: &str, stale_reclaim: StaleReclaim) -> io::Result<Self> {
         let inner = LocalSocketListener::bind_with_options(
             endpoint,
             ListenerOptions {
                 security: ListenerSecurity::CurrentUserOnly,
-                stale_reclaim: StaleReclaim::Unconditional,
+                stale_reclaim,
             },
         )
         .await?;
@@ -96,10 +131,12 @@ pub async fn connect(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
 
 #[cfg(unix)]
 #[allow(unused_imports)]
-pub use unix_impl::{endpoint_alive, open_daemon_log, session_endpoint};
+pub use unix_impl::{
+    endpoint_alive, open_daemon_log, open_registry_log, registry_endpoint, session_endpoint,
+};
 #[cfg(windows)]
 #[allow(unused_imports)]
-pub use windows_impl::{endpoint_alive, session_endpoint};
+pub use windows_impl::{endpoint_alive, registry_endpoint, session_endpoint};
 
 // ── Unix session-path helpers ───────────────────────────────────────
 
@@ -113,6 +150,26 @@ mod unix_impl {
     pub fn session_endpoint(session_id: &str) -> String {
         socket_dir()
             .join(format!("session-{session_id}.sock"))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Compute the endpoint (socket path) for the host-wide registry daemon.
+    ///
+    /// A **singleton** sibling of the per-session sockets in the same per-user
+    /// `0o700` directory (ADR-11): one registry per user per host, which is what
+    /// makes it a rendezvous every worker of that user can find without being
+    /// told where it is. Because the dir is already per-user, the file name
+    /// needs no user component. Overridable via
+    /// [`REGISTRY_ENDPOINT_ENV`](super::REGISTRY_ENDPOINT_ENV).
+    pub fn registry_endpoint() -> String {
+        if let Ok(endpoint) = std::env::var(super::REGISTRY_ENDPOINT_ENV) {
+            if !endpoint.is_empty() {
+                return endpoint;
+            }
+        }
+        socket_dir()
+            .join("registry.sock")
             .to_string_lossy()
             .into_owned()
     }
@@ -148,9 +205,22 @@ mod unix_impl {
     /// Best-effort: returns `None` if the dir or file can't be created, and the
     /// caller falls back to a null stderr.
     pub fn open_daemon_log(session_id: &str) -> Option<std::fs::File> {
+        open_log(&format!("session-{session_id}.log"))
+    }
+
+    /// Open (truncating) the registry daemon's log file in the socket dir.
+    ///
+    /// Same reasoning as [`open_daemon_log`]: the registry is spawned by a
+    /// worker that may itself be running over an SSH exec channel, so it must
+    /// never inherit that stderr. Logs beside its socket as `registry.log`.
+    pub fn open_registry_log() -> Option<std::fs::File> {
+        open_log("registry.log")
+    }
+
+    fn open_log(file_name: &str) -> Option<std::fs::File> {
         let dir = socket_dir();
         ensure_socket_dir(&dir).ok()?;
-        std::fs::File::create(dir.join(format!("session-{session_id}.log"))).ok()
+        std::fs::File::create(dir.join(file_name)).ok()
     }
 }
 
@@ -163,6 +233,26 @@ mod windows_impl {
     /// Pipe names live in the `\\.\pipe\` namespace and are unique per session.
     pub fn session_endpoint(session_id: &str) -> String {
         format!(r"\\.\pipe\termihub-session-{session_id}")
+    }
+
+    /// Compute the pipe name for the host-wide registry daemon (ADR-11).
+    ///
+    /// Unlike the per-session pipes, this name is a **singleton** rendezvous
+    /// with no unique component, so it must carry the user itself: the
+    /// `\\.\pipe\` namespace is machine-global, and unix gets its per-user
+    /// scoping for free from the `0o700` socket *directory* that has no windows
+    /// analog. Two users on one host therefore get two distinct pipes — matching
+    /// the "one registry per user per host" rule — on top of the per-user DACL
+    /// that keeps each one unreachable by the other. Overridable via
+    /// [`REGISTRY_ENDPOINT_ENV`](super::REGISTRY_ENDPOINT_ENV).
+    pub fn registry_endpoint() -> String {
+        if let Ok(endpoint) = std::env::var(super::REGISTRY_ENDPOINT_ENV) {
+            if !endpoint.is_empty() {
+                return endpoint;
+            }
+        }
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "unknown".to_string());
+        format!(r"\\.\pipe\termihub-registry-{user}")
     }
 
     /// Cheap liveness pre-check: whether a named-pipe instance exists.

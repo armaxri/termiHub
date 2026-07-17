@@ -2411,3 +2411,57 @@ On a real host where your SSH user has `sudo` rights (e.g. a Raspberry Pi):
    unchanged, and no temp file remains.
 5. Inspect the LogViewer / backend logs during all of the above and confirm the
    **sudo password never appears** in any log line.
+
+### Application log file (#1570)
+
+Rotation, capping, the platform log-directory resolution, and the INFO-level file
+filter are covered by unit tests (`src-tauri/src/utils/file_log.rs`). The steps
+below are manual because they need a **bundled** app: only a real install exercises
+the launch path a post-mortem cares about, and the point of the feature is that the
+evidence exists on disk after the process is gone. Referenced by PR #1578.
+
+**A run leaves a log behind, on every platform.**
+
+1. Launch the installed app and open a session, then locate the log file:
+   - macOS: `~/Library/Logs/com.termihub.app/termihub.log`
+   - Windows: `%LOCALAPPDATA%\com.termihub.app\logs\termihub.log`
+   - Linux: `~/.local/share/com.termihub.app/logs/termihub.log`
+2. Confirm the file exists and its first line of the run is the
+   `termiHub starting` banner carrying the **version** and **pid**.
+3. Confirm entries are timestamped, carry a level and a target, and contain **no
+   ANSI escape sequences** (the file is read in a plain editor, not a terminal).
+
+**A clean exit is visible as a clean exit.**
+
+1. Close the app via the **window close button**. Re-open the log and confirm it
+   ends with the full breadcrumb sequence: `Window close requested`,
+   `Exit requested, shutting down`, then `termiHub exited cleanly` — whose absence
+   in the 2026-07-17 investigation forced the reconstruction from Apple's unified
+   log.
+2. Relaunch and quit via the **app menu / Cmd+Q** instead. Confirm the log ends with
+   `termiHub exited cleanly`. Note that this path emits **only** that line — Tauri
+   raises neither `CloseRequested` nor `ExitRequested` for a menu quit, so
+   `termiHub exited cleanly` is the one marker common to every clean exit and the
+   line to look for. Do not treat a missing `Exit requested` as evidence of a crash.
+3. Relaunch, then **kill** the app (`kill -9`, or Force Quit). Confirm the log ends
+   _without_ `termiHub exited cleanly` — a killed run is distinguishable from a clean
+   one by inspection alone, which is the whole point.
+4. Relaunch once more and confirm the new run **appends** below the previous one
+   rather than truncating it, so the run before an incident survives the restart.
+
+**The cap holds and secrets stay out.**
+
+1. Connect to an SSH host using a password and/or unlock the credential store.
+   Confirm the log records the _actions_ ("Unlocking credential store") but that
+   the password, passphrase, and private-key material appear **nowhere** in the
+   file. Confirm terminal contents are not logged.
+2. Relaunch with `TERMIHUB_FILE_LOG=debug` and open an SSH session. Confirm the
+   file gains termiHub's own DEBUG detail but still contains **no `russh` packet
+   logging** — raising termiHub's verbosity must never unclamp SSH internals into
+   a file users paste into issues (`russh` is held at WARN on top of any override).
+3. To exercise rotation without waiting for 5 MiB, append filler to the live file
+   (`python3 -c "open('termihub.log','a').write('x'*(5*1024*1024))"`) and relaunch:
+   the startup banner alone then trips the cap. Confirm `termihub.log` starts fresh
+   with the banner, the previous content moved to `termihub.1.log`, and that after
+   enough churn `termihub.2.log` is the oldest kept — `termihub.3.log` must
+   **never** appear and the directory must stay under ~15 MiB.

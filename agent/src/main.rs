@@ -7,6 +7,7 @@ mod monitoring;
 mod network;
 mod protocol;
 mod registry;
+mod registry_daemon;
 mod session;
 mod state;
 mod transport;
@@ -27,6 +28,7 @@ fn print_usage() {
     eprintln!("  --stdio              Run in stdio mode (NDJSON over stdin/stdout)");
     eprintln!("  --listen [addr]      Run in TCP listener mode (default: {DEFAULT_LISTEN_ADDR})");
     eprintln!("  --daemon <id>        Run as a session daemon (internal use only)");
+    eprintln!("  --registry-daemon    Run as the host-wide client registry (internal use only)");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --version             Print version and exit");
@@ -130,6 +132,19 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             });
             daemon::process::run_daemon(session_id).await
+        }
+        "--registry-daemon" => {
+            init_tracing();
+
+            // Spawned by a worker that could not find a registry (see
+            // `registry_daemon::client`), never by a user. Exits on its own once
+            // it has been idle, and exits immediately — successfully — if
+            // another registry already owns the endpoint.
+            info!(
+                "termihub-agent {} starting as the host-wide registry",
+                VERSION
+            );
+            registry_daemon::process::run_registry_daemon().await
         }
         other => {
             eprintln!("Unknown option: {}", other);
