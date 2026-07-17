@@ -1,10 +1,14 @@
 export default {
   extends: ["@commitlint/config-conventional"],
   rules: {
+    // Keep in sync with the type lists in docs/contributing.md and .claude/CLAUDE.md.
+    // `build` is part of the Conventional Commits spec and is already used in this
+    // repo's issue titles (e.g. #1537, #1538), so copying an issue title into a commit
+    // subject must not fail the lint (#1571).
     "type-enum": [
       2,
       "always",
-      ["feat", "fix", "docs", "style", "refactor", "perf", "test", "chore", "ci", "revert"],
+      ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "chore", "ci", "revert"],
     ],
   },
   ignores: [

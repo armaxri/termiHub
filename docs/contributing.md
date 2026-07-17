@@ -277,7 +277,10 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 <footer>
 ```
 
-**Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
+**Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `chore`, `ci`, `revert`
+
+This list is enforced by `commitlint.config.js` — a subject using any other type fails the
+Lint Commit Messages check.
 
 **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, etc.
 
