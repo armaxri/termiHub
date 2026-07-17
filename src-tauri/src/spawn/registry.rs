@@ -1325,6 +1325,8 @@ mod imp {
         use crate::connection::shell_integration::{
             ShellEntry, ShellEntryVisibility, ShowForTargets,
         };
+        use crate::spawn::SpawnKind;
+        use termihub_core::config::ContainerRuntime;
         use winreg::enums::*;
         use winreg::RegKey;
 
@@ -2307,7 +2309,9 @@ mod linux {
         use crate::connection::shell_integration::{
             LinuxFileManagerToggles, ShellEntry, ShellEntryVisibility, ShowForTargets,
         };
+        use crate::spawn::SpawnKind;
         use std::sync::Mutex;
+        use termihub_core::config::ContainerRuntime;
 
         const EXE: &str = "/opt/termihub/termiHub";
 
