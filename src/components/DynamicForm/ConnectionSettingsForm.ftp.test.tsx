@@ -83,6 +83,7 @@ const bridgeDeps: BridgeDeps = {
   sendTerminalInput: async () => false,
   resizeWindow: async () => {},
   screenshot: async () => "data:image/png;base64,AAAA",
+  emitEvent: async () => {},
 };
 
 async function selectTlsMode(value: string) {
