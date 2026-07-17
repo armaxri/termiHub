@@ -102,9 +102,6 @@ enum Command {
     Register(Box<ClientRecord>),
     Deregister,
     List(oneshot::Sender<Vec<ClientRecord>>),
-    /// Constructed only by [`RegistryClient::broadcast`], whose production
-    /// caller lands with #1351 — see the note there.
-    #[allow(dead_code)]
     Broadcast(Box<BroadcastEnvelope>),
 }
 
@@ -174,18 +171,17 @@ impl RegistryClient {
     /// **single-consumer**, so it can only ever reach this worker's own client.
     /// Anything that must reach the host's *other* desktops goes through here.
     ///
-    /// # No production caller yet
+    /// # Callers
     ///
-    /// #1574 deliberately ships the broadcast **substrate**; #1351 (coordinated
-    /// update notification) is the feature that sends one, and owns what gets
-    /// broadcast and when. So this is dead code on purpose until #1351 lands —
-    /// hence the `allow`, which should be removed with the first real caller.
+    /// The coordinated update (#1351) is the production caller — it broadcasts
+    /// [`agent.update_pending`](crate::protocol::methods::AGENT_UPDATE_PENDING)
+    /// so every other host can leave before the binary is swapped. It reaches
+    /// here through the `PeerCoordinator` trait in [`crate::update`], which is
+    /// implemented for this type.
     ///
-    /// It is not untested: the registry's fan-out and this client's delivery are
-    /// unit-tested here and in [`super::process`], and
-    /// `agent/tests/registry_daemon_integration.rs` proves the round trip across
-    /// two processes on a real socket.
-    #[allow(dead_code)]
+    /// The round trip is proven across two processes on a real socket by
+    /// `agent/tests/registry_daemon_integration.rs`, on top of the fan-out and
+    /// delivery unit tests here and in [`super::process`].
     pub fn broadcast(&self, envelope: BroadcastEnvelope) {
         let _ = self.cmd_tx.send(Command::Broadcast(Box::new(envelope)));
     }
