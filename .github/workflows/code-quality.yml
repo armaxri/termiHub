@@ -205,6 +205,12 @@ jobs:
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
         with:
+          # Pin uv itself (issue #1552). Without an explicit version the action
+          # resolves "latest" through the GitHub Releases API, which flakes and
+          # fast-fails the whole job on transient API errors — unrelated to the
+          # PR under test. A fixed version skips that lookup entirely and also
+          # makes the toolchain reproducible; bump it deliberately.
+          version: '0.11.29'
           # Pin the interpreter for reproducibility; dependencies are resolved
           # from the committed tests/system/uv.lock (the wrapper uses --frozen).
           python-version: '3.12'
