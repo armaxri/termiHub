@@ -1061,12 +1061,10 @@ export function FileBrowser() {
             // Session-layer browsing (FTP, Docker, agent sessions): the editor
             // reads and writes through session_read_file / session_write_file
             // rather than an SftpManager session. (#1557)
-            useAppStore
-              .getState()
-              .openEditorTab(entry.path, true, undefined, entry.permissions, {
-                sessionId: sessionFileBrowserId,
-                connectionType: activeTabConnectionType ?? "remote-session",
-              });
+            useAppStore.getState().openEditorTab(entry.path, true, undefined, entry.permissions, {
+              sessionId: sessionFileBrowserId,
+              connectionType: activeTabConnectionType ?? "remote-session",
+            });
           }
           break;
         case "download":
