@@ -8,6 +8,7 @@ use crate::files::sftp::{lock_session, ElevatedWriteResult, SftpManager, Writabi
 use crate::files::transfer::{self, TransferContext, TransferDirection, TransferRegistry};
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
+use crate::utils::fs::file_name_of;
 use crate::utils::vscode;
 
 /// Open a new SFTP session. Returns the session ID.
@@ -94,14 +95,6 @@ pub async fn sftp_check_writable(
     tokio::task::spawn_blocking(move || lock_session(&session)?.check_writable(&remote_path))
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
-}
-
-/// Extract the display file name from a path (falls back to the whole path).
-fn file_name_of(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string())
 }
 
 /// Open a dedicated SFTP channel off `session` and (for downloads) stat the
@@ -541,40 +534,4 @@ pub fn write_cheatsheet(html: String, app: tauri::AppHandle) -> Result<String, S
         .to_str()
         .map(|s| s.to_string())
         .ok_or_else(|| "file path contains non-UTF-8 characters".to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::file_name_of;
-
-    #[test]
-    fn names_a_file_by_its_basename() {
-        assert_eq!(file_name_of("/home/testuser/report.csv"), "report.csv");
-        assert_eq!(file_name_of("/report.csv"), "report.csv");
-        assert_eq!(file_name_of("report.csv"), "report.csv");
-    }
-
-    #[test]
-    fn falls_back_to_the_whole_path_when_there_is_no_basename() {
-        assert_eq!(file_name_of("/"), "/");
-        assert_eq!(file_name_of(""), "");
-        assert_eq!(file_name_of(".."), "..");
-    }
-
-    /// Both transfer directions name the row from the *remote* path, so the
-    /// name always agrees with the `path` cell beside it. Feeding an upload the
-    /// destination path — rather than the local temp copy an SFTP→SFTP paste
-    /// reads from — is what keeps the scratch name off the row (#1573).
-    #[test]
-    fn names_a_paste_upload_after_the_destination_not_the_temp_copy() {
-        let temp_local = "/tmp/termihub-paste-1784278708447-report.csv";
-        let remote_dest = "/home/testuser/dest/report.csv";
-
-        assert_eq!(file_name_of(remote_dest), "report.csv");
-        assert_eq!(
-            file_name_of(temp_local),
-            "termihub-paste-1784278708447-report.csv",
-            "the temp basename is what the row must NOT show",
-        );
-    }
 }
