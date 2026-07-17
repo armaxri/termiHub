@@ -204,4 +204,49 @@ mod tests {
         new_si.registered = false;
         assert!(!stage_shell_integration(&mut on, new_si));
     }
+
+    // ── Remember this choice (#1561) ─────────────────────────────────────────
+
+    #[test]
+    fn stage_remembered_choice_writes_the_picked_target_onto_the_entry() {
+        let mut settings = AppSettings::default();
+        settings.shell_integration.entries = vec![entry("a"), entry("b")];
+
+        assert!(stage_remembered_choice(
+            &mut settings,
+            "b",
+            PickedTarget::Container {
+                runtime: ContainerRuntime::Podman,
+                image: "alpine:3".to_string(),
+                mount: "/workspace".to_string(),
+            },
+        ));
+
+        let b = &settings.shell_integration.entries[1];
+        assert_eq!(b.spawn_kind, SpawnKind::Container);
+        assert_eq!(b.container_runtime, ContainerRuntime::Podman);
+        assert_eq!(b.container_image.as_deref(), Some("alpine:3"));
+        assert_eq!(b.container_mount.as_deref(), Some("/workspace"));
+
+        // The choice must land on the addressed entry only.
+        assert_eq!(settings.shell_integration.entries[0], entry("a"));
+    }
+
+    /// The entry can be deleted between the context-menu click and the picker's
+    /// confirm. That must be a quiet no-op, not an error or an invented entry.
+    #[test]
+    fn stage_remembered_choice_ignores_an_unknown_entry() {
+        let mut settings = AppSettings::default();
+        settings.shell_integration.entries = vec![entry("a")];
+
+        assert!(!stage_remembered_choice(
+            &mut settings,
+            "gone",
+            PickedTarget::Local {
+                shell: "zsh".to_string()
+            },
+        ));
+
+        assert_eq!(settings.shell_integration.entries, vec![entry("a")]);
+    }
 }

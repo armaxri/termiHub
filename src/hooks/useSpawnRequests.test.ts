@@ -22,6 +22,7 @@ vi.mock("@/services/events", () => ({
 const resolveContainerSpawn = vi.fn();
 const resolveShellSpawn = vi.fn();
 const takePendingSpawn = vi.fn();
+const rememberSpawnChoice = vi.fn();
 vi.mock("@/services/api", () => ({
   resolveContainerSpawn: (
     location: string,
@@ -38,6 +39,7 @@ vi.mock("@/services/api", () => ({
     shell?: string
   ) => resolveShellSpawn(location, connection, entryId, kind, shell),
   takePendingSpawn: () => takePendingSpawn(),
+  rememberSpawnChoice: (entryId: string, target: unknown) => rememberSpawnChoice(entryId, target),
 }));
 
 vi.mock("@/components/ui", () => ({
@@ -52,11 +54,12 @@ vi.mock("@/components/ui", () => ({
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { applySpawnChoice, useSpawnRequests } from "./useSpawnRequests";
+import { applySpawnChoice, useSpawnChoiceHandler, useSpawnRequests } from "./useSpawnRequests";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { SpawnRequestPayload } from "@/services/events";
+import type { SpawnChoice } from "@/types/spawn";
 import type { ContainerSpawn, ShellSpawn } from "@/services/api";
 import type { TerminalTab } from "@/types/terminal";
 
@@ -668,5 +671,126 @@ describe("applySpawnChoice — folding a picker choice back into its request (SI
     );
 
     expect(request.new_window).toBe(true);
+  });
+});
+
+describe("useSpawnChoiceHandler — persisting \"Remember this choice\" (#1561)", () => {
+  /** Render the hook and hand back its confirm handler. */
+  function choiceHandler(): (req: SpawnRequestPayload, choice: SpawnChoice) => Promise<void> {
+    let handler!: ReturnType<typeof useSpawnChoiceHandler>;
+    function Probe() {
+      handler = useSpawnChoiceHandler();
+      return null;
+    }
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      createRoot(host).render(React.createElement(Probe));
+    });
+    return handler;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rememberSpawnChoice.mockResolvedValue(undefined);
+    resolveShellSpawn.mockResolvedValue(SAMPLE_SHELL_SPAWN);
+    resolveContainerSpawn.mockResolvedValue(SAMPLE_SPAWN);
+  });
+
+  const REQ: SpawnRequestPayload = { location: "/proj", entry_id: "open", pick: true };
+
+  it("saves the picked local shell onto the triggering entry", async () => {
+    const handler = choiceHandler();
+
+    await act(async () => {
+      await handler(REQ, {
+        target: { kind: "local", shell: "fish" },
+        newWindow: false,
+        remember: true,
+      });
+    });
+
+    expect(rememberSpawnChoice).toHaveBeenCalledWith("open", { kind: "local", shell: "fish" });
+  });
+
+  it("saves the picked container runtime, image and mount", async () => {
+    const handler = choiceHandler();
+
+    await act(async () => {
+      await handler(REQ, {
+        target: { kind: "container", runtime: "podman", image: "alpine:3", mount: "/workspace" },
+        newWindow: false,
+        remember: true,
+      });
+    });
+
+    expect(rememberSpawnChoice).toHaveBeenCalledWith("open", {
+      kind: "container",
+      runtime: "podman",
+      image: "alpine:3",
+      mount: "/workspace",
+    });
+  });
+
+  it("saves the picked WSL distribution", async () => {
+    const handler = choiceHandler();
+
+    await act(async () => {
+      await handler(REQ, {
+        target: { kind: "wsl", distro: "Ubuntu-22.04" },
+        newWindow: false,
+        remember: true,
+      });
+    });
+
+    expect(rememberSpawnChoice).toHaveBeenCalledWith("open", {
+      kind: "wsl",
+      distro: "Ubuntu-22.04",
+    });
+  });
+
+  it("saves nothing when the box is left unticked", async () => {
+    const handler = choiceHandler();
+
+    await act(async () => {
+      await handler(REQ, {
+        target: { kind: "local", shell: "fish" },
+        newWindow: false,
+        remember: false,
+      });
+    });
+
+    expect(rememberSpawnChoice).not.toHaveBeenCalled();
+  });
+
+  // A bare `termiHub spawn --pick` from a terminal has no entry to remember onto.
+  it("saves nothing when the spawn came from no context-menu entry", async () => {
+    const handler = choiceHandler();
+
+    await act(async () => {
+      await handler(
+        { location: "/proj", pick: true },
+        { target: { kind: "local", shell: "fish" }, newWindow: false, remember: true }
+      );
+    });
+
+    expect(rememberSpawnChoice).not.toHaveBeenCalled();
+  });
+
+  // Remembering is a side effect of the spawn, never a precondition for it.
+  it("still opens the session when remembering fails", async () => {
+    rememberSpawnChoice.mockRejectedValue(new Error("disk full"));
+    const handler = choiceHandler();
+
+    await act(async () => {
+      await handler(REQ, {
+        target: { kind: "local", shell: "fish" },
+        newWindow: false,
+        remember: true,
+      });
+    });
+
+    expect(resolveShellSpawn).toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("could not remember"));
   });
 });

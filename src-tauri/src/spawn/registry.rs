@@ -394,6 +394,45 @@ mod shared_helper_tests {
         );
     }
 
+    /// A remembered entry (#1561) carries its kind into the invocation, so the
+    /// click arrives already classified instead of as `auto`. Without this a
+    /// remembered container entry falls through the presence-based inference and
+    /// opens a local shell — the bug #1561 fixes.
+    #[test]
+    fn spawn_command_line_emits_a_remembered_kind() {
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", SpawnKind::Container, "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --kind container --location %f"#
+        );
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", SpawnKind::Wsl, "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --kind wsl --location %f"#
+        );
+        assert_eq!(
+            spawn_command_line("/opt/termihub/termiHub", "open", SpawnKind::Local, "%f"),
+            r#""/opt/termihub/termiHub" spawn --entry-id open --kind local --location %f"#
+        );
+    }
+
+    /// The emitted `--kind` token must be one the CLI parser actually accepts —
+    /// otherwise registration writes a command line the app silently ignores.
+    #[test]
+    fn every_emitted_kind_round_trips_through_the_cli_parser() {
+        for kind in [
+            SpawnKind::Container,
+            SpawnKind::Local,
+            SpawnKind::Wsl,
+            SpawnKind::Ssh,
+            SpawnKind::Auto,
+        ] {
+            assert_eq!(
+                SpawnKind::from_wire(kind.to_wire()),
+                Some(kind),
+                "{kind:?} does not round-trip through the wire token"
+            );
+        }
+    }
+
     #[test]
     fn id_slug_windows_style_uses_underscore_without_trim_or_fallback() {
         // Windows `entry_key_name`: non-alnum → `_`, lowercased, no trimming,
