@@ -181,9 +181,10 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, Sy
     def test_status_bar_items_hide_on_a_terminal_tab(self):
         self._open_editor()
         assert self.editor_status_present() is True
-        # A terminal tab has no editor status.
-        self.switch_to_connections_sidebar()
-        self.ensure_terminal()
+        # Activating a terminal tab must clear the editor status-bar items.
+        # ``ensure_terminal`` alone does not switch tabs when a terminal already
+        # exists, so switch to the terminal tab explicitly.
+        self.switch_to_terminal_tab()
         self.wait(
             lambda: self.editor_status() is None,
             what="the editor status to clear on the terminal tab",
@@ -193,8 +194,7 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, Sy
     def test_status_bar_items_return_when_switching_back_to_the_editor(self):
         name = self._open_editor()
         editor_tab = self.find_tab(name)
-        self.switch_to_connections_sidebar()
-        self.ensure_terminal()
+        self.switch_to_terminal_tab()
         self.wait(lambda: self.editor_status() is None, what="status to clear")
         self.switch_to_tab(editor_tab["id"])
         self.wait(lambda: self.editor_status() is not None, what="status to return")

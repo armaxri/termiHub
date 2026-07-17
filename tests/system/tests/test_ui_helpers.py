@@ -10,6 +10,7 @@ from termihub_harness import find_connection, find_folder
 from termihub_harness.bridge import BridgeError
 from termihub_harness.ui import connection_item_testid, folder_toggle_testid, iter_tabs
 from termihub_harness.ui.base import HarnessMixin
+from termihub_harness.ui.tabs import TabsUi
 
 
 class StubDriver:
@@ -139,6 +140,94 @@ def test_open_named_context_menu_waits_for_resolve_then_a_mounted_trigger():
         what="the menu",
     )
     assert driver.context_menu_calls == ["trigger-9"]
+
+
+class TabDriver:
+    """Driver stub for tab switching: serves ``get_state`` for the panel tree and
+    ``activePanelId``, and flips a leaf's ``activeTabId`` when its tab is clicked.
+
+    Clicking ``tab-<id>`` mirrors the real app: the clicked tab becomes the active
+    tab of whichever leaf contains it, so ``active_tab()`` then reflects it.
+    """
+
+    def __init__(self, root: dict, active_panel_id: str):
+        self._root = root
+        self._active_panel_id = active_panel_id
+        self.clicks: list[str] = []
+
+    def get_state(self, path=None):
+        if path == "rootPanel":
+            return self._root
+        if path == "activePanelId":
+            return self._active_panel_id
+        raise BridgeError("getState", f'state path "{path}" does not resolve')
+
+    def click(self, test_id: str) -> None:
+        self.clicks.append(test_id)
+        if not test_id.startswith("tab-"):
+            return
+        tab_id = test_id[len("tab-") :]
+
+        def activate(node):
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "leaf":
+                if any(t.get("id") == tab_id for t in node.get("tabs") or []):
+                    node["activeTabId"] = tab_id
+                return
+            for child in node.get("children") or []:
+                activate(child)
+
+        activate(self._root)
+
+
+class FakeTabs(TabsUi):
+    """``TabsUi`` with an eager, app-free ``wait`` (same pattern as FakeHarness)."""
+
+    _MAX_POLLS = 50
+
+    def __init__(self, driver):
+        self.driver = driver
+
+    def wait(self, predicate, *, timeout=0, interval=0, what=""):
+        for _ in range(self._MAX_POLLS):
+            result = predicate()
+            if result:
+                return result
+        raise AssertionError(f"timed out waiting for {what}")
+
+
+def test_switch_to_terminal_tab_activates_the_open_terminal():
+    # An editor tab is active alongside an open terminal tab. Switching must
+    # click the *terminal* tab (by contentType) and leave it the active tab —
+    # ``ensure_terminal`` would not have changed the active tab at all.
+    root = {
+        "type": "leaf",
+        "id": "p1",
+        "activeTabId": "ed",
+        "tabs": [
+            {"id": "ed", "contentType": "editor"},
+            {"id": "term", "contentType": "terminal"},
+        ],
+    }
+    driver = TabDriver(root, "p1")
+    tabs = FakeTabs(driver)
+    result = tabs.switch_to_terminal_tab()
+    assert result["id"] == "term"
+    assert driver.clicks == ["tab-term"]
+    assert tabs.active_tab()["id"] == "term"
+
+
+def test_switch_to_terminal_tab_raises_when_no_terminal_is_open():
+    root = {
+        "type": "leaf",
+        "id": "p1",
+        "activeTabId": "ed",
+        "tabs": [{"id": "ed", "contentType": "editor"}],
+    }
+    tabs = FakeTabs(TabDriver(root, "p1"))
+    with pytest.raises(AssertionError):
+        tabs.switch_to_terminal_tab()
 
 
 def test_iter_tabs_flattens_a_split_tree_in_order():
