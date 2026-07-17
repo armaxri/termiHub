@@ -68,3 +68,6 @@ serde_json = { workspace = true }
 base64 = "0.22"
 # Mock GitHub Releases HTTP endpoints in self-update tests without real network.
 wiremock = "0.6"
+# Compute the SHA-256 the mock release advertises for the staged agent binary
+# in the live self-update integration test.
+sha2 = "0.10"
