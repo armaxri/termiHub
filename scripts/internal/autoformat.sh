@@ -26,11 +26,14 @@ case "$FILE_PATH" in
         ;;
 esac
 
-# Keep tests/system/testid-catalog.md in sync when a component's data-testid set
-# may have changed, so a stale catalog never reaches CI (#1084, #899). The Node
-# helper self-gates on path + contents (no-op for non-source / testid-free
-# files) and locates a usable Python interpreter itself. Best-effort: never fail
-# the edit.
+# Refresh tests/system/testid-catalog.md when a component's testid set may have
+# changed, so the local reference stays current as you edit (#1084, #899). The
+# catalog is git-ignored and CI regenerates it from source rather than diffing a
+# committed copy (#1528), so this only keeps the local artifact fresh — it is not
+# a CI gate. The Node helper self-gates on path + contents (no-op for non-source
+# / testid-free files), shells out to build-testid-catalog.py (the single source
+# of truth for catalog content), and locates a usable Python interpreter itself.
+# Best-effort: never fail the edit.
 case "$FILE_PATH" in
     *.ts|*.tsx)
         node "$(dirname "$0")/regen-testid-catalog.mjs" "$FILE_PATH" &>/dev/null || true
