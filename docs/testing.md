@@ -2455,9 +2455,13 @@ evidence exists on disk after the process is gone. Referenced by PR #1578.
    Confirm the log records the _actions_ ("Unlocking credential store") but that
    the password, passphrase, and private-key material appear **nowhere** in the
    file. Confirm terminal contents are not logged.
-2. To exercise rotation without waiting for 5 MiB, relaunch with
-   `TERMIHUB_FILE_LOG=trace` and drive the app (open sessions, browse SFTP) until
-   the log passes 5 MiB. Confirm `termihub.log` starts fresh, the previous content
-   moved to `termihub.1.log`, and that after enough churn `termihub.2.log` is the
-   oldest kept — `termihub.3.log` must **never** appear and the directory must
-   stay under ~15 MiB.
+2. Relaunch with `TERMIHUB_FILE_LOG=debug` and open an SSH session. Confirm the
+   file gains termiHub's own DEBUG detail but still contains **no `russh` packet
+   logging** — raising termiHub's verbosity must never unclamp SSH internals into
+   a file users paste into issues (`russh` is held at WARN on top of any override).
+3. To exercise rotation without waiting for 5 MiB, append filler to the live file
+   (`python3 -c "open('termihub.log','a').write('x'*(5*1024*1024))"`) and relaunch:
+   the startup banner alone then trips the cap. Confirm `termihub.log` starts fresh
+   with the banner, the previous content moved to `termihub.1.log`, and that after
+   enough churn `termihub.2.log` is the oldest kept — `termihub.3.log` must
+   **never** appear and the directory must stay under ~15 MiB.

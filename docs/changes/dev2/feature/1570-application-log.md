@@ -22,4 +22,6 @@
   files — so it cannot grow without bound. It records INFO and above (the LogViewer
   keeps its more detailed DEBUG view), and never contains passwords, key material,
   or terminal contents. Set `TERMIHUB_FILE_LOG` (e.g. `TERMIHUB_FILE_LOG=debug`) to
-  raise the file's detail when diagnosing a problem.
+  raise the file's detail when diagnosing a problem — SSH packet-level logging stays
+  clamped even then, so raising verbosity cannot accidentally put transport internals
+  into a file you are about to share.

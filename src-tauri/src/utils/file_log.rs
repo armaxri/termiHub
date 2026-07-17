@@ -72,15 +72,35 @@ const MAX_FILES: usize = 3;
 /// depend on how the app happened to be launched.
 ///
 /// `TERMIHUB_FILE_LOG` overrides this when a support case needs more detail.
-const FILE_LOG_DIRECTIVE: &str = "info";
+///
+/// `russh` is clamped for the same reason the ring buffer clamps it — it emits
+/// per-packet cipher logs below WARN — but here the clamp is also a *safety*
+/// property, not just a noise one: this file is written to disk and pasted into
+/// issues, so packet-level SSH internals must not reach it. See
+/// [`RUSSH_CLAMP`], which keeps that true even when the override lowers the level.
+const FILE_LOG_DIRECTIVE: &str = "info,russh=warn";
+
+/// Floor applied to `russh` on top of *any* file directive, including a
+/// `TERMIHUB_FILE_LOG` override.
+///
+/// Without this, `TERMIHUB_FILE_LOG=debug` would silently unclamp russh's
+/// per-packet cipher logging into a durable, user-shared file. A support case
+/// that genuinely needs russh internals can still ask for them explicitly
+/// (`TERMIHUB_FILE_LOG="debug,russh=debug"`) — the point is that it cannot
+/// happen by accident while someone is only trying to raise termiHub's own detail.
+const RUSSH_CLAMP: &str = "russh=warn";
 
 /// Build the [`EnvFilter`] for the file sink.
 ///
-/// Honors `TERMIHUB_FILE_LOG` when set, else [`FILE_LOG_DIRECTIVE`].
+/// Honors `TERMIHUB_FILE_LOG` when set, else [`FILE_LOG_DIRECTIVE`]. An override
+/// gets [`RUSSH_CLAMP`] prepended, so a directive that names `russh` explicitly
+/// still wins (later directives take precedence in an `EnvFilter`) while one that
+/// does not stays clamped.
 pub fn file_env_filter() -> EnvFilter {
     match std::env::var("TERMIHUB_FILE_LOG") {
         Ok(directive) if !directive.trim().is_empty() => {
-            EnvFilter::try_new(&directive).unwrap_or_else(|_| EnvFilter::new(FILE_LOG_DIRECTIVE))
+            EnvFilter::try_new(format!("{RUSSH_CLAMP},{directive}"))
+                .unwrap_or_else(|_| EnvFilter::new(FILE_LOG_DIRECTIVE))
         }
         _ => EnvFilter::new(FILE_LOG_DIRECTIVE),
     }
@@ -401,6 +421,58 @@ mod tests {
 
         assert_eq!(read(&dir.path().join("termihub.log")), "bbbbb\n");
         assert!(!dir.path().join("termihub.1.log").exists());
+    }
+
+    /// Render what `directive` admits for `russh` at DEBUG, without touching the
+    /// process environment (which is global and would race other tests).
+    fn russh_debug_reaches_file(directive: &str) -> bool {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::Layer as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let log = RotatingLogFile::new(dir.path(), 1 << 20, 3).unwrap();
+        let filter = EnvFilter::try_new(directive).unwrap();
+
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(log.clone())
+                .with_filter(filter),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "russh", "packet cipher internals");
+        });
+
+        read(&dir.path().join("termihub.log")).contains("packet cipher internals")
+    }
+
+    #[test]
+    fn the_default_file_directive_clamps_russh() {
+        assert!(
+            !russh_debug_reaches_file(FILE_LOG_DIRECTIVE),
+            "russh DEBUG is per-packet cipher logging and must never reach a file \
+             users paste into issues"
+        );
+    }
+
+    #[test]
+    fn raising_file_detail_does_not_unclamp_russh() {
+        // The realistic support instruction: "set TERMIHUB_FILE_LOG=debug". It must
+        // raise termiHub's own detail without dragging SSH packet internals along.
+        assert!(
+            !russh_debug_reaches_file(&format!("{RUSSH_CLAMP},debug")),
+            "TERMIHUB_FILE_LOG=debug must not silently enable russh packet logging"
+        );
+    }
+
+    #[test]
+    fn an_explicit_russh_directive_still_wins() {
+        // Escape hatch: a support case that truly needs russh internals can ask.
+        assert!(
+            russh_debug_reaches_file(&format!("{RUSSH_CLAMP},debug,russh=debug")),
+            "an explicit russh=debug must still be honored — the clamp is a default, \
+             not a prohibition"
+        );
     }
 
     #[test]
