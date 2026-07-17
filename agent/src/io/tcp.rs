@@ -28,9 +28,6 @@ pub async fn run_tcp_listener(
     allow_self_update: bool,
     update_strategy: crate::update::UpdateStrategy,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    info!("Listening on {}", listener.local_addr()?);
-
     let (notification_tx, mut notification_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
     let registry = Arc::new(build_registry());
@@ -86,6 +83,18 @@ pub async fn run_tcp_listener(
     // simulated slow init happens while the port is still un-connectable,
     // exactly as the real #1551 startup work now does.
     startup_test_delay().await;
+
+    // Bind and announce readiness only now, after all the startup work above
+    // has finished (#1579). Binding earlier makes `Listening on …` a lie: the
+    // kernel accepts connections into the listen backlog the instant the socket
+    // is bound, so a client's `connect` succeeds while this task is still deep
+    // in `SessionManager::new`'s #1551 binary byte-compare, `ensure_default_shell`
+    // and `recover_sessions` — and then the client's `initialize` stalls with no
+    // reader until the accept loop below is finally reached. By binding last, the
+    // log line is a true readiness signal and an early client is cleanly refused
+    // (the desktop retries with backoff) instead of accepted-then-stalled.
+    let listener = TcpListener::bind(addr).await?;
+    info!("Listening on {}", listener.local_addr()?);
 
     loop {
         tokio::select! {
