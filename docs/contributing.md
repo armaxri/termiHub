@@ -288,6 +288,12 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 This list is enforced by `commitlint.config.js` — a subject using any other type fails the
 Lint Commit Messages check.
 
+**Subject**: must be **lowercase**. The `subject-case` rule inherited from
+`@commitlint/config-conventional` rejects sentence-case, start-case, PascalCase and
+UPPER-CASE subjects, so start the `<subject>` with a lowercase word — otherwise Lint Commit
+Messages fails. Use `fix(config): resolve the dev port collision`, not
+`fix(config): Resolve the dev port collision`.
+
 **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, etc.
 
 **Examples:**
