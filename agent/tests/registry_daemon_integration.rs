@@ -603,6 +603,15 @@ impl RawWorker {
 
     /// Register and wait for the ACK, so the caller knows the registry has
     /// recorded this worker before it asserts on fan-out.
+    ///
+    /// The ACK is not necessarily the *next* frame. The registry fans a
+    /// broadcast out to every connection except its sender — registered or not —
+    /// so a worker that connects while another worker's broadcast is in flight
+    /// can be handed the `MSG_EVENT` before its own `MSG_ACK`. That ordering is
+    /// harmless in production (a real worker dispatches on frame type and never
+    /// waits on the ACK), but a helper that assumed "next frame == ACK" made this
+    /// suite fail about 1 run in 20 under load. Skipping to the ACK asserts what
+    /// this helper actually means to assert.
     fn register(&mut self, client_id: &str) {
         let record = json!({
             "client_id": client_id,
@@ -612,8 +621,16 @@ impl RawWorker {
             "pid": std::process::id(),
         });
         self.send(MSG_REGISTER, &serde_json::to_vec(&record).expect("encode"));
-        let (msg_type, _) = self.recv().expect("registry must ACK a REGISTER");
-        assert_eq!(msg_type, MSG_ACK, "expected ACK for {client_id}");
+        loop {
+            let (msg_type, _) = self.recv().expect("registry must ACK a REGISTER");
+            if msg_type == MSG_ACK {
+                return;
+            }
+            assert_eq!(
+                msg_type, MSG_EVENT,
+                "expected an ACK for {client_id}, or a broadcast racing it — got 0x{msg_type:02x}"
+            );
+        }
     }
 }
 
