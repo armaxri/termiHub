@@ -223,6 +223,17 @@ def ssh_fixtures():
 
 
 @pytest.fixture(scope="session")
+def ssh_password_fixtures():
+    """Password-auth SSH container only (port 2201).
+
+    ``ssh_fixtures`` also brings up ``ssh-keys``; suites that never authenticate
+    with a key should ask for this instead, so they neither wait for that image
+    to build nor skip when only *it* fails to.
+    """
+    return _ensure_ssh_services([(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT)])
+
+
+@pytest.fixture(scope="session")
 def ssh_x11_fixtures():
     """X11-forwarding SSH container (port 2208).
 
