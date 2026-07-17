@@ -320,9 +320,8 @@ impl Client {
         }
         let deadline = Instant::now() + TIMEOUT;
         while Instant::now() < deadline {
-            let Some(msg) = self.read_message() else {
-                return None;
-            };
+            // A closed/timed-out read means nothing more is coming.
+            let msg = self.read_message()?;
             self.buffer_notification(msg);
             if let Some(found) = self.take_buffered(method) {
                 return Some(found);
