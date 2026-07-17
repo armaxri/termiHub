@@ -36,6 +36,7 @@ pub async fn run_tcp_listener(
     let session_manager = Arc::new(SessionManager::new(notification_tx.clone(), registry));
     let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
     let update_tx = notification_tx.clone();
+    let test_update_tx = notification_tx.clone();
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
         connection_store.clone(),
@@ -58,6 +59,15 @@ pub async fn run_tcp_listener(
         update_tx,
         shutdown.child_token(),
     );
+
+    // Test-only (#1546): arm the deferred-update E2E hook when the env gate is
+    // set. Seeded AFTER `SessionManager::new` so the #1551 startup prune has
+    // already run and cannot sweep the record we just staged. `None` — and so a
+    // completely untouched code path — in production.
+    let test_update = crate::update::TestPendingUpdate::from_env();
+    if let Some(test_update) = test_update.as_ref() {
+        test_update.seed(&session_manager).await;
+    }
 
     loop {
         tokio::select! {
@@ -87,6 +97,15 @@ pub async fn run_tcp_listener(
                 // Buffered data is preserved in serial ring buffers and
                 // replayed on attach, so these are not needed.
                 while notification_rx.try_recv().is_ok() {}
+
+                // Test-only (#1546): re-announce the staged update to the client
+                // that just attached. This has to sit AFTER the drain above —
+                // anything queued before a client connects is discarded — which
+                // is exactly why a staged update is otherwise never replayed on
+                // attach and the deferred path is unreachable from a live test.
+                if let Some(test_update) = test_update.as_ref() {
+                    test_update.notify_attached(&test_update_tx, env!("CARGO_PKG_VERSION"));
+                }
 
                 // As with accept(), a failure to build the per-connection
                 // handler must not kill the listener — drop this client and keep

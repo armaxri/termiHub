@@ -643,7 +643,28 @@ function useFileBrowserSync() {
       activeTabConnectionType &&
       typeSupportsFileBrowser(activeTabConnectionType, connectionTypes)
     ) {
-      setFileBrowserMode(fileBrowserEnabled ? "sftp" : "none");
+      if (!fileBrowserEnabled) {
+        setSessionFileBrowserId(null);
+        setFileBrowserMode("none");
+      } else if (activeTabConnectionType === "ssh") {
+        // SSH keeps the legacy SftpManager/sftp_* path, which carries features
+        // the shared FileBrowser trait does not expose yet (realpath, writability
+        // probes, elevated writes, exec capability). Converging it onto the
+        // session layer is tracked as a follow-up to #1335.
+        setFileBrowserMode("sftp");
+      } else if (activeTab.sessionId) {
+        // Every other file-browser-capable type (FTP, Docker, ...) dispatches
+        // through the session layer: SessionManager already keys sessions by id
+        // and routes file ops via ConnectionType::file_browser(), so this works
+        // for any backend that implements the trait (#1335).
+        setSessionFileBrowserId(activeTab.sessionId);
+        setFileBrowserMode("session");
+      } else {
+        // Session not established yet (still connecting) — this effect re-runs
+        // once the tab receives its session id.
+        setSessionFileBrowserId(null);
+        setFileBrowserMode("none");
+      }
     } else {
       setFileBrowserMode("none");
     }
