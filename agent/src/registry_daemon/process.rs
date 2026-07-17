@@ -404,6 +404,100 @@ mod tests {
         );
     }
 
+    /// A connection that has opened but never sent `MSG_REGISTER` still receives
+    /// broadcasts — and this is deliberate, not the oversight #1608 asked us to
+    /// check. The fan-out targets **connections**, while `agent.list_connections`
+    /// (via [`RegistryState::clients`]) targets registered **clients**: the two
+    /// answer different questions and are meant to differ, not to agree.
+    ///
+    /// Why a not-yet-registered connection must still be reached: a worker mid
+    /// `initialize` handshake is *racing to become a client*, and the one
+    /// production broadcast — `agent.update_pending` (#1351) — is exactly the
+    /// signal it must not miss, or it will spin up sessions the imminent binary
+    /// swap is about to tear down. Delivery is harmless before registration: the
+    /// worker dispatches on frame type (never on ACK ordering, see #1610) and a
+    /// client that is not there yet simply drops the event on a closed channel.
+    ///
+    /// This test pins that behaviour so a later "tidy up the fan-out" change
+    /// cannot silently drop the racing-registration case.
+    #[test]
+    fn an_unregistered_connection_still_receives_broadcasts() {
+        let state = Arc::new(RegistryState::default());
+        let _rx_sender = conn(&state, 0);
+        let mut rx_unregistered = conn(&state, 1);
+        // The sender registers; the recipient never does.
+        handle_frame(
+            &state,
+            0,
+            frame(MSG_REGISTER, serde_json::to_vec(&record("a")).unwrap()),
+        );
+
+        let envelope = BroadcastEnvelope {
+            origin_client_id: "a".into(),
+            method: "agent.update_pending".into(),
+            params: json!({"version": "2.0.0"}),
+        };
+        handle_frame(
+            &state,
+            0,
+            frame(MSG_BROADCAST, serde_json::to_vec(&envelope).unwrap()),
+        );
+
+        // The unregistered connection is invisible to `list`...
+        assert_eq!(state.clients(), vec![record("a")]);
+        // ...yet still receives the broadcast.
+        let (msg_type, payload) = rx_unregistered
+            .try_recv()
+            .expect("event must reach an unregistered connection");
+        assert_eq!(msg_type, MSG_EVENT);
+        let got: BroadcastEnvelope = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(got, envelope);
+    }
+
+    /// A worker that registered and then sent `MSG_DEREGISTER` — its client
+    /// disconnected but its process is still up and its socket still open — keeps
+    /// receiving broadcasts, matching the invariant documented on [`WorkerConn`].
+    /// Its record is gone from `list`, but the connection is live, so the fan-out
+    /// still reaches it; with no client behind it the event harmlessly drops.
+    #[test]
+    fn a_deregistered_but_connected_worker_still_receives_broadcasts() {
+        let state = Arc::new(RegistryState::default());
+        let _rx_sender = conn(&state, 0);
+        let mut rx_gone = conn(&state, 1);
+        handle_frame(
+            &state,
+            0,
+            frame(MSG_REGISTER, serde_json::to_vec(&record("a")).unwrap()),
+        );
+        handle_frame(
+            &state,
+            1,
+            frame(MSG_REGISTER, serde_json::to_vec(&record("b")).unwrap()),
+        );
+        handle_frame(&state, 1, frame(MSG_DEREGISTER, Vec::new()));
+        let _ = rx_gone.try_recv(); // drain b's ACK
+
+        // b is no longer a client, but its connection is still live.
+        assert_eq!(state.clients(), vec![record("a")]);
+        assert_eq!(state.connection_count(), 2);
+
+        let envelope = BroadcastEnvelope {
+            origin_client_id: "a".into(),
+            method: "agent.update_pending".into(),
+            params: json!({"version": "2.0.0"}),
+        };
+        handle_frame(
+            &state,
+            0,
+            frame(MSG_BROADCAST, serde_json::to_vec(&envelope).unwrap()),
+        );
+
+        let (msg_type, _) = rx_gone
+            .try_recv()
+            .expect("event must reach a deregistered-but-connected worker");
+        assert_eq!(msg_type, MSG_EVENT);
+    }
+
     #[test]
     fn a_malformed_frame_is_skipped_rather_than_failing_the_worker() {
         let state = Arc::new(RegistryState::default());
