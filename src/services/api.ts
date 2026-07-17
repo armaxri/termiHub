@@ -213,6 +213,11 @@ export interface ShellSpawn {
  * - **ssh** — the saved SSH connection (`connection`) opened verbatim, with the
  *   target path returned as `cdPath` to `cd` into after connect.
  *
+ * `shell` names the specific target within the `kind` — a local shell name, or a
+ * WSL distribution — as chosen in the Session Picker (SI-3, #1366). It outranks
+ * the `connection` / system-default fallbacks. Omit it to keep the pre-picker
+ * behaviour of opening the system default.
+ *
  * Rejects (throws) an SSH/WSL spawn that cannot be resolved to a
  * connection/distribution, so the caller can surface an error toast.
  */
@@ -220,13 +225,15 @@ export async function resolveShellSpawn(
   location?: string,
   connection?: string,
   entryId?: string,
-  kind?: string
+  kind?: string,
+  shell?: string
 ): Promise<ShellSpawn> {
   return await invoke<ShellSpawn>("resolve_shell_spawn", {
     location,
     connection,
     entryId,
     kind,
+    shell: shell ?? null,
   });
 }
 

@@ -117,6 +117,7 @@ pub fn resolve_shell_spawn(
     connection: Option<String>,
     entry_id: Option<String>,
     kind: Option<String>,
+    shell: Option<String>,
 ) -> Result<ShellSpawn, String> {
     let kind = kind
         .as_deref()
@@ -136,6 +137,7 @@ pub fn resolve_shell_spawn(
         &home,
         &connections,
         default_wsl_distribution().as_deref(),
+        shell.as_deref(),
     )
 }
 
@@ -173,27 +175,36 @@ fn resolve_shell_spawn_with(
     home: &Path,
     connections: &[SavedConnection],
     default_wsl_distro: Option<&str>,
+    shell: Option<&str>,
 ) -> Result<ShellSpawn, String> {
     match req.kind {
         SpawnKind::Ssh => resolve_ssh_spawn(req, connections),
         SpawnKind::Wsl => {
-            let distribution = resolve_wsl_distribution(req, connections, default_wsl_distro)?;
+            let distribution =
+                resolve_wsl_distribution(req, connections, default_wsl_distro, shell)?;
             Ok(handler::build_wsl_spawn(req, home, &distribution))
         }
         // Local / Auto (and any unexpected kind) open a local shell — the #1365
         // path, unchanged.
-        _ => Ok(handler::build_shell_spawn(req, home)),
+        _ => Ok(handler::build_shell_spawn(req, home, shell)),
     }
 }
 
-/// Resolve the WSL distribution for a spawn: the saved WSL connection referenced
-/// by `--connection` (if it names a non-empty distribution), otherwise the
-/// system default distro. Errors when neither is available.
+/// Resolve the WSL distribution for a spawn: the explicitly picked distribution
+/// (SI-3, #1366), else the saved WSL connection referenced by `--connection` (if
+/// it names a non-empty distribution), else the system default distro. Errors
+/// when none is available.
 fn resolve_wsl_distribution(
     req: &SpawnRequest,
     connections: &[SavedConnection],
     default_wsl_distro: Option<&str>,
+    picked: Option<&str>,
 ) -> Result<String, String> {
+    // A distribution the user chose in the picker outranks every fallback.
+    if let Some(distro) = picked.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(distro.to_string());
+    }
+
     if let Some(id) = req
         .connection
         .as_deref()
@@ -368,6 +379,48 @@ mod tests {
     }
 
     #[test]
+    fn a_picked_shell_is_opened_instead_of_the_system_default() {
+        // The picker's whole point is choosing a specific shell, so the pick has
+        // to reach the backend settings rather than falling back to the default.
+        let home = Path::new("/tmp");
+        let req = SpawnRequest {
+            kind: SpawnKind::Local,
+            ..SpawnRequest::default()
+        };
+
+        let picked =
+            resolve_shell_spawn_with(&req, home, &[], None, Some("zsh")).expect("resolves");
+        assert_eq!(
+            picked.settings.get("shell").and_then(|v| v.as_str()),
+            Some("zsh")
+        );
+
+        // No pick (every pre-#1366 spawn) must not pin a shell at all.
+        let default = resolve_shell_spawn_with(&req, home, &[], None, None).expect("resolves");
+        assert!(default.settings.get("shell").is_none());
+
+        // A blank pick means "no choice", not a shell literally named "".
+        let blank = resolve_shell_spawn_with(&req, home, &[], None, Some("  ")).expect("resolves");
+        assert!(blank.settings.get("shell").is_none());
+    }
+
+    #[test]
+    fn a_picked_wsl_distribution_outranks_the_default() {
+        let home = Path::new("/tmp");
+        let req = SpawnRequest {
+            kind: SpawnKind::Wsl,
+            ..SpawnRequest::default()
+        };
+
+        let spawn = resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu"), Some("Debian"))
+            .expect("resolves");
+        assert_eq!(
+            spawn.settings.get("distribution").and_then(|v| v.as_str()),
+            Some("Debian")
+        );
+    }
+
+    #[test]
     fn spawn_options_serialize_camel_case() {
         // The frontend `SpawnOptions` type mirrors these keys; a rename here
         // would silently strand the picker on `undefined`.
@@ -524,7 +577,8 @@ mod tests {
         // its /mnt/ form (location None falls back to the home dir).
         let home = Path::new(r"C:\Users\foo");
         let req = wsl_request(None, None);
-        let spawn = resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu")).expect("resolves");
+        let spawn =
+            resolve_shell_spawn_with(&req, home, &[], Some("Ubuntu"), None).expect("resolves");
         assert_eq!(spawn.session_type, "wsl");
         assert_eq!(spawn.settings["distribution"], "Ubuntu");
         assert_eq!(spawn.settings["startingDirectory"], "/mnt/c/Users/foo");
@@ -542,7 +596,8 @@ mod tests {
             serde_json::json!({ "distribution": "Debian" }),
         )];
         let req = wsl_request(None, Some("Work/Debian box"));
-        let spawn = resolve_shell_spawn_with(&req, home, &conns, Some("Ubuntu")).expect("resolves");
+        let spawn =
+            resolve_shell_spawn_with(&req, home, &conns, Some("Ubuntu"), None).expect("resolves");
         assert_eq!(spawn.settings["distribution"], "Debian");
     }
 
@@ -551,7 +606,7 @@ mod tests {
         // No connection and no default distro (e.g. a non-Windows host) → error.
         let home = Path::new("/home/user");
         let req = wsl_request(None, None);
-        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("no distro");
+        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("no distro");
         assert!(err.contains("WSL distribution"), "err: {err}");
     }
 
@@ -565,7 +620,7 @@ mod tests {
         });
         let conns = vec![saved_conn("Prod/Web", "Web", "ssh", ssh_settings.clone())];
         let req = ssh_request(Some("/srv/app"), Some("Prod/Web"));
-        let spawn = resolve_shell_spawn_with(&req, home, &conns, None).expect("resolves");
+        let spawn = resolve_shell_spawn_with(&req, home, &conns, None, None).expect("resolves");
         assert_eq!(spawn.session_type, "ssh");
         assert_eq!(spawn.settings, ssh_settings);
         assert_eq!(spawn.cd_path.as_deref(), Some("/srv/app"));
@@ -577,7 +632,7 @@ mod tests {
     fn ssh_spawn_without_connection_id_is_an_error() {
         let home = Path::new("/home/user");
         let req = ssh_request(Some("/srv/app"), None);
-        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("needs id");
+        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("needs id");
         assert!(err.contains("--connection"), "err: {err}");
     }
 
@@ -585,7 +640,7 @@ mod tests {
     fn ssh_spawn_unknown_connection_is_an_error() {
         let home = Path::new("/home/user");
         let req = ssh_request(Some("/srv/app"), Some("nope"));
-        let err = resolve_shell_spawn_with(&req, home, &[], None).expect_err("not found");
+        let err = resolve_shell_spawn_with(&req, home, &[], None, None).expect_err("not found");
         assert!(err.contains("not found"), "err: {err}");
     }
 
@@ -599,7 +654,7 @@ mod tests {
             serde_json::json!({ "shell": "bash" }),
         )];
         let req = ssh_request(Some("/srv/app"), Some("Local/Home"));
-        let err = resolve_shell_spawn_with(&req, home, &conns, None).expect_err("wrong type");
+        let err = resolve_shell_spawn_with(&req, home, &conns, None, None).expect_err("wrong type");
         assert!(err.contains("not an SSH connection"), "err: {err}");
     }
 
@@ -612,7 +667,7 @@ mod tests {
             kind: SpawnKind::Local,
             ..SpawnRequest::default()
         };
-        let spawn = resolve_shell_spawn_with(&req, home, &[], None).expect("resolves");
+        let spawn = resolve_shell_spawn_with(&req, home, &[], None, None).expect("resolves");
         assert_eq!(spawn.session_type, "local");
         assert_eq!(spawn.settings["startingDirectory"], "/home/user");
     }

@@ -163,7 +163,12 @@ fn spawn_title(cwd: &Path, fallback: &str) -> String {
 /// its target against `home`. The resolved directory becomes the shell's
 /// `startingDirectory` (the `core/src/backends/local_shell.rs` `cwd` path), so
 /// the session opens `cd`'d to the target without a fragile post-start `cd`.
-pub fn build_shell_spawn(req: &SpawnRequest, home: &Path) -> ShellSpawn {
+///
+/// `shell` names the specific shell to open (as detected by
+/// `detect_available_shells`) — the Session Picker's choice (SI-3, #1366). When
+/// `None`, the shell is left to the system default, which is every non-picked
+/// spawn's behaviour.
+pub fn build_shell_spawn(req: &SpawnRequest, home: &Path, shell: Option<&str>) -> ShellSpawn {
     let resolved = resolve_spawn_location(req.location.as_deref(), home);
     if resolved.missing {
         tracing::warn!(
@@ -175,12 +180,16 @@ pub fn build_shell_spawn(req: &SpawnRequest, home: &Path) -> ShellSpawn {
     let starting_directory = resolved.cwd.to_string_lossy().into_owned();
 
     // Serialised into the exact camelCase keys the local-shell backend parses
-    // (`startingDirectory`, `shellIntegration`); the shell itself is left to the
-    // system default.
-    let settings = json!({
+    // (`shell`, `startingDirectory`, `shellIntegration`). A blank `shell` is
+    // dropped rather than sent as an empty string, which the backend would treat
+    // as a real (and unlaunchable) shell name instead of "use the default".
+    let mut settings = json!({
         "startingDirectory": starting_directory,
         "shellIntegration": true,
     });
+    if let Some(shell) = shell.map(str::trim).filter(|s| !s.is_empty()) {
+        settings["shell"] = json!(shell);
+    }
 
     ShellSpawn {
         session_type: "local".to_string(),
@@ -417,7 +426,7 @@ mod tests {
             kind: SpawnKind::Local,
             ..SpawnRequest::default()
         };
-        let spawn = build_shell_spawn(&req, &home);
+        let spawn = build_shell_spawn(&req, &home, None);
         assert_eq!(spawn.session_type, "local");
         assert!(spawn.spawned);
         assert!(!spawn.missing);
@@ -438,7 +447,7 @@ mod tests {
             kind: SpawnKind::Local,
             ..SpawnRequest::default()
         };
-        let spawn = build_shell_spawn(&req, &home);
+        let spawn = build_shell_spawn(&req, &home, None);
         assert!(spawn.missing);
         assert_eq!(
             spawn.settings["startingDirectory"],
