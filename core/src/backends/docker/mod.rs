@@ -5,6 +5,7 @@
 //! Docker API access instead of shelling out to the Docker CLI.
 
 mod file_browser;
+mod runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -133,48 +134,124 @@ fn podman_socket_uri() -> Option<String> {
 
 /// Connect to the appropriate container runtime based on the config.
 ///
-/// - `Auto`: tries `connect_with_local_defaults()` first (which already handles
-///   `DOCKER_HOST`/`CONTAINER_HOST`); if the ping fails, falls back to the Podman socket.
-/// - `Docker`: uses `connect_with_local_defaults()` only.
-/// - `Podman`: connects directly to the Podman socket.
-fn connect_to_runtime(runtime: &ContainerRuntime) -> Result<bollard::Docker, SessionError> {
+/// Unlike a bare `connect_with_local_defaults()`, this honours the **Docker
+/// CLI context** for the `Docker`/`Auto` paths and verifies the daemon
+/// identity, so an explicit `Docker` selection can never silently land on a
+/// Podman daemon behind a hijacked `/var/run/docker.sock` (issue #1600):
+///
+/// - `Docker`: resolves the endpoint the Docker CLI would use (`DOCKER_HOST`,
+///   else the active `docker context`), else the platform default socket. It
+///   then queries `/version` and **fails loudly** if the daemon is Podman.
+/// - `Auto`: prefers that same Docker endpoint, verified by an actual
+///   `/version` round-trip; if it is unreachable, falls back to the Podman
+///   socket. (The old check only fired when the client failed to *construct*,
+///   which never happened in practice.)
+/// - `Podman`: connects directly to the Podman socket and verifies it is
+///   reachable.
+async fn connect_to_runtime(runtime: &ContainerRuntime) -> Result<bollard::Docker, SessionError> {
     match runtime {
-        ContainerRuntime::Docker => bollard::Docker::connect_with_local_defaults().map_err(|e| {
-            SessionError::SpawnFailed(format!("Failed to connect to Docker daemon: {e}"))
-        }),
+        ContainerRuntime::Docker => connect_docker().await,
+        ContainerRuntime::Auto => connect_auto().await,
         ContainerRuntime::Podman => {
             let uri = podman_socket_uri().ok_or_else(|| {
                 SessionError::SpawnFailed("Could not determine Podman socket path".to_string())
             })?;
-            connect_podman(&uri)
-        }
-        ContainerRuntime::Auto => {
-            // Try Docker/default first.
-            match bollard::Docker::connect_with_local_defaults() {
-                Ok(client) => Ok(client),
-                Err(_) => {
-                    // Fall back to Podman socket.
-                    let uri = podman_socket_uri().ok_or_else(|| {
-                        SessionError::SpawnFailed(
-                            "Failed to connect to Docker daemon and no Podman socket found"
-                                .to_string(),
-                        )
-                    })?;
-                    connect_podman(&uri)
-                }
-            }
+            let client = connect_via_uri(&uri)?;
+            client.version().await.map_err(|e| {
+                SessionError::SpawnFailed(format!(
+                    "Selected runtime is Podman but the socket at {uri} is unreachable: {e}"
+                ))
+            })?;
+            info!(endpoint = %uri, runtime = "podman", "Connected to Podman runtime");
+            Ok(client)
         }
     }
 }
 
+/// Construct a client for the Docker CLI's active endpoint, returning the
+/// client together with a human-readable label of the endpoint used.
+fn connect_docker_endpoint() -> Result<(bollard::Docker, String), SessionError> {
+    match runtime::resolve_docker_endpoint() {
+        Some(uri) => {
+            let client = connect_via_uri(&uri)?;
+            Ok((client, uri))
+        }
+        None => {
+            let client = bollard::Docker::connect_with_local_defaults().map_err(|e| {
+                SessionError::SpawnFailed(format!("Failed to connect to Docker daemon: {e}"))
+            })?;
+            Ok((client, "platform default socket".to_string()))
+        }
+    }
+}
+
+/// Explicit-`Docker` path: connect to the Docker CLI endpoint and reject a
+/// Podman daemon rather than silently using it.
+async fn connect_docker() -> Result<bollard::Docker, SessionError> {
+    let (client, endpoint) = connect_docker_endpoint()?;
+    let version = client.version().await.map_err(|e| {
+        SessionError::SpawnFailed(format!(
+            "Selected runtime is Docker but the daemon at {endpoint} is unreachable: {e}"
+        ))
+    })?;
+    if runtime::version_is_podman(&version) {
+        let server = version.version.as_deref().unwrap_or("unknown");
+        return Err(SessionError::SpawnFailed(format!(
+            "Selected runtime is Docker but the daemon at {endpoint} is Podman (server {server}). \
+             Check your Docker CLI context (`docker context ls`) or set DOCKER_HOST to a Docker endpoint."
+        )));
+    }
+    info!(endpoint = %endpoint, runtime = "docker", "Connected to Docker runtime");
+    Ok(client)
+}
+
+/// `Auto` path: prefer the real Docker endpoint (verified by a `/version`
+/// round-trip), falling back to the Podman socket only when Docker is
+/// genuinely unreachable.
+async fn connect_auto() -> Result<bollard::Docker, SessionError> {
+    match connect_docker_endpoint() {
+        Ok((client, endpoint)) => match client.version().await {
+            Ok(version) => {
+                let detected = if runtime::version_is_podman(&version) {
+                    "podman"
+                } else {
+                    "docker"
+                };
+                info!(endpoint = %endpoint, runtime = detected, "Auto-selected container runtime");
+                return Ok(client);
+            }
+            Err(e) => {
+                debug!(endpoint = %endpoint, error = %e, "Default Docker endpoint unreachable; trying Podman");
+            }
+        },
+        Err(e) => {
+            debug!(error = %e, "Could not construct default Docker client; trying Podman");
+        }
+    }
+
+    let uri = podman_socket_uri().ok_or_else(|| {
+        SessionError::SpawnFailed(
+            "Failed to reach Docker daemon and no Podman socket found".to_string(),
+        )
+    })?;
+    let client = connect_via_uri(&uri)?;
+    client.version().await.map_err(|e| {
+        SessionError::SpawnFailed(format!(
+            "Failed to reach Docker daemon; Podman socket at {uri} is also unreachable: {e}"
+        ))
+    })?;
+    info!(endpoint = %uri, runtime = "podman", "Auto-selected Podman runtime (Docker unavailable)");
+    Ok(client)
+}
+
 /// Connect to a container runtime via an explicit URI string.
-fn connect_podman(uri: &str) -> Result<bollard::Docker, SessionError> {
+fn connect_via_uri(uri: &str) -> Result<bollard::Docker, SessionError> {
     #[cfg(unix)]
     if uri.starts_with("unix://") {
         return bollard::Docker::connect_with_unix(uri, 120, bollard::API_DEFAULT_VERSION).map_err(
             |e| {
                 SessionError::SpawnFailed(format!(
-                    "Failed to connect to Podman socket at {uri}: {e}"
+                    "Failed to connect to container socket at {uri}: {e}"
                 ))
             },
         );
@@ -192,7 +269,7 @@ fn connect_podman(uri: &str) -> Result<bollard::Docker, SessionError> {
         )
         .map_err(|e| {
             SessionError::SpawnFailed(format!(
-                "Failed to connect to Podman named pipe at {pipe_name}: {e}"
+                "Failed to connect to container named pipe at {pipe_name}: {e}"
             ))
         });
         #[cfg(not(windows))]
@@ -538,7 +615,7 @@ impl ConnectionType for Docker {
         info!(image = %config.image, "Connecting Docker session");
 
         // Connect to the container runtime (Docker or Podman).
-        let client = connect_to_runtime(&config.runtime)?;
+        let client = connect_to_runtime(&config.runtime).await?;
 
         // Pull the image if it's not already available locally.
         info!(image = %config.image, "Pulling Docker image");
