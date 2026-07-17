@@ -63,6 +63,13 @@ class AgentUi(HarnessMixin):
     SETUP_REMOTE_PATH = "agent-setup-remote-path"
     SETUP_ARCH = "agent-setup-arch-select"
 
+    # Deferred-update banner (#1352), rendered under a *connected* agent's row.
+    # The id suffix is the agent id. (Apply Now — `agent-update-banner-apply-*` —
+    # is not driven yet; both its outcomes are unassertable live, see #1546 and
+    # tests/system/tests/test_agent_update_banner_live.py.)
+    UPDATE_BANNER = "agent-update-banner"
+    UPDATE_BANNER_DISMISS = "agent-update-banner-dismiss"
+
     # ── lookups ─────────────────────────────────────────────────────────────────
     def remote_agents(self) -> list[dict[str, Any]]:
         value = self.driver.get_state("remoteAgents")
@@ -306,3 +313,74 @@ class AgentUi(HarnessMixin):
             lambda: not self.driver.exists(self.SETUP_CANCEL),
             what="the agent-setup dialog to close",
         )
+
+    # ── deferred-update banner ──────────────────────────────────────────────────
+    def announce_agent_update(
+        self,
+        agent_id: str,
+        *,
+        available_version: str,
+        current_version: str = "0.1.0",
+        staged: bool = True,
+    ) -> None:
+        """Raise the backend's ``agent-update-available`` event for ``agent_id``.
+
+        This is the **only** producer of the banner's store state: a live agent
+        announces a staged update from its 24h self-update timer (behind
+        ``--allow-self-update``), and the notification is not replayed on attach —
+        so no UI gesture can surface the banner and the event must be injected
+        (see :meth:`BridgeDriver.emit_event`, #1545).
+
+        The payload mirrors the backend's wire shape exactly — ``agent_id`` is
+        snake_case while the version fields are camelCase (``services/events.ts``
+        ``onAgentUpdateAvailable``) — so the app's real ``listen`` subscription and
+        the ``useAgentUpdateEvents`` folding hook are exercised, not bypassed.
+        """
+        self.driver.emit_event(
+            "agent-update-available",
+            {
+                "agent_id": agent_id,
+                "currentVersion": current_version,
+                "availableVersion": available_version,
+                "staged": staged,
+            },
+        )
+
+    def agent_update_banner_testid(self, agent_id: str) -> str:
+        return f"{self.UPDATE_BANNER}-{agent_id}"
+
+    def agent_update_banner_present(self, agent_id: str) -> bool:
+        return self.driver.exists(self.agent_update_banner_testid(agent_id))
+
+    def agent_update_banner_text(self, agent_id: str) -> str:
+        return self.driver.get_text(self.agent_update_banner_testid(agent_id))
+
+    def wait_agent_update_banner(self, agent_id: str, *, timeout: float = 10.0) -> str:
+        """Wait for the deferred-update banner to render and return its text.
+
+        The event crosses the Tauri bus asynchronously, so the banner appears a
+        tick or two after :meth:`announce_agent_update` returns.
+        """
+        self.wait(
+            lambda: self.agent_update_banner_present(agent_id),
+            what=f"the deferred-update banner for agent {agent_id}",
+            timeout=timeout,
+        )
+        return self.agent_update_banner_text(agent_id)
+
+    def wait_no_agent_update_banner(self, agent_id: str, *, timeout: float = 10.0) -> None:
+        self.wait(
+            lambda: not self.agent_update_banner_present(agent_id),
+            what=f"the deferred-update banner for agent {agent_id} to go",
+            timeout=timeout,
+        )
+
+    def agent_update_state(self, agent_id: str) -> Optional[dict[str, Any]]:
+        """The store's folded ``agentUpdates[agent_id]`` record, if any."""
+        value = self.driver.get_state(f"agentUpdates.{agent_id}")
+        return value if isinstance(value, dict) else None
+
+    def dismiss_agent_update_banner(self, agent_id: str) -> None:
+        """Click the banner's Dismiss and wait for it to disappear."""
+        self.driver.click(f"{self.UPDATE_BANNER_DISMISS}-{agent_id}")
+        self.wait_no_agent_update_banner(agent_id)
