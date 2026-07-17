@@ -342,17 +342,18 @@ The system is authoritative: its concept lives at [`docs/concepts/partial/ui-mod
 
 ### Level 2: Backend Modules
 
-| Module         | Location                    | Responsibility                                                                                                                                                      |
-| -------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Terminal**   | `src-tauri/src/terminal/`   | Agent manager (deploy, version check, setup), remote backend proxy, X11 forwarding, cross-platform X server provisioning orchestrator (`xserver/`), JSON-RPC client |
-| **Session**    | `src-tauri/src/session/`    | Desktop `SessionManager` — wraps core `ConnectionType` instances, manages lifecycle via the registry                                                                |
-| **Connection** | `src-tauri/src/connection/` | Config persistence, CRUD operations, connection file I/O                                                                                                            |
-| **Tunnel**     | `src-tauri/src/tunnel/`     | SSH tunnel manager — local, remote, and dynamic (SOCKS5) forwarding with session pooling, auto-start, and `tunnels.json` persistence                                |
-| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — master password backend, Argon2id + AES-256-GCM encryption, auto-lock                                                                |
-| **Files**      | `src-tauri/src/files/`      | Local and SFTP file browsing, upload/download                                                                                                                       |
-| **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime)                                                                                                            |
-| **Commands**   | `src-tauri/src/commands/`   | Tauri IPC command handlers (session, connection, agent, files, monitoring, credentials, tunnels, logs)                                                              |
-| **Utils**      | `src-tauri/src/utils/`      | Shell detection, Docker detection, VS Code detection, env expansion, error helpers                                                                                  |
+| Module         | Location                    | Responsibility                                                                                                                                                                           |
+| -------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal**   | `src-tauri/src/terminal/`   | Agent manager (deploy, version check, setup), remote backend proxy, X11 forwarding, cross-platform X server provisioning orchestrator (`xserver/`), JSON-RPC client                      |
+| **Session**    | `src-tauri/src/session/`    | Desktop `SessionManager` — wraps core `ConnectionType` instances, manages lifecycle via the registry                                                                                     |
+| **Connection** | `src-tauri/src/connection/` | Config persistence, CRUD operations, connection file I/O                                                                                                                                 |
+| **Tunnel**     | `src-tauri/src/tunnel/`     | SSH tunnel manager — local, remote, and dynamic (SOCKS5) forwarding with session pooling, auto-start, and `tunnels.json` persistence                                                     |
+| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — master password backend, Argon2id + AES-256-GCM encryption, auto-lock                                                                                     |
+| **Files**      | `src-tauri/src/files/`      | Local and SFTP file browsing, upload/download                                                                                                                                            |
+| **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime)                                                                                                                                 |
+| **Commands**   | `src-tauri/src/commands/`   | Tauri IPC command handlers (session, connection, agent, files, monitoring, credentials, tunnels, logs)                                                                                   |
+| **Spawn**      | `src-tauri/src/spawn/`      | "Open in termiHub" spawn rendezvous — `SpawnRequest` wire types, per-user IPC transport (named pipe / Unix socket), CLI classifier, and per-OS file-manager registration (`registry.rs`) |
+| **Utils**      | `src-tauri/src/utils/`      | Shell detection, Docker detection, VS Code detection, env expansion, error helpers                                                                                                       |
 
 ### Level 2: Shared Core Modules
 
@@ -942,6 +943,75 @@ Backend → Frontend:  Tauri Events (push-based, JSON-serialized)
 - **Events** for streaming: `terminal-output` events routed by session ID
 - **Singleton dispatcher**: frontend uses O(1) Map-based routing instead of per-terminal global listeners
 
+### Spawn IPC & Shell-Integration Registration
+
+The **"Open in termiHub" shell integration** (`src-tauri/src/spawn/`, concept
+[`shell-context-menu-integration.html`](concepts/partial/shell-context-menu-integration.html),
+epic #1363) lets an OS file-manager context-menu entry or a `termiHub spawn --location <path>`
+CLI call open a new session tab **in the already-running window** (brought to focus), or launch the
+app first if none is running. Both sources — plus a deliberately-deferred `termihub://spawn` deep
+link — funnel through one `SpawnRequest`.
+
+**Rendezvous over a per-user IPC channel.** A `termiHub spawn …` invocation is detected from the raw
+process arguments **before** Tauri initialises (`spawn::classify_command`), turned into a
+`SpawnRequest`, and forwarded to a running instance over a per-user transport: a Windows named pipe
+`\\.\pipe\termihub-spawn-{username}` or a macOS/Linux Unix domain socket
+`{runtime_dir}/termihub-spawn-{uid}.sock`, carrying newline-delimited JSON. The server is started in
+`tauri::Builder::setup()` for the app lifetime; on receipt it re-emits the request as the
+`spawn-request` Tauri event, which the frontend consumes to focus the window, resolve the connection
+type, and open a session tab `cd`'d to the target (dir → `cd <path>`; file → `cd <parent>`; missing →
+home + warning toast). If **no** running instance answers, the invocation becomes the running
+instance and self-handles its own request (threaded into `setup()` as a pending spawn), so a cold
+start still opens the target once the UI is ready.
+
+```mermaid
+sequenceDiagram
+    participant OS as File manager / CLI
+    participant New as termiHub spawn (new process)
+    participant IPC as Per-user pipe/socket
+    participant Run as Running instance
+    participant UI as Frontend
+    OS->>New: termiHub spawn --location <path>
+    New->>New: classify_command → SpawnRequest
+    New->>IPC: connect + send JSON
+    alt a running instance is listening
+        IPC->>Run: SpawnRequest
+        Run->>UI: emit "spawn-request"
+        UI->>UI: focus window · resolve type · open tab cd'd to path
+        New-->>OS: exit (forwarded)
+    else nothing listening
+        New->>New: become the running instance,<br/>self-handle as pending spawn
+    end
+```
+
+**Connection-type resolution priority** (frontend): `--connection` flag → clicked entry's
+`--entry-id` → first "Always" entry → fallback setting ("Show session picker" / "Use system default
+shell"). The session-picker branch of that fallback is the one still-open sub-issue (#1366).
+
+**Per-OS registration** (`spawn/registry.rs`) is entirely **user-level — no admin/elevation** — and
+fully installable/uninstallable from the Shell Integration settings panel or the
+`(un)install-shell-integration` CLI, with every registration losslessly removing only what it wrote:
+
+- **Windows** — `HKCU\Software\Classes\{Directory|Directory\Background|*}\shell\termihub_<slug>`;
+  `Icon` points at the executable's own icon resource (`<exe>,0`); `Extended` hides an entry behind
+  Shift+right-click; ≥3 entries collapse into a cascading submenu.
+- **macOS** — per-entry Automator Quick Action `.workflow` bundles under `~/Library/Services`, plus
+  the app-level `NSServices` entry declared in `src-tauri/Info.plist` and served by a native provider
+  (`macos_services.rs`) for file managers that surface app Services rather than Quick Actions.
+- **Linux** — XDG `.desktop` launchers + Nautilus scripts + KDE service menus (KDE5/6) + Thunar
+  `uca.xml`, written only for the file managers detected on the box; launchers reference the themed
+  `termihub` icon.
+
+**Bundle assets.** The integration needs almost no static bundle configuration: the only
+build-time asset is `src-tauri/Info.plist` (auto-merged into the macOS `.app` by tauri-bundler),
+the Windows registry `Icon` reuses the bundled `.exe`'s embedded icon, and the Linux launchers use
+the themed icon the `deb`/`rpm` bundler already installs. Every other surface (workflow bundles,
+desktop files, `uca.xml`) is **generated at runtime** by the registration code — no `externalBin`
+helper is bundled. Because registration writes **absolute exe paths** into system-global locations,
+the launch-time comparison of the registered path to `current_exe()` drives a **reinstall banner**
+when they diverge (e.g. a moved portable install) — see [ADR-13](#adr-13-multi-instance-with-a-spawn-ipc-rendezvous).
+Per-OS manual verification steps live in [testing.md](testing.md#manual-testing).
+
 ### State Management
 
 The frontend uses a single **Zustand** store (`src/store/appStore.ts`) managing:
@@ -1390,6 +1460,50 @@ Three options were prototyped against the real code:
 - **Prefer-libraries alignment.** Reuses `tokio_util::sync::CancellationToken` and the existing registry rather than introducing new channels.
 
 **Trade-off:** The queue currently only has FTP wired as a producer; SFTP still uses its original one-shot path and is expected to migrate onto the shared model in a follow-up. The concept's original placement of the queue inside the FTP backend was rejected as a divergence and recorded in the concept sync ledger.
+
+### ADR-13: Multi-Instance with a Spawn IPC Rendezvous
+
+**Context:** The "Open in termiHub" shell integration (epic #1363, concept
+[`shell-context-menu-integration.html`](concepts/partial/shell-context-menu-integration.html)) must
+route an OS context-menu click or a `termiHub spawn` CLI call into a session tab **in the
+already-running window**, focusing it — or launch the app if none is running. termiHub is
+**deliberately multi-instance**: `lib.rs` polls `connections.json` mtime and emits
+`connections-changed` so several independently-launched windows stay in sync over the config file.
+The obvious Tauri answer, `tauri-plugin-single-instance` (forward argv from a second launch to the
+first, then exit), would collapse that model — it makes the second process a courier that dies, so
+only one window can ever exist, changing the established sync behaviour.
+
+**Decision:** Keep the app multi-instance and add a dedicated **spawn IPC rendezvous** as the
+cross-process channel, rather than adopting single-instance. A `termiHub spawn …` invocation is
+classified from raw argv **before** Tauri initialises, serialised to a `SpawnRequest`, and sent over
+a **per-user** named pipe (`\\.\pipe\termihub-spawn-{username}`) or Unix domain socket
+(`{runtime_dir}/termihub-spawn-{uid}.sock`) as newline-delimited JSON. A server started in
+`tauri::Builder::setup()` receives it and re-emits a `spawn-request` event to the frontend. If no
+instance answers, the spawning process **becomes** the running instance and self-handles the request
+as a pending spawn. All three spawn sources (context menu, CLI, and a future `termihub://` deep link)
+converge on this one path.
+
+**Rationale:**
+
+- **Preserves the existing sync model.** The `connections.json` file-watch that keeps multiple
+  windows consistent is untouched; the spawn socket is an _additive_ rendezvous, not a replacement
+  for how instances coordinate.
+- **One code path, three sources.** Classifying argv pre-init and funnelling everything through
+  `SpawnRequest` means the context menu, the CLI, and a later deep link share the same transport,
+  resolution priority, and frontend consumer — the IPC layer was shaped to admit the deep link
+  without reopening the design.
+- **Cold start is free.** "Nobody listening → become the instance and self-handle" means a spawn
+  that launches the app needs no special-casing; the queued request is drained once the UI is ready.
+- **Per-user isolation.** Keying the pipe/socket on username/uid keeps concurrent users (and the
+  parallel dev checkouts) from colliding on one endpoint.
+
+**Trade-off:** A hand-rolled IPC endpoint and its lifecycle are more code than dropping in the
+single-instance plugin, and registration writes **absolute exe paths** into system-global locations
+— inherently at odds with portable mode. The mitigation is a launch-time `registeredExePath` vs
+`current_exe()` comparison that raises a **reinstall banner** when a portable install moves, rather
+than trying to keep the registrations location-independent. Full end-to-end verification (real
+right-click → focus → tab, especially window focus under Wayland) cannot run in CI and stays a
+documented manual step (see [testing.md](testing.md#manual-testing)).
 
 ---
 

@@ -2233,8 +2233,14 @@ interface SpawnChoice {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (concept not yet implemented) ·
-          <strong>Status:</strong> diverged (entirely missing — backlog feature)
+          <strong>Last synced:</strong> 2026-07-16 at commit <code>dba98550</code> ·
+          <strong>Status:</strong> diverged (partial — the core spawn/IPC/CLI path and all three
+          per-OS registrations are implemented; one sub-issue, the in-app Session Picker
+          <a href="https://github.com/armaxri/termiHub/issues/1366">#1366</a>, is still open, and the
+          deep-link source is deliberately deferred). Concept moved <code>backlog/</code> →
+          <code>partial/</code> as the epic
+          <a href="https://github.com/armaxri/termiHub/issues/1363">#1363</a> wrap-up
+          (<a href="https://github.com/armaxri/termiHub/issues/1373">#1373</a>).
         </p>
 
         <h3>Open divergences</h3>
@@ -2252,10 +2258,38 @@ interface SpawnChoice {
             <tbody>
               <tr>
                 <td>1</td>
-                <td>Entire feature (per concept)</td>
-                <td>Not implemented — backlog</td>
+                <td>
+                  In-app <strong>Session Picker</strong> dialog for local / WSL / Docker / Podman,
+                  reached via the <code>--pick</code> flag and the "Show session picker" fallback when
+                  no connection type resolves.
+                </td>
+                <td>
+                  No picker dialog component exists (no <code>SessionPicker</code> under
+                  <code>src/components/</code>). The <code>--pick</code> flag and the
+                  <code>ShowSessionPicker</code> fallback are modelled in the config/resolver
+                  (<code>connection/shell_integration.rs</code>) but have no UI to present.
+                </td>
                 <td>Missing</td>
-                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+                <td>
+                  Implement per SI-3
+                  <a href="https://github.com/armaxri/termiHub/issues/1366">#1366</a>, then re-sync.
+                </td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>
+                  A <code>termihub://spawn?…</code> deep link as a third spawn source, funnelling
+                  through the same <code>SpawnRequest</code>.
+                </td>
+                <td>
+                  Not implemented. The IPC/request layer was deliberately shaped to admit it later,
+                  but no URL-scheme handler is registered.
+                </td>
+                <td>Design reality (deferred)</td>
+                <td>
+                  None — the concept itself scopes the deep link as future/out-of-scope. Revisit when
+                  a dedicated deep-link issue is filed.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -2273,9 +2307,74 @@ interface SpawnChoice {
             </thead>
             <tbody>
               <tr>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>2026-07</td>
+                <td>#1364</td>
+                <td>
+                  Spawn core — <code>SpawnRequest</code> wire types, per-user IPC transport (named
+                  pipe / Unix socket), pre-init CLI classifier and <code>termiHub spawn</code>
+                  routing (<code>src-tauri/src/spawn/</code>).
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1365</td>
+                <td>External-trigger session open + window focus + spawn confirmation toast.</td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1367</td>
+                <td>
+                  Shell-integration config model, connection-type resolution priority, and
+                  exe-path staleness comparison (<code>connection/shell_integration.rs</code>).
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1368</td>
+                <td>
+                  Windows <code>HKCU</code> registry registration/unregistration (Directory /
+                  Background / <code>*</code>, Extended + cascading submenu), user-level only.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1369 / #1409</td>
+                <td>
+                  macOS Automator Quick Action <code>.workflow</code> bundles + app-level
+                  <code>NSServices</code> entry (<code>src-tauri/Info.plist</code>) with a native
+                  services provider (<code>macos_services.rs</code>).
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1370 / #1397</td>
+                <td>
+                  Linux file-manager registration — XDG <code>.desktop</code>, Nautilus scripts, KDE
+                  service menus (KDE5/6), Thunar <code>uca.xml</code> — with runtime detection.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1371</td>
+                <td>Shell Integration settings panel + entry editor + first-launch/staleness banner.</td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1372 / #1446 / #1466</td>
+                <td>
+                  Docker/Podman "new container with directory bind-mount" spawn, the "Spawned" tab
+                  badge, and backend-authoritative Spawned-container grouping in Open Connections.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07</td>
+                <td>#1373</td>
+                <td>
+                  Wrap-up — bundle assets confirmed (auto-merged <code>Info.plist</code>; registry
+                  Icon points at the exe; Linux launchers use the themed <code>termihub</code> icon,
+                  no bundled helper), architecture + testing docs, and this concept moved to
+                  <code>partial/</code> with the ledger refreshed.
+                </td>
               </tr>
             </tbody>
           </table>
