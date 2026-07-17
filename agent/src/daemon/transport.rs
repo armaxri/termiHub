@@ -28,6 +28,17 @@
 use std::io;
 use std::time::Duration;
 
+/// Env var overriding the host-wide registry endpoint.
+///
+/// The registry endpoint is otherwise a fixed per-user path, which is exactly
+/// what makes it a rendezvous — workers find it without being told. That also
+/// means every agent of one user on one machine shares it, so tests (and
+/// side-by-side development checkouts) need a way to opt into an isolated one
+/// rather than fighting over the live socket. Mirrors the session daemon's
+/// existing `TERMIHUB_SOCKET_PATH`. A worker that sets it also passes it to any
+/// registry it spawns, via the inherited environment.
+pub const REGISTRY_ENDPOINT_ENV: &str = "TERMIHUB_REGISTRY_ENDPOINT";
+
 use termihub_core::ipc::{
     self, ListenerOptions, ListenerSecurity, LocalSocketListener, StaleReclaim,
 };
@@ -148,8 +159,14 @@ mod unix_impl {
     /// `0o700` directory (ADR-11): one registry per user per host, which is what
     /// makes it a rendezvous every worker of that user can find without being
     /// told where it is. Because the dir is already per-user, the file name
-    /// needs no user component.
+    /// needs no user component. Overridable via
+    /// [`REGISTRY_ENDPOINT_ENV`](super::REGISTRY_ENDPOINT_ENV).
     pub fn registry_endpoint() -> String {
+        if let Ok(endpoint) = std::env::var(super::REGISTRY_ENDPOINT_ENV) {
+            if !endpoint.is_empty() {
+                return endpoint;
+            }
+        }
         socket_dir()
             .join("registry.sock")
             .to_string_lossy()
@@ -225,8 +242,14 @@ mod windows_impl {
     /// scoping for free from the `0o700` socket *directory* that has no windows
     /// analog. Two users on one host therefore get two distinct pipes — matching
     /// the "one registry per user per host" rule — on top of the per-user DACL
-    /// that keeps each one unreachable by the other.
+    /// that keeps each one unreachable by the other. Overridable via
+    /// [`REGISTRY_ENDPOINT_ENV`](super::REGISTRY_ENDPOINT_ENV).
     pub fn registry_endpoint() -> String {
+        if let Ok(endpoint) = std::env::var(super::REGISTRY_ENDPOINT_ENV) {
+            if !endpoint.is_empty() {
+                return endpoint;
+            }
+        }
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "unknown".to_string());
         format!(r"\\.\pipe\termihub-registry-{user}")
     }

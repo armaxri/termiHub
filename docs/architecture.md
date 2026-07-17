@@ -1428,7 +1428,18 @@ A first-time, download-backed Windows provision is gated on a connect-time conse
 
 ### ADR-11: Per-Process Agent Connection Tracking (Multi-Host Model)
 
-**Context:** The remote-agent update strategy epic (#1345, concept `docs/concepts/backlog/remote-agent-update-strategy.html`) needs an agent to answer "who else is connected?" so a desktop can update a shared agent without silently killing another desktop's sessions. The concept assumed **one shared agent process that knows all connected clients**. The code does not work that way: `AgentConnectionManager::connect_agent` (`src-tauri/src/terminal/agent_manager.rs`) opens a **russh exec channel per desktop** and runs `termihub-agent --stdio` (`RemoteAgentConfig::agent_exec_command`), so there is **one agent OS process per desktop→agent channel**, and that process's `AgentHandler`/`HandlerState` serves exactly one client. The `--listen` TCP mode (`agent/src/io/tcp.rs`) shares a `SessionManager` across connections but still accepts **one client at a time**. The only host-side state shared across `--stdio` workers is the layer of detached session **daemons** (`termihub-agent --daemon <id>`, unix socket / Windows named pipe), which outlive the worker and replay a ring buffer on re-attach. This gap (SI-1, #1346) is the foundational risk for every cross-client feature in the epic.
+**Context:** The remote-agent update strategy epic (#1345, concept `docs/concepts/backlog/remote-agent-update-strategy.html`) needs an agent to answer "who else is connected?" so a desktop can update a shared agent without silently killing another desktop's sessions. The concept assumed **one shared agent process that knows all connected clients**. The code does not work that way: `AgentConnectionManager::connect_agent` (`src-tauri/src/terminal/agent_manager.rs`) opens a **russh exec channel per desktop** and runs `termihub-agent --stdio` (`RemoteAgentConfig::agent_exec_command`), so there is **one agent OS process per desktop→agent channel**, and that process's `AgentHandler`/`HandlerState` serves exactly one client. The `--listen` TCP mode (`agent/src/io/tcp.rs`) shares a `SessionManager` across connections but still accepts **one client at a time**. The layer of detached session **daemons** (`termihub-agent --daemon <id>`, unix socket / Windows named pipe) outlives the worker and replays a ring buffer on re-attach. This gap (SI-1, #1346) is the foundational risk for every cross-client feature in the epic.
+
+> **Correction (#1574).** As originally written, this ADR claimed the session daemons were host-side state *shared across workers*, and built its rationale on it. That is **factually wrong**, verified at `1c554c6e`. The session daemons are shared across **time**, not across **workers**:
+>
+> | Original claim | Reality |
+> | --- | --- |
+> | Daemons are shared across workers | **No — they are per-session.** `daemon/transport.rs::session_endpoint` → `session-{session_id}.sock` (Windows: `\\.\pipe\termihub-session-{id}`) |
+> | A daemon can serve as a rendezvous | **No — single-attach with takeover.** `daemon/process.rs` clears `agent_writer` and aborts the previous reader on every `accept()`, evicting the incumbent |
+> | A host-wide endpoint exists | **No.** No host-wide endpoint existed before #1574 |
+> | Every desktop has a daemon | **No** — daemons exist only where sessions exist; a session-less desktop has none |
+>
+> A restarted worker re-attaching to a surviving daemon is time-sharing. At any instant a daemon has exactly one attached worker, and a second connection hijacks the live session's I/O. The decision below still stands — per-process tracking remains the honest primitive — but the sentences supporting it have been corrected, and the deferred coordination work was **not implementable as described**, which is why it was never filed. See the amendment under ADR-11a.
 
 Three options were prototyped against the real code:
 
@@ -1440,12 +1451,39 @@ Three options were prototyped against the real code:
 
 **Rationale:**
 
-- **Topology reality.** One `--stdio` process per desktop is fixed by the SSH-exec transport; a process genuinely knows one client, so per-process tracking is the honest primitive. The daemons are the _only_ thing already shared across workers on a host, and the epic's deferred-update approach already "leans entirely on" them surviving a binary swap — so they are the natural coordination substrate.
+- **Topology reality.** One `--stdio` process per desktop is fixed by the SSH-exec transport; a process genuinely knows one client, so per-process tracking is the honest primitive. The daemon **layer** is the only host-side substrate that already survives an agent binary swap on all three platforms, and the epic's deferred-update approach "leans entirely on" that property — so it is the natural coordination substrate. (As corrected above, the individual session daemons are *not* themselves shared across workers; what #1574 reuses is the substrate — `DaemonListener`, the frame protocol, the per-user socket dir — not the session daemons.)
 - **Security.** `--stdio` runs inside the existing authenticated SSH channel and opens no new socket. Option (b) would require a listening TCP port on every remote host plus its own authentication and port management — a real attack-surface regression over SSH-tunneled stdio.
 - **Retry / streaming.** Daemons already persist across agent-worker restarts and replay their ring buffer on re-attach; extending them keeps cross-client visibility that survives an agent binary swap. A new coordinator (a) would have to re-implement that restart/streaming story from scratch.
 - **Platform coverage.** The daemon layer already works on all three platforms (unix domain socket / Windows named pipe; Windows agent parity landed in #771), so (c) inherits the 3-platform matrix. A new long-lived coordinator (a) would need fresh cross-platform daemonization, and (b)'s single-client-at-a-time accept loop does not even deliver concurrent multi-client visibility without further rework.
 
 **Trade-off:** The shipped registry does not yet give cross-agent visibility on its own — in `--stdio` it holds exactly one client — so the epic's `list_connections`/broadcast features still need the follow-up daemon-layer work chosen here. That is deliberate: SI-1 fixes the model and lands the queryable primitive; the coordination surface is built on top in later sub-issues. RPC methods, UI, and update logic are explicitly out of scope for #1346.
+
+### ADR-11a: "Extending the daemon layer" admits a new daemon _role_ (host-wide registry)
+
+**Context:** ADR-11 deferred cross-worker coordination to "extending the existing daemon layer" and rejected option (a), "a new host-side coordinator/supervisor process". When #1574 came to implement that deferred half, the two readings forked and **neither** satisfied the brief:
+
+- Extending the **per-session** daemons cannot work. Visibility would become a function of *session topology*, not host topology: a desktop holding **zero sessions** has no daemon, so it is invisible and unreachable — and under SI-5 that is exactly the client an agent binary swap kills without warning. It would also silently redefine `agent.list_connections` from "connected clients" to "clients holding ≥1 live session", and would require reworking the attach contract that persistent-session re-attach depends on.
+- A host-wide registry process reaches the goal but is, literally, ADR-11's rejected (a).
+
+The deferred work was never filed precisely because ADR-11 assumed a shared substrate the per-session daemon layer does not provide (see the correction under ADR-11).
+
+**Decision:** "Extending the daemon layer" is hereby read as admitting a **new daemon role on the existing substrate**. `termihub-agent --registry-daemon` is a host-wide registry that reuses `DaemonListener`, the existing `[type][length][payload]` frame protocol, the per-user `0o700` socket dir and `termihub_core::ipc`. Every worker registers its client with it, keyed to `initialize` and **never to sessions**, so a session-less desktop is visible and reachable.
+
+This **is** ADR-11's option (a), adopted deliberately. ADR-11 rejected (a) for two reasons — *fresh cross-platform daemonization* and *re-implementing the restart/streaming story from scratch* — and **both are mitigated by reuse**: the registry inherits daemonization, the 3-platform matrix and the detached-spawn path from the substrate the session daemons already use. The rejection was written against such a process *existing*; reusing the substrate was not the option on the table. Option **(b) (`--listen` TCP) stays rejected** — its security objection is unchanged and binding.
+
+**The three properties that constrain any implementation of this role:**
+
+- **No new network socket.** UDS / Windows named pipe, current-user-only. A TCP port would be option (b).
+- **Survives an agent binary swap.** Detached, exactly like the session daemons.
+- **All three platforms**, inherited via `termihub_core::ipc`.
+
+**Rationale:**
+
+- **It is the only route that reaches the goal.** The session-less desktop is not an edge case; it is the motivating case for SI-5.
+- **Reuse, not a new mechanism.** The registry is a *role* — a different frame vocabulary on the same listener, dir and spawn path — so it adds no second daemonization story to maintain.
+- **Optional by construction.** A missing or restarting registry is never fatal to a worker: registration is best-effort, the worker re-registers on reconnect, and a worker whose registry is unreachable still serves its own client and reports itself.
+
+**Trade-off:** A second long-lived process shape now exists on a host. It is bounded deliberately: it is spawned on demand by whichever worker finds no registry running (the loser of a spawn race sees `AddrInUse` and exits), it exits on an idle timeout when no worker is attached, it holds only in-memory records, and it garbage-collects a worker by dropping its record when the connection drops. It stores nothing on disk and is safe to kill.
 
 ### ADR-12: Connection-Type-Agnostic Transfer Queue
 
