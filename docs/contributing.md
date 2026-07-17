@@ -166,6 +166,12 @@ This starts:
 - The Vite development server for the frontend (with hot module replacement)
 - The Rust backend compiled in debug mode
 
+Both read the Vite dev port from the gitignored `dev.local.json` (`dev_port`,
+default `1420`), so several checkouts can run the app at once without competing
+for the port. `./scripts/dev.sh` is the fuller path: it additionally starts this
+checkout's dev-agent `sshd`, frees a stale port, and accepts a one-off override
+(`./scripts/dev.sh 1499`). See [testing.md](testing.md) → "Parallel test isolation".
+
 Frontend changes appear instantly. Rust backend changes trigger a recompile and restart.
 
 ### Individual Commands

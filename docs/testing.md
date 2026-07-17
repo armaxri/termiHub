@@ -664,8 +664,8 @@ cp default.dev.local.json dev.local.json
 
 | Key                | Default    | Purpose                                                                                                                                                       |
 | ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dev_port`         | `1420`     | Vite dev-server port for `./scripts/dev.sh` (HMR uses `dev_port + 1`).                                                                                        |
-| `dev_agent_port`   | `2222`     | Local `sshd` port `./scripts/dev.sh` starts for the dev agent (Unix only).                                                                                    |
+| `dev_port`         | `1420`     | Vite dev-server port (HMR uses `dev_port + 1`). Honoured by `./scripts/dev.sh` **and** by a bare `pnpm tauri dev`.                                            |
+| `dev_agent_port`   | `2222`     | Local `sshd` port `./scripts/dev.sh` starts for the dev agent (Unix only). **Only `dev.sh` starts it** — `pnpm tauri dev` does not.                           |
 | `dev_name`         | —          | Label for the dev-agent connection entry in the termiHub sidebar (optional).                                                                                  |
 | `compose_project`  | `termihub` | Docker Compose project name for the test containers. Namespaces every **container, network and volume**, so parallel checkouts never share a container.       |
 | `test_port_offset` | `0`        | Integer added to **every** published / looked-up test infrastructure port. Keep it a multiple of `1000` and unique per checkout so port ranges never overlap. |
@@ -705,10 +705,33 @@ examples — one fully-filled, non-colliding file per checkout:
 cp examples/dev0.dev.local.json dev.local.json   # or dev1 / dev2 / dev3
 ```
 
+#### Running the app in a parallel checkout
+
+Both launch paths honour this checkout's `dev_port`, so neither one collides
+with checkout 0's dev server:
+
+```bash
+./scripts/dev.sh     # preferred
+pnpm tauri dev       # same dev port, but no dev agent
+```
+
+Prefer **`./scripts/dev.sh`**. It is the only one that also starts this
+checkout's `dev_agent_port` `sshd` and registers the dev-agent connection, frees
+a stale `dev_port`, and takes a one-off port override (`./scripts/dev.sh 1499`).
+
+`pnpm tauri dev` is isolated by construction rather than by convention
+([#1588](https://github.com/armaxri/termiHub/issues/1588)): it routes through
+`scripts/internal/tauri.mjs`, which resolves `dev_port` and merges a matching
+`build.devUrl` over the static `http://localhost:1420` in `tauri.conf.json`.
+Both halves have to agree — Vite binds the port, Tauri loads the URL — so the
+wrapper and `vite.config.ts` read the same resolver. Before that, `pnpm tauri dev`
+bound **1420 in every checkout**, silently squatting on checkout 0's dev server;
+it only ever failed loudly when something already held the port.
+
 #### What is isolated, and how
 
 `dev.local.json` resolves into a canonical set of environment variables that
-every entry point honours. The resolver lives in two mirrored forms:
+every entry point honours. The resolver lives in three mirrored forms:
 
 - **Shell:** `scripts/internal/dev-local-env.sh` — sourced by `test.sh`,
   `test-system*.sh`, and the E2E runner; exports `COMPOSE_PROJECT_NAME`,
@@ -717,6 +740,13 @@ every entry point honours. The resolver lives in two mirrored forms:
 - **Python:** `termihub_harness.dev_local` — read by the bridge-harness Docker
   fixtures so the harness publishes/looks up the same offset ports and runs
   `compose` under the same project name.
+- **Node:** `scripts/internal/dev-local.mjs` — read by `vite.config.ts` and the
+  `pnpm tauri` wrapper to resolve `dev_port`.
+
+All three apply the same precedence: an explicit **environment variable** wins,
+then the `dev.local.json` key, then the built-in default. So `dev.sh` keeps
+overriding via `TERMIHUB_DEV_PORT`, and a checkout with no `dev.local.json` — a
+fresh clone, or CI — behaves exactly as it always did.
 
 | Resource                         | Base (offset 0)                    | Derivation                                                                    |
 | -------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |

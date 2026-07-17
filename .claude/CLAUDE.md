@@ -411,8 +411,14 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 
 # Dev server
-pnpm tauri dev
+./scripts/dev.sh         # preferred — also starts this checkout's dev agent
+pnpm tauri dev           # app only; same dev port, no dev agent
 ```
+
+Both honour this checkout's `dev_port` from `dev.local.json`, so neither collides
+with another parallel checkout. Only `./scripts/dev.sh` starts the `dev_agent_port`
+`sshd` and registers the dev-agent connection — see
+[docs/testing.md](../docs/testing.md) → "Parallel test isolation".
 
 ---
 

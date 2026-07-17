@@ -103,3 +103,5 @@ The `internal/` subdirectory contains scripts that are **not** intended for dire
 | `internal/autoformat.sh`            | `.claude/settings.json` PostToolUse hook | Auto-format a single edited file (Prettier / rustfmt) and refresh the `data-testid` catalog    |
 | `internal/regen-testid-catalog.mjs` | `internal/autoformat.sh`                 | Regenerate the `data-testid` catalog when a source `.tsx` with a `data-testid` changes (#1084) |
 | `internal/kill-port.cjs`            | `dev.sh` / `dev.cmd`                     | Kill any process occupying the Vite dev server port                                            |
+| `internal/dev-local.mjs`            | `vite.config.ts` / `internal/tauri.mjs`  | Resolve this checkout's `dev_port` from `dev.local.json` (Node half of the resolver) (#1588)   |
+| `internal/tauri.mjs`                | `pnpm tauri`                             | Point `tauri dev` at this checkout's `dev_port`; pass every other subcommand through (#1588)   |
