@@ -49,6 +49,14 @@ export interface BridgeDeps {
    * this to a DOM rasterizer; unit tests supply a stub.
    */
   screenshot: () => Promise<string>;
+  /**
+   * Emit a Tauri event with `payload` into the running app, rejecting if the
+   * event bus is unavailable or test mode is off. The live {@link TestBridge}
+   * wires this to Tauri's `emit(...)` behind a test-mode re-check; unit tests
+   * supply a stub. This is the bridge's only non-DOM injection path — see
+   * {@link EmitEventCommand} for why it exists.
+   */
+  emitEvent: (event: string, payload: unknown) => Promise<void>;
 }
 
 /** Resolve an element by its `data-testid`, escaping the value for the selector. */
@@ -568,6 +576,18 @@ export async function dispatchCommand(
         return ok("screenshot", await deps.screenshot());
       } catch (error) {
         return fail("screenshot", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "emitEvent": {
+      // Reject an empty name here rather than at the bus: Tauri would fail with
+      // an opaque plugin error, and a test author's typo deserves a direct one.
+      if (!command.event) return fail("emitEvent", "event name is required");
+      try {
+        await deps.emitEvent(command.event, command.payload);
+        return ok("emitEvent");
+      } catch (error) {
+        return fail("emitEvent", error instanceof Error ? error.message : String(error));
       }
     }
 
