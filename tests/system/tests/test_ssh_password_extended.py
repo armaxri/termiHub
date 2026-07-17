@@ -15,6 +15,7 @@ from termihub_harness import (
     SSH_KEY_PATH,
     SSH_PASSWORD_PORT,
     SSH_USERNAME,
+    SftpUi,
     SidebarUi,
     SystemTest,
     TabsUi,
@@ -28,7 +29,9 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshPasswordExtended(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SystemTest):
+class TestSshPasswordExtended(
+    TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SftpUi, SystemTest
+):
     def test_key_auth_shows_no_password_dialog(self):
         name = unique_name("ssh-key-nopass")
         self.create_ssh_connection(
@@ -56,13 +59,13 @@ class TestSshPasswordExtended(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Pass
         self.switch_to_files_sidebar()
         prompted = self.wait(
             lambda: self.driver.exists("password-prompt-input")
-            or self.driver.exists("file-browser-current-path"),
+            or self.driver.exists(self.CURRENT_PATH),
             what="the SFTP browser or its password prompt",
         )
         assert prompted
         if self.driver.exists("password-prompt-input"):
             self.handle_password_prompt()
             assert self.wait(
-                lambda: self.driver.get_text("file-browser-current-path"),
+                lambda: self.file_browser_path() or None,
                 what="the SFTP browser to load",
             )

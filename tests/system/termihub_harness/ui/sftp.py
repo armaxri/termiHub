@@ -11,11 +11,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..fixtures import SSH_PASSWORD
-from .base import HarnessMixin
+from .files import FileBrowserPathReads
 
 
-class SftpUi(HarnessMixin):
-    """Open the SFTP browser for the active tab and read its current path."""
+class SftpUi(FileBrowserPathReads):
+    """Open the SFTP browser for the active tab and read its current path.
+
+    The path read (``file_browser_path``) comes from
+    :class:`~termihub_harness.ui.files.FileBrowserPathReads`: the remote browser
+    renders the same ``FileBrowserPathBar`` as the local one, so suites that mix
+    this with :class:`~termihub_harness.ui.FilesUi` get one implementation rather
+    than two that can drift apart (#1568).
+    """
 
     if TYPE_CHECKING:  # borrowed from the mixins suites combine this with
         def switch_to_files_sidebar(self) -> None: ...
@@ -32,18 +39,12 @@ class SftpUi(HarnessMixin):
         # wait() returns truthy or raises, so no outer guard is needed.
         self.wait(
             lambda: self.driver.exists("password-prompt-input")
-            or self.driver.exists("file-browser-current-path"),
+            or self.driver.exists(self.CURRENT_PATH),
             what="the SFTP browser or its password prompt",
         )
         if self.driver.exists("password-prompt-input"):
             self.handle_password_prompt(password)
         return self.wait(
-            lambda: self.driver.get_text("file-browser-current-path"),
+            lambda: self.file_browser_path() or None,
             what="the file-browser path",
         )
-
-    def file_browser_path(self) -> str:
-        """The path currently shown in the file browser (empty if none)."""
-        if not self.driver.exists("file-browser-current-path"):
-            return ""
-        return self.driver.get_text("file-browser-current-path")

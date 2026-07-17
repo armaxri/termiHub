@@ -139,17 +139,6 @@ class TestTransferQueueLiveTransfer(
     # settles well inside the wait budget on a localhost container.
     FILE_MB = 8
 
-    def sftp_path(self) -> str:
-        """The browser's current remote directory, read from the store.
-
-        Deliberately not ``FilesUi.file_browser_path()``: that helper still reads
-        a ``file-browser-current-path`` testid which no longer exists — the path
-        bar became the breadcrumb ``FileBrowserPathBar`` (see the follow-up filed
-        from this PR). The store's ``currentPath`` is what the bar renders from,
-        so it is both current and the thing under test here.
-        """
-        return self.driver.get_state("currentPath") or ""
-
     def open_sftp_browser(self) -> str:
         """Show the Files sidebar, clear any password prompt, await the listing."""
         self.switch_to_files_sidebar()
@@ -164,7 +153,7 @@ class TestTransferQueueLiveTransfer(
             lambda: self.driver.get_state("sftpStatus") == "connected",
             what="the SFTP session to connect",
         )
-        return self.wait(lambda: self.sftp_path() or False, what="the remote path")
+        return self.wait(lambda: self.file_browser_path() or False, what="the remote path")
 
     def test_real_sftp_paste_populates_the_transfer_queue(self):
         """A real copy/paste drives rows to `completed`, carrying the remote path.
@@ -195,7 +184,7 @@ class TestTransferQueueLiveTransfer(
         self.wait_for_file_row(dest)
         self.driver.double_click(f"file-row-{dest}")
         self.wait(
-            lambda: self.sftp_path() == f"{source_dir.rstrip('/')}/{dest}",
+            lambda: self.file_browser_path() == f"{source_dir.rstrip('/')}/{dest}",
             what=f"the browser to enter {dest!r}",
         )
 

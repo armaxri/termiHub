@@ -4,8 +4,8 @@ Ported from ``tests/e2e/file-browser-local.test.js`` and
 ``file-browser-extended.test.js`` onto the Python bridge harness (#809).
 
 The browser is driven through its real toolbar/row testids and asserted against
-what the user sees — ``file-browser-current-path`` for the path and
-``file-row-<name>`` for entries. Known entries are created in the browser's
+what the user sees — ``file-browser-current-path`` (the breadcrumb path bar,
+read via its ``title``) for the path and ``file-row-<name>`` for entries. Known entries are created in the browser's
 **current** directory (the home dir a fresh shell shows) or via the browser's own
 New File/Folder inputs, so a test never depends on OSC 7 cwd-following timing for
 its fixtures. The dedicated CWD-aware tests below *do* exercise cwd-following and
