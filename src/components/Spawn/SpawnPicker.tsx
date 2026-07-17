@@ -119,10 +119,10 @@ export function SpawnPicker({
   /** The concrete target the current selection describes, or `null` if none. */
   const target = useMemo((): SpawnTarget | null => {
     if (!selected) return null;
-    const [section, value] = [
-      selected.slice(0, selected.indexOf(":")),
-      selected.slice(selected.indexOf(":") + 1),
-    ];
+    // Split on the first ":" only — a shell name or distro may contain one.
+    const separator = selected.indexOf(":");
+    const section = selected.slice(0, separator);
+    const value = selected.slice(separator + 1);
     switch (section) {
       case "local":
         return { kind: "local", shell: value };
