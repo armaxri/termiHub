@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { ArrowUpCircle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, toast } from "@/components/ui";
-import { requestAgentDeferredUpdate } from "@/services/api";
+import { requestAgentDeferredUpdate, requestAgentUpdate } from "@/services/api";
 import "./AgentUpdateBanner.css";
 
 /** Props for {@link AgentUpdateBanner}. */
@@ -48,9 +48,35 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
   const update = useAppStore((s) => s.agentUpdates[agentId]);
   const dismissed = useAppStore((s) => s.agentUpdatesDismissed[agentId] ?? false);
   const dismissAgentUpdate = useAppStore((s) => s.dismissAgentUpdate);
+  // A coordinated-strategy agent stages its self-update and waits for a
+  // coordinated apply (#1351): "Apply Now" must go through `agent.request_update`
+  // so every *other* connected host is warned and given a clean disconnect
+  // window, rather than hard-cut by the plain deferred apply (#1602).
+  const isCoordinated = useAppStore(
+    (s) => s.remoteAgents.find((a) => a.id === agentId)?.config.updateStrategy === "coordinated"
+  );
 
   const handleApply = useCallback(async () => {
     try {
+      if (isCoordinated) {
+        const result = await requestAgentUpdate(agentId);
+        if (result.applied) {
+          const n = result.notifiedClients;
+          toast.success(
+            n > 0
+              ? `Agent updating — ${n} other host${n === 1 ? "" : "s"} notified. Reconnecting…`
+              : "Agent updated — reconnecting…"
+          );
+        } else {
+          const n = result.activeSessions;
+          toast.info(
+            `Update deferred — it will be applied automatically when the last of ${n} active ` +
+              `session${n === 1 ? "" : "s"} disconnects.`
+          );
+        }
+        dismissAgentUpdate(agentId);
+        return;
+      }
       const result = await requestAgentDeferredUpdate(agentId);
       if (result.applied) {
         toast.success("Agent updated — reconnecting…");
@@ -74,7 +100,7 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
       // error toast and returns to idle.
       throw err;
     }
-  }, [agentId, dismissAgentUpdate]);
+  }, [agentId, dismissAgentUpdate, isCoordinated]);
 
   const handleDismiss = useCallback(() => {
     dismissAgentUpdate(agentId);

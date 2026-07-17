@@ -16,6 +16,7 @@ vi.mock("@/services/api", async (importOriginal) => {
   return {
     ...actual,
     requestAgentDeferredUpdate: vi.fn(),
+    requestAgentUpdate: vi.fn(),
   };
 });
 
@@ -137,5 +138,57 @@ describe("AgentUpdateBanner", () => {
     expect(byTestId(bannerId)).toBeNull();
     expect(mockedApi.requestAgentDeferredUpdate).not.toHaveBeenCalled();
     expect(useAppStore.getState().agentUpdatesDismissed[AGENT_ID]).toBe(true);
+  });
+
+  describe("coordinated strategy (#1602)", () => {
+    function seedCoordinatedAgent(): void {
+      useAppStore.setState({
+        remoteAgents: [
+          {
+            id: AGENT_ID,
+            name: AGENT_NAME,
+            config: { updateStrategy: "coordinated" },
+          },
+        ] as unknown as ReturnType<typeof useAppStore.getState>["remoteAgents"],
+      });
+    }
+
+    it("routes Apply Now through agent.request_update, not the deferred RPC", async () => {
+      seedCoordinatedAgent();
+      mockedApi.requestAgentUpdate.mockResolvedValue({
+        applied: true,
+        activeSessions: 0,
+        notifiedClients: 2,
+        allAcked: true,
+        remainingClients: [],
+      });
+      await render();
+      await act(async () => {
+        byTestId(applyId)?.click();
+      });
+      expect(mockedApi.requestAgentUpdate).toHaveBeenCalledWith(AGENT_ID);
+      expect(mockedApi.requestAgentDeferredUpdate).not.toHaveBeenCalled();
+      // The success notice mentions the hosts that were warned.
+      expect(toastMocks.success).toHaveBeenCalledTimes(1);
+      expect(toastMocks.success.mock.calls[0][0]).toContain("2");
+    });
+
+    it("shows the deferred message when the coordinated apply is deferred", async () => {
+      seedCoordinatedAgent();
+      mockedApi.requestAgentUpdate.mockResolvedValue({
+        applied: false,
+        activeSessions: 4,
+        notifiedClients: 1,
+        allAcked: true,
+        remainingClients: [],
+      });
+      await render();
+      await act(async () => {
+        byTestId(applyId)?.click();
+      });
+      expect(toastMocks.info).toHaveBeenCalledTimes(1);
+      expect(toastMocks.info.mock.calls[0][0]).toContain("4");
+      expect(toastMocks.success).not.toHaveBeenCalled();
+    });
   });
 });

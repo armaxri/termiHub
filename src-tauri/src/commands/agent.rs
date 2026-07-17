@@ -199,6 +199,93 @@ pub async fn request_agent_deferred_update(
     .unwrap_or_else(|e| Err(e.to_string()))
 }
 
+/// Response to a coordinated-update request (`request_agent_update`, #1602).
+///
+/// Mirrors the agent's `agent.request_update` result (#1351): the apply outcome
+/// (`applied` / `active_sessions`) plus the coordination outcome (`notified_clients`
+/// / `all_acked` / `remaining_clients`), so the desktop can report *"3 hosts were
+/// notified, 1 was still connected"* rather than only "done".
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoordinatedUpdateResponse {
+    /// `true` if the agent was idle and applied the update immediately.
+    pub applied: bool,
+    /// Sessions still active on the agent (0 when applied immediately).
+    pub active_sessions: u32,
+    /// How many *other* hosts were sent the `agent.update_pending` notice.
+    pub notified_clients: u32,
+    /// `true` when every notified host disconnected inside the window (or there
+    /// was nobody to notify); `false` when the window closed with hosts still
+    /// attached, or when no host-wide view was available.
+    pub all_acked: bool,
+    /// `client_id`s still attached when the window closed. Empty on the happy path.
+    pub remaining_clients: Vec<String>,
+}
+
+/// Request a coordinated agent update (#1602, SI-5).
+///
+/// Sends `agent.request_update` over JSON-RPC (#1351). The agent broadcasts an
+/// `agent.update_pending` notice to every *other* connected host, gives them a
+/// window to disconnect cleanly, then applies the update through the same
+/// deferred-apply path as [`request_agent_deferred_update`] — never interrupting
+/// active sessions. When `binary_path` is omitted the agent applies an update it
+/// already staged itself (the coordinated self-update "Apply Now" path).
+///
+/// Note: when the agent applies immediately it re-execs the new binary, which
+/// tears down this connection — the caller should treat a subsequent disconnect
+/// as expected and reconnect to observe the new version.
+#[tauri::command]
+pub async fn request_agent_update(
+    agent_id: String,
+    binary_path: Option<String>,
+    version: Option<String>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<CoordinatedUpdateResponse, String> {
+    info!(agent_id, "Requesting coordinated agent update");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut params = serde_json::Map::new();
+        if let Some(path) = binary_path {
+            params.insert("binaryPath".to_string(), Value::String(path));
+        }
+        if let Some(v) = version {
+            params.insert("version".to_string(), Value::String(v));
+        }
+        let result = manager
+            .send_request(&agent_id, "agent.request_update", Value::Object(params))
+            .map_err(|e| e.to_string())?;
+        Ok(CoordinatedUpdateResponse {
+            applied: result
+                .get("applied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            active_sessions: result
+                .get("activeSessions")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32,
+            notified_clients: result
+                .get("notifiedClients")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32,
+            all_acked: result
+                .get("allAcked")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            remaining_clients: result
+                .get("remainingClients")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
 /// Close a session on a remote agent.
 ///
 /// Sends `connection.close` over JSON-RPC to the agent, then the agent
