@@ -1308,6 +1308,46 @@ export async function requestAgentDeferredUpdate(
   });
 }
 
+/** Outcome of a coordinated agent-update request (#1602 / #1351, SI-5). */
+export interface AgentCoordinatedUpdateResult {
+  /**
+   * `true` when the agent was idle and applied the update immediately (the
+   * connection is expected to drop as the binary swaps); `false` when the update
+   * was deferred until the last of `activeSessions` disconnects.
+   */
+  applied: boolean;
+  /** Number of active sessions the update will wait on when `applied` is false. */
+  activeSessions: number;
+  /** How many *other* connected hosts were sent the `agent.update_pending` notice. */
+  notifiedClients: number;
+  /**
+   * `true` when every notified host disconnected inside the window (or there was
+   * nobody to notify); `false` when the window closed with hosts still attached.
+   */
+  allAcked: boolean;
+  /** Hosts still attached when the coordination window closed. Empty on success. */
+  remainingClients: string[];
+}
+
+/**
+ * Request a coordinated agent update (#1602 / #1351, SI-5). The agent broadcasts
+ * an `agent.update_pending` notice to every *other* connected host, gives them a
+ * window to disconnect cleanly, then applies through the deferred-apply path —
+ * never interrupting active sessions. Omit `binaryPath` to apply the agent's
+ * already-staged pending update (the coordinated "Apply Now" path).
+ */
+export async function requestAgentUpdate(
+  agentId: string,
+  binaryPath?: string,
+  version?: string
+): Promise<AgentCoordinatedUpdateResult> {
+  return await invoke<AgentCoordinatedUpdateResult>("request_agent_update", {
+    agentId,
+    binaryPath,
+    version,
+  });
+}
+
 /** Disconnect from a remote agent. */
 export async function disconnectAgent(agentId: string): Promise<void> {
   await invoke("disconnect_agent", { agentId });

@@ -744,6 +744,7 @@ pub fn run() {
             commands::agent::get_agent_capabilities,
             commands::agent::apply_agent_settings,
             commands::agent::request_agent_deferred_update,
+            commands::agent::request_agent_update,
             commands::agent::list_agent_sessions,
             commands::agent::close_agent_session,
             commands::agent::list_agent_definitions,

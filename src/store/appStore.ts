@@ -310,6 +310,30 @@ export interface AgentPendingUpdate {
   staged: boolean;
 }
 
+/**
+ * A coordinated update in progress on an agent, initiated by *another* host
+ * (#1602). Recorded per agent id from the `agent.update_pending` notification so
+ * the "being updated by another host" notice can show restart progress while the
+ * connection is suspended and a reconnect is queued.
+ */
+export interface AgentUpdatePending {
+  /** Version of the desktop that requested the update (`"unknown"` if unread). */
+  requestedByVersion: string;
+  /** The agent's estimate of how long it will be unavailable, in seconds. */
+  estimatedRestartSecs: number;
+  /** `Date.now()` when the notice arrived — drives the restart progress bar. */
+  since: number;
+}
+
+/**
+ * Extra seconds added to the agent's own restart estimate before the queued
+ * auto-reconnect fires (#1602). The agent only begins its restart once every
+ * host has disconnected (or a 10 s window closes), so reconnecting exactly at
+ * the estimate would race the process still coming up; a small buffer avoids a
+ * wasted failing attempt.
+ */
+const AGENT_UPDATE_RECONNECT_BUFFER_SECS = 3;
+
 interface AppState {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
@@ -905,6 +929,25 @@ interface AppState {
   setAgentUpdateAvailable: (agentId: string, update: AgentPendingUpdate) => void;
   /** Hide the deferred-update banner for an agent for this session. */
   dismissAgentUpdate: (agentId: string) => void;
+  /**
+   * Coordinated updates in progress on an agent, initiated by another host,
+   * from `agent.update_pending` (#1602). Keyed by agent id.
+   */
+  agentUpdatePending: Record<string, AgentUpdatePending>;
+  /**
+   * Handle an incoming `agent.update_pending` (#1602): record the notice,
+   * suspend the affected agent connection (the disconnect *is* the ack the
+   * updating host waits for), and queue an auto-reconnect to the new version
+   * once the agent's restart window has elapsed. Sessions survive in detached
+   * daemons and are recovered on reconnect, so only the connection is suspended.
+   */
+  handleAgentUpdatePending: (
+    agentId: string,
+    requestedByVersion: string,
+    estimatedRestartSecs: number
+  ) => void;
+  /** Clear a recorded coordinated-update-pending notice for an agent. */
+  clearAgentUpdatePending: (agentId: string) => void;
   addRemoteAgent: (agent: RemoteAgentDefinition) => void;
   updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
   deleteRemoteAgent: (agentId: string) => void;
@@ -4144,6 +4187,69 @@ export const useAppStore = create<AppState>((set, get) => {
       set((s) => ({
         agentUpdatesDismissed: { ...s.agentUpdatesDismissed, [agentId]: true },
       }));
+    },
+
+    agentUpdatePending: {},
+
+    handleAgentUpdatePending: (agentId, requestedByVersion, estimatedRestartSecs) => {
+      // Ignore a duplicate notice for an agent already suspended for this
+      // coordinated update — its reconnect is already queued.
+      if (get().agentUpdatePending[agentId]) return;
+
+      const agentName = get().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
+      const toastId = `agent-update-pending-${agentId}`;
+
+      set((s) => ({
+        agentUpdatePending: {
+          ...s.agentUpdatePending,
+          [agentId]: { requestedByVersion, estimatedRestartSecs, since: Date.now() },
+        },
+      }));
+
+      // Surface the "being updated by another host" notice. A loading toast is
+      // the design system's long-running-work affordance (the "reactive"
+      // pillar): it shows the suspend/restart is in progress and resolves in
+      // place to success/error when the reconnect settles.
+      toast.loading(`${agentName} is being updated by another host…`, {
+        id: toastId,
+        description: "Sessions are paused briefly and reconnect automatically.",
+      });
+
+      // Suspend the connection: disconnecting is the ack the updating host waits
+      // for (there is no reply frame — see docs/remote-protocol.md
+      // `agent.update_pending`). Sessions live on in detached daemons and are
+      // recovered on reconnect, so only the transport goes away here.
+      void get().disconnectRemoteAgent(agentId);
+
+      // Queue the auto-reconnect once the agent has had its restart window.
+      const delayMs =
+        (Math.max(estimatedRestartSecs, 1) + AGENT_UPDATE_RECONNECT_BUFFER_SECS) * 1000;
+      setTimeout(() => {
+        // Skip if the notice was cleared meanwhile (e.g. a manual reconnect).
+        if (!get().agentUpdatePending[agentId]) return;
+        get().clearAgentUpdatePending(agentId);
+        get()
+          .connectRemoteAgent(agentId)
+          .then(() => {
+            toast.success(`${agentName} reconnected to the updated version.`, {
+              id: toastId,
+            });
+          })
+          .catch(() => {
+            toast.error(`Couldn't reconnect to ${agentName} after the update.`, {
+              id: toastId,
+            });
+          });
+      }, delayMs);
+    },
+
+    clearAgentUpdatePending: (agentId) => {
+      set((s) => {
+        if (!(agentId in s.agentUpdatePending)) return {};
+        const next = { ...s.agentUpdatePending };
+        delete next[agentId];
+        return { agentUpdatePending: next };
+      });
     },
 
     addRemoteAgent: (agent) => {

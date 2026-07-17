@@ -27,6 +27,7 @@ class SftpUi(FileBrowserPathReads):
     if TYPE_CHECKING:  # borrowed from the mixins suites combine this with
         def switch_to_files_sidebar(self) -> None: ...
         def handle_password_prompt(self, password: str = ...) -> None: ...
+        def password_prompt_open(self) -> bool: ...
 
     def connect_sftp_browser(self, password: str = SSH_PASSWORD) -> str:
         """Open the file browser for the active SSH tab and wait for its path.
@@ -42,7 +43,10 @@ class SftpUi(FileBrowserPathReads):
             or self.driver.exists(self.CURRENT_PATH),
             what="the SFTP browser or its password prompt",
         )
-        if self.driver.exists("password-prompt-input"):
+        # Gate on the store's liveness signal, not a stale DOM check: the prompt
+        # can auto-resolve from a cached credential, and ``handle_password_prompt``
+        # then tolerates it closing under us (#1593).
+        if self.password_prompt_open():
             self.handle_password_prompt(password)
         return self.wait(
             lambda: self.file_browser_path() or None,
