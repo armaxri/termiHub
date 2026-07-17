@@ -21,9 +21,10 @@ mod workspace;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 use connection::manager::ConnectionManager;
 use connection::recovery::RecoveryWarning;
@@ -35,6 +36,7 @@ use network::NetworkManager;
 use session::manager::SessionManager;
 use session::registry::build_desktop_registry;
 use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
+use utils::file_log;
 use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer};
 
 /// Build the shared X server lifecycle manager (issue #1049).
@@ -144,11 +146,52 @@ pub fn run() {
     let capture_layer = LogCaptureLayer::new(log_buffer.clone());
     let app_handle_slot = capture_layer.app_handle_slot();
 
+    // Durable application log (#1570). A bundled desktop app has nowhere for the
+    // `fmt` layer's stdout to go and the ring buffer dies with the process, so
+    // without this sink the app leaves no evidence of what it was doing. Kept
+    // best-effort: an unwritable log directory must never stop the app booting,
+    // so the failure is recorded and startup continues.
+    let (file_layer, file_log_status) = match file_log::RotatingLogFile::with_defaults() {
+        Ok(writer) => (
+            Some(
+                tracing_subscriber::fmt::layer()
+                    // No terminal on the other end of a file: escape codes would
+                    // just make it unreadable.
+                    .with_ansi(false)
+                    .with_writer(writer)
+                    .with_filter(file_log::file_env_filter()),
+            ),
+            Ok(()),
+        ),
+        Err(e) => (None, Err(e)),
+    };
+
     tracing_subscriber::registry()
         .with(default_env_filter())
         .with(tracing_subscriber::fmt::layer())
         .with(capture_layer)
+        .with(file_layer)
         .init();
+
+    // The first lines of every run: they mark the run boundary in an appended
+    // file and record the version a later post-mortem will need.
+    match (&file_log_status, file_log::log_file_path()) {
+        (Ok(()), Some(path)) => info!(
+            version = env!("CARGO_PKG_VERSION"),
+            pid = std::process::id(),
+            log_file = %path.display(),
+            "termiHub starting"
+        ),
+        (Err(e), _) => {
+            info!(
+                version = env!("CARGO_PKG_VERSION"),
+                pid = std::process::id(),
+                "termiHub starting"
+            );
+            warn!("Application log file unavailable, logging to memory only: {e}");
+        }
+        (Ok(()), None) => unreachable!("the writer opened, so a log path resolves"),
+    }
 
     // Shared X server manager (#1049), held as an `Arc` so the provisioner
     // (#1052) and the Tauri commands can both reference the same instance.
@@ -802,6 +845,23 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // Shutdown breadcrumbs (#1570). The 2026-07-17 post-mortem could only
+            // establish that termiHub had exited *cleanly* by reading Apple's
+            // unified log — the app itself recorded nothing on the way out. These
+            // three events make the clean-exit path self-evident from termiHub's
+            // own log, and their *absence* before a restart is what distinguishes
+            // a clean shutdown from a kill or a crash.
+            match &event {
+                RunEvent::WindowEvent {
+                    label,
+                    event: WindowEvent::CloseRequested { .. },
+                    ..
+                } => info!(window = %label, "Window close requested"),
+                RunEvent::ExitRequested { .. } => info!("Exit requested, shutting down"),
+                RunEvent::Exit => info!("termiHub exited cleanly"),
+                _ => {}
+            }
+
             if let RunEvent::WindowEvent {
                 event: WindowEvent::Destroyed,
                 ..
