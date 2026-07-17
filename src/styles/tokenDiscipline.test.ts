@@ -99,10 +99,27 @@ const BESPOKE_BTN_ALLOWLIST: string[] = [];
 const RAW_HEX_CSS_ALLOWLIST: string[] = [];
 
 /**
+ * Blank out `/* … *\/` comment bodies, keeping the newlines they spanned.
+ *
+ * These guards check CSS, not prose: an issue reference in a comment (`#1366`)
+ * is indistinguishable from a hex colour to a bare regex, so comments are
+ * removed before any pattern runs (#1563). Newlines are preserved so the
+ * line-based rules keep the file's line structure — a declaration sharing a
+ * line with a comment must still be seen.
+ *
+ * @param css Contents of a CSS file.
+ * @returns The same CSS with every comment body replaced by blanks.
+ */
+function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "));
+}
+
+/**
  * True when `css` carries a standalone raw hex colour literal.
  *
  * `var(--token, #hex)` fallbacks are acceptable defensive defaults and are
  * exempt: any line whose hex sits inside a `var(...)` fallback is ignored.
+ * Comments are ignored entirely (see `stripCssComments`).
  *
  * @param css Contents of a CSS file.
  * @returns Whether any line declares a bare raw hex literal.
@@ -112,7 +129,9 @@ function hasStandaloneRawHex(css: string): boolean {
   // `color: var(--color-error, #f44336);`.
   const varFallbackRe = /var\([^)]*#[0-9a-f]/i;
   const rawHexRe = /#[0-9a-f]{3,8}\b/i;
-  return css.split("\n").some((line) => !varFallbackRe.test(line) && rawHexRe.test(line));
+  return stripCssComments(css)
+    .split("\n")
+    .some((line) => !varFallbackRe.test(line) && rawHexRe.test(line));
 }
 
 describe("CSS token discipline (#1059)", () => {
@@ -125,7 +144,7 @@ describe("CSS token discipline (#1059)", () => {
     // Matches rgba(0,0,0,0.7) with any internal whitespace.
     const overlayRe = /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0?\.7\s*\)/i;
     for (const file of cssFiles) {
-      if (overlayRe.test(readFileSync(file, "utf8"))) {
+      if (overlayRe.test(stripCssComments(readFileSync(file, "utf8")))) {
         offenders.push(file);
       }
     }
@@ -139,7 +158,7 @@ describe("CSS token discipline (#1059)", () => {
       if (WHITE_ALLOWLIST.some((allowed) => file.endsWith(allowed))) {
         continue;
       }
-      if (whiteRe.test(readFileSync(file, "utf8"))) {
+      if (whiteRe.test(stripCssComments(readFileSync(file, "utf8")))) {
         offenders.push(file);
       }
     }
