@@ -13,7 +13,7 @@ use tauri::State;
 
 use crate::connection::config::SavedConnection;
 use crate::connection::manager::ConnectionManager;
-use crate::connection::shell_integration::ShellIntegrationSettings;
+use crate::connection::shell_integration::{ShellEntry, ShellIntegrationSettings};
 use crate::spawn::container::{self, ContainerSpawn};
 use crate::spawn::handler::{self, PendingSpawn, ShellSpawn};
 use crate::spawn::{SpawnKind, SpawnRequest};
@@ -30,8 +30,7 @@ fn saved_container_prefs(
     settings: &ShellIntegrationSettings,
     entry_id: Option<&str>,
 ) -> SavedContainerPrefs {
-    entry_id
-        .and_then(|id| settings.entries.iter().find(|e| e.id == id))
+    saved_entry(settings, entry_id)
         .map(|e| (e.container_image.clone(), e.container_mount.clone()))
         .unwrap_or((None, None))
 }
@@ -72,6 +71,16 @@ pub fn resolve_container_spawn(
     )
 }
 
+/// Look up the entry addressed by `entry_id`, if any. An absent or unknown id
+/// yields `None`, so the spawn falls through to the request values and then the
+/// built-in defaults.
+fn saved_entry<'a>(
+    settings: &'a ShellIntegrationSettings,
+    entry_id: Option<&str>,
+) -> Option<&'a ShellEntry> {
+    entry_id.and_then(|id| settings.entries.iter().find(|e| e.id == id))
+}
+
 /// Map the frontend's runtime token onto a [`ContainerRuntime`]. Anything else —
 /// including no token at all — means "detect it", which is what every pre-picker
 /// spawn did.
@@ -97,6 +106,14 @@ fn resolve_container_spawn_with(
         return Err("a spawn location is required for a container spawn".to_string());
     }
     let (saved_image, saved_mount) = saved_container_prefs(settings, entry_id.as_deref());
+    // An explicitly requested runtime wins; otherwise fall back to the one the
+    // entry remembered (#1561), and only then to detection.
+    let runtime = match runtime {
+        ContainerRuntime::Auto => saved_entry(settings, entry_id.as_deref())
+            .map(|e| e.container_runtime.clone())
+            .unwrap_or_default(),
+        explicit => explicit,
+    };
     let request = SpawnRequest {
         location,
         entry_id,
@@ -139,10 +156,20 @@ pub fn resolve_shell_spawn(
     kind: Option<String>,
     shell: Option<String>,
 ) -> Result<ShellSpawn, String> {
+    let settings = manager.get_settings();
+    let entry = saved_entry(&settings.shell_integration, entry_id.as_deref());
+    // An explicitly requested kind/shell wins; otherwise fall back to whatever the
+    // entry remembered (#1561), and only then to the pre-picker defaults. A
+    // context-menu click carries no shell and (for an un-remembered entry) an
+    // `auto` kind, so this is what makes a remembered choice take effect.
     let kind = kind
         .as_deref()
         .and_then(SpawnKind::from_wire)
+        .filter(|k| !matches!(k, SpawnKind::Auto))
+        .or_else(|| entry.map(|e| e.spawn_kind))
         .unwrap_or_default();
+    let shell = shell
+        .or_else(|| entry.and_then(ShellEntry::resolved_shell).map(str::to_string));
     let request = SpawnRequest {
         location,
         connection,
@@ -500,6 +527,9 @@ mod tests {
                 show_for: ShowForTargets::default(),
                 container_image: image.map(str::to_string),
                 container_mount: mount.map(str::to_string),
+                spawn_kind: SpawnKind::Auto,
+                shell: None,
+                container_runtime: ContainerRuntime::Auto,
             }],
             ..Default::default()
         }

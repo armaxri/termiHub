@@ -6,7 +6,7 @@ use tauri::State;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::settings::AppSettings;
 use crate::connection::shell_integration::{
-    self, ShellIntegrationSettings, ShellIntegrationStatus,
+    self, PickedTarget, ShellIntegrationSettings, ShellIntegrationStatus,
 };
 use crate::spawn::registry;
 use crate::utils::portable::detect_app_mode;
@@ -111,10 +111,60 @@ pub fn save_shell_integration_settings(
     Ok(current_status(&manager))
 }
 
+/// Save a picked target onto the entry addressed by `entry_id`, returning whether
+/// an entry actually changed. An unknown id is a no-op — the entry may have been
+/// deleted between the context-menu click and the picker's confirm.
+fn stage_remembered_choice(
+    settings: &mut AppSettings,
+    entry_id: &str,
+    target: PickedTarget,
+) -> bool {
+    match settings
+        .shell_integration
+        .entries
+        .iter_mut()
+        .find(|e| e.id == entry_id)
+    {
+        Some(entry) => {
+            entry.remember(target);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Persist the Session Picker's "Remember this choice" (#1561): save the picked
+/// target onto the triggering entry so a later context-menu click opens it
+/// directly instead of prompting again.
+///
+/// Re-registers when the integration is currently registered, because the entry's
+/// remembered kind is part of the command line the OS surface invokes
+/// (`--kind <token>`) — without that the OS would keep calling the pre-choice
+/// command. Returns the recomputed status, mirroring
+/// [`save_shell_integration_settings`].
+#[tauri::command]
+pub fn remember_spawn_choice(
+    manager: State<'_, ConnectionManager>,
+    entry_id: String,
+    target: PickedTarget,
+) -> Result<ShellIntegrationStatus, String> {
+    let mut settings = manager.get_settings();
+    if !stage_remembered_choice(&mut settings, &entry_id, target) {
+        return Ok(current_status(&manager));
+    }
+    if settings.shell_integration.registered {
+        registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
+    }
+    manager.save_settings(settings).map_err(|e| e.to_string())?;
+    Ok(current_status(&manager))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::connection::shell_integration::{ShellEntry, ShellEntryVisibility, ShowForTargets};
+    use crate::spawn::SpawnKind;
+    use termihub_core::config::ContainerRuntime;
 
     fn entry(id: &str) -> ShellEntry {
         ShellEntry {
@@ -125,6 +175,9 @@ mod tests {
             show_for: ShowForTargets::default(),
             container_image: None,
             container_mount: None,
+            spawn_kind: SpawnKind::Auto,
+            shell: None,
+            container_runtime: ContainerRuntime::Auto,
         }
     }
 

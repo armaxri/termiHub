@@ -81,6 +81,19 @@ impl SpawnKind {
             _ => None,
         }
     }
+
+    /// The wire/CLI token for this kind — the inverse of [`from_wire`](Self::from_wire).
+    /// Used by shell-integration registration to emit a remembered entry's kind as
+    /// `--kind <token>` (#1561).
+    pub fn to_wire(self) -> &'static str {
+        match self {
+            Self::Container => "container",
+            Self::Local => "local",
+            Self::Wsl => "wsl",
+            Self::Ssh => "ssh",
+            Self::Auto => "auto",
+        }
+    }
 }
 
 /// A request to open a new session, originating from an external

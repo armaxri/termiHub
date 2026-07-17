@@ -10,7 +10,10 @@
 //! files / Quick Actions) and file-manager detection land in later epic issues.
 
 use serde::{Deserialize, Serialize};
+use termihub_core::config::ContainerRuntime;
 use termihub_core::files::utils::normalize_platform_path;
+
+use crate::spawn::SpawnKind;
 
 /// Windows context-menu visibility for a shell-integration entry.
 ///
@@ -78,6 +81,115 @@ pub struct ShellEntry {
     /// honored for a container spawn when no explicit `--container-mount` is given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_mount: Option<String>,
+    /// The kind of session this entry opens — the Session Picker's "Remember this
+    /// choice" writes the picked section here (SI-3, #1366 / #1561).
+    ///
+    /// [`SpawnKind::Auto`] (the default, and what every pre-#1561 `settings.json`
+    /// deserializes to) means "no remembered choice": the entry keeps the legacy
+    /// presence-based inference and registers a plain `spawn --entry-id …` command.
+    /// Anything else is authoritative — it is emitted as `--kind <token>` at
+    /// registration time and pins resolution for a context-menu click.
+    #[serde(default)]
+    pub spawn_kind: SpawnKind,
+    /// Saved per-entry shell preference in [`shell_to_command`]'s single-string
+    /// encoding: a local shell name (`"zsh"`, `"powershell"`, an absolute path) or
+    /// a WSL distribution as `"wsl:<distro>"` (e.g. `"wsl:Ubuntu-22.04"`).
+    ///
+    /// Honored for a [`SpawnKind::Local`] / [`SpawnKind::Wsl`] spawn when no
+    /// explicit shell is passed. `None` → no saved preference, so the spawn falls
+    /// back to the system default shell / default distribution.
+    ///
+    /// [`shell_to_command`]: termihub_core::session::shell::shell_to_command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// Saved per-entry container-runtime preference — the Docker/Podman section the
+    /// user picked. Same priority + forward-compat semantics as
+    /// [`container_image`](Self::container_image): honored for a container spawn
+    /// when no explicit runtime is given. [`ContainerRuntime::Auto`] (the default)
+    /// keeps the pre-picker behaviour of detecting whichever runtime is installed.
+    #[serde(default)]
+    pub container_runtime: ContainerRuntime,
+}
+
+/// A target picked in the interactive Session Picker, as the frontend's
+/// `SpawnTarget` discriminated union sends it (SI-3, #1366).
+///
+/// Mirrors `src/types/spawn.ts` field-for-field so a confirmed choice crosses the
+/// bridge without a translation table. Only used as the input to
+/// [`ShellEntry::remember`]; the persisted shape is [`ShellEntry`]'s own fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PickedTarget {
+    /// A local shell, by detected shell name (e.g. `"bash"`).
+    Local {
+        /// Shell name in [`shell_to_command`](termihub_core::session::shell::shell_to_command) encoding.
+        shell: String,
+    },
+    /// A WSL distribution, by name (e.g. `"Ubuntu-22.04"`).
+    Wsl {
+        /// Distribution name, *without* the `wsl:` prefix.
+        distro: String,
+    },
+    /// A new container bind-mounting the spawn location at `mount`.
+    Container {
+        /// Docker or Podman — the picker's choice of section.
+        runtime: ContainerRuntime,
+        /// Image reference (`repository:tag`).
+        image: String,
+        /// In-container mount target for the spawn location.
+        mount: String,
+    },
+}
+
+impl ShellEntry {
+    /// Save a picked target onto this entry — the write side of the Session
+    /// Picker's "Remember this choice" (#1561).
+    ///
+    /// Pins [`spawn_kind`](Self::spawn_kind) to the picked section so a later
+    /// context-menu click resolves to it authoritatively instead of re-inferring,
+    /// and records the section's own target: the shell (a WSL distro is stored in
+    /// `shell_to_command`'s `wsl:<distro>` encoding, so one field covers both shell
+    /// sections) or the container runtime + image + mount.
+    ///
+    /// Only the picked section's fields are written. A preference belonging to a
+    /// *different* section is left alone rather than cleared — `spawn_kind` already
+    /// makes it inert, and keeping it means remembering a local shell does not
+    /// silently discard the container image the user configured in Settings
+    /// (#1447).
+    pub fn remember(&mut self, target: PickedTarget) {
+        match target {
+            PickedTarget::Local { shell } => {
+                self.spawn_kind = SpawnKind::Local;
+                self.shell = Some(shell);
+            }
+            PickedTarget::Wsl { distro } => {
+                self.spawn_kind = SpawnKind::Wsl;
+                self.shell = Some(format!("wsl:{distro}"));
+            }
+            PickedTarget::Container {
+                runtime,
+                image,
+                mount,
+            } => {
+                self.spawn_kind = SpawnKind::Container;
+                self.container_runtime = runtime;
+                self.container_image = Some(image);
+                self.container_mount = Some(mount);
+            }
+        }
+    }
+
+    /// The entry's saved shell in the form the spawn resolver wants: a bare
+    /// distribution name for a WSL entry (the `wsl:` prefix is the storage
+    /// encoding, not the wire value `resolve_shell_spawn` takes), the shell name
+    /// verbatim otherwise. `None` when nothing is saved.
+    pub fn resolved_shell(&self) -> Option<&str> {
+        let shell = self.shell.as_deref().map(str::trim).filter(|s| !s.is_empty())?;
+        match self.spawn_kind {
+            SpawnKind::Wsl => Some(shell.strip_prefix("wsl:").unwrap_or(shell)),
+            _ => Some(shell),
+        }
+    }
 }
 
 /// Fallback behaviour when no entry resolves a spawn request.
@@ -315,6 +427,9 @@ mod tests {
             show_for: ShowForTargets::default(),
             container_image: None,
             container_mount: None,
+            spawn_kind: SpawnKind::Auto,
+            shell: None,
+            container_runtime: ContainerRuntime::Auto,
         }
     }
 
