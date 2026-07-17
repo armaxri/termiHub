@@ -68,6 +68,26 @@ impl FileWatchManager {
         watch_id: String,
         path: String,
     ) -> Result<(), TerminalError> {
+        // The path is echoed back so the frontend can confirm it matches the tab;
+        // contents are never read or logged here.
+        self.watch_with_sink(watch_id, path, move |watch_id, path| {
+            let _ = app.emit("local-file-changed", FileChangedPayload { watch_id, path });
+        })
+    }
+
+    /// Core of [`Self::watch`], parameterised by the notification `sink` so the
+    /// OS-watch pipeline can be exercised against a real file without a Tauri
+    /// `AppHandle`. The sink is called with `(watch_id, path)` on each debounced
+    /// change to the target file.
+    fn watch_with_sink<F>(
+        &self,
+        watch_id: String,
+        path: String,
+        sink: F,
+    ) -> Result<(), TerminalError>
+    where
+        F: Fn(String, String) + Send + 'static,
+    {
         let target = PathBuf::from(&path);
         // Watch the containing directory so atomic rename-replace writes (which
         // swap the inode) are still observed; events are filtered to the target
@@ -92,15 +112,7 @@ impl FileWatchManager {
                         .flat_map(|ev| ev.paths.iter())
                         .any(|p| paths_match(p, &target_for_cb));
                     if touched {
-                        // The path is echoed back so the frontend can confirm it
-                        // matches the tab; contents are never read or logged here.
-                        let _ = app.emit(
-                            "local-file-changed",
-                            FileChangedPayload {
-                                watch_id: watch_id_cb.clone(),
-                                path: emit_path.clone(),
-                            },
-                        );
+                        sink(watch_id_cb.clone(), emit_path.clone());
                     }
                 }
                 Err(errors) => {
@@ -183,5 +195,75 @@ mod tests {
             Path::new("/home/u"),
             Path::new("/home/u/notes.txt")
         ));
+    }
+
+    /// End-to-end against a real file: an external write to a watched file must
+    /// drive the sink with the file's `watch_id`. Exercises the actual OS watcher
+    /// (FSEvents / inotify / ReadDirectoryChangesW), not a mock.
+    #[test]
+    fn sink_fires_on_real_external_write() {
+        use std::sync::mpsc;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "before").expect("seed file");
+
+        let manager = FileWatchManager::new();
+        let (tx, rx) = mpsc::channel();
+        manager
+            .watch_with_sink(
+                "w1".to_string(),
+                file.to_string_lossy().to_string(),
+                move |watch_id, _path| {
+                    let _ = tx.send(watch_id);
+                },
+            )
+            .expect("watch starts");
+
+        // Let the OS watch arm before writing (FSEvents in particular is lazy).
+        std::thread::sleep(Duration::from_millis(400));
+        std::fs::write(&file, "after external change").expect("external write");
+
+        let got = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a change event should arrive");
+        assert_eq!(got, "w1");
+
+        manager.unwatch("w1");
+    }
+
+    /// Dropping the watch (via `unwatch`) stops delivery: writes after teardown
+    /// must not reach the sink — the resource-cleanup guarantee.
+    #[test]
+    fn sink_stops_after_unwatch() {
+        use std::sync::mpsc;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "before").expect("seed file");
+
+        let manager = FileWatchManager::new();
+        let (tx, rx) = mpsc::channel();
+        manager
+            .watch_with_sink(
+                "w1".to_string(),
+                file.to_string_lossy().to_string(),
+                move |watch_id, _path| {
+                    let _ = tx.send(watch_id);
+                },
+            )
+            .expect("watch starts");
+
+        manager.unwatch("w1");
+        // Drain any event that may have been queued before teardown.
+        while rx.try_recv().is_ok() {}
+
+        std::thread::sleep(Duration::from_millis(400));
+        std::fs::write(&file, "after teardown").expect("external write");
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(800)).is_err(),
+            "no event should arrive after unwatch"
+        );
     }
 }
