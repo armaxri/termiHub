@@ -33,6 +33,8 @@ import {
   sftpCheckWritable,
   sftpDownload,
   sftpRealpath,
+  sessionReadFile,
+  sessionWriteFile,
   storeCredential,
   resolveCredential,
   removeCredential,
@@ -50,6 +52,27 @@ const MAX_SUDO_ATTEMPTS = 3;
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
+
+/**
+ * Read a file's text through the session layer (#1557).
+ *
+ * `session_read_file` is byte-oriented — it backs binary transfers too — so the
+ * editor decodes here. The SFTP path (`sftp_read_file_content`) decodes backend
+ * side and hands back a string already, which is why only this side needs it.
+ */
+async function sessionReadFileContent(sessionId: string, path: string): Promise<string> {
+  const bytes = await sessionReadFile(sessionId, path);
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+/** Write a file's text through the session layer, mirroring {@link sessionReadFileContent}. */
+async function sessionWriteFileContent(
+  sessionId: string,
+  path: string,
+  content: string
+): Promise<void> {
+  await sessionWriteFile(sessionId, path, Array.from(new TextEncoder().encode(content)));
+}
 
 /**
  * Read current editor status from a Monaco editor instance.
@@ -231,6 +254,8 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         let text: string;
         if (meta.isRemote && meta.sftpSessionId) {
           text = await sftpReadFileContent(meta.sftpSessionId, meta.filePath);
+        } else if (meta.isRemote && meta.sessionBrowser) {
+          text = await sessionReadFileContent(meta.sessionBrowser.sessionId, meta.filePath);
         } else {
           text = await localReadFile(meta.filePath);
         }
@@ -251,7 +276,14 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     return () => {
       cancelled = true;
     };
-  }, [meta.filePath, meta.isRemote, meta.sftpSessionId, meta.scratch, meta.scratchContent]);
+  }, [
+    meta.filePath,
+    meta.isRemote,
+    meta.sftpSessionId,
+    meta.sessionBrowser,
+    meta.scratch,
+    meta.scratchContent,
+  ]);
 
   // Probe whether the remote connection can run remote commands (shell vs
   // SFTP-only). Determines whether privilege-elevated writes will be offered.
@@ -627,6 +659,8 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     try {
       if (meta.isRemote && meta.sftpSessionId) {
         await sftpWriteFileContent(meta.sftpSessionId, meta.filePath, content);
+      } else if (meta.isRemote && meta.sessionBrowser) {
+        await sessionWriteFileContent(meta.sessionBrowser.sessionId, meta.filePath, content);
       } else {
         await localWriteFile(targetPath, content);
       }
@@ -653,6 +687,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     meta.filePath,
     meta.isRemote,
     meta.sftpSessionId,
+    meta.sessionBrowser,
     tabId,
     renameTab,
     elevated,
