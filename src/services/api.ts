@@ -240,6 +240,36 @@ export async function takePendingSpawn(): Promise<SpawnRequestPayload | null> {
   return await invoke<SpawnRequestPayload | null>("take_pending_spawn");
 }
 
+/**
+ * The spawn targets available on this host (SI-3, #1366). Mirrors the Rust
+ * `SpawnOptions`: every list is "what exists right now", so the Session Picker
+ * renders a section per non-empty group. `wslDistros` is always empty off
+ * Windows, and an image list is only populated when its runtime is available.
+ */
+export interface SpawnOptions {
+  /** Local shells detected on this host (e.g. `"bash"`, `"zsh"`). */
+  shells: string[];
+  /** Installed WSL distributions. Always empty off Windows. */
+  wslDistros: string[];
+  /** Whether a usable Docker daemon responded. */
+  dockerAvailable: boolean;
+  /** Local Docker images (`repository:tag`). Empty unless `dockerAvailable`. */
+  dockerImages: string[];
+  /** Whether a usable Podman runtime responded. */
+  podmanAvailable: boolean;
+  /** Local Podman images (`repository:tag`). Empty unless `podmanAvailable`. */
+  podmanImages: string[];
+}
+
+/**
+ * Enumerate the spawn targets the Session Picker can offer (SI-3, #1366).
+ * Called when the picker opens so it reflects the host's live state — shells,
+ * WSL distributions and the images of whichever container runtimes respond.
+ */
+export async function listSpawnOptions(): Promise<SpawnOptions> {
+  return await invoke<SpawnOptions>("list_spawn_options");
+}
+
 /** Send input data to a terminal session */
 export async function sendInput(sessionId: SessionId, data: string): Promise<void> {
   await invoke("send_input", { sessionId, data });
