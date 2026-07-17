@@ -475,8 +475,12 @@ async fn applied_update_does_not_re_exec_on_the_next_idle() {
         agent.stderr()
     );
 
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(30))
-        .unwrap_or_else(|| panic!("agent did not come back after self-apply.\n{}", agent.stderr()));
+    let mut client = Client::connect(&agent.addr, Duration::from_secs(30)).unwrap_or_else(|| {
+        panic!(
+            "agent did not come back after self-apply.\n{}",
+            agent.stderr()
+        )
+    });
     let inode_after_apply = inode(&agent.bin_path).expect("binary present after apply");
 
     // Drive a session through the idle transition that triggers a deferred apply.
