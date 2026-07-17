@@ -199,8 +199,22 @@ class TestTransferQueueLiveTransfer(
         )
         self.driver.click("file-browser-paste")
 
-        # The panel appears as soon as the first transfer registers.
-        self.wait(lambda: self.driver.exists(QUEUE), what="the Transfer Queue panel")
+        # Synchronise on the store slice — the authoritative readiness signal —
+        # not the panel DOM. `applyTransferProgressToQueue` folds the first
+        # `transfer-progress` event into the `transferQueue` slice synchronously
+        # in the event callback (`useTransferEvents`), and the panel is mounted
+        # unconditionally, gated only by that slice being non-empty
+        # (`TransferQueue` returns `null` while `entries.length === 0`). So "a
+        # transfer has registered" is the real readiness condition; the panel's
+        # `data-testid` only paints on the following React commit, which trails
+        # the store, so waiting on the DOM here raced (#1619). The panel's own
+        # rendering is still asserted below (the `transfer-row` / summary reads
+        # after the two-row wait), so this only moves the *synchronisation* onto
+        # the earlier, render-independent signal — it does not drop coverage.
+        self.wait(
+            lambda: self.queue_entries() or False,
+            what="the transfer queue to register the first transfer",
+        )
 
         # Download + upload = two rows, both settling at `completed`.
         entries = self.wait(
