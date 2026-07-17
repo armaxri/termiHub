@@ -814,3 +814,151 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
     expect(query("file-editor-download")).toBeNull();
   });
 });
+
+describe("FileEditor — session-layer backed tabs (#1557)", () => {
+  const SESSION_META: EditorTabMeta = {
+    filePath: "/srv/app/config.yml",
+    isRemote: true,
+    sessionBrowser: { sessionId: "sess-ftp-1", connectionType: "ftp" },
+  };
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  /** Encode text the way session_read_file returns it: a plain byte array. */
+  function bytes(text: string): number[] {
+    return Array.from(new TextEncoder().encode(text));
+  }
+
+  it("reads the file through session_read_file and never touches the SFTP path", async () => {
+    mockedInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "session_read_file") {
+        expect(args).toMatchObject({ sessionId: "sess-ftp-1", path: "/srv/app/config.yml" });
+        return Promise.resolve(bytes("port: 8080\n"));
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(SESSION_META);
+    await flush();
+
+    expect((query("mock-monaco") as HTMLTextAreaElement).value).toBe("port: 8080\n");
+    const commands = mockedInvoke.mock.calls.map((c) => c[0]);
+    expect(commands).toContain("session_read_file");
+    expect(commands.filter((c) => String(c).startsWith("sftp_"))).toEqual([]);
+  });
+
+  it("decodes non-ASCII content returned as bytes", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "session_read_file") return Promise.resolve(bytes("gruß: 🌍\n"));
+      return Promise.resolve(undefined);
+    });
+
+    render(SESSION_META);
+    await flush();
+
+    expect((query("mock-monaco") as HTMLTextAreaElement).value).toBe("gruß: 🌍\n");
+  });
+
+  it("saves the buffer back through session_write_file", async () => {
+    const writes: { sessionId: string; path: string; data: number[] }[] = [];
+    mockedInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "session_read_file") return Promise.resolve(bytes("port: 8080\n"));
+      if (cmd === "session_write_file") {
+        writes.push(args as unknown as { sessionId: string; path: string; data: number[] });
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+
+    render(SESSION_META);
+    await flush();
+
+    editContent("port: 9090\n");
+    await flush();
+
+    const saveBtn = query("file-editor-save") as HTMLButtonElement;
+    expect(saveBtn.disabled).toBe(false);
+    await act(async () => {
+      saveBtn.click();
+    });
+    await flush();
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].sessionId).toBe("sess-ftp-1");
+    expect(writes[0].path).toBe("/srv/app/config.yml");
+    expect(new TextDecoder().decode(new Uint8Array(writes[0].data))).toBe("port: 9090\n");
+    // A successful save clears the dirty flag and raises no error banner.
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+    expect(query("file-editor-save-error")).toBeNull();
+  });
+
+  it("surfaces a failed session save and keeps the buffer dirty", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "session_read_file") return Promise.resolve(bytes("port: 8080\n"));
+      if (cmd === "session_write_file")
+        return Promise.reject(new Error("write config.yml: permission denied"));
+      return Promise.resolve(undefined);
+    });
+
+    render(SESSION_META);
+    await flush();
+
+    editContent("port: 9090\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(query("file-editor-save-error")?.textContent ?? "").toMatch(/permission denied/i);
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+  });
+
+  it("marks the tab remote but offers no SFTP-only affordances", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "session_read_file") return Promise.resolve(bytes("body\n"));
+      // Were these ever reached, they would light up the sudo / fallback UI.
+      if (cmd === "sftp_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "sftp_check_writable") return Promise.resolve("readOnly");
+      return Promise.resolve(undefined);
+    });
+
+    render(SESSION_META);
+    await flush();
+
+    // The session layer exposes read/write only: no writability probe, no sudo,
+    // no realpath-backed "save a copy", no SFTP download.
+    expect(query("file-editor-remote-badge")).not.toBeNull();
+    expect(query("file-editor-readonly-badge")).toBeNull();
+    expect(query("file-editor-edit-with-sudo")).toBeNull();
+    expect(query("file-editor-save-copy")).toBeNull();
+    expect(query("file-editor-download")).toBeNull();
+  });
+
+  it("surfaces a session read failure as a load error", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "session_read_file") return Promise.reject(new Error("no such file"));
+      return Promise.resolve(undefined);
+    });
+
+    render(SESSION_META);
+    await flush();
+
+    expect(container.textContent ?? "").toMatch(/no such file/i);
+  });
+});
