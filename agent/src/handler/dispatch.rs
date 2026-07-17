@@ -27,17 +27,17 @@ use crate::protocol::errors;
 use crate::protocol::methods::{
     AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
     AgentRequestUpdateResult, AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams,
-    AgentShutdownResult, Capabilities, UpdatePendingNotification, AGENT_UPDATE_PENDING,
-    ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo, ConnectionListResult,
-    ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams, FilesListParams,
-    FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult, FilesRenameParams,
-    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
-    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
-    MonitoringUnsubscribeParams, NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams,
-    NetworkTracerouteParams, NetworkWolParams, SessionAttachParams, SessionCloseParams,
-    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
-    SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
-    SessionResizeParams,
+    AgentShutdownResult, Capabilities, ConnectionCreateParams, ConnectionDeleteParams,
+    ConnectionInfo, ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
+    FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
+    FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
+    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
+    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
+    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
+    SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult, SessionInputParams,
+    SessionListEntry, SessionListResult, SessionResizeParams, UpdatePendingNotification,
+    AGENT_UPDATE_PENDING,
 };
 use crate::registry_daemon::client::RegistryClient;
 use crate::registry_daemon::protocol::{BroadcastEnvelope, ClientRecord};
@@ -1379,7 +1379,9 @@ const ESTIMATED_RESTART_SECS: u64 = 5;
 ///
 /// It still never interrupts an active session — that guarantee comes from the
 /// shared apply path, not from here.
-fn register_agent_request_update(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+fn register_agent_request_update(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
     module.register_async_method("agent.request_update", |params, ctx, _ext| async move {
         let p: AgentRequestUpdateParams = params
             .parse()
@@ -1923,7 +1925,8 @@ mod tests {
         let result = dispatch(&handler, "agent.request_update", json!({}), 1).await;
 
         assert_eq!(
-            result["error"]["code"], errors::NOT_INITIALIZED,
+            result["error"]["code"],
+            errors::NOT_INITIALIZED,
             "uninitialized request_update must be rejected: {result}"
         );
     }
@@ -1941,7 +1944,8 @@ mod tests {
         // No binary staged, so the apply is what fails — the point is that it
         // got as far as the apply instead of hanging for the ack window.
         assert_eq!(
-            result["error"]["code"], errors::INVALID_PARAMS,
+            result["error"]["code"],
+            errors::INVALID_PARAMS,
             "should reach the apply and report no pending update: {result}"
         );
     }
@@ -1955,8 +1959,7 @@ mod tests {
 
         let params = json!({"binaryPath": "/definitely/not/here/termihub-agent"});
         let coordinated = dispatch(&handler, "agent.request_update", params.clone(), 2).await;
-        let deferred =
-            dispatch(&handler, "agent.request_deferred_update", params, 3).await;
+        let deferred = dispatch(&handler, "agent.request_deferred_update", params, 3).await;
 
         assert_eq!(coordinated["error"]["code"], errors::INVALID_PARAMS);
         assert_eq!(

@@ -221,6 +221,40 @@ impl Client {
             .to_string()
     }
 
+    /// Wait for a JSON-RPC notification named `method`, ignoring any others.
+    ///
+    /// Returns `None` if nothing matching arrives within `timeout` — which is
+    /// how "the requester must *not* hear its own broadcast" is asserted, so a
+    /// timeout here is a legitimate expected outcome and not always a failure.
+    fn next_notification(&mut self, method: &str, timeout: Duration) -> Option<Value> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.checked_duration_since(Instant::now())?;
+            // The socket timeout is what actually bounds the blocking read; the
+            // deadline above only stops us looping past it on noisy traffic.
+            self.reader
+                .get_ref()
+                .set_read_timeout(Some(remaining))
+                .expect("set read timeout");
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => return None,
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+            let Ok(value): Result<Value, _> = serde_json::from_str(&line) else {
+                continue;
+            };
+            if value.get("id").is_none() && value["method"].as_str() == Some(method) {
+                self.reader
+                    .get_ref()
+                    .set_read_timeout(Some(RPC_TIMEOUT))
+                    .expect("restore read timeout");
+                return Some(value);
+            }
+        }
+    }
+
     /// `agent.list_connections`, as `client` names.
     fn list_connection_names(&mut self) -> Vec<String> {
         let response = self.call("agent.list_connections", json!({}));
@@ -660,4 +694,174 @@ fn a_broadcast_with_no_other_workers_is_harmless() {
     // proves the broadcast did not take it down.
     let mut peer = RawWorker::connect(&endpoint);
     peer.register("desktop-b");
+}
+
+// ── Coordinated update (#1351) ────────────────────────────────────────────────
+
+/// Ask for a coordinated update from `client`, on a thread.
+///
+/// `agent.request_update` blocks for as long as it is waiting for the other
+/// hosts to leave, so the requester cannot also be the thing watching them
+/// leave. The caller drives the peers while this runs.
+///
+/// No binary is staged, so the *apply* always fails with "no pending update" —
+/// deliberately. Staging a real one would exec-replace the agent mid-test; what
+/// these tests are about is the coordination that happens strictly *before* the
+/// apply, and the failure arriving at all is itself proof the window closed.
+fn request_update_async(
+    mut client: Client,
+    ack_timeout_secs: u64,
+) -> std::thread::JoinHandle<(Value, Duration)> {
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let response = client.call(
+            "agent.request_update",
+            json!({ "ackTimeoutSecs": ack_timeout_secs }),
+        );
+        (response, started.elapsed())
+    })
+}
+
+/// The issue's acceptance criterion, end to end: initiating a coordinated update
+/// **shows the notice on another host** — one that is attached to a *different
+/// agent process* and holds *no sessions at all*.
+///
+/// The session-less half is the part that could not have worked before #1574:
+/// registration keyed to `initialize` rather than to a session is exactly what
+/// makes an idle desktop visible to broadcast. And the cross-process half could
+/// not have worked before either — `io/tcp.rs`'s notification channel is
+/// single-consumer, so this notice provably could not have reached desktop B
+/// through any pre-existing path.
+#[test]
+fn the_update_notice_reaches_a_second_session_less_desktop() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "update-notice");
+    let _registry = spawn_registry(&endpoint);
+    assert!(wait_for_endpoint(&endpoint), "registry never bound");
+
+    let agent_a = spawn_agent(&endpoint);
+    let agent_b = spawn_agent(&endpoint);
+    let mut desktop_a = Client::connect(&agent_a.addr);
+    let mut desktop_b = Client::connect(&agent_b.addr);
+    desktop_a.initialize("desktop-a");
+    desktop_b.initialize("desktop-b");
+
+    // Neither desktop creates a session — they are visible purely by having
+    // initialized. Wait until A can actually see B, or the broadcast would
+    // legitimately go to an empty set and prove nothing.
+    assert_eq!(
+        wait_for_connections(&mut desktop_a, &["desktop-a", "desktop-b"]),
+        vec!["desktop-a", "desktop-b"],
+        "desktop-b must be host-wide visible before the update is requested"
+    );
+
+    let requester = request_update_async(desktop_a, 2);
+
+    let notice = desktop_b
+        .next_notification("agent.update_pending", Duration::from_secs(15))
+        .expect("desktop-b must receive the agent.update_pending notice");
+
+    // The desktop renders these two fields; a casing slip is invisible to the
+    // agent and fatal to the toast.
+    assert_eq!(
+        notice["params"]["requestedByVersion"], "1.0.0",
+        "the notice must name the version of the desktop that asked: {notice}"
+    );
+    assert!(
+        notice["params"]["estimatedRestartSecs"].as_u64().is_some(),
+        "the notice must carry a restart estimate for the progress display: {notice}"
+    );
+
+    let (response, _) = requester.join().expect("requester thread");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("No pending update")),
+        "coordination must complete and hand over to the apply: {response}"
+    );
+}
+
+/// The ack *is* the disconnect, proven across processes: a desktop that takes
+/// the notice and leaves releases the update immediately, rather than the agent
+/// sitting out the full window.
+///
+/// The window here is 20 s — far longer than the test tolerates — so the only
+/// way this passes is if the agent actually noticed desktop-b go.
+#[test]
+fn a_desktop_that_disconnects_releases_the_update_early() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "update-early");
+    let _registry = spawn_registry(&endpoint);
+    assert!(wait_for_endpoint(&endpoint), "registry never bound");
+
+    let agent_a = spawn_agent(&endpoint);
+    let agent_b = spawn_agent(&endpoint);
+    let mut desktop_a = Client::connect(&agent_a.addr);
+    let mut desktop_b = Client::connect(&agent_b.addr);
+    desktop_a.initialize("desktop-a");
+    desktop_b.initialize("desktop-b");
+    assert_eq!(
+        wait_for_connections(&mut desktop_a, &["desktop-a", "desktop-b"]),
+        vec!["desktop-a", "desktop-b"],
+    );
+
+    let requester = request_update_async(desktop_a, 20);
+
+    desktop_b
+        .next_notification("agent.update_pending", Duration::from_secs(15))
+        .expect("desktop-b must receive the notice");
+    // Exactly what a real desktop does once it has suspended its sessions.
+    drop(desktop_b);
+
+    let (response, elapsed) = requester.join().expect("requester thread");
+    assert!(
+        response.get("error").is_some(),
+        "coordination must still hand over to the apply: {response}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(18),
+        "the update must proceed on the disconnect, not sit out the 20 s window: took {elapsed:?}"
+    );
+}
+
+/// "Host B never acks" — the timeout path the issue calls out explicitly. A
+/// desktop that ignores the notice must not be able to hold an update hostage.
+#[test]
+fn a_desktop_that_never_leaves_does_not_block_the_update() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "update-timeout");
+    let _registry = spawn_registry(&endpoint);
+    assert!(wait_for_endpoint(&endpoint), "registry never bound");
+
+    let agent_a = spawn_agent(&endpoint);
+    let agent_b = spawn_agent(&endpoint);
+    let mut desktop_a = Client::connect(&agent_a.addr);
+    let mut desktop_b = Client::connect(&agent_b.addr);
+    desktop_a.initialize("desktop-a");
+    desktop_b.initialize("desktop-b");
+    assert_eq!(
+        wait_for_connections(&mut desktop_a, &["desktop-a", "desktop-b"]),
+        vec!["desktop-a", "desktop-b"],
+    );
+
+    // desktop-b stays attached and does nothing about the notice.
+    let requester = request_update_async(desktop_a, 2);
+
+    let (response, elapsed) = requester.join().expect("requester thread");
+    assert!(
+        response.get("error").is_some(),
+        "the update must proceed to the apply despite the stuck host: {response}"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(2),
+        "the stuck host must get its full window first: took {elapsed:?}"
+    );
+    // desktop-b is still there — the agent proceeded without it, it did not
+    // mistake it for gone.
+    assert!(
+        desktop_b
+            .list_connection_names()
+            .contains(&"desktop-b".to_string()),
+        "desktop-b must still be attached; the update proceeded on the timeout"
+    );
 }

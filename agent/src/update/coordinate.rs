@@ -342,13 +342,20 @@ mod tests {
         let start = tokio::time::Instant::now();
         let outcome = coordinate_update(&host, "self", envelope(), ACK_TIMEOUT).await;
 
-        assert_eq!(outcome, CoordinationOutcome::AllDisconnected { notified: 2 });
+        assert_eq!(
+            outcome,
+            CoordinationOutcome::AllDisconnected { notified: 2 }
+        );
         assert!(outcome.all_acked());
         assert!(
             tokio::time::Instant::now() - start < ACK_TIMEOUT,
             "must proceed on the last disconnect, not on the timeout"
         );
-        assert_eq!(host.broadcasts(), vec![envelope()], "peers must be told once");
+        assert_eq!(
+            host.broadcasts(),
+            vec![envelope()],
+            "peers must be told once"
+        );
     }
 
     /// "Host B never acks" — the timeout path the issue calls out explicitly.
@@ -417,7 +424,10 @@ mod tests {
 
         let outcome = coordinate_update(&host, "self", envelope(), ACK_TIMEOUT).await;
 
-        assert_eq!(outcome, CoordinationOutcome::AllDisconnected { notified: 1 });
+        assert_eq!(
+            outcome,
+            CoordinationOutcome::AllDisconnected { notified: 1 }
+        );
         assert_eq!(
             host.polls(),
             5,
