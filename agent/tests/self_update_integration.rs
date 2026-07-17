@@ -359,16 +359,62 @@ impl Client {
             .to_string()
     }
 
+    /// Raw `connection.list` response. Kept separate from [`Self::session_count`]
+    /// so a failing assertion can print what the agent actually said (#1559):
+    /// the count alone collapses "RPC died" and "agent listed N sessions" into
+    /// the same number and hides which one happened.
+    fn session_list_raw(&mut self) -> Value {
+        self.rpc("connection.list", json!({}))
+    }
+
     fn session_count(&mut self) -> usize {
-        let resp = self.rpc("connection.list", json!({}));
+        let resp = self.session_list_raw();
         resp["result"]["sessions"]
             .as_array()
             .map(|a| a.len())
             .unwrap_or(0)
     }
 
-    fn close_session(&mut self, session_id: &str) {
-        self.rpc("connection.close", json!({"session_id": session_id}));
+    /// Close a session, returning the raw response so a caller can report a
+    /// refused close (`result: false` / an error object) rather than silently
+    /// dropping it (#1559).
+    fn close_session(&mut self, session_id: &str) -> Value {
+        self.rpc("connection.close", json!({"session_id": session_id}))
+    }
+
+    /// Everything needed to diagnose a session-count assertion in one CI hit
+    /// (#1559): what the agent lists *now*, its live sessions, and its stderr.
+    ///
+    /// `connection.list` is re-issued here rather than cached from the failing
+    /// poll, which also disambiguates the two failure shapes for free: a `Null`
+    /// raw response means the RPC is dead (so the count was a false `0`), while a
+    /// populated `sessions` array names the sessions that would not go away.
+    fn failure_report(&mut self, agent: &LiveAgent) -> String {
+        let raw = self.session_list_raw();
+        let ids = match raw["result"]["sessions"].as_array() {
+            Some(sessions) if sessions.is_empty() => "<none>".to_string(),
+            Some(sessions) => sessions
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{} (type={}, status={}, title={:?}, attached={})",
+                        s["session_id"], s["session_type"], s["status"], s["title"], s["attached"]
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n  "),
+            None => "<no sessions array — RPC returned no result>".to_string(),
+        };
+        format!(
+            "--- agent addr ---\n{}\n\
+             --- raw connection.list ---\n{raw}\n\
+             --- listed sessions ---\n  {ids}\n\
+             --- persisted state.json ---\n{}\n\
+             --- agent stderr ---\n{}",
+            agent.addr,
+            agent.state(),
+            agent.stderr()
+        )
     }
 }
 
@@ -487,12 +533,21 @@ async fn applied_update_does_not_re_exec_on_the_next_idle() {
     let session_id = client.create_session("shell", json!({}));
     assert!(
         wait_until(Duration::from_secs(15), || client.session_count() >= 1),
-        "session did not become active in time"
+        "session {session_id} did not become active in time.\n{}",
+        client.failure_report(&agent)
     );
-    client.close_session(&session_id);
+    let close_resp = client.close_session(&session_id);
+    // This assertion is the long-standing flake in #1559, and the bare message it
+    // used to carry ("session did not close in time") was unactionable: it can
+    // only fail when a *live* agent lists a session for 15s straight — every
+    // dead/timed-out RPC path yields `Null` -> a count of 0 -> a pass. So a
+    // failure here means a real, unexpected session is in the agent's map, and
+    // the raw list plus the agent's own stderr is what identifies it.
     assert!(
         wait_until(Duration::from_secs(15), || client.session_count() == 0),
-        "session did not close in time"
+        "session {session_id} did not close in time.\n\
+         --- connection.close response ---\n{close_resp}\n{}",
+        client.failure_report(&agent)
     );
     // Give a spurious apply every chance to fire.
     std::thread::sleep(Duration::from_millis(500));
@@ -653,7 +708,8 @@ async fn assert_never_interrupts(
     let wait = Duration::from_secs(session_wait_secs.unwrap_or(15));
     assert!(
         wait_until(wait, || client.session_count() >= 1),
-        "session did not become active in time"
+        "{session_type} session {session_id} did not become active in time.\n{}",
+        client.failure_report(&agent)
     );
 
     // Wait for the poll to run (it records last_check_time at its start).
