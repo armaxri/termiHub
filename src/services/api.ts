@@ -14,7 +14,7 @@ import {
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
-import type { ContainerRuntime } from "@/types/spawn";
+import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -677,6 +677,23 @@ export async function saveShellIntegrationSettings(
 ): Promise<ShellIntegrationStatus> {
   return await invoke<ShellIntegrationStatus>("save_shell_integration_settings", {
     shellIntegration,
+  });
+}
+
+/**
+ * Persist the Session Picker's "Remember this choice" (#1561): save the picked
+ * target onto the entry that triggered the spawn, so a later context-menu click
+ * opens it directly instead of prompting again. Re-registers the OS context menu
+ * when the integration is registered, since the remembered kind is part of the
+ * command line the surface invokes. An unknown `entryId` is a no-op.
+ */
+export async function rememberSpawnChoice(
+  entryId: string,
+  target: SpawnTarget
+): Promise<ShellIntegrationStatus> {
+  return await invoke<ShellIntegrationStatus>("remember_spawn_choice", {
+    entryId,
+    target,
   });
 }
 

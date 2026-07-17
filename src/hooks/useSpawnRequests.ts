@@ -2,7 +2,12 @@ import { useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { onSpawnPickerRequested, onSpawnRequest, SpawnRequestPayload } from "@/services/events";
-import { resolveContainerSpawn, resolveShellSpawn, takePendingSpawn } from "@/services/api";
+import {
+  rememberSpawnChoice,
+  resolveContainerSpawn,
+  resolveShellSpawn,
+  takePendingSpawn,
+} from "@/services/api";
 import type { ContainerRuntime, SpawnChoice } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -223,9 +228,35 @@ export function useSpawnRequests(): void {
 }
 
 /**
+ * Persist a "Remember this choice" selection onto the entry that triggered the
+ * spawn (#1561), so a later context-menu click opens the picked target directly
+ * instead of prompting again.
+ *
+ * A no-op unless the user actually ticked the box *and* the spawn came from a
+ * context-menu entry — a bare `termiHub spawn --pick` from a terminal has no
+ * entry to remember onto.
+ *
+ * Remembering is a side effect of the spawn, not a precondition for it: a failed
+ * save is logged and toasted but never blocks opening the session the user asked
+ * for.
+ */
+async function persistRememberedChoice(
+  req: SpawnRequestPayload,
+  choice: SpawnChoice
+): Promise<void> {
+  if (!choice.remember || !req.entry_id) return;
+  try {
+    await rememberSpawnChoice(req.entry_id, choice.target);
+  } catch (err) {
+    frontendLog("spawn", `Failed to remember spawn choice: ${err}`);
+    toast.error(`Opened the session, but could not remember the choice: ${err}`);
+  }
+}
+
+/**
  * The confirm handler for the Session Picker (SI-3, #1366): fold the choice back
- * into its request and open the session through the same path every other spawn
- * takes.
+ * into its request, persist it when "Remember this choice" was ticked (#1561),
+ * and open the session through the same path every other spawn takes.
  */
 export function useSpawnChoiceHandler(): (
   req: SpawnRequestPayload,
@@ -237,6 +268,7 @@ export function useSpawnChoiceHandler(): (
   return useCallback(
     async (req, choice) => {
       const { request, picked } = applySpawnChoice(req, choice);
+      await persistRememberedChoice(req, choice);
       await handleSpawnRequest(request, { openSpawnedContainer, openSpawnedShell }, picked);
     },
     [openSpawnedContainer, openSpawnedShell]

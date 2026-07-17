@@ -1,6 +1,7 @@
 import { ConnectionConfig, RemoteAgentConfig, TerminalOptions, LineEnding } from "./terminal";
 import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
+import type { SavedContainerRuntime, SpawnKind } from "./spawn";
 
 /**
  * Explicit lifecycle status of the single desktop SFTP session (audit gap A1).
@@ -314,6 +315,26 @@ export interface ShellEntry {
    * explicit `--container-mount` is given.
    */
   containerMount?: string;
+  /**
+   * The kind of session this entry opens — written by the Session Picker's
+   * "Remember this choice" (#1561). `"auto"` (the default) means no remembered
+   * choice, keeping the presence-based inference. Anything else is emitted as
+   * `--kind <token>` at registration time and pins how a context-menu click
+   * resolves.
+   */
+  spawnKind?: SpawnKind;
+  /**
+   * Saved per-entry shell preference in the backend's single-string encoding: a
+   * local shell name (`"zsh"`) or a WSL distribution as `"wsl:<distro>"`.
+   * Honored for a local/WSL spawn when no explicit shell is passed.
+   */
+  shell?: string;
+  /**
+   * Saved per-entry container-runtime preference — the Docker/Podman section the
+   * user picked. `"auto"` (the default) keeps detecting whichever runtime is
+   * installed.
+   */
+  containerRuntime?: SavedContainerRuntime;
 }
 
 /** Linux per-file-manager install toggles (Linux-only in effect). */
