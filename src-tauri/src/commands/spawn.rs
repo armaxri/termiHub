@@ -3,11 +3,12 @@
 //! Exposes the directory-mount container spawn resolution to the frontend: given
 //! a spawn `location` and optional image / mount overrides, returns the Docker
 //! settings + tab title the frontend uses to open a "new container" session with
-//! the target directory bind-mounted. The interactive picker that chooses "new
-//! container" (SI-3) and the frontend session/tab wiring are out of scope here.
+//! the target directory bind-mounted, plus the target enumeration
+//! ([`list_spawn_options`]) backing the interactive Session Picker (SI-3, #1366).
 
 use std::path::Path;
 
+use serde::Serialize;
 use tauri::State;
 
 use crate::connection::config::SavedConnection;
@@ -270,10 +271,118 @@ pub fn take_pending_spawn(pending: State<'_, PendingSpawn>) -> Option<SpawnReque
     handler::take_pending_spawn(&pending)
 }
 
+/// The spawn targets available on this host, as offered by the Session Picker
+/// (SI-3, #1366).
+///
+/// Every list is "what exists right now" — the picker renders a section per
+/// non-empty group, so an absent runtime simply drops its section rather than
+/// showing a disabled one. `wsl_distros` is always empty off Windows (the picker
+/// hides the WSL section there), and the image lists are only populated when the
+/// matching runtime reports itself available, so a stopped daemon costs one
+/// probe instead of a hanging `images` call.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnOptions {
+    /// Local shells detected on this host (e.g. `"bash"`, `"zsh"`, `"pwsh"`).
+    pub shells: Vec<String>,
+    /// Installed WSL distributions. Always empty off Windows.
+    pub wsl_distros: Vec<String>,
+    /// Whether a usable Docker daemon responded.
+    pub docker_available: bool,
+    /// Local Docker images (`repository:tag`). Empty unless `docker_available`.
+    pub docker_images: Vec<String>,
+    /// Whether a usable Podman runtime responded.
+    pub podman_available: bool,
+    /// Local Podman images (`repository:tag`). Empty unless `podman_available`.
+    pub podman_images: Vec<String>,
+}
+
+/// Enumerate the spawn targets the Session Picker can offer (SI-3, #1366).
+///
+/// Called when the picker opens, so it reflects the host's live state rather
+/// than a cached snapshot: shells and WSL distributions come from the same
+/// detection the connection editors use, and each container runtime is probed
+/// for availability before its images are listed.
+#[tauri::command]
+pub fn list_spawn_options() -> SpawnOptions {
+    let docker_available = crate::utils::docker_detect::is_docker_available();
+    let podman_available = crate::utils::docker_detect::is_podman_available();
+    SpawnOptions {
+        shells: termihub_core::session::shell::detect_available_shells(),
+        wsl_distros: wsl_distros(),
+        docker_available,
+        docker_images: if docker_available {
+            crate::utils::docker_detect::list_docker_images()
+        } else {
+            Vec::new()
+        },
+        podman_available,
+        podman_images: if podman_available {
+            crate::utils::docker_detect::list_podman_images()
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// Installed WSL distributions on Windows; an empty list everywhere else, where
+/// WSL cannot exist and the picker omits the section entirely.
+fn wsl_distros() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        termihub_core::session::shell::detect_wsl_distros()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::connection::shell_integration::{ShellEntry, ShellEntryVisibility, ShowForTargets};
+
+    // `list_spawn_options` reports whatever the host actually has, so the
+    // assertions below cover the invariants that must hold on every machine and
+    // every CI platform — never a concrete shell/image list, which would make
+    // the suite depend on the runner's installed software.
+
+    #[test]
+    fn list_spawn_options_holds_its_invariants() {
+        let options = list_spawn_options();
+
+        // An unavailable runtime must never report images: the picker uses the
+        // availability flag to decide whether to render the section at all.
+        if !options.docker_available {
+            assert!(options.docker_images.is_empty());
+        }
+        if !options.podman_available {
+            assert!(options.podman_images.is_empty());
+        }
+
+        // WSL exists only on Windows; elsewhere the section must stay empty so
+        // the picker hides it.
+        #[cfg(not(windows))]
+        assert!(options.wsl_distros.is_empty());
+    }
+
+    #[test]
+    fn spawn_options_serialize_camel_case() {
+        // The frontend `SpawnOptions` type mirrors these keys; a rename here
+        // would silently strand the picker on `undefined`.
+        let json = serde_json::to_value(SpawnOptions::default()).expect("serializes");
+        for key in [
+            "shells",
+            "wslDistros",
+            "dockerAvailable",
+            "dockerImages",
+            "podmanAvailable",
+            "podmanImages",
+        ] {
+            assert!(json.get(key).is_some(), "missing key {key}");
+        }
+    }
 
     fn settings_with_entry(
         id: &str,
