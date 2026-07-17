@@ -607,8 +607,13 @@ function useFileBrowserSync() {
       return;
     }
     if (activeTabContentType === "editor") {
-      // Editor tabs: derive mode from file location
-      if (activeTabEditorMeta?.isRemote) {
+      // Editor tabs: derive mode from the transport the tab was opened with.
+      // A session-backed tab must not fall into "sftp" mode — there is no
+      // SftpManager session behind it, so the browser would show nothing. (#1557)
+      if (activeTabEditorMeta?.sessionBrowser) {
+        setSessionFileBrowserId(activeTabEditorMeta.sessionBrowser.sessionId);
+        setFileBrowserMode("session");
+      } else if (activeTabEditorMeta?.isRemote) {
         setFileBrowserMode("sftp");
       } else {
         setFileBrowserMode("local");
@@ -1036,6 +1041,8 @@ export function FileBrowser() {
   }, []);
 
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
+  const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
+  const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
 
   const handleContextAction = useCallback(
     (entry: FileEntry, action: string) => {
@@ -1050,8 +1057,17 @@ export function FileBrowser() {
                 mode === "sftp" ? (sftpSessionId ?? undefined) : undefined,
                 mode === "sftp" ? entry.permissions : undefined
               );
+          } else if (mode === "session" && sessionFileBrowserId) {
+            // Session-layer browsing (FTP, Docker, agent sessions): the editor
+            // reads and writes through session_read_file / session_write_file
+            // rather than an SftpManager session. (#1557)
+            useAppStore
+              .getState()
+              .openEditorTab(entry.path, true, undefined, entry.permissions, {
+                sessionId: sessionFileBrowserId,
+                connectionType: activeTabConnectionType ?? "remote-session",
+              });
           }
-          // session mode: file editing via editor not yet supported for agent sessions
           break;
         case "download":
           // downloadFile surfaces its own success/error toast (see useFileSystem).
@@ -1103,7 +1119,17 @@ export function FileBrowser() {
         }
       }
     },
-    [mode, sftpSessionId, downloadFile, openInVscode, copyEntry, cutEntry, deleteEntry]
+    [
+      mode,
+      sftpSessionId,
+      sessionFileBrowserId,
+      activeTabConnectionType,
+      downloadFile,
+      openInVscode,
+      copyEntry,
+      cutEntry,
+      deleteEntry,
+    ]
   );
 
   const handleRenameSubmit = useCallback(

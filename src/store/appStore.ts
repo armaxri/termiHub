@@ -9,6 +9,7 @@ import {
   TabContentType,
   TerminalOptions,
   EditorTabMeta,
+  EditorSessionRef,
   ConnectionEditorMeta,
   TunnelEditorMeta,
   WorkspaceEditorMeta,
@@ -478,11 +479,19 @@ interface AppState {
   ) => void;
   httpMonitors: HttpMonitorState[];
   setHttpMonitors: (monitors: HttpMonitorState[]) => void;
+  /**
+   * Open (or focus) an editor tab for a file.
+   *
+   * A remote tab is backed by exactly one transport: pass `sftpSessionId` for
+   * the legacy SFTP path (SSH), or `sessionBrowser` for the protocol-agnostic
+   * session layer (FTP, Docker, agent sessions — #1557).
+   */
   openEditorTab: (
     filePath: string,
     isRemote: boolean,
     sftpSessionId?: string,
-    permissions?: string | null
+    permissions?: string | null,
+    sessionBrowser?: EditorSessionRef
   ) => void;
   /**
    * Open a new "scratch" editor tab seeded with in-memory content that is not
@@ -2329,7 +2338,7 @@ export const useAppStore = create<AppState>((set, get) => {
         return { rootPanel, activePanelId: targetPanelId };
       }),
 
-    openEditorTab: (filePath, isRemote, sftpSessionId, permissions) =>
+    openEditorTab: (filePath, isRemote, sftpSessionId, permissions, sessionBrowser) =>
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
@@ -2346,11 +2355,19 @@ export const useAppStore = create<AppState>((set, get) => {
               ...l,
               tabs: l.tabs.map((t) => {
                 if (t.id !== existing.id) return { ...t, isActive: false };
-                // Refresh the SFTP session ID so a reconnected session works.
-                const updatedMeta =
-                  isRemote && sftpSessionId && t.editorMeta
-                    ? { ...t.editorMeta, sftpSessionId }
-                    : t.editorMeta;
+                // Refresh the backing session so a reconnected session works.
+                // Only the transport actually supplied is refreshed, and the
+                // other is cleared with it: a tab must never carry both an
+                // sftpSessionId and a sessionBrowser, or the editor's
+                // SFTP-first branch would shadow the session-layer one. (#1557)
+                let updatedMeta = t.editorMeta;
+                if (isRemote && t.editorMeta) {
+                  if (sftpSessionId) {
+                    updatedMeta = { ...t.editorMeta, sftpSessionId, sessionBrowser: undefined };
+                  } else if (sessionBrowser) {
+                    updatedMeta = { ...t.editorMeta, sessionBrowser, sftpSessionId: undefined };
+                  }
+                }
                 return { ...t, isActive: true, editorMeta: updatedMeta };
               }),
               activeTabId: existing.id,
@@ -2365,7 +2382,13 @@ export const useAppStore = create<AppState>((set, get) => {
 
         const fileName = filePath.split("/").pop() ?? filePath;
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId, permissions };
+        const editorMeta: EditorTabMeta = {
+          filePath,
+          isRemote,
+          sftpSessionId,
+          permissions,
+          sessionBrowser,
+        };
         const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
         newTab.editorMeta = editorMeta;
 
