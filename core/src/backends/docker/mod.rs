@@ -1423,4 +1423,69 @@ mod tests {
         let result = docker.connect(settings).await;
         assert!(result.is_err());
     }
+
+    /// Manual, host-dependent diagnostic for #1600. Requires a live host where
+    /// Docker Desktop and Podman both run and `/var/run/docker.sock` points at
+    /// Podman (the exact misconfiguration the bug describes). Run with:
+    /// `cargo test -p termihub-core --features docker -- --ignored --nocapture
+    ///  connect_to_runtime_honours_docker_context`.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "requires a live Docker+Podman host with docker.sock -> Podman"]
+    async fn connect_to_runtime_honours_docker_context() {
+        // BEFORE: the platform default socket (what the old `Docker` path used
+        // via connect_with_local_defaults) — on this host it is Podman.
+        let default = bollard::Docker::connect_with_local_defaults().unwrap();
+        let default_ver = default.version().await.unwrap();
+        println!(
+            "default socket -> podman={} server={:?}",
+            runtime::version_is_podman(&default_ver),
+            default_ver.version
+        );
+
+        // AFTER: explicit Docker must reach a real Docker daemon (or fail loud),
+        // never silently Podman.
+        let docker = connect_to_runtime(&ContainerRuntime::Docker)
+            .await
+            .expect("explicit Docker should reach a Docker daemon on this host");
+        let docker_ver = docker.version().await.unwrap();
+        println!(
+            "runtime=Docker -> podman={} server={:?}",
+            runtime::version_is_podman(&docker_ver),
+            docker_ver.version
+        );
+        assert!(
+            !runtime::version_is_podman(&docker_ver),
+            "explicit Docker must not land on Podman"
+        );
+
+        // Podman must still reach Podman when a socket is discoverable.
+        // (On macOS `podman_socket_uri()` may not locate the machine socket —
+        // a pre-existing gap tracked separately — so this step is best-effort.)
+        match connect_to_runtime(&ContainerRuntime::Podman).await {
+            Ok(podman) => {
+                let podman_ver = podman.version().await.unwrap();
+                println!(
+                    "runtime=Podman -> podman={} server={:?}",
+                    runtime::version_is_podman(&podman_ver),
+                    podman_ver.version
+                );
+                assert!(runtime::version_is_podman(&podman_ver));
+            }
+            Err(e) => println!("runtime=Podman -> socket not discovered: {e}"),
+        }
+
+        // Auto prefers the real Docker endpoint (via context), not Podman.
+        let auto = connect_to_runtime(&ContainerRuntime::Auto).await.unwrap();
+        let auto_ver = auto.version().await.unwrap();
+        println!(
+            "runtime=Auto -> podman={} server={:?}",
+            runtime::version_is_podman(&auto_ver),
+            auto_ver.version
+        );
+        assert!(
+            !runtime::version_is_podman(&auto_ver),
+            "Auto must prefer real Docker over Podman-behind-docker.sock"
+        );
+    }
 }
