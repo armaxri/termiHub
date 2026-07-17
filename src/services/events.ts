@@ -420,6 +420,24 @@ export async function onVscodeEditComplete(
   });
 }
 
+interface LocalFileChangedPayload {
+  watchId: string;
+  path: string;
+}
+
+/**
+ * Subscribe to external on-disk change events for watched local editor files
+ * (#1620). The `watchId` identifies which editor instance registered the watch;
+ * callers filter to their own id.
+ */
+export async function onLocalFileChanged(
+  callback: (watchId: string, path: string) => void
+): Promise<UnlistenFn> {
+  return await listen<LocalFileChangedPayload>("local-file-changed", (event) => {
+    callback(event.payload.watchId, event.payload.path);
+  });
+}
+
 /** Subscribe to real-time log entry events from the backend. */
 export async function onLogEntry(callback: (entry: LogEntry) => void): Promise<UnlistenFn> {
   return await listen<LogEntry>("log-entry", (event) => {

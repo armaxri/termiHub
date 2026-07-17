@@ -33,6 +33,10 @@ tauri = { version = "2", default-features = false, features = ["wry", "compressi
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+# Cross-platform filesystem watching (FSEvents / inotify / ReadDirectoryChangesW)
+# for reflecting external on-disk changes to open local editor files (#1620).
+# The debouncer coalesces the multiple syscalls a single external save emits.
+notify-debouncer-full = "0.7"
 serde = { workspace = true }
 hex = "0.4"
 # SHA-256 hashing: agent-binary integrity verification (all platforms) and
