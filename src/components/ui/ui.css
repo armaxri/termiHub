@@ -371,6 +371,46 @@
   background: var(--text-on-accent);
 }
 
+/* ── Checkbox (Radix skin) ──────────────────────────────────────────── */
+.ui-checkbox {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--bg-active);
+  border: 1px solid var(--text-secondary);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.ui-checkbox:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-checkbox[data-state="checked"],
+.ui-checkbox[data-state="indeterminate"] {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.ui-checkbox:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-checkbox__indicator {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+}
+
 /* ── Progress (accessible div) ──────────────────────────────────────── */
 .ui-progress {
   position: relative;

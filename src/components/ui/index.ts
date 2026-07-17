@@ -29,6 +29,9 @@ export type { ConfirmDialogProps, ConfirmDontAskAgain } from "./ConfirmDialog";
 export { Toggle } from "./Toggle";
 export type { ToggleProps } from "./Toggle";
 
+export { Checkbox } from "./Checkbox";
+export type { CheckboxProps, CheckboxChecked } from "./Checkbox";
+
 export { Tooltip, TooltipProvider } from "./Tooltip";
 export type { TooltipProps, TooltipProviderProps } from "./Tooltip";
 
