@@ -76,8 +76,9 @@ jobs:
 
   # Build the Windows agent (MSVC) and run the agent/core test suites on a
   # Windows runner. cross-rs cannot build the MSVC ABI, so this uses native
-  # cargo on windows-latest. System/E2E tests stay Linux-only (tauri-driver +
-  # Docker — see ADR-5); Windows agent coverage is unit/integration + manual.
+  # cargo on windows-latest. The bridge system-test harness now runs on all three
+  # OSes (system-integration.yml), but its Docker fixtures stay Linux-only, so
+  # Windows agent coverage is unit/integration + manual (see ADR-5, docs/testing.md).
   build-windows:
     name: Build (${{ matrix.target }})
     runs-on: windows-latest

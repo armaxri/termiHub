@@ -290,37 +290,26 @@ Examples:
 
 ## CI Integration
 
-Add to `.github/workflows/test.yml`:
+The system/E2E suite runs in **two lanes**, split so per-PR CI stays fast while
+the app-launching suites still run on a cadence:
 
-```yaml
-name: Tests
+- **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR runs the bridge harness with `-m "not integration"`, so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
+- **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). A scheduled + `workflow_dispatch` job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
-on: [push, pull_request]
+The lane runs the app natively on each OS; only the **Docker fixtures** are
+Linux-only:
 
-jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - run: npm ci
-      - run: npm run test:coverage
-      - uses: codecov/codecov-action@v3
+| Leg                            | App launch + UI suites            | Docker-fixture suites (SSH/telnet/serial/agent)                            |
+| ------------------------------ | --------------------------------- | -------------------------------------------------------------------------- |
+| **Linux** (`ubuntu-latest`)    | Run headless under Xvfb           | Run — Docker Compose fixtures brought up in-job                            |
+| **macOS** (`macos-latest`)     | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon                   |
+| **Windows** (`windows-latest`) | Run natively (WebView2, no Xvfb)  | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
 
-  system-tests:
-    # System / E2E coverage runs through the Python bridge harness
-    # (tests/system/), which talks to the app over a WebSocket bridge and needs
-    # no tauri-driver — so it runs on all three OSes. See tests/system/README.md.
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: ./scripts/test-system-py.sh -m integration
-```
+The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
+present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
+the coverage it _can_ run rather than failing on fixtures it cannot reach. This
+Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
+carve-out](#ssh-tunnel-startstop-on-macos-manual-carve-out-933) and ADR-5.
 
 ### Windows Agent CI Coverage
 
