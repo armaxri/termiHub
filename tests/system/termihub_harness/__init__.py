@@ -7,6 +7,9 @@ tests that run identically on Linux, Windows, and macOS (issue #802).
 
 from .bridge import Bridge, BridgeError, Driver, screenshot_to_png_bytes
 from .fixtures import (
+    REMOTE_AGENT_PENDING_PORT,
+    REMOTE_AGENT_PENDING_SERVICE,
+    REMOTE_AGENT_PENDING_VERSION,
     REMOTE_AGENT_PORT,
     REMOTE_AGENT_SERVICE,
     SSH_BANNER_PORT,
@@ -129,6 +132,9 @@ __all__ = [
     "wait_for_port",
     "REMOTE_AGENT_SERVICE",
     "REMOTE_AGENT_PORT",
+    "REMOTE_AGENT_PENDING_SERVICE",
+    "REMOTE_AGENT_PENDING_PORT",
+    "REMOTE_AGENT_PENDING_VERSION",
     "SSH_HOST",
     "SSH_PASSWORD_SERVICE",
     "SSH_PASSWORD_PORT",
