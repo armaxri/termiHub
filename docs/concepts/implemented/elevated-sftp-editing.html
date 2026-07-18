@@ -1,0 +1,1687 @@
+<!doctype html>
+<!--
+  Single-file concept: Elevated (sudo) SFTP editing + early read-only detection.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/implemented/ai-driven-concept-workflow.md.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Elevated (sudo) SFTP Editing + Early Read-Only Detection (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* ── Real FileEditor classes (mirror src/components/FileEditor/FileEditor.css) ── */
+      .file-editor {
+        display: flex;
+        flex-direction: column;
+        height: 320px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .file-editor__toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 10px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .file-editor__path {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        flex: 1;
+      }
+      .file-editor__remote-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .file-editor__filepath {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .file-editor__save-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border-primary);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .file-editor__save-btn:disabled {
+        color: var(--text-disabled);
+        cursor: default;
+      }
+      .file-editor__editor-container {
+        flex: 1;
+        padding: 12px 14px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text-primary);
+        line-height: 1.6;
+        white-space: pre;
+        overflow: hidden;
+      }
+      .file-editor__editor-container .ln {
+        color: var(--text-disabled);
+        margin-right: 14px;
+        user-select: none;
+      }
+      .file-editor__editor-container--readonly {
+        opacity: 0.85;
+      }
+      .file-editor__save-error {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        background: rgba(239, 107, 90, 0.12);
+        border-bottom: 1px solid var(--color-error);
+        color: var(--color-error);
+        font-size: 12px;
+      }
+      .file-editor__save-error-text {
+        flex: 1;
+      }
+      .file-editor__save-error-dismiss {
+        background: none;
+        border: none;
+        color: inherit;
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1;
+      }
+
+      /* ── Proposed new classes for this concept ── */
+      .file-editor__readonly-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+        background: rgba(212, 168, 67, 0.16);
+        border: 1px solid var(--color-warning);
+        color: var(--color-warning);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .file-editor__elevate-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--accent-color);
+        background: transparent;
+        color: var(--text-accent);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .file-editor__elevated-mark {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+        background: rgba(61, 125, 232, 0.16);
+        border: 1px solid var(--accent-color);
+        color: var(--text-accent);
+        font-size: 11px;
+      }
+      /* Read-only info banner shown under the toolbar at open time. */
+      .file-editor__readonly-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        background: rgba(212, 168, 67, 0.1);
+        border-bottom: 1px solid var(--color-warning);
+        color: var(--color-warning);
+        font-size: 12px;
+      }
+      .file-editor__readonly-banner-text {
+        flex: 1;
+      }
+      .file-editor__readonly-banner code {
+        font-family: var(--font-mono);
+        color: var(--text-secondary);
+      }
+      .file-editor__elevate-link {
+        background: none;
+        border: none;
+        color: var(--text-accent);
+        cursor: pointer;
+        font-size: 12px;
+        padding: 0;
+      }
+      .col-states {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+      .col-states > * {
+        flex: none;
+      }
+
+      /* ── Sudo prompt mockup ── */
+      .dialog-stage {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      /* Reuse the .menu primitive but widen it for the form. */
+      .sudo-dialog.menu {
+        width: 360px;
+      }
+      .sudo-dialog__body {
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .sudo-dialog__intro {
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .sudo-dialog__intro code {
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+      }
+      .sudo-dialog__field {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .sudo-dialog__label {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .sudo-dialog__input {
+        padding: 7px 10px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border-primary);
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .sudo-dialog__input--error {
+        border-color: var(--color-error);
+      }
+      .sudo-dialog__remember {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .sudo-dialog__remember .check {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+        display: inline-grid;
+        place-items: center;
+      }
+      .sudo-dialog__remember--on .check {
+        background: var(--accent-color);
+        border-color: var(--accent-color);
+        color: #fff;
+      }
+      .sudo-dialog__error {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--color-error);
+        font-size: 12px;
+      }
+      .sudo-dialog__locked {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--color-warning);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Union of symbols used by all mockups. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol id="i-save" viewBox="0 0 24 24">
+        <path
+          d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
+        />
+        <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+        <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" x2="12" y1="8" y2="12" />
+        <line x1="12" x2="12.01" y1="16" y2="16" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24">
+        <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
+        <path d="m21 2-9.6 9.6" />
+        <circle cx="7.5" cy="15.5" r="5.5" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Elevated (sudo) SFTP Editing + Early Read-Only Detection</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/970">#970</a></span
+          >
+          <span><code>docs/concepts/implemented/elevated-sftp-editing.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept elevated-sftp-editing</code> to
+          reconcile it with the implementation.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          When a user opens a remote file over an <strong>SFTP file connection</strong> they
+          sometimes lack write permission for it — typically root/admin-owned files on a Raspberry
+          Pi or server (e.g. <code>/etc/nginx/nginx.conf</code>). Today the editor only discovers
+          this <strong>at save time</strong>: the write fails and (after
+          <a href="https://github.com/armaxri/termiHub/issues/969">#969</a>) surfaces a "permission
+          denied" banner. The user has already edited the file and now cannot save their work
+          without leaving termiHub.
+        </p>
+        <p>This concept designs two complementary improvements:</p>
+        <ol>
+          <li>
+            <strong>Early read-only detection</strong> — determine writability
+            <strong>at open time</strong> from SFTP permission bits and flag it clearly (badge +
+            banner), before the user invests effort in edits they cannot save.
+          </li>
+          <li>
+            <strong>Elevated (sudo) save</strong> — when the connection also has shell access, let
+            the user authorize a privileged write so the file can be saved anyway, via
+            <code>sudo</code> on the remote host.
+          </li>
+        </ol>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Open → probe → writable / read-only / elevated overview</span
+          >
+          <pre class="mermaid">
+flowchart LR
+    Open[Open remote file] --> Probe{Probe writability}
+    Probe -->|writable| Normal[Normal editing]
+    Probe -->|read-only + shell| RO1[Read-only badge<br/>Edit with sudo]
+    Probe -->|read-only, SFTP-only| RO2[Read-only badge<br/>Save a copy fallback]
+    RO1 --> Elevate[Authorize sudo] --> ElevSave[Save via sudo]
+          </pre>
+        </div>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>Tell the user a file is read-only <strong>before</strong> they edit it.</li>
+          <li>
+            Let users save admin-owned files without dropping to a terminal, when a shell is
+            available.
+          </li>
+          <li>
+            Be explicit and honest about the privileged context (a persistent <code>sudo</code>
+            marker, named targets in the prompt).
+          </li>
+          <li>
+            Handle the sudo password securely (in-memory by default, optional credential-store
+            persistence).
+          </li>
+          <li>Degrade gracefully when elevation isn't possible (SFTP-only connections).</li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Editing local files as another user / <code>sudo</code> for local files (this concept is
+            remote-only).
+          </li>
+          <li>
+            Changing file ownership or permissions from the editor
+            (<code>chmod</code>/<code>chown</code>).
+          </li>
+          <li>
+            A general remote-command console — elevation is scoped to the save operation only.
+          </li>
+          <li>
+            Detecting writability via true ownership (uid/gid) — <code>russh-sftp</code> does not
+            expose owner ids; detection uses permission bits plus a best-effort probe (see
+            Implementation Details).
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The visual surfaces are specified by the mockups — the inline mockups below are
+          authoritative for layout. This section describes them.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Editor states</td>
+                <td>
+                  Writable baseline, read-only detected, elevated-edit mode, elevated-save failure,
+                  and the SFTP-only (no elevation) fallback
+                </td>
+              </tr>
+              <tr>
+                <td>Sudo prompt</td>
+                <td>
+                  Sudo password prompt: initial, incorrect-password retry, and
+                  persist-to-credential-store option
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Read-only badge</h3>
+        <p>
+          A <strong>Read-only</strong> badge (lucide <code>Lock</code>, warning color) appears in
+          the existing <code>.file-editor__toolbar</code> next to the <code>Remote</code> badge
+          whenever the open file is not writable by the connecting user. Its tooltip shows the
+          parsed permission string (e.g. <code>-rw-r--r--</code>). The badge is purely
+          informational; it never blocks reading or navigating.
+        </p>
+
+        <h3>Read-only info banner</h3>
+        <p>
+          Under the toolbar, a dismissible <code>.file-editor__readonly-banner</code> (mirrors the
+          #969 <code>.file-editor__save-error</code> banner, warning color instead of error)
+          explains the cause in plain language and offers the relevant action inline:
+        </p>
+        <ul>
+          <li>
+            <strong>Shell available:</strong> "You don't have write access to this file
+            (<code>-rw-r--r--</code>). Saving directly will fail. <strong>Edit with sudo</strong> to
+            save through privilege elevation."
+          </li>
+          <li>
+            <strong>SFTP-only:</strong> "…This is an SFTP-only connection, so sudo elevation isn't
+            available. <strong>Save a copy…</strong>"
+          </li>
+        </ul>
+
+        <h3>Edit-with-sudo affordance</h3>
+        <p>
+          When a file is read-only <strong>and</strong> the connection exposes a shell channel, the
+          toolbar's <strong>Save</strong> button is replaced by an
+          <strong>Edit with sudo</strong> button (lucide <code>ShieldCheck</code>, accent outline).
+          The same action is reachable from the banner link. Activating it opens the sudo prompt (if
+          needed) and puts the editor into <strong>elevated edit mode</strong>.
+        </p>
+
+        <h3>Elevated edit mode</h3>
+        <p>Once elevation is authorized for the tab:</p>
+        <ul>
+          <li>
+            A persistent <strong>sudo</strong> marker (accent color) sits in the toolbar for the
+            whole elevated session, so the privileged context is never hidden.
+          </li>
+          <li>
+            The Save button reads <strong>Save with sudo</strong> and writes via the elevated path.
+          </li>
+          <li>The buffer is fully editable (Monaco is no longer dimmed).</li>
+        </ul>
+
+        <h3>Sudo password prompt</h3>
+        <p>A modal dialog (built on the shared <code>.menu</code> primitive) that:</p>
+        <ul>
+          <li>Names the exact target: host, user, and file path being written as root.</li>
+          <li>Has a masked password field.</li>
+          <li>
+            Defaults to <strong>Remember for this session</strong> (in-memory cache for the tab's
+            connection).
+          </li>
+          <li>
+            When the credential store is <strong>Unlocked</strong>, offers a second choice to
+            <strong>Save in credential store</strong> under a dedicated sudo-password key.
+          </li>
+          <li>
+            On wrong password, re-prompts (matching sudo's three-attempt loop) before giving up.
+          </li>
+        </ul>
+
+        <h3>SFTP-only fallback</h3>
+        <p>
+          For pure SFTP connections (no shell), there is no <code>sudo</code> path. The read-only
+          state is still shown, Save stays disabled, and the banner offers
+          <strong>Save a copy…</strong> (write to a writable remote path, or download to the local
+          disk via the existing download command).
+        </p>
+
+        <!-- Mockup: Editor states -->
+        <div class="mockup-section">
+          <h3>Mockup — editor states</h3>
+          <div class="col-states">
+            <!-- State 1: writable file (baseline, unchanged) -->
+            <section class="mockup-section">
+              <h2>1 · Writable file (baseline)</h2>
+              <div class="mockup-note">
+                Owner write bit set, or no permission info available → editor behaves exactly as
+                today. No new chrome.
+              </div>
+              <div class="file-editor">
+                <div class="file-editor__toolbar">
+                  <div class="file-editor__path">
+                    <span class="file-editor__remote-badge">
+                      <svg class="li"><use href="#i-globe" /></svg> Remote
+                    </span>
+                    <span class="file-editor__filepath">/home/pi/notes.txt</span>
+                  </div>
+                  <button class="file-editor__save-btn">
+                    <svg class="li"><use href="#i-save" /></svg> Save
+                  </button>
+                </div>
+                <div class="file-editor__editor-container">
+                  <span class="ln">1</span>Shopping list <span class="ln">2</span>- coffee
+                  <span class="ln">3</span><span class="cursor"></span>
+                </div>
+              </div>
+            </section>
+
+            <!-- State 2: read-only detected at open -->
+            <section class="mockup-section">
+              <h2>2 · Read-only detected at open time</h2>
+              <div class="mockup-note">
+                Permission probe at load finds the file is not writable. A warning badge sits in the
+                toolbar, an info banner explains why, and Save is replaced by an
+                <strong>Edit with sudo</strong> affordance (only when a shell is available on the
+                connection).
+              </div>
+              <div class="file-editor">
+                <div class="file-editor__toolbar">
+                  <div class="file-editor__path">
+                    <span class="file-editor__remote-badge">
+                      <svg class="li"><use href="#i-globe" /></svg> Remote
+                    </span>
+                    <span class="file-editor__readonly-badge">
+                      <svg class="li"><use href="#i-lock" /></svg> Read-only
+                      <span class="callout">A</span>
+                    </span>
+                    <span class="file-editor__filepath">/etc/nginx/nginx.conf</span>
+                  </div>
+                  <button class="file-editor__elevate-btn">
+                    <svg class="li"><use href="#i-shield" /></svg> Edit with sudo
+                    <span class="callout">B</span>
+                  </button>
+                </div>
+                <div class="file-editor__readonly-banner">
+                  <svg class="li"><use href="#i-lock" /></svg>
+                  <span class="file-editor__readonly-banner-text">
+                    You don't have write access to this file (<code>-rw-r--r--</code>). Saving
+                    directly will fail.
+                    <button class="file-editor__elevate-link">Edit with sudo</button>
+                    to save through privilege elevation.
+                    <span class="callout">C</span>
+                  </span>
+                </div>
+                <div class="file-editor__editor-container file-editor__editor-container--readonly">
+                  <span class="ln">1</span>user www-data; <span class="ln">2</span>worker_processes
+                  auto; <span class="ln">3</span>pid /run/nginx.pid;<span class="cursor"></span>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">A</span> Read-only badge (lucide <code>Lock</code>) in
+                    warning color, with the parsed permission string as a tooltip.
+                  </li>
+                  <li>
+                    <span class="callout">B</span> <strong>Edit with sudo</strong> button (lucide
+                    <code>ShieldCheck</code>) replaces Save when the file is read-only and the
+                    connection has shell access. Hidden for SFTP-only connections (see banner in
+                    state 5).
+                  </li>
+                  <li>
+                    <span class="callout">C</span> Dismissible info banner: explains the cause and
+                    offers the same elevate action inline.
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            <!-- State 3: elevated edit mode (sudo authorized) -->
+            <section class="mockup-section">
+              <h2>3 · Elevated edit mode (sudo authorized)</h2>
+              <div class="mockup-note">
+                After the user authorizes elevation (see sudo-prompt mockup), the buffer becomes
+                editable. The toolbar shows a persistent <strong>sudo</strong> marker so it is
+                always obvious the next save runs as root.
+              </div>
+              <div class="file-editor">
+                <div class="file-editor__toolbar">
+                  <div class="file-editor__path">
+                    <span class="file-editor__remote-badge">
+                      <svg class="li"><use href="#i-globe" /></svg> Remote
+                    </span>
+                    <span class="file-editor__elevated-mark">
+                      <svg class="li"><use href="#i-shield" /></svg> sudo
+                      <span class="callout">D</span>
+                    </span>
+                    <span class="file-editor__filepath">/etc/nginx/nginx.conf</span>
+                  </div>
+                  <button class="file-editor__save-btn">
+                    <svg class="li"><use href="#i-save" /></svg> Save with sudo
+                    <span class="callout">E</span>
+                  </button>
+                </div>
+                <div class="file-editor__editor-container">
+                  <span class="ln">1</span>user www-data; <span class="ln">2</span>worker_processes
+                  4; <span class="ln">3</span>pid /run/nginx.pid;<span class="cursor"></span>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">D</span> Persistent <strong>sudo</strong> marker (accent
+                    color) — visible for the whole elevated session so the privileged context is
+                    never hidden.
+                  </li>
+                  <li>
+                    <span class="callout">E</span> Save button label becomes
+                    <strong>Save with sudo</strong> to confirm the write path before the user
+                    commits.
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            <!-- State 4: elevated save failed -->
+            <section class="mockup-section">
+              <h2>4 · Elevated save failed (retry)</h2>
+              <div class="mockup-note">
+                Wrong password, sudo not permitted, or the remote command failed. The existing
+                save-error banner (#969) carries the elevated context and lets the user re-enter the
+                password or fall back.
+              </div>
+              <div class="file-editor">
+                <div class="file-editor__toolbar">
+                  <div class="file-editor__path">
+                    <span class="file-editor__remote-badge">
+                      <svg class="li"><use href="#i-globe" /></svg> Remote
+                    </span>
+                    <span class="file-editor__elevated-mark">
+                      <svg class="li"><use href="#i-shield" /></svg> sudo
+                    </span>
+                    <span class="file-editor__filepath">/etc/nginx/nginx.conf</span>
+                  </div>
+                  <button class="file-editor__save-btn">
+                    <svg class="li"><use href="#i-save" /></svg> Save with sudo
+                  </button>
+                </div>
+                <div class="file-editor__save-error">
+                  <svg class="li"><use href="#i-alert" /></svg>
+                  <span class="file-editor__save-error-text">
+                    Elevated save failed — sudo: incorrect password. Your changes are kept; retry to
+                    re-enter the password.
+                    <span class="callout">F</span>
+                  </span>
+                  <button class="file-editor__save-error-dismiss">
+                    <svg class="li"><use href="#i-x" /></svg>
+                  </button>
+                </div>
+                <div class="file-editor__editor-container">
+                  <span class="ln">1</span>user www-data; <span class="ln">2</span>worker_processes
+                  4; <span class="ln">3</span>pid /run/nginx.pid;<span class="cursor"></span>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">F</span> Reuses the #969 dismissible save-error banner;
+                    the buffer and unsaved changes are preserved. Clicking Save re-opens the sudo
+                    prompt.
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            <!-- State 5: read-only, no shell (SFTP-only) -->
+            <section class="mockup-section">
+              <h2>5 · Read-only, no elevation available (SFTP-only)</h2>
+              <div class="mockup-note">
+                The connection is a pure SFTP connection (no shell channel to run sudo). The
+                read-only state is still surfaced, but no elevate affordance is offered — only an
+                honest explanation and a Download / Save-As fallback.
+              </div>
+              <div class="file-editor">
+                <div class="file-editor__toolbar">
+                  <div class="file-editor__path">
+                    <span class="file-editor__remote-badge">
+                      <svg class="li"><use href="#i-globe" /></svg> Remote
+                    </span>
+                    <span class="file-editor__readonly-badge">
+                      <svg class="li"><use href="#i-lock" /></svg> Read-only
+                    </span>
+                    <span class="file-editor__filepath">/etc/hosts</span>
+                  </div>
+                  <button class="file-editor__save-btn" disabled>
+                    <svg class="li"><use href="#i-save" /></svg> Save
+                  </button>
+                </div>
+                <div class="file-editor__readonly-banner">
+                  <svg class="li"><use href="#i-lock" /></svg>
+                  <span class="file-editor__readonly-banner-text">
+                    You don't have write access (<code>-rw-r--r--</code>). This is an SFTP-only
+                    connection, so sudo elevation isn't available.
+                    <button class="file-editor__elevate-link">Save a copy…</button>
+                    <span class="callout">G</span>
+                  </span>
+                </div>
+                <div class="file-editor__editor-container file-editor__editor-container--readonly">
+                  <span class="ln">1</span>127.0.0.1 localhost <span class="ln">2</span>::1
+                  localhost<span class="cursor"></span>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">G</span> No <strong>Edit with sudo</strong> button —
+                    instead a <strong>Save a copy…</strong> fallback writes to a writable path or
+                    downloads locally. Save stays disabled.
+                  </li>
+                </ul>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <!-- Mockup: Sudo prompt -->
+        <div class="mockup-section">
+          <h3>Mockup — sudo password prompt</h3>
+          <div class="dialog-stage">
+            <!-- State 1: initial prompt -->
+            <section class="mockup-section">
+              <h2>1 · Initial prompt</h2>
+              <div class="mockup-note">
+                Shown when the user triggers <strong>Edit with sudo</strong> or
+                <strong>Save with sudo</strong> and no cached password is available.
+              </div>
+              <div class="menu sudo-dialog">
+                <div class="menu__title">
+                  <svg class="li"><use href="#i-shield" /></svg> Authorize elevated save
+                </div>
+                <div class="sudo-dialog__body">
+                  <div class="sudo-dialog__intro">
+                    termiHub will run <code>sudo</code> on <code>pi@raspberrypi</code> to write
+                    <code>/etc/nginx/nginx.conf</code> as root.
+                    <span class="callout">A</span>
+                  </div>
+                  <div class="sudo-dialog__field">
+                    <span class="sudo-dialog__label">sudo password for pi</span>
+                    <input class="sudo-dialog__input" type="password" value="••••••••" />
+                  </div>
+                  <label class="sudo-dialog__remember sudo-dialog__remember--on">
+                    <span class="check">✓</span>
+                    Remember for this session
+                    <span class="callout">B</span>
+                  </label>
+                </div>
+                <div class="menu__footer">
+                  <button class="btn btn--primary">
+                    <svg class="li"><use href="#i-key" /></svg> Authorize &amp; save
+                  </button>
+                  <button class="btn">Cancel</button>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">A</span> Always names the exact command target (host,
+                    user, file) so the user knows what they are authorizing.
+                  </li>
+                  <li>
+                    <span class="callout">B</span> Default: cache in the in-memory session only. If
+                    the credential store is unlocked, an optional second choice can persist it
+                    (state 3).
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            <!-- State 2: wrong password -->
+            <section class="mockup-section">
+              <h2>2 · Incorrect password</h2>
+              <div class="mockup-note">
+                Sudo rejected the password. The field is highlighted; the dialog stays open for a
+                retry (matches sudo's three-attempt behavior).
+              </div>
+              <div class="menu sudo-dialog">
+                <div class="menu__title">
+                  <svg class="li"><use href="#i-shield" /></svg> Authorize elevated save
+                </div>
+                <div class="sudo-dialog__body">
+                  <div class="sudo-dialog__intro">
+                    termiHub will run <code>sudo</code> on <code>pi@raspberrypi</code> to write
+                    <code>/etc/nginx/nginx.conf</code> as root.
+                  </div>
+                  <div class="sudo-dialog__field">
+                    <span class="sudo-dialog__label">sudo password for pi</span>
+                    <input
+                      class="sudo-dialog__input sudo-dialog__input--error"
+                      type="password"
+                      value="••"
+                    />
+                  </div>
+                  <div class="sudo-dialog__error">
+                    <svg class="li"><use href="#i-alert" /></svg> Sorry, try again (attempt 2 of 3).
+                    <span class="callout">C</span>
+                  </div>
+                </div>
+                <div class="menu__footer">
+                  <button class="btn btn--primary">
+                    <svg class="li"><use href="#i-key" /></svg> Authorize &amp; save
+                  </button>
+                  <button class="btn">Cancel</button>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">C</span> Re-prompt loop. After the third failure the
+                    dialog closes and the editor shows the elevated-save-failed banner
+                    (editor-states state 4). A wrong cached password is discarded automatically.
+                  </li>
+                </ul>
+              </div>
+            </section>
+
+            <!-- State 3: credential store available -->
+            <section class="mockup-section">
+              <h2>3 · Persist offered (credential store unlocked)</h2>
+              <div class="mockup-note">
+                When the master-password credential store is unlocked, the user may opt to persist
+                the sudo password under a dedicated credential key so it survives app restarts.
+              </div>
+              <div class="menu sudo-dialog">
+                <div class="menu__title">
+                  <svg class="li"><use href="#i-shield" /></svg> Authorize elevated save
+                </div>
+                <div class="sudo-dialog__body">
+                  <div class="sudo-dialog__intro">
+                    termiHub will run <code>sudo</code> on <code>pi@raspberrypi</code> to write
+                    <code>/etc/nginx/nginx.conf</code> as root.
+                  </div>
+                  <div class="sudo-dialog__field">
+                    <span class="sudo-dialog__label">sudo password for pi</span>
+                    <input class="sudo-dialog__input" type="password" value="••••••••" />
+                  </div>
+                  <div class="menu__row menu__row--selected">
+                    <span class="radio"></span> Remember for this session only
+                  </div>
+                  <div class="menu__row">
+                    <span class="radio"></span> Save in credential store (until removed)
+                    <span class="callout">D</span>
+                  </div>
+                  <div class="sudo-dialog__locked">
+                    <svg class="li"><use href="#i-lock" /></svg> Credential store: Unlocked
+                  </div>
+                </div>
+                <div class="menu__footer">
+                  <button class="btn btn--primary">
+                    <svg class="li"><use href="#i-key" /></svg> Authorize &amp; save
+                  </button>
+                  <button class="btn">Cancel</button>
+                </div>
+              </div>
+              <div class="legend">
+                <ul>
+                  <li>
+                    <span class="callout">D</span> Persisted under a new
+                    <code>CredentialType::SudoPassword</code> key, keyed by connection id. Hidden /
+                    disabled when the credential store is Locked or Unavailable — only the session
+                    option remains.
+                  </li>
+                </ul>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Workflow A — open a read-only file (shell available)</h3>
+        <ol>
+          <li>User opens <code>/etc/nginx/nginx.conf</code> from the file browser.</li>
+          <li>
+            The editor loads the content <strong>and</strong> probes writability (see Implementation
+            Details).
+          </li>
+          <li>
+            Probe returns <em>not writable</em> → Read-only badge + banner; toolbar shows
+            <strong>Edit with sudo</strong>.
+          </li>
+          <li>User edits the buffer (allowed — edits are local until save).</li>
+          <li>
+            User clicks <strong>Edit with sudo</strong> (or <strong>Save with sudo</strong>) → sudo
+            prompt appears.
+          </li>
+          <li>User enters the password, chooses cache scope, confirms.</li>
+          <li>
+            termiHub writes the buffer to a temp path via SFTP, then runs
+            <code>sudo tee</code>/<code>sudo mv</code> over an exec channel to move it into place.
+          </li>
+          <li>
+            Success → <code>savedContent</code> updates, dirty flag clears, sudo marker stays for
+            the session.
+          </li>
+        </ol>
+
+        <h3>Workflow B — open a read-only file (SFTP-only)</h3>
+        <ol>
+          <li>1–3 as above, except the probe also reports no shell capability.</li>
+          <li>Banner explains elevation is unavailable; Save is disabled.</li>
+          <li>
+            User picks <strong>Save a copy…</strong> → choose a writable remote path or download
+            locally.
+          </li>
+        </ol>
+
+        <h3>Workflow C — writable file (no change)</h3>
+        <p>
+          Probe reports writable (or returns unknown and the optimistic-write succeeds) → editor
+          behaves exactly as today. This concept must not add friction to the common case.
+        </p>
+
+        <h3>Edge cases</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Case</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Permission bits unavailable (<code>permissions: null</code>)</td>
+                <td>
+                  Treat as <strong>unknown</strong>, not read-only. No badge. Fall back to today's
+                  behavior: attempt the write, surface the #969 error if it fails, and
+                  <em>then</em> offer <strong>Retry with sudo</strong> in the error banner.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Owner write bit set but file still unwritable (parent dir, immutable, full disk)
+                </td>
+                <td>
+                  The optimistic probe/write fails; surface via the #969 error banner with a
+                  <strong>Retry with sudo</strong> action. Early detection is best-effort, not a
+                  guarantee.
+                </td>
+              </tr>
+              <tr>
+                <td>User is root already</td>
+                <td>
+                  Write succeeds directly; no elevation needed. The probe sees a writable result, no
+                  badge.
+                </td>
+              </tr>
+              <tr>
+                <td><code>sudo</code> not installed / user not in sudoers</td>
+                <td>
+                  Elevated save fails with a clear message ("sudo: command not found" / "user is not
+                  in the sudoers file"). No retry loop for non-password failures.
+                </td>
+              </tr>
+              <tr>
+                <td><code>sudo</code> requires a TTY (<code>requiretty</code>)</td>
+                <td>
+                  Use <code>sudo -S</code> reading the password from stdin on a non-PTY exec
+                  channel; if the host enforces <code>requiretty</code>, report it and suggest the
+                  user disable it or use the terminal.
+                </td>
+              </tr>
+              <tr>
+                <td>Cached session password becomes wrong (changed remotely)</td>
+                <td>First elevated save fails → discard the cache, re-prompt.</td>
+              </tr>
+              <tr>
+                <td>Connection drops mid-save</td>
+                <td>
+                  Temp file may remain on the remote; the elevated command cleans up its own temp
+                  file on failure (<code>rm -f</code> in the same command). Report the failure via
+                  the #969 banner.
+                </td>
+              </tr>
+              <tr>
+                <td>Scratch buffer saved to a read-only remote path</td>
+                <td>
+                  Same detection applies once a destination is chosen; offer sudo on the chosen
+                  path.
+                </td>
+              </tr>
+              <tr>
+                <td>Symlink to a root-owned file</td>
+                <td>
+                  Permission string is for the link target after <code>stat</code>; elevation writes
+                  the resolved target via <code>sudo tee</code>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Security considerations</h3>
+        <ul>
+          <li>
+            <strong>Password handling:</strong> the sudo password is sent only over the
+            already-authenticated, encrypted SSH channel via <code>sudo -S</code> (stdin). It is
+            never written to the remote disk and never logged.
+          </li>
+          <li>
+            <strong>In-memory by default:</strong> the default cache scope is the in-memory session,
+            cleared on disconnect / app exit. Persistence is opt-in and only when the credential
+            store is unlocked.
+          </li>
+          <li>
+            <strong>Credential store reuse:</strong> persisted sudo passwords use the existing
+            AES-GCM master-password store via a new <code>CredentialType::SudoPassword</code> key,
+            inheriting auto-lock and removal semantics.
+          </li>
+          <li>
+            <strong>Explicit consent:</strong> the prompt always names host, user, and target file,
+            so the user knows exactly what privileged write they authorize. The persistent
+            <code>sudo</code> marker keeps it visible.
+          </li>
+          <li>
+            <strong>Audit:</strong> elevated writes go through <code>sudo</code>, so they appear in
+            the remote host's normal sudo audit log (<code>/var/log/auth.log</code>). termiHub adds
+            a frontend LogViewer DEBUG entry per elevated save (without the password).
+          </li>
+          <li>
+            <strong>No command injection:</strong> the remote path is passed as an argument to
+            <code>tee</code>, never interpolated into a shell string; the temp path is a
+            termiHub-generated name. (See Implementation Details for argument construction.)
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+        <p>
+          The full Mermaid state machines and sequence diagrams for read-only detection on open, the
+          elevated-save flow, and the sudo prompt / retry / failure paths:
+        </p>
+        <ul>
+          <li>
+            Editor writability state machine (open → probe → writable / read-only / elevated).
+          </li>
+          <li>Read-only detection sequence on open.</li>
+          <li>
+            Elevated-save sequence (temp upload → <code>sudo tee</code>/<code>mv</code> → result).
+          </li>
+          <li>Sudo prompt + retry / failure flow.</li>
+        </ul>
+
+        <div class="diagram">
+          <span class="diagram__caption">Editor writability state machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Loading
+    Loading --> Probing: content loaded
+    Probing --> Writable: writable / unknown
+    Probing --> ReadOnlyShell: not writable + shell available
+    Probing --> ReadOnlyNoShell: not writable + SFTP-only
+
+    Writable --> Writable: edit
+    Writable --> [*]: save (direct) OK
+    Writable --> SaveFailed: save (direct) fails
+
+    ReadOnlyShell --> ReadOnlyShell: edit (buffer only)
+    ReadOnlyShell --> Prompting: Edit/Save with sudo
+    Prompting --> Elevated: password accepted
+    Prompting --> ReadOnlyShell: cancel
+    Prompting --> Prompting: wrong password (retry &lt; 3)
+    Prompting --> SaveFailed: 3 failures / non-password error
+
+    Elevated --> Elevated: edit / save OK
+    Elevated --> SaveFailed: elevated save fails
+
+    ReadOnlyNoShell --> ReadOnlyNoShell: edit (buffer only)
+    ReadOnlyNoShell --> SaveCopy: Save a copy...
+    SaveCopy --> [*]: written to writable path / downloaded
+
+    SaveFailed --> ReadOnlyShell: dismiss (cached pw cleared if wrong)
+    SaveFailed --> Elevated: dismiss (still elevated)
+    SaveFailed --> Writable: dismiss (was direct save)
+          </pre>
+        </div>
+        <p>Notes:</p>
+        <ul>
+          <li>
+            <strong>Unknown</strong> writability (no permission bits, no probe) collapses into
+            <code>Writable</code> — today's optimistic behavior. A failed direct save then routes to
+            <code>SaveFailed</code>, whose banner offers
+            <strong>Retry with sudo</strong> (transition into <code>Prompting</code>) when a shell
+            is available.
+          </li>
+        </ul>
+
+        <div class="diagram">
+          <span class="diagram__caption">Read-only detection on open</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant FE as FileEditor.tsx
+    participant API as api.ts
+    participant CMD as commands/files.rs
+    participant SFTP as "files/sftp.rs (russh-sftp)"
+
+    U->>FE: open /etc/nginx/nginx.conf
+    par load content
+        FE->>API: sftpReadFileContent(session, path)
+        API->>CMD: sftp_read_file_content
+        CMD->>SFTP: read_file_content()
+        SFTP-->>FE: file content
+    and probe writability
+        FE->>API: sftpCheckWritable(session, path)
+        API->>CMD: sftp_check_writable
+        CMD->>SFTP: "open(path, WRITE) then close"
+        alt server: PERMISSION_DENIED
+            SFTP-->>FE: writable = false
+        else open ok
+            SFTP-->>FE: writable = true
+        else cannot determine
+            SFTP-->>FE: writable = unknown
+        end
+    end
+
+    alt writable = false and shell available
+        FE-->>U: Read-only badge + banner + "Edit with sudo"
+    else writable = false and SFTP-only
+        FE-->>U: Read-only badge + banner + "Save a copy..."
+    else
+        FE-->>U: normal editor (no badge)
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Elevated save flow</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant FE as FileEditor.tsx
+    participant DLG as SudoPromptDialog
+    participant API as api.ts
+    participant CMD as commands/files.rs
+    participant SFTP as files/sftp.rs
+    participant SSH as "SshSession (exec channel)"
+    participant H as Remote host
+
+    U->>FE: Save with sudo
+    alt no cached password
+        FE->>DLG: "open prompt (host, user, file)"
+        DLG-->>FE: password + cache scope
+    else cached password
+        FE->>FE: use cached password
+    end
+
+    FE->>API: sftpWriteFileContentElevated(session, path, content, pw)
+    API->>CMD: sftp_write_file_content_elevated
+    CMD->>SFTP: write buffer to /tmp/termihub-&lt;uuid&gt;
+    SFTP->>H: "SFTP create + write_all (temp)"
+    CMD->>SSH: "exec: sudo -S -p '' sh -c 'cat $TMP > $DEST && rm -f $TMP'"
+    CMD->>SSH: "stdin: &lt;password&gt;"
+    SSH->>H: run as root
+    alt exit 0
+        H-->>FE: ok
+        FE->>FE: savedContent = content; keep sudo marker
+        opt cache scope = credential store
+            FE->>CMD: store SudoPassword credential
+        end
+        FE-->>U: saved
+    else incorrect password
+        H-->>FE: "error: incorrect password"
+        FE->>FE: discard cached pw
+        FE->>DLG: "re-open prompt (retry)"
+    else other failure
+        H-->>FE: "error (sudo not permitted / requiretty / write error)"
+        SSH->>H: "rm -f $TMP (cleanup)"
+        FE-->>U: #969 save-error banner (no retry loop)
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Sudo prompt + retry / failure</span>
+          <pre class="mermaid">
+flowchart TD
+    Start([Save with sudo]) --> Cached{Cached password?}
+    Cached -->|yes| Try[Run elevated save]
+    Cached -->|no| Prompt[Show sudo prompt]
+    Prompt --> Cancel{Cancel?}
+    Cancel -->|yes| Abort([Back to read-only state])
+    Cancel -->|no| Try
+    Try --> Result{Result}
+    Result -->|ok| Done([Saved · sudo marker stays])
+    Result -->|incorrect password| Attempts{attempts &lt; 3?}
+    Attempts -->|yes| Prompt
+    Attempts -->|no| Fail
+    Result -->|"sudo not permitted / requiretty / write error"| Fail["#969 save-error banner"]
+    Fail --> Abort
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Capability + cache-scope decision</span>
+          <pre class="mermaid">
+flowchart LR
+    RO{File read-only?} -->|no| Direct[Direct save]
+    RO -->|yes| Shell{Shell / exec available?}
+    Shell -->|no| Copy[SFTP-only: Save a copy / download]
+    Shell -->|yes| Store{Credential store unlocked?}
+    Store -->|yes| Choice[Offer: session OR persist]
+    Store -->|no| SessionOnly[Session-only cache]
+    Choice --> Elevate[Elevated save]
+    SessionOnly --> Elevate
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at the concept's base commit. References real modules so
+          implementation can follow directly. The concept is authoritative; if a constraint makes
+          the design wrong, change the concept (not silently the code).
+        </p>
+
+        <h3>Current write path (today)</h3>
+        <div class="diagram">
+          <span class="diagram__caption">Current SFTP write path</span>
+          <pre class="mermaid">
+flowchart LR
+    FE["FileEditor.tsx<br/>handleSave()"] --> API["api.ts<br/>sftpWriteFileContent()"]
+    API --> CMD["commands/files.rs<br/>sftp_write_file_content"]
+    CMD --> SESS["files/sftp.rs<br/>SftpSession::write_file_content()"]
+    SESS --> RUSSH["russh-sftp<br/>create() + write_all()"]
+          </pre>
+        </div>
+
+        <p>Key facts gathered from the code:</p>
+        <ul>
+          <li>
+            <strong>Frontend editor:</strong> <code>src/components/FileEditor/FileEditor.tsx</code>.
+            <code>handleSave()</code> calls
+            <code>sftpWriteFileContent(meta.sftpSessionId, meta.filePath, content)</code>. Save
+            errors already surface in the dismissible <code>.file-editor__save-error</code> banner
+            via <code>formatSaveError()</code> (#969). The toolbar already renders a
+            <code>Remote</code> badge — the read-only badge slots in beside it.
+          </li>
+          <li>
+            <strong>Tauri command:</strong> <code>src-tauri/src/commands/files.rs</code> —
+            <code>sftp_write_file_content(session_id, remote_path, content)</code> and
+            <code>sftp_read_file_content(...)</code>, plus <code>sftp_list_dir</code>,
+            <code>sftp_stat</code>, <code>sftp_download</code>.
+          </li>
+          <li>
+            <strong>SFTP session:</strong> <code>src-tauri/src/files/sftp.rs</code> —
+            <code>SftpSession</code> wraps a <code>russh_sftp</code> client and the underlying
+            <code>SshSession</code>; <code>SftpManager</code> keys sessions by UUID. Write goes
+            through <code>write_file_content</code> → <code>write_bytes</code> (<code
+              >sftp.create()</code
+            >
+            + <code>write_all</code>).
+          </li>
+          <li>
+            <strong>File metadata:</strong> <code>core/src/files/mod.rs</code>
+            <code
+              >FileEntry { name, path, is_directory, size, modified, permissions:
+              Option&lt;String&gt; }</code
+            >. <code>permissions</code> is the <code>rwxrwxrwx</code> string from
+            <code>core/src/files/utils.rs::format_permissions(u32)</code>.
+            <strong>No uid/gid</strong> is exposed by <code>russh-sftp</code>.
+          </li>
+          <li>
+            <strong>Frontend types:</strong>
+            <code>src/types/connection.ts::FileEntry</code> (mirrors the Rust struct) and
+            <code
+              >src/types/terminal.ts::EditorTabMeta { filePath, isRemote, sftpSessionId?, scratch?,
+              scratchContent? }</code
+            >.
+          </li>
+          <li>
+            <strong>Credential store:</strong> <code>src-tauri/src/credential/</code> —
+            <code>CredentialStore</code> trait
+            (<code>get</code>/<code>set</code>/<code>remove</code>),
+            <code>CredentialKey { connection_id, credential_type }</code>,
+            <code>CredentialType { Password, KeyPassphrase }</code>, <code>CredentialManager</code>
+            with master-password AES-GCM store and auto-lock.
+          </li>
+          <li>
+            <strong>SSH exec capability:</strong> <code>core/src/backends/ssh/</code> — the same
+            <code>SshSession</code> (<code>russh::client::Handle</code>) can open additional
+            channels. SFTP uses its own channel/subsystem; an <strong>exec channel</strong> (<code
+              >channel_open_session()</code
+            >
+            + <code>channel.exec(...)</code>) on the same connection runs remote commands. The
+            monitoring provider already uses this pattern (<code
+              >core/src/backends/ssh/monitoring.rs</code
+            >
+            runs periodic <code>stat</code> via an exec helper). This is the hook for running
+            <code>sudo</code>.
+          </li>
+        </ul>
+
+        <h3>1. Early read-only detection</h3>
+        <p>
+          <strong>Step 1 — surface writability to the frontend.</strong> Add an optional,
+          best-effort writability hint. Two layers:
+        </p>
+        <ul>
+          <li>
+            <strong>Cheap (permission bits):</strong> extend <code>FileEntry</code> with
+            <code>writable: Option&lt;bool&gt;</code> derived from the permission string. Because
+            <code>russh-sftp</code> gives no uid/gid, the backend cannot know if the connecting user
+            <em>is</em> the owner. The conservative rule: parse the <code>rwxrwxrwx</code> string
+            and treat the file as <strong>not writable</strong> only when <em>none</em> of
+            owner/group/other has the write bit (i.e. the file is read-only for everyone, e.g.
+            <code>-r--r--r--</code> or <code>-rw-r--r--</code> owned by another user). This is a
+            hint, not a guarantee — see Step 2.
+          </li>
+          <li>
+            <strong>Accurate (probe):</strong> add an
+            <code>sftp_check_writable(session_id, remote_path)</code> command. Most robust option is
+            an <strong>SFTP <code>open</code> for write without truncate</strong> (open the existing
+            file with write flags and immediately close, no data written) — if the server returns
+            <code>SFTP_FX_PERMISSION_DENIED</code> the file is not writable for this user; success
+            means writable. This sidesteps the uid/gid gap and works on SFTP-only connections.
+            Implement in <code>src-tauri/src/files/sftp.rs</code> using the
+            <code>russh_sftp</code> open-flags API.
+          </li>
+        </ul>
+        <p>
+          The probe (accurate) is preferred when available; the permission bits (cheap) drive the
+          file browser's at-a-glance display without an extra round-trip.
+        </p>
+        <p>
+          <strong>Step 2 — wire into the editor.</strong> <code>FileEditor.tsx</code> calls
+          <code>sftp_check_writable</code> in the load <code>useEffect</code> (in parallel with the
+          existing read). New state <code>writable: boolean | "unknown"</code>. When
+          <code>false</code>, render the read-only badge + banner and switch the toolbar action set.
+          <code>"unknown"</code> keeps today's optimistic behavior. Add
+          <code>frontendLog("file_editor", ...)</code> traces for the probe result.
+        </p>
+
+        <h3>2. Elevated (sudo) save</h3>
+        <p>
+          <strong>Capability detection.</strong> The editor needs to know whether the file
+          connection has an associated shell. Add a backend helper that reports, for a given SFTP
+          session / connection, whether an exec channel can be opened on the same
+          <code>SshSession</code>. SFTP-only connections (no SSH credentials for a shell, or a relay
+          without exec) report <code>false</code> → SFTP-only fallback.
+        </p>
+        <p>
+          <strong>Elevated write command.</strong> Add
+          <code
+            >sftp_write_file_content_elevated(session_id, remote_path, content, sudo_password)</code
+          >
+          in <code>src-tauri/src/commands/files.rs</code>, implemented in
+          <code>files/sftp.rs</code>:
+        </p>
+        <ol>
+          <li>
+            Write the buffer to a termiHub-generated temp path under a writable dir (e.g.
+            <code>/tmp/termihub-&lt;uuid&gt;</code>) via the normal SFTP <code>create()</code> +
+            <code>write_all()</code>.
+          </li>
+          <li>
+            Open an exec channel on the same <code>SshSession</code> and run a single composed
+            command that moves the temp file into place as root and cleans up, reading the password
+            from stdin:
+            <pre><code>sudo -S -p '' /bin/sh -c 'cat "$TMP" &gt; "$DEST" &amp;&amp; rm -f "$TMP"'</code></pre>
+            The password is written to the channel's stdin (one line). <code>$DEST</code>/<code
+              >$TMP</code
+            >
+            are passed as a here-doc / single-quoted literals built in Rust (never
+            string-interpolated from user text) to avoid injection. Using
+            <code>cat &gt; dest</code> (rather than <code>mv</code>) preserves the destination
+            file's existing owner, mode, and ACLs.
+          </li>
+          <li>
+            Inspect the exit status and stderr: success → ok; <code>incorrect password</code> →
+            typed error so the frontend can re-prompt; other → pass through to the #969 banner.
+            Always attempt <code>rm -f $TMP</code> on the remote even on failure.
+          </li>
+        </ol>
+        <p>
+          This reuses the existing exec pattern from
+          <code>core/src/backends/ssh/monitoring.rs</code>; factor a small
+          <code>ssh_exec_with_stdin</code> helper if one does not already exist.
+        </p>
+        <p>
+          <strong>Frontend.</strong> <code>api.ts</code> gains
+          <code>sftpWriteFileContentElevated(...)</code>. A new
+          <code>SudoPromptDialog</code> component (built like <code>UnsavedChangesDialog</code> in
+          <code>src/components/ConnectionEditor/</code>) collects the password and cache choice.
+          <code>FileEditor.tsx</code> gains <code>elevated: boolean</code> +
+          <code>sudoPassword</code> (held only in component state / store, never persisted to disk
+          by the component) and routes <code>handleSave</code> to the elevated command when in
+          elevated mode. On <code>incorrect password</code>, re-open the prompt; on three failures,
+          surface via the existing save-error banner.
+        </p>
+
+        <h3>3. Sudo password caching</h3>
+        <ul>
+          <li>
+            <strong>Session cache:</strong> keep the password in the backend session/connection
+            state (or a short-lived in-memory map keyed by connection id), cleared on disconnect.
+            Never serialized.
+          </li>
+          <li>
+            <strong>Persistent cache (opt-in):</strong> add
+            <code>CredentialType::SudoPassword</code> to
+            <code>src-tauri/src/credential/types.rs</code>; store/retrieve via the existing
+            <code>CredentialManager</code> keyed by <code>connection_id</code>. Only offered when
+            <code>CredentialStore::status()</code> is <code>Unlocked</code>. Removed with the
+            connection's other credentials via <code>remove_all_for_connection</code>.
+          </li>
+        </ul>
+
+        <h3>Affected modules summary</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>File(s)</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Writability hint</td>
+                <td><code>core/src/files/mod.rs</code>, <code>core/src/files/utils.rs</code></td>
+                <td>
+                  Add <code>FileEntry.writable: Option&lt;bool&gt;</code> + permission-bit
+                  derivation
+                </td>
+              </tr>
+              <tr>
+                <td>Probe + elevated write</td>
+                <td><code>src-tauri/src/files/sftp.rs</code></td>
+                <td>
+                  <code>check_writable</code>, <code>write_file_content_elevated</code>,
+                  exec-with-stdin helper
+                </td>
+              </tr>
+              <tr>
+                <td>Capability detection</td>
+                <td><code>src-tauri/src/files/sftp.rs</code> / ssh backend</td>
+                <td>report exec-channel availability per session</td>
+              </tr>
+              <tr>
+                <td>Commands</td>
+                <td><code>src-tauri/src/commands/files.rs</code></td>
+                <td>
+                  <code>sftp_check_writable</code>, <code>sftp_write_file_content_elevated</code>,
+                  capability query
+                </td>
+              </tr>
+              <tr>
+                <td>Credential type</td>
+                <td><code>src-tauri/src/credential/types.rs</code></td>
+                <td><code>CredentialType::SudoPassword</code></td>
+              </tr>
+              <tr>
+                <td>Frontend API</td>
+                <td><code>src/services/api.ts</code></td>
+                <td>new wrappers</td>
+              </tr>
+              <tr>
+                <td>Frontend types</td>
+                <td><code>src/types/connection.ts</code>, <code>src/types/terminal.ts</code></td>
+                <td><code>FileEntry.writable</code>, editor elevated state</td>
+              </tr>
+              <tr>
+                <td>Editor UI</td>
+                <td><code>src/components/FileEditor/FileEditor.tsx</code> + <code>.css</code></td>
+                <td>badge, banner, elevate button, sudo marker</td>
+              </tr>
+              <tr>
+                <td>Sudo dialog</td>
+                <td><code>src/components/FileEditor/SudoPromptDialog.tsx</code> (new)</td>
+                <td>password prompt + cache choice</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Testing strategy (for the eventual implementation)</h3>
+        <ul>
+          <li>
+            <strong>Rust unit:</strong> <code>format_permissions</code> → <code>writable</code>
+            derivation; elevated-command composition (argument quoting, temp-path generation)
+            without a live host.
+          </li>
+          <li>
+            <strong>Integration (Docker):</strong> <code>tests/docker/</code> already has SSH
+            variants; add a root-owned file and assert: probe reports not-writable; elevated save
+            with correct password succeeds; wrong password fails with the typed error; SFTP-only
+            variant reports no-shell.
+          </li>
+          <li>
+            <strong>Frontend (Vitest):</strong> <code>FileEditor</code> renders the read-only
+            badge/banner when <code>writable=false</code>, routes save to the elevated path in
+            elevated mode, and re-prompts on <code>incorrect password</code>.
+          </li>
+          <li>
+            <strong>Manual:</strong> macOS (no E2E) — verify the prompt, marker, and retry against a
+            real Raspberry Pi; document steps in <code>docs/testing.md</code>.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger — Elevated SFTP Editing <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            This ledger is maintained by the <code>/sync-concept elevated-sftp-editing</code> skill.
+            It records the last commit at which the concept artifacts and the code were reconciled,
+            plus any open divergences. The concept is the source of truth; code is fixed to match by
+            default.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> 2026-07-18 (status reconciliation) · previously
+          <code>6e5d9586</code> at concept creation · <strong>Status:</strong> converged (no open
+          functional gaps). The elevated-sudo epic
+          <a href="https://github.com/armaxri/termiHub/issues/1323">#1323</a> closed fully-delivered;
+          concept moved <code>backlog/</code> → <code>implemented/</code>.
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colspan="5">None open — all four divergences resolved; see Resolved below.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Notes / known constraints</h3>
+        <ul>
+          <li>
+            <code>russh-sftp</code> (v2.3) exposes permission bits but <strong>no uid/gid</strong>,
+            so writability detection relies on permission bits plus a best-effort SFTP write-open
+            probe rather than true ownership. The concept already accounts for this (<code
+              >writable: Option&lt;bool&gt;</code
+            >
+            with an <code>unknown</code> state).
+          </li>
+          <li>
+            The mockups add proposed BEM classes (<code>.file-editor__readonly-badge</code>,
+            <code>.file-editor__elevate-btn</code>, <code>.file-editor__elevated-mark</code>,
+            <code>.file-editor__readonly-banner</code>) inline; when implemented these should be
+            moved into <code>src/components/FileEditor/FileEditor.css</code> and mirrored back into
+            <code>docs/concepts/_assets/mockup.css</code>.
+          </li>
+        </ul>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>2026-07-18</td>
+                <td>1</td>
+                <td>
+                  Early read-only detection — the write-open probe (#1324/#1325) sets
+                  <code>writable</code> (<code>true</code>/<code>false</code>/<code>"unknown"</code>)
+                  in <code>src/components/FileEditor/FileEditor.tsx</code>; <code>false</code>
+                  surfaces the read-only badge and dismissible banner.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-18</td>
+                <td>2</td>
+                <td>
+                  Elevated (sudo) save — <code>sftpWriteFileContentElevated</code> /
+                  <code>ElevatedWriteResult</code> via the exec channel (#1328) in
+                  <code>src-tauri/src/files/sftp.rs</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-18</td>
+                <td>3</td>
+                <td>
+                  <code>CredentialType::SudoPassword</code> shipped in
+                  <code>src-tauri/src/credential/types.rs</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-18</td>
+                <td>4</td>
+                <td>
+                  <code>SudoPromptDialog</code> shipped at
+                  <code>src/components/FileEditor/SudoPromptDialog.tsx</code>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
