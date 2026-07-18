@@ -317,6 +317,55 @@ mod tests {
     }
 
     #[test]
+    fn prune_keeps_update_when_staged_binary_differs_in_size() {
+        // Different sizes settle it via the cheap metadata check alone (no bytes
+        // are read). A genuinely newer staged build is a different length, so
+        // this is the common production shape.
+        let tmp = tempfile::tempdir().unwrap();
+        let staged = tmp.path().join("staged-agent");
+        let running = tmp.path().join("running-agent");
+        std::fs::write(&staged, b"NEW-BINARY-THAT-IS-LONGER").unwrap();
+        std::fs::write(&running, b"OLD").unwrap();
+
+        let mut state = state_with(pending("9.9.9", &staged));
+        assert!(!prune_applied_pending_update(
+            &mut state,
+            "0.1.0",
+            Some(&running)
+        ));
+        assert!(state.update.pending_update.is_some());
+    }
+
+    #[test]
+    fn prune_verdict_matches_across_multi_chunk_binaries() {
+        // Binaries larger than one read buffer exercise the streaming compare:
+        // identical multi-chunk contents clear; a single differing byte late in
+        // an otherwise-identical, same-length binary keeps.
+        let tmp = tempfile::tempdir().unwrap();
+        let running = tmp.path().join("running-agent");
+        let identical = tmp.path().join("staged-identical");
+        let differ_late = tmp.path().join("staged-differ-late");
+
+        let mut base = vec![0xABu8; 200 * 1024];
+        for (i, b) in base.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        std::fs::write(&running, &base).unwrap();
+        std::fs::write(&identical, &base).unwrap();
+        let mut late = base.clone();
+        *late.last_mut().unwrap() ^= 0xFF; // same length, last byte differs
+        std::fs::write(&differ_late, &late).unwrap();
+
+        let mut state = state_with(pending("9.9.9", &identical));
+        assert!(prune_applied_pending_update(&mut state, "0.1.0", Some(&running)));
+        assert!(state.update.pending_update.is_none());
+
+        let mut state = state_with(pending("9.9.9", &differ_late));
+        assert!(!prune_applied_pending_update(&mut state, "0.1.0", Some(&running)));
+        assert!(state.update.pending_update.is_some());
+    }
+
+    #[test]
     fn prune_keeps_update_with_unparsable_version_and_different_binary() {
         // `agent.request_deferred_update` may stage a path with no version at
         // all. With nothing to compare and different bytes running, keep it.
