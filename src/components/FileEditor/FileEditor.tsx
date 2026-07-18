@@ -36,7 +36,9 @@ import {
   sftpCheckWritable,
   sftpDownload,
   sftpRealpath,
+  sftpStat,
   sessionReadFile,
+  sessionStat,
   sessionWriteFile,
   storeCredential,
   resolveCredential,
@@ -53,6 +55,22 @@ import "./FileEditor.css";
 
 /** Maximum number of sudo-password attempts before falling back to the error banner. */
 const MAX_SUDO_ATTEMPTS = 3;
+
+/**
+ * Poll interval for remote (SFTP / session) editor tabs' external-change
+ * detection (#1627). Remote transports cannot use OS file-watching (which backs
+ * the local path in #1620), so the open file is re-`stat`ed on this interval and
+ * its `modified`/`size` compared to spot an out-of-band change.
+ *
+ * Chosen to stay lightweight: a stat is a single metadata round-trip, polling is
+ * confined to the *focused, visible* editor tab (paused when the window is not
+ * focused — see the poll effect), and only the currently-open file is watched.
+ * At 4s that is 0.25 req/s per open remote editor — negligible next to
+ * interactive SFTP browsing — while still reflecting a teammate's edit within a
+ * few seconds. Kept a single constant so a future setting could gate/tune it
+ * (the owner reserves whether remote polling should be opt-in — see #1627).
+ */
+export const REMOTE_POLL_INTERVAL_MS = 4000;
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
@@ -449,14 +467,30 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     }
   }, []);
 
-  // Reflect the current on-disk contents of a locally-watched file (#1620).
-  // Invoked (debounced) when the OS reports the open file changed underneath us.
+  // Read the current on-disk contents of the open file via whichever transport
+  // backs the tab (local / SFTP / session layer). Used by both the external-
+  // change reload paths and the "Reload from disk" button so local (#1620) and
+  // remote (#1627) files share one read path.
+  const readEffectiveContent = useCallback(async (): Promise<string> => {
+    if (meta.isRemote && meta.sftpSessionId) {
+      return await sftpReadFileContent(meta.sftpSessionId, effectivePath);
+    }
+    if (meta.isRemote && meta.sessionBrowser) {
+      return await sessionReadFileContent(meta.sessionBrowser.sessionId, effectivePath);
+    }
+    return await localReadFile(effectivePath);
+  }, [meta.isRemote, meta.sftpSessionId, meta.sessionBrowser, effectivePath]);
+
+  // Reflect the current on-disk contents when the open file changed underneath
+  // us — driven by the OS watcher for local files (#1620) and by the re-stat
+  // poll for remote files (#1627). Both feed the same clean-reload / conflict
+  // decision below.
   const reloadFromDisk = useCallback(async () => {
-    // Only local, on-disk editor buffers are watched.
-    if (meta.isRemote || isUnsavedScratch) return;
+    // A scratch buffer that was never saved has no on-disk counterpart.
+    if (isUnsavedScratch) return;
     let disk: string;
     try {
-      disk = await localReadFile(effectivePath);
+      disk = await readEffectiveContent();
     } catch (err) {
       frontendLog(
         "file_editor",
@@ -489,25 +523,18 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     // Happy path: the buffer is clean, so reflect the new content silently.
     applyDiskContent(disk);
     frontendLog("file_editor", `reloaded tab ${tabId} from external on-disk change`);
-  }, [
-    meta.isRemote,
-    isUnsavedScratch,
-    effectivePath,
-    savedContent,
-    content,
-    tabId,
-    applyDiskContent,
-  ]);
+  }, [isUnsavedScratch, readEffectiveContent, savedContent, content, tabId, applyDiskContent]);
 
-  // Banner action "Reload from disk" (#1620): discard the unsaved buffer edits
-  // and load the on-disk version. Reuses the clean-case reload path; the only
-  // difference is it proceeds despite a dirty buffer. Once applied, the buffer
-  // matches disk (clean), which also clears the conflict banner.
+  // Banner action "Reload from disk" (#1620, #1627): discard the unsaved buffer
+  // edits and load the on-disk version (local or remote). Reuses the clean-case
+  // read path; the only difference is it proceeds despite a dirty buffer. Once
+  // applied, the buffer matches disk (clean), which also clears the conflict
+  // banner.
   const handleReloadFromDisk = useCallback(async () => {
-    if (meta.isRemote || isUnsavedScratch) return;
+    if (isUnsavedScratch) return;
     let disk: string;
     try {
-      disk = await localReadFile(effectivePath);
+      disk = await readEffectiveContent();
     } catch (err) {
       frontendLog(
         "file_editor",
@@ -520,7 +547,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     applyDiskContent(disk);
     setDiskChangedWhileDirty(false);
     frontendLog("file_editor", `reloaded tab ${tabId} from disk, discarding unsaved edits`);
-  }, [meta.isRemote, isUnsavedScratch, effectivePath, tabId, applyDiskContent]);
+  }, [isUnsavedScratch, readEffectiveContent, tabId, applyDiskContent]);
 
   // Banner action "Keep my changes" (#1620): dismiss the conflict banner and
   // ignore the on-disk change. Clears the pending-conflict state so a later
@@ -537,6 +564,15 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // calls the latest reload logic without re-subscribing on every keystroke.
   const reloadFromDiskRef = useRef(reloadFromDisk);
   reloadFromDiskRef.current = reloadFromDisk;
+
+  // Last-seen remote stat (mtime + size) for the external-change poll (#1627),
+  // keyed to the file identity so it survives visibility toggles (returning to a
+  // tab detects a change that landed while it was hidden) but resets when the
+  // tab points at a different file.
+  const remoteBaselineRef = useRef<{
+    key: string;
+    value: { modified: string; size: number } | null;
+  }>({ key: "", value: null });
 
   // Watch the open local file for external on-disk changes and reflect them
   // (#1620). Remote (SFTP / session) files use their own transports and are not
@@ -586,6 +622,98 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       });
     };
   }, [meta.isRemote, isUnsavedScratch, effectivePath, watchId, tabId]);
+
+  // Poll a remote (SFTP / session) file for external on-disk changes (#1627).
+  // Remote transports can't OS-watch, so we re-`stat` the open file on an
+  // interval and compare mtime/size to the last-seen baseline; a change routes
+  // through the same reload/conflict path (#1620) the local watcher uses. Kept
+  // lightweight: only the focused, *visible* tab polls, it pauses while the
+  // window is not focused, and a stat is a single metadata round-trip. A
+  // detected change re-reads the full file (via `reloadFromDisk`) only then.
+  useEffect(() => {
+    if (!meta.isRemote || isUnsavedScratch || !isVisible) return;
+    const sftpSessionId = meta.sftpSessionId;
+    const sessionId = meta.sessionBrowser?.sessionId;
+    if (!sftpSessionId && !sessionId) return;
+    const filePath = effectivePath;
+
+    // Reset the baseline when the tab now points at a different remote file;
+    // preserve it across visibility toggles (same identity) so a change that
+    // landed while the tab was hidden is caught on the next visible poll.
+    const identityKey = `${sftpSessionId ?? ""}|${sessionId ?? ""}|${filePath}`;
+    if (remoteBaselineRef.current.key !== identityKey) {
+      remoteBaselineRef.current = { key: identityKey, value: null };
+    }
+
+    let disposed = false;
+
+    const statFile = async (): Promise<{ modified: string; size: number } | null> => {
+      try {
+        const entry = sftpSessionId
+          ? await sftpStat(sftpSessionId, filePath)
+          : await sessionStat(sessionId!, filePath);
+        return { modified: entry.modified, size: entry.size };
+      } catch (err) {
+        frontendLog(
+          "file_editor",
+          `remote stat poll failed for tab ${tabId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return null;
+      }
+    };
+
+    const tick = async () => {
+      if (disposed) return;
+      // Pause while the window is not focused — no point polling a remote file
+      // the user isn't looking at. (jsdom / older envs may lack hasFocus.)
+      if (typeof document !== "undefined" && typeof document.hasFocus === "function") {
+        if (!document.hasFocus()) return;
+      }
+      const current = await statFile();
+      if (disposed || !current) return;
+      const baseline = remoteBaselineRef.current.value;
+      // Seed the baseline on the first successful stat; only later changes fire.
+      if (baseline === null) {
+        remoteBaselineRef.current = { key: identityKey, value: current };
+        return;
+      }
+      if (current.modified !== baseline.modified || current.size !== baseline.size) {
+        remoteBaselineRef.current = { key: identityKey, value: current };
+        frontendLog(
+          "file_editor",
+          `remote external change detected for tab ${tabId} (mtime/size changed)`
+        );
+        void reloadFromDiskRef.current();
+      }
+    };
+
+    // Seed immediately so the first real detection latency is one interval, then
+    // poll, and re-check the moment the window regains focus.
+    void tick();
+    const interval = setInterval(() => {
+      void tick();
+    }, REMOTE_POLL_INTERVAL_MS);
+    const onFocus = () => {
+      void tick();
+    };
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [
+    meta.isRemote,
+    meta.sftpSessionId,
+    meta.sessionBrowser,
+    isUnsavedScratch,
+    isVisible,
+    effectivePath,
+    tabId,
+  ]);
 
   // A file that failed to load (e.g. the connection dropped) shows the
   // error-only view, which doesn't render the UnsavedChangesDialog. If such a

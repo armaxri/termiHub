@@ -260,6 +260,20 @@ pub async fn session_read_file(
     manager.read_file(&session_id, &path).await
 }
 
+/// Get metadata for a single file via a session's file browser capability.
+///
+/// Backs the editor's remote external-change detection (#1627): the frontend
+/// re-stats the open file on an interval and compares `modified`/`size`.
+#[tauri::command]
+pub async fn session_stat(
+    session_id: String,
+    path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<FileEntry, TerminalError> {
+    debug!(session_id, path, "Session file stat");
+    manager.stat_file(&session_id, &path).await
+}
+
 /// Write a file via a session's file browser capability.
 #[tauri::command]
 pub async fn session_write_file(

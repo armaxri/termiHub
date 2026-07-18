@@ -572,6 +572,31 @@ impl SessionManager {
             .map_err(|e| TerminalError::RemoteError(e.to_string()))
     }
 
+    /// Get metadata for a single file via a session's file browser capability.
+    ///
+    /// Backs the editor's remote external-change detection (#1627): the frontend
+    /// polls this to compare `modified`/`size` against the last-seen values. It
+    /// routes through the same `connection.files.stat` RPC the file browser
+    /// already uses — no new protocol.
+    pub async fn stat_file(
+        &self,
+        session_id: &str,
+        path: &str,
+    ) -> Result<FileEntry, TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let browser = entry
+            .connection
+            .file_browser()
+            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
+        browser
+            .stat(path)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
     /// Write a file via a session's file browser capability.
     pub async fn write_file(
         &self,
