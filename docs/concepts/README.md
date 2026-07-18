@@ -101,17 +101,17 @@ These features have something built, but there are meaningful gaps. See the
 
 Not started yet — realistic and planned for the near to medium term.
 
-| Document                                                                                               | Summary                                                                                      |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones |
-| [broadcast-input.html](backlog/broadcast-input.html)                                                   | Synchronised input across multiple terminals simultaneously                                  |
-| [embedded-unix-windows.html](backlog/embedded-unix-windows.html)                                       | Bundle BusyBox-w32 + Unix tools with the Windows build                                       |
-| [macos-code-signing-notarization.md](backlog/macos-code-signing-notarization.md)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)          |
-| [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                   |
+| Document                                                                                               | Summary                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones                                                           |
+| [broadcast-input.html](backlog/broadcast-input.html)                                                   | Synchronised input across multiple terminals simultaneously                                                                                            |
+| [embedded-unix-windows.html](backlog/embedded-unix-windows.html)                                       | Bundle BusyBox-w32 + Unix tools with the Windows build                                                                                                 |
+| [macos-code-signing-notarization.md](backlog/macos-code-signing-notarization.md)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)                                                                    |
+| [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                                                                             |
 | [remote-desktop-sessions.html](backlog/remote-desktop-sessions.html)                                   | **Unified** graphical remote-desktop concept — VNC + RDP behind one shared user-facing layer (Rust-side decode); supersedes the two below (epic #1678) |
-| [rdp-sessions.html](backlog/rdp-sessions.html)                                                         | RDP client sessions — **superseded** by `remote-desktop-sessions.html`; kept for #513 history |
-| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                     |
-| [vnc-sessions.html](backlog/vnc-sessions.html)                                                         | VNC client sessions — **superseded** by `remote-desktop-sessions.html`; kept for #514 history |
+| [rdp-sessions.html](backlog/rdp-sessions.html)                                                         | RDP client sessions — **superseded** by `remote-desktop-sessions.html`; kept for #513 history                                                          |
+| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                                                                               |
+| [vnc-sessions.html](backlog/vnc-sessions.html)                                                         | VNC client sessions — **superseded** by `remote-desktop-sessions.html`; kept for #514 history                                                          |
 
 ---
 

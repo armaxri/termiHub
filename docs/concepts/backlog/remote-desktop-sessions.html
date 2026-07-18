@@ -353,10 +353,7 @@
         <h1>Unified Graphical Remote-Desktop Sessions (VNC + RDP)</h1>
         <div class="concept-meta">
           <span class="concept-status">Backlog · not implemented</span>
-          <span
-            >Epic:
-            <a href="https://github.com/armaxri/termiHub/issues/1678">#1678</a></span
-          >
+          <span>Epic: <a href="https://github.com/armaxri/termiHub/issues/1678">#1678</a></span>
           <span
             >Concept issue:
             <a href="https://github.com/armaxri/termiHub/issues/1679">#1679</a></span
@@ -411,8 +408,8 @@
           Add built-in <strong>graphical remote-desktop sessions</strong> to termiHub for both
           <strong>VNC</strong> (RFB — Remote Framebuffer) and <strong>RDP</strong> (Remote Desktop
           Protocol). A remote desktop renders inside a termiHub tab on a
-          <code>&lt;canvas&gt;</code> element, alongside terminal tabs, participating in the tab bar,
-          drag-and-drop, and split views like any other connection.
+          <code>&lt;canvas&gt;</code> element, alongside terminal tabs, participating in the tab
+          bar, drag-and-drop, and split views like any other connection.
         </p>
         <p>
           <strong>Motivation.</strong> RDP (Windows) and VNC (Linux/macOS/Unix) are the two most
@@ -424,13 +421,15 @@
           <strong>The problem this concept exists to solve — drift.</strong> The wire protocols are
           completely different (RFB vs. the RDP protocol) so the <em>backends</em> legitimately
           differ, and that is fine. But the two original concepts were written separately and
-          already diverged on the one axis that matters most to the user — <em>how a frame reaches
-          the screen</em>: the VNC concept rendered with the <strong>noVNC JavaScript client</strong>
+          already diverged on the one axis that matters most to the user —
+          <em>how a frame reaches the screen</em>: the VNC concept rendered with the
+          <strong>noVNC JavaScript client</strong>
           over a WebSocket-to-TCP proxy (decode in JS), while the RDP concept decoded with
           <strong>IronRDP natively in Rust</strong> and pushed frames to a canvas (decode in Rust).
           Two rendering transports means two canvases, two input-capture paths, two clipboard paths,
           two toolbars, two resize handlers — they <em>will</em> drift and <em>won't</em> feel the
-          same. This concept fixes that by designing <strong>one shared user-facing/session layer</strong>
+          same. This concept fixes that by designing
+          <strong>one shared user-facing/session layer</strong>
           that both protocol backends plug into, mirroring how
           <a href="https://github.com/armaxri/termiHub/issues/1335">#1335</a> introduced a
           protocol-agnostic file-browser session layer that FTP and SFTP both use.
@@ -458,14 +457,20 @@
             (<code>DynamicForm</code>), the credential store, the connection sidebar, and the SSH
             tunnel infrastructure — not new parallel systems.
           </li>
-          <li><strong>Cross-platform</strong> on Windows, macOS, and Linux (pure-Rust decoders).</li>
+          <li>
+            <strong>Cross-platform</strong> on Windows, macOS, and Linux (pure-Rust decoders).
+          </li>
         </ul>
 
         <h3>Non-Goals (v1)</h3>
         <ul>
           <li>Multi-monitor remote sessions (single monitor only).</li>
-          <li>RD Gateway / proxy and VNC repeaters (direct connections, or via existing SSH tunnel).</li>
-          <li>Smart-card / certificate authentication (password + NLA for RDP; RFB auth for VNC).</li>
+          <li>
+            RD Gateway / proxy and VNC repeaters (direct connections, or via existing SSH tunnel).
+          </li>
+          <li>
+            Smart-card / certificate authentication (password + NLA for RDP; RFB auth for VNC).
+          </li>
           <li>Image clipboard (text clipboard only; image is a stretch goal).</li>
           <li>XDMCP (#515) — parked in <code>future/</code>, designed to plug in later.</li>
         </ul>
@@ -548,9 +553,9 @@
           <li>
             <strong>VNC → a Rust RFB client</strong> — a maintained RFB/VNC crate that exposes
             framebuffer updates and input encoding. The final crate choice is made during
-            implementation (<a href="https://github.com/armaxri/termiHub/issues/1681">#1681</a>); the
-            requirement is only that it decodes in Rust into the shared frame stream (no noVNC, no WS
-            proxy). Per the repo's "prefer libraries over custom code" rule, a mature crate is
+            implementation (<a href="https://github.com/armaxri/termiHub/issues/1681">#1681</a>);
+            the requirement is only that it decodes in Rust into the shared frame stream (no noVNC,
+            no WS proxy). Per the repo's "prefer libraries over custom code" rule, a mature crate is
             strongly preferred over a hand-rolled RFB decoder.
           </li>
         </ul>
@@ -563,9 +568,11 @@
           The dividing line is deliberate: everything the user sees or touches is
           <strong>shared</strong> and built once (implementation issue
           <a href="https://github.com/armaxri/termiHub/issues/1680">#1680</a>); only wire-level
-          concerns live in the per-protocol backends
-          (<a href="https://github.com/armaxri/termiHub/issues/1681">#1681</a> VNC,
-          <a href="https://github.com/armaxri/termiHub/issues/1682">#1682</a> RDP).
+          concerns live in the per-protocol backends (<a
+            href="https://github.com/armaxri/termiHub/issues/1681"
+            >#1681</a
+          >
+          VNC, <a href="https://github.com/armaxri/termiHub/issues/1682">#1682</a> RDP).
         </p>
 
         <h3>Shared — built once in the layer (#1680)</h3>
@@ -575,17 +582,22 @@
             <code>vnc</code>/<code>rdp</code> types) → one <code>RemoteDesktopTab</code> /
             <code>RemoteDesktopCanvas</code> component.
           </li>
-          <li><strong>One canvas surface</strong> fed by protocol-agnostic frame + cursor events.</li>
+          <li>
+            <strong>One canvas surface</strong> fed by protocol-agnostic frame + cursor events.
+          </li>
           <li>
             <strong>One floating hover toolbar</strong>: host badge, resolution, Ctrl+Alt+Del,
             clipboard, scaling, fullscreen, disconnect. Auto-hide.
           </li>
           <li>
-            <strong>One set of connection-state overlays</strong>: connecting / reconnecting
-            (max-3 auto-retry) / view-only, with tab state-dot semantics (amber connecting, green
+            <strong>One set of connection-state overlays</strong>: connecting / reconnecting (max-3
+            auto-retry) / view-only, with tab state-dot semantics (amber connecting, green
             connected).
           </li>
-          <li><strong>One status-bar segment</strong>: type icon, <code>host:port</code>, resolution, encoding/color-depth.</li>
+          <li>
+            <strong>One status-bar segment</strong>: type icon, <code>host:port</code>, resolution,
+            encoding/color-depth.
+          </li>
           <li><strong>One session state machine</strong> and lifecycle (below).</li>
           <li>
             <strong>One input pipeline</strong>: keyboard/mouse capture, focus-boundary escape
@@ -603,7 +615,9 @@
             <code>monitor</code> icon, context menu (Connect / Edit / Duplicate / Delete — no
             SFTP/file-browser), and an Open Connections entry, identical to other types.
           </li>
-          <li><strong>Shared credential-store integration</strong> and generic Tauri commands/events.</li>
+          <li>
+            <strong>Shared credential-store integration</strong> and generic Tauri commands/events.
+          </li>
         </ul>
 
         <h3>Protocol-specific — in each backend (the backends legitimately differ)</h3>
@@ -640,7 +654,10 @@
               <tr>
                 <td>Extras</td>
                 <td>encodings / quality preference; remote-cursor; SSH-tunnel reuse</td>
-                <td>drive redirection, audio, admin/console session, dynamic resize (Display Control Channel)</td>
+                <td>
+                  drive redirection, audio, admin/console session, dynamic resize (Display Control
+                  Channel)
+                </td>
               </tr>
               <tr>
                 <td>Clipboard wire</td>
@@ -698,7 +715,9 @@
                     </div>
                   </nav>
                   <aside class="sidebar">
-                    <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+                    <div class="sidebar__header">
+                      <span class="sidebar__title">Connections</span>
+                    </div>
                     <div class="sidebar__content">
                       <div class="connection-tree__item connection-tree__item--selected">
                         <svg class="li"><use href="#i-monitor" /></svg> win-server
@@ -716,12 +735,16 @@
                       <div class="tab tab--active">
                         <span class="state-dot state-dot--connected"></span>
                         <span class="tab__title">RDP: win-server</span>
-                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
                       </div>
                       <div class="tab">
                         <span class="state-dot state-dot--connected"></span>
                         <span class="tab__title">SSH: dev-box</span>
-                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
                       </div>
                     </div>
                     <div class="terminal-view__content">
@@ -772,7 +795,9 @@
                       <div class="tab tab--active">
                         <span class="state-dot state-dot--connecting"></span>
                         <span class="tab__title">RDP: win-server</span>
-                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
                       </div>
                     </div>
                     <div class="terminal-view__content">
@@ -811,7 +836,9 @@
                       <div class="tab tab--active">
                         <span class="state-dot state-dot--connecting"></span>
                         <span class="tab__title">VNC: linux-desktop</span>
-                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
                       </div>
                     </div>
                     <div class="terminal-view__content">
@@ -852,7 +879,9 @@
                       <div class="tab tab--active">
                         <span class="state-dot state-dot--connected"></span>
                         <span class="tab__title">VNC: linux-desktop</span>
-                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
                       </div>
                     </div>
                     <div class="terminal-view__content">
@@ -882,8 +911,8 @@
                 <div class="status-bar">
                   <div class="status-bar__section status-bar__section--left">
                     <span class="status-bar__item">
-                      <svg class="li"><use href="#i-monitor" /></svg> linux-desktop:5901 ·
-                      1440×900 · Tight · 24-bit
+                      <svg class="li"><use href="#i-monitor" /></svg> linux-desktop:5901 · 1440×900
+                      · Tight · 24-bit
                     </span>
                   </div>
                 </div>
@@ -925,8 +954,8 @@
             Rendered by the existing <code>DynamicForm</code>. The <strong>Connection</strong>,
             <strong>Display</strong>, and <strong>Features</strong> groups are the shared field
             base; the highlighted group is the only protocol-specific part — RDP contributes
-            <em>Domain + Security</em>, VNC contributes <em>Display number + Encoding</em> and has no
-            domain.
+            <em>Domain + Security</em>, VNC contributes <em>Display number + Encoding</em> and has
+            no domain.
           </div>
           <div class="states">
             <div>
@@ -964,7 +993,9 @@
                     <div class="field">
                       <span class="field__label">Security</span
                       ><span class="select"
-                        >Auto <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                        >Auto
+                        <span class="caret"
+                          ><svg class="li"><use href="#i-chevron-down" /></svg></span
                       ></span>
                     </div>
                     <div class="check-row">
@@ -979,17 +1010,23 @@
                     <div class="field">
                       <span class="field__label">Scale Mode</span
                       ><span class="select"
-                        >Fit to Tab <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                        >Fit to Tab
+                        <span class="caret"
+                          ><svg class="li"><use href="#i-chevron-down" /></svg></span
                       ></span>
                     </div>
                     <div class="field">
                       <span class="field__label">Color Depth</span
                       ><span class="select"
-                        >32-bit <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                        >32-bit
+                        <span class="caret"
+                          ><svg class="li"><use href="#i-chevron-down" /></svg></span
                       ></span>
                     </div>
                     <div class="check-row check-row--on">
-                      <span class="check"><svg class="li"><use href="#i-check" /></svg></span>
+                      <span class="check"
+                        ><svg class="li"><use href="#i-check" /></svg
+                      ></span>
                       Clipboard Sync
                     </div>
                   </div>
@@ -1027,18 +1064,24 @@
                     <div class="field">
                       <span class="field__label">Encoding</span
                       ><span class="select"
-                        >Tight <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                        >Tight
+                        <span class="caret"
+                          ><svg class="li"><use href="#i-chevron-down" /></svg></span
                       ></span>
                     </div>
                     <div class="field">
                       <span class="field__label">Quality</span
                       ><span class="select"
-                        >Automatic <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                        >Automatic
+                        <span class="caret"
+                          ><svg class="li"><use href="#i-chevron-down" /></svg></span
                       ></span>
                     </div>
                     <div class="check-row check-row--on">
-                      <span class="check"><svg class="li"><use href="#i-check" /></svg></span> Show
-                      remote cursor
+                      <span class="check"
+                        ><svg class="li"><use href="#i-check" /></svg
+                      ></span>
+                      Show remote cursor
                     </div>
                   </div>
                   <div class="form-group">
@@ -1046,14 +1089,16 @@
                     <div class="field">
                       <span class="field__label">Scale Mode</span
                       ><span class="select"
-                        >Fit to Window <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                        >Fit to Window
+                        <span class="caret"
+                          ><svg class="li"><use href="#i-chevron-down" /></svg></span
                       ></span>
                     </div>
-                    <div class="check-row">
-                      <span class="check"></span> View Only
-                    </div>
+                    <div class="check-row"><span class="check"></span> View Only</div>
                     <div class="check-row check-row--on">
-                      <span class="check"><svg class="li"><use href="#i-check" /></svg></span>
+                      <span class="check"
+                        ><svg class="li"><use href="#i-check" /></svg
+                      ></span>
                       Clipboard Sync
                     </div>
                     <div class="check-row">
@@ -1068,9 +1113,9 @@
           <div class="legend">
             <ul>
               <li>
-                <span class="callout">A</span> Shared field base — Host, Password (+ credential-store
-                Save), Scale Mode, Color Depth, Clipboard Sync, View Only — rendered identically for
-                both protocols.
+                <span class="callout">A</span> Shared field base — Host, Password (+
+                credential-store Save), Scale Mode, Color Depth, Clipboard Sync, View Only —
+                rendered identically for both protocols.
               </li>
               <li>
                 <span class="callout">B</span> The only protocol-specific group. RDP: Domain +
@@ -1124,8 +1169,8 @@
           <li>
             <strong>Clipboard</strong> is bidirectional text (VNC:
             <code>ServerCutText</code>/<code>ClientCutText</code>; RDP: clipboard channel), surfaced
-            through one shared slide-out panel with an auto-sync toggle. Image clipboard is a stretch
-            goal.
+            through one shared slide-out panel with an auto-sync toggle. Image clipboard is a
+            stretch goal.
           </li>
           <li>
             <strong>Reconnection</strong> retries up to 3 times on an unexpected drop, showing the
@@ -1145,7 +1190,10 @@
             <tbody>
               <tr>
                 <td>Auth failure</td>
-                <td>Inline error in the tab ("Authentication failed — check credentials"), retry with new credentials.</td>
+                <td>
+                  Inline error in the tab ("Authentication failed — check credentials"), retry with
+                  new credentials.
+                </td>
               </tr>
               <tr>
                 <td>RDP certificate mismatch</td>
@@ -1153,11 +1201,17 @@
               </tr>
               <tr>
                 <td>VNC over an insecure network</td>
-                <td>Offer/encourage the SSH-tunnel option (RFB auth is weak); reuse the existing tunnel infra.</td>
+                <td>
+                  Offer/encourage the SSH-tunnel option (RFB auth is weak); reuse the existing
+                  tunnel infra.
+                </td>
               </tr>
               <tr>
                 <td>Very large remote resolution</td>
-                <td>Cap framebuffer (e.g. 4096×2160) to bound memory; warn if the request exceeds the cap.</td>
+                <td>
+                  Cap framebuffer (e.g. 4096×2160) to bound memory; warn if the request exceeds the
+                  cap.
+                </td>
               </tr>
               <tr>
                 <td>Tab loses focus mid-drag</td>
@@ -1196,7 +1250,9 @@ flowchart TD
         </div>
 
         <div class="diagram">
-          <span class="diagram__caption">Shared session state machine (identical for VNC and RDP)</span>
+          <span class="diagram__caption"
+            >Shared session state machine (identical for VNC and RDP)</span
+          >
           <pre class="mermaid">
 stateDiagram-v2
     [*] --&gt; Connecting: connect()
@@ -1280,11 +1336,11 @@ sequenceDiagram
         <h3>The seam: a <code>GraphicalBackend</code> trait behind a capability flag</h3>
         <p>
           termiHub's existing <code>ConnectionType</code> trait
-          (<code>core/src/connection/mod.rs</code>) is byte-stream oriented (<code>write(&amp;[u8])</code>,
-          <code>subscribe_output() -&gt; bytes</code>, <code>resize(cols, rows)</code>) — a poor fit
-          for a framebuffer. The layer adds a sibling, framebuffer-oriented trait and reuses the same
-          registry/editor/sidebar/credential plumbing via a new capability flag, exactly as
-          <code>terminal: false</code> was added for FTP.
+          (<code>core/src/connection/mod.rs</code>) is byte-stream oriented
+          (<code>write(&amp;[u8])</code>, <code>subscribe_output() -&gt; bytes</code>,
+          <code>resize(cols, rows)</code>) — a poor fit for a framebuffer. The layer adds a sibling,
+          framebuffer-oriented trait and reuses the same registry/editor/sidebar/credential plumbing
+          via a new capability flag, exactly as <code>terminal: false</code> was added for FTP.
         </p>
         <pre class="mermaid">
 classDiagram
@@ -1295,7 +1351,7 @@ classDiagram
         +bool resize
     }
     class GraphicalBackend {
-        <<trait>>
+        &lt;&lt;trait&gt;&gt;
         +connect(settings) Result
         +disconnect() Result
         +is_connected() bool
@@ -1316,9 +1372,9 @@ classDiagram
     class MockRemoteDesktopBackend {
         test pattern + synthetic cursor
     }
-    GraphicalBackend <|.. VncBackend
-    GraphicalBackend <|.. RdpBackend
-    GraphicalBackend <|.. MockRemoteDesktopBackend
+    GraphicalBackend &lt;|.. VncBackend
+    GraphicalBackend &lt;|.. RdpBackend
+    GraphicalBackend &lt;|.. MockRemoteDesktopBackend
         </pre>
         <ul>
           <li>
@@ -1347,32 +1403,53 @@ classDiagram
             <tbody>
               <tr>
                 <td><code>core/src/connection/mod.rs</code></td>
-                <td><strong>Edit</strong> — add <code>graphical</code> to <code>Capabilities</code>; add <code>GraphicalBackend</code> trait + <code>FrameUpdate</code>/<code>InputEvent</code> types.</td>
+                <td>
+                  <strong>Edit</strong> — add <code>graphical</code> to <code>Capabilities</code>;
+                  add <code>GraphicalBackend</code> trait + <code>FrameUpdate</code>/<code
+                    >InputEvent</code
+                  >
+                  types.
+                </td>
                 <td>#1680</td>
               </tr>
               <tr>
                 <td><code>src-tauri/src/session/graphical_manager.rs</code></td>
-                <td><strong>New</strong> — <code>GraphicalSessionManager</code>: keyed live sessions, shared state machine, event fan-out.</td>
+                <td>
+                  <strong>New</strong> — <code>GraphicalSessionManager</code>: keyed live sessions,
+                  shared state machine, event fan-out.
+                </td>
                 <td>#1680</td>
               </tr>
               <tr>
                 <td><code>src-tauri/src/commands/remote_desktop.rs</code></td>
-                <td><strong>New</strong> — generic commands <code>remote_desktop_connect/resize/send_input/send_clipboard/disconnect</code>.</td>
+                <td>
+                  <strong>New</strong> — generic commands
+                  <code>remote_desktop_connect/resize/send_input/send_clipboard/disconnect</code>.
+                </td>
                 <td>#1680</td>
               </tr>
               <tr>
                 <td><code>core/src/backends/mock_remote_desktop.rs</code></td>
-                <td><strong>New</strong> — test-pattern backend so the layer merges and is E2E-testable with no real server.</td>
+                <td>
+                  <strong>New</strong> — test-pattern backend so the layer merges and is
+                  E2E-testable with no real server.
+                </td>
                 <td>#1680</td>
               </tr>
               <tr>
                 <td><code>core/src/backends/vnc/</code></td>
-                <td><strong>New</strong> — RFB adapter implementing <code>GraphicalBackend</code>; registers <code>vnc</code>.</td>
+                <td>
+                  <strong>New</strong> — RFB adapter implementing <code>GraphicalBackend</code>;
+                  registers <code>vnc</code>.
+                </td>
                 <td>#1681</td>
               </tr>
               <tr>
                 <td><code>core/src/backends/rdp/</code></td>
-                <td><strong>New</strong> — IronRDP adapter implementing <code>GraphicalBackend</code>; registers <code>rdp</code>.</td>
+                <td>
+                  <strong>New</strong> — IronRDP adapter implementing <code>GraphicalBackend</code>;
+                  registers <code>rdp</code>.
+                </td>
                 <td>#1682</td>
               </tr>
             </tbody>
@@ -1397,12 +1474,18 @@ classDiagram
               </tr>
               <tr>
                 <td><code>src/hooks/useRemoteDesktopSession.ts</code></td>
-                <td><strong>New</strong> — drives connect/resize/input/clipboard via the generic commands + events.</td>
+                <td>
+                  <strong>New</strong> — drives connect/resize/input/clipboard via the generic
+                  commands + events.
+                </td>
                 <td>#1680</td>
               </tr>
               <tr>
                 <td><code>src/types/remoteDesktop.ts</code></td>
-                <td><strong>New</strong> — <code>TabContentType: "remote-desktop"</code>, event payload types.</td>
+                <td>
+                  <strong>New</strong> — <code>TabContentType: "remote-desktop"</code>, event
+                  payload types.
+                </td>
                 <td>#1680</td>
               </tr>
               <tr>
@@ -1412,7 +1495,10 @@ classDiagram
               </tr>
               <tr>
                 <td>VNC / RDP settings schema</td>
-                <td><strong>New</strong> — protocol rows layered on the shared field base (no editor component change).</td>
+                <td>
+                  <strong>New</strong> — protocol rows layered on the shared field base (no editor
+                  component change).
+                </td>
                 <td>#1681 / #1682</td>
               </tr>
             </tbody>
@@ -1423,22 +1509,30 @@ classDiagram
           <p>
             <strong>Anti-collision requirement for #1680.</strong> Backend registration must be
             additive/registry-driven and the editor must be fully schema-driven, so that adding VNC
-            (#1681) or RDP (#1682) means only creating a new <code>backends/&lt;proto&gt;/</code>
-            module + schema and calling <code>registry.register(...)</code> — <em>no</em> edit to a
-            shared match arm or a hand-written editor switch. If that holds, #1681 and #1682 touch
-            disjoint files and may run in parallel; if not, they must be sequenced. The eventual code
-            follows the repo's <code>.claude/CLAUDE.md</code> and <code>docs/contributing.md</code>
+            (#1681) or RDP (#1682) means only creating a new
+            <code>backends/&lt;proto&gt;/</code> module + schema and calling
+            <code>registry.register(...)</code> — <em>no</em> edit to a shared match arm or a
+            hand-written editor switch. If that holds, #1681 and #1682 touch disjoint files and may
+            run in parallel; if not, they must be sequenced. The eventual code follows the repo's
+            <code>.claude/CLAUDE.md</code> and <code>docs/contributing.md</code>
             (schema-driven forms, prefer libraries over custom code, tests-with-every-change).
           </p>
         </blockquote>
 
         <h3>Security considerations</h3>
         <ul>
-          <li>VNC RFB auth is weak; encourage the SSH-tunnel path and warn on plaintext connections.</li>
-          <li>RDP defaults to NLA (CredSSP); legacy RDP encryption is available only behind an explicit warning.</li>
+          <li>
+            VNC RFB auth is weak; encourage the SSH-tunnel path and warn on plaintext connections.
+          </li>
+          <li>
+            RDP defaults to NLA (CredSSP); legacy RDP encryption is available only behind an
+            explicit warning.
+          </li>
           <li>"Ignore certificate errors" is off by default and shown with a warning.</li>
           <li>Passwords never touch config plaintext — always via the credential store.</li>
-          <li>Cap framebuffer dimensions to bound memory against a hostile/misconfigured server.</li>
+          <li>
+            Cap framebuffer dimensions to bound memory against a hostile/misconfigured server.
+          </li>
         </ul>
       </section>
 
@@ -1447,9 +1541,9 @@ classDiagram
         <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
         <blockquote>
           <p>
-            Maintained by <code>/sync-concept remote-desktop-sessions</code>. Records the last commit
-            at which the concept and code were reconciled, plus open divergences. The concept is the
-            source of truth.
+            Maintained by <code>/sync-concept remote-desktop-sessions</code>. Records the last
+            commit at which the concept and code were reconciled, plus open divergences. The concept
+            is the source of truth.
           </p>
         </blockquote>
         <p>
@@ -1470,7 +1564,10 @@ classDiagram
             <tbody>
               <tr>
                 <td>1</td>
-                <td>Shared graphical-session layer (canvas tab, toolbar, session manager, generic commands/events, <code>GraphicalBackend</code> trait, mock backend)</td>
+                <td>
+                  Shared graphical-session layer (canvas tab, toolbar, session manager, generic
+                  commands/events, <code>GraphicalBackend</code> trait, mock backend)
+                </td>
                 <td>Not implemented</td>
                 <td>Missing</td>
                 <td>Implement #1680, then re-sync</td>
