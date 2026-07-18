@@ -445,6 +445,7 @@ impl ConnectionType for Ssh {
             file_browser: true,
             resize: true,
             persistent: true,
+            terminal: true,
         }
     }
 

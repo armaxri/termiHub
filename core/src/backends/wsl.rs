@@ -640,6 +640,7 @@ impl ConnectionType for Wsl {
             file_browser: true,
             resize: true,
             persistent: true,
+            terminal: true,
         }
     }
 

@@ -109,11 +109,14 @@ import type {
   ContainerSpawn,
   ShellSpawn,
   TransferProgress,
+  TransferSnapshot,
 } from "@/services/api";
 import type { SpawnRequestPayload } from "@/services/events";
 import {
+  isTerminalTransferState,
   transferEntryFromProgress,
   transferEntryFromSeed,
+  transferEntryFromSnapshot,
   type TransferEntry,
   type TransferSeed,
 } from "@/types/transfer";
@@ -774,6 +777,15 @@ interface AppState {
    * the id already exists, so it never clobbers a further-along event-fed row.
    */
   seedTransferQueue: (seed: TransferSeed) => void;
+  /**
+   * Reconcile the queue against a backend `transfer_list` snapshot (#1645), the
+   * backstop for a dropped *terminal* `transfer-progress` event. Settles any
+   * still-open row whose backend snapshot reports a terminal state to that
+   * state. Idempotent and conservative: it never resurrects a removed row,
+   * never clobbers an already-terminal row, and never moves a live (active)
+   * row — event delivery owns live progress; this only settles stuck rows.
+   */
+  reconcileTransferQueue: (snapshots: TransferSnapshot[]) => void;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -3781,6 +3793,25 @@ export const useAppStore = create<AppState>((set, get) => {
         if (seed.id in state.transferQueue) return {};
         const entry = transferEntryFromSeed(seed, Date.now());
         return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
+      }),
+
+    reconcileTransferQueue: (snapshots: TransferSnapshot[]) =>
+      set((state) => {
+        const now = Date.now();
+        let next: Record<string, TransferEntry> | null = null;
+        for (const snap of snapshots) {
+          // Only a terminal snapshot settles a row — events own live progress,
+          // so a snapshot must never move an active row (it may lag / read 0).
+          if (!isTerminalTransferState(snap.state)) continue;
+          const prev = state.transferQueue[snap.transferId];
+          // Seed owns row creation; do not resurrect a row the user removed.
+          if (!prev) continue;
+          // Already settled (an event beat us here): idempotent no-op.
+          if (isTerminalTransferState(prev.state)) continue;
+          next ??= { ...state.transferQueue };
+          next[snap.transferId] = transferEntryFromSnapshot(snap, prev, now);
+        }
+        return next ? { transferQueue: next } : {};
       }),
 
     retrySftp: async () => {

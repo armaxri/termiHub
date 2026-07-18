@@ -75,4 +75,16 @@ export interface Capabilities {
   fileBrowser: boolean;
   resize: boolean;
   persistent: boolean;
+  /**
+   * Whether this connection type has an interactive terminal.
+   *
+   * Optional to match the wire reality: an agent or config predating this field
+   * omits it, and an absent value means terminal-capable (the Rust
+   * `#[serde(default = "true")]`). Only an explicit `false` marks a terminal-less
+   * type (FTP), which opens directly into a browser-only tab (`"file-browser"`
+   * content type) with no terminal session — the file browser lives in the
+   * sidebar, driven by the tab's session id. Decide with `terminal === false`,
+   * never `!terminal` (#1335).
+   */
+  terminal?: boolean;
 }

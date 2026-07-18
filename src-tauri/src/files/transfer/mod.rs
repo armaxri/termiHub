@@ -373,8 +373,13 @@ async fn upload_inner(
     copy_chunked(&mut local, &mut remote, ctx, token, sink).await
 }
 
-/// Emit the terminal event, run cleanup on cancel/error, and drop the registry
-/// entry. Shared by download and upload.
+/// Emit the terminal event, run cleanup on cancel/error, and record the
+/// transfer's terminal state in the registry. Shared by download and upload.
+///
+/// The terminal state is *retained* in the registry for a bounded window
+/// (`finish_legacy`, #1645) rather than immediately dropped, so a reconcile can
+/// still settle a stuck Transfer Queue row if this terminal `transfer-progress`
+/// event was dropped (e.g. under memory pressure).
 fn finish_transfer<F: FnOnce()>(
     outcome: Result<CopyOutcome, TerminalError>,
     ctx: &TransferContext,
@@ -382,21 +387,24 @@ fn finish_transfer<F: FnOnce()>(
     sink: &ProgressSink,
     cleanup: F,
 ) {
-    match outcome {
+    let (phase, transferred) = match outcome {
         Ok(CopyOutcome::Completed { transferred }) => {
             info!(transfer_id = %ctx.transfer_id, transferred, "transfer complete");
             sink(&ctx.progress(transferred, TransferPhase::Done, None));
+            (TransferPhase::Done, transferred)
         }
         Ok(CopyOutcome::Cancelled { transferred }) => {
             info!(transfer_id = %ctx.transfer_id, transferred, "transfer cancelled");
             cleanup();
             sink(&ctx.progress(transferred, TransferPhase::Cancelled, None));
+            (TransferPhase::Cancelled, transferred)
         }
         Err(e) => {
             warn!(transfer_id = %ctx.transfer_id, error = %e, "transfer failed");
             cleanup();
             sink(&ctx.progress(0, TransferPhase::Error, Some(e.to_string())));
+            (TransferPhase::Error, 0)
         }
-    }
-    registry.drop_entry(&ctx.transfer_id);
+    };
+    registry.finish_legacy(&ctx.transfer_id, phase.state_tag(), transferred);
 }

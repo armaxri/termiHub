@@ -256,6 +256,7 @@ impl ConnectionType for Serial {
             file_browser: false,
             resize: false,
             persistent: true,
+            terminal: true,
         }
     }
 
