@@ -288,8 +288,7 @@ mod windows_impl {
                 }
                 ListenerSecurity::Inherit => None,
             };
-            let next =
-                create_instance(address, security.as_ref(), true).map_err(as_addr_in_use)?;
+            let next = create_instance(address, security.as_ref(), true).map_err(as_addr_in_use)?;
             Ok(Self {
                 name: address.to_string(),
                 security,
