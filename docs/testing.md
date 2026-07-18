@@ -929,6 +929,31 @@ a Unix agent host (the exec-replace is Unix-only). See PR #1352.
 5. **Dismiss.** Press **Dismiss** on the banner. Expect: the banner hides for the
    session and no update is requested.
 
+### Coordinated desktop-push Update deploy (#1616)
+
+Verifies that triggering an **Update** (the desktop-push deploy, not just the
+self-update banner) on a **Coordinated**-strategy agent notifies the other hosts
+and lets them reconnect cleanly, on Unix, with a documented Windows fallback.
+Requires three desktops (A, B, C) and one **Unix** agent host, plus a Windows
+agent host for step 4. See PR #1636.
+
+1. **Coordinated Unix deploy notifies others.** Set the agent's update strategy to
+   **Coordinated**. Connect desktops A, B, C to the same Unix agent and open a
+   persistent session on B. From A, open the agent's **Update** dialog and confirm.
+   Expect: A stages the binary and reports how many other hosts were notified; B
+   and C show the "being updated by another host" notice, suspend, and
+   auto-reconnect; B's persistent session survives (detached daemon) and resumes.
+2. **Applies after the window.** The agent applies once B and C disconnect or the
+   10s coordination window closes; A's connection drops as the agent re-execs.
+   Reconnect from A → the agent version badge shows the new version.
+3. **No hard cut.** Confirm B and C never saw an unexplained disconnect — only the
+   coordinated notice + reconnect.
+4. **Windows fallback.** Repeat step 1 against a **Windows** agent host. Expect: the
+   Update falls back to the immediate deploy (shutdown + redeploy); other connected
+   hosts are surfaced by the connected-host guard warning ("Notify Others &
+   Update") exactly as today — the coordinated self-swap is not attempted on
+   Windows, and the update path is not regressed.
+
 ### Command palette (#1484)
 
 Verifies the Cmd/Ctrl+P command palette that fuzzy-matches application commands
