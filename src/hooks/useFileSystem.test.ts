@@ -158,7 +158,9 @@ describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
     expect(vi.mocked(sftpUpload)).toHaveBeenCalledWith(
       "sess-1",
       "/local/image.png",
-      "/uploads/image.png"
+      "/uploads/image.png",
+      // Seed callback for the Transfer Queue row (#1632).
+      expect.any(Function)
     );
   });
 
@@ -183,8 +185,47 @@ describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
     expect(vi.mocked(sftpUpload)).toHaveBeenCalledWith(
       "sess-1",
       "/local/report.pdf",
-      "/report.pdf"
+      "/report.pdf",
+      // Seed callback for the Transfer Queue row (#1632).
+      expect.any(Function)
     );
+  });
+
+  it("seeds a Transfer Queue row from the registration callback (#1632)", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+
+    // Simulate the backend returning a transferId, but emitting NO
+    // transfer-progress event (the memory-pressure drop). The row must still
+    // appear, proving panel-open no longer depends on the event stream.
+    vi.mocked(sftpUpload).mockImplementationOnce(
+      async (_sessionId, _localPath, remotePath, onRegistered) => {
+        onRegistered?.("tid-1632");
+        void remotePath;
+        return 0;
+      }
+    );
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await uploadFn!("/local/report.pdf");
+    });
+
+    expect(useAppStore.getState().transferQueue["tid-1632"]).toMatchObject({
+      id: "tid-1632",
+      sessionId: "sess-1",
+      direction: "upload",
+      name: "report.pdf",
+      path: "/uploads/report.pdf",
+      state: "queued",
+    });
   });
 
   it("does nothing when sftpSessionId is null", async () => {

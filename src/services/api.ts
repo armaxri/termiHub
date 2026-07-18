@@ -894,17 +894,25 @@ async function awaitTransfer(transferId: string): Promise<number> {
  *
  * Registers a background transfer on a dedicated channel and resolves with the
  * bytes transferred once it completes (#1245).
+ *
+ * `onRegistered` fires once with the backend `transferId` the instant the start
+ * command returns — over the reliable request/response channel, before any
+ * best-effort `transfer-progress` event. Callers use it to seed the Transfer
+ * Queue so the panel opens even if progress events are dropped/delayed under
+ * memory pressure (#1632).
  */
 export async function sftpDownload(
   sessionId: string,
   remotePath: string,
-  localPath: string
+  localPath: string,
+  onRegistered?: (transferId: string) => void
 ): Promise<number> {
   const transferId = await invoke<string>("sftp_download", {
     sessionId,
     remotePath,
     localPath,
   });
+  onRegistered?.(transferId);
   return await awaitTransfer(transferId);
 }
 
@@ -913,17 +921,23 @@ export async function sftpDownload(
  *
  * Registers a background transfer on a dedicated channel and resolves with the
  * bytes transferred once it completes (#1245).
+ *
+ * `onRegistered` fires once with the backend `transferId` the instant the start
+ * command returns (see {@link sftpDownload}), for seeding the Transfer Queue
+ * ahead of any progress event (#1632).
  */
 export async function sftpUpload(
   sessionId: string,
   localPath: string,
-  remotePath: string
+  remotePath: string,
+  onRegistered?: (transferId: string) => void
 ): Promise<number> {
   const transferId = await invoke<string>("sftp_upload", {
     sessionId,
     localPath,
     remotePath,
   });
+  onRegistered?.(transferId);
   return await awaitTransfer(transferId);
 }
 

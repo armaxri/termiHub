@@ -15,6 +15,12 @@ import { FileEntry } from "@/types/connection";
 import { toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 
+/** Basename of a POSIX/Windows path (the file name the queue row displays). */
+function baseName(path: string): string {
+  const parts = path.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || path;
+}
+
 /** Extract a human-readable message from an unknown transfer error. */
 function transferErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -79,6 +85,39 @@ export function useFileSystem() {
   const sftpError = useAppStore((s) => s.sftpError);
   const navigateSftp = useAppStore((s) => s.navigateSftp);
   const refreshSftp = useAppStore((s) => s.refreshSftp);
+  const seedTransferQueue = useAppStore((s) => s.seedTransferQueue);
+
+  // Wrap the transfer helpers so every transfer seeds a `queued` Transfer Queue
+  // row from the id the start command returns — the panel then opens without
+  // waiting for a `transfer-progress` event, which can be dropped/delayed under
+  // memory pressure (#1632). The row is keyed by the backend `transferId`, so a
+  // later event upserts (never duplicates) it.
+  const startDownload = useCallback(
+    (sessionId: string, remotePath: string, localPath: string) =>
+      sftpDownload(sessionId, remotePath, localPath, (transferId) =>
+        seedTransferQueue({
+          id: transferId,
+          sessionId,
+          direction: "download",
+          name: baseName(remotePath),
+          path: remotePath,
+        })
+      ),
+    [seedTransferQueue]
+  );
+  const startUpload = useCallback(
+    (sessionId: string, localPath: string, remotePath: string) =>
+      sftpUpload(sessionId, localPath, remotePath, (transferId) =>
+        seedTransferQueue({
+          id: transferId,
+          sessionId,
+          direction: "upload",
+          name: baseName(remotePath),
+          path: remotePath,
+        })
+      ),
+    [seedTransferQueue]
+  );
 
   const navigateTo = useCallback(
     (path: string) => {
@@ -102,11 +141,11 @@ export function useFileSystem() {
       if (!sftpSessionId) return;
       const localPath = await save({ title: "Save file as...", defaultPath: fileName });
       if (!localPath) return;
-      await runTransfer("Download", () => sftpDownload(sftpSessionId, remotePath, localPath), {
+      await runTransfer("Download", () => startDownload(sftpSessionId, remotePath, localPath), {
         loading: `Downloading ${fileName}…`,
       });
     },
-    [sftpSessionId]
+    [sftpSessionId, startDownload]
   );
 
   const uploadFile = useCallback(async () => {
@@ -115,11 +154,13 @@ export function useFileSystem() {
     if (!localPath) return;
     const fileName = localPath.split("/").pop() ?? localPath.split("\\").pop() ?? "upload";
     const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
-    const ok = await runTransfer("Upload", () => sftpUpload(sftpSessionId, localPath, remotePath), {
-      loading: `Uploading ${fileName}…`,
-    });
+    const ok = await runTransfer(
+      "Upload",
+      () => startUpload(sftpSessionId, localPath, remotePath),
+      { loading: `Uploading ${fileName}…` }
+    );
     if (ok) refreshSftp();
-  }, [sftpSessionId, currentPath, refreshSftp]);
+  }, [sftpSessionId, currentPath, refreshSftp, startUpload]);
 
   const uploadFileFromPath = useCallback(
     async (localPath: string) => {
@@ -129,12 +170,12 @@ export function useFileSystem() {
       const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
       const ok = await runTransfer(
         "Upload",
-        () => sftpUpload(sftpSessionId, localPath, remotePath),
+        () => startUpload(sftpSessionId, localPath, remotePath),
         { loading: `Uploading ${fileName}…` }
       );
       if (ok) refreshSftp();
     },
-    [sftpSessionId, currentPath, refreshSftp]
+    [sftpSessionId, currentPath, refreshSftp, startUpload]
   );
 
   const createDirectory = useCallback(
@@ -228,20 +269,20 @@ export function useFileSystem() {
           } else {
             // Different SFTP session — download to temp then upload
             const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipEntry.name}`;
-            await sftpDownload(clipboard.sftpSessionId!, clipEntry.path, tempPath);
-            await sftpUpload(sftpSessionId, tempPath, destPath);
+            await startDownload(clipboard.sftpSessionId!, clipEntry.path, tempPath);
+            await startUpload(sftpSessionId, tempPath, destPath);
           }
         } else {
           // Copy within SFTP: download to temp, re-upload
           const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipEntry.name}`;
           if (clipboard.sftpSessionId) {
-            await sftpDownload(clipboard.sftpSessionId, clipEntry.path, tempPath);
-            await sftpUpload(sftpSessionId, tempPath, destPath);
+            await startDownload(clipboard.sftpSessionId, clipEntry.path, tempPath);
+            await startUpload(sftpSessionId, tempPath, destPath);
           }
         }
       } else {
         // local→sftp: upload local file to remote destination
-        await sftpUpload(sftpSessionId, clipEntry.path, destPath);
+        await startUpload(sftpSessionId, clipEntry.path, destPath);
       }
     };
 
@@ -259,7 +300,7 @@ export function useFileSystem() {
     }
 
     refreshSftp();
-  }, [sftpSessionId, currentPath, refreshSftp]);
+  }, [sftpSessionId, currentPath, refreshSftp, startDownload, startUpload]);
 
   return {
     fileEntries,
