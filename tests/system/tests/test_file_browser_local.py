@@ -31,7 +31,6 @@ context-menu styling parity and other pure-visual checks; the rename inline-inpu
 flow (covered indirectly — delete exercises the same context-menu refresh path).
 """
 
-import os
 import shutil
 import tempfile
 from pathlib import Path
