@@ -405,6 +405,21 @@
         </div>
       </header>
 
+      <blockquote style="border-left: 3px solid var(--color-warning)">
+        <p>
+          <strong>⚠ Superseded — do not implement from this document.</strong> VNC is now designed
+          under one shared graphical remote-desktop abstraction (shared with RDP) so the two feel
+          identical to the user. The authoritative concept is
+          <a href="remote-desktop-sessions.html"><code>remote-desktop-sessions.html</code></a>
+          (epic <a href="https://github.com/armaxri/termiHub/issues/1678">#1678</a>). This file is
+          kept for <a href="https://github.com/armaxri/termiHub/issues/514">#514</a> history only.
+          <strong>Note the rendering-transport change:</strong> the unified concept decodes VNC
+          <em>in Rust</em> into a shared protocol-agnostic frame stream — it does
+          <em>not</em> use the noVNC JavaScript client or the WebSocket-to-TCP proxy described below,
+          which were the main source of drift from RDP.
+        </p>
+      </blockquote>
+
       <blockquote>
         <p>
           <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,

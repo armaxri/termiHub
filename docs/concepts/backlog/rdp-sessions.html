@@ -352,6 +352,20 @@
         </div>
       </header>
 
+      <blockquote style="border-left: 3px solid var(--color-warning)">
+        <p>
+          <strong>⚠ Superseded — do not implement from this document.</strong> RDP is now designed
+          under one shared graphical remote-desktop abstraction (shared with VNC) so the two feel
+          identical to the user. The authoritative concept is
+          <a href="remote-desktop-sessions.html"><code>remote-desktop-sessions.html</code></a>
+          (epic <a href="https://github.com/armaxri/termiHub/issues/1678">#1678</a>). This file is
+          kept for <a href="https://github.com/armaxri/termiHub/issues/513">#513</a> history only. In
+          particular the unified concept decides <strong>Rust-side decode + protocol-agnostic frame
+          events for both protocols</strong> — the RDP-native-decode approach here is generalized,
+          not the VNC noVNC/WebSocket-proxy approach.
+        </p>
+      </blockquote>
+
       <blockquote>
         <p>
           <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,

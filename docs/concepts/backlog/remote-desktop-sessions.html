@@ -1,0 +1,1509 @@
+<!doctype html>
+<!--
+  Single-file concept: Unified Graphical Remote-Desktop Sessions (VNC + RDP).
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/implemented/ai-driven-concept-workflow.md.
+
+  This concept SUPERSEDES the two independently-written concepts:
+    docs/concepts/backlog/vnc-sessions.html (#514)
+    docs/concepts/backlog/rdp-sessions.html (#513)
+  Both are kept for #513/#514 history and now carry a banner pointing here.
+
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh docs/concepts/backlog/remote-desktop-sessions.html
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unified Remote-Desktop Sessions — VNC + RDP (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Mockup-only structural styles for the shared graphical remote-desktop
+         surface, floating toolbar, and connecting/reconnect/view-only overlays.
+         Theme vars only — no new colors. These map to the real shared components
+         (RemoteDesktopCanvas / RemoteDesktopToolbar), NOT to a per-protocol one. */
+      .rd-surface {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #05070b; /* plain dark remote-desktop region — NOT a screenshot */
+        background-image:
+          linear-gradient(0deg, transparent 23px, rgba(255, 255, 255, 0.018) 24px),
+          linear-gradient(90deg, transparent 23px, rgba(255, 255, 255, 0.018) 24px);
+        background-size: 24px 24px;
+        overflow: hidden;
+      }
+      .rd-surface__label {
+        color: var(--text-disabled);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        user-select: none;
+      }
+      .rd-bar {
+        position: absolute;
+        top: 6px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        height: 28px;
+        padding: 0 6px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-overlay);
+        color: var(--text-secondary);
+        font-size: 12px;
+        z-index: 3;
+      }
+      .rd-bar__host {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 6px;
+        color: var(--text-primary);
+      }
+      .rd-bar__res {
+        padding: 0 6px;
+        border-left: 1px solid var(--border-primary);
+        white-space: nowrap;
+      }
+      .rd-bar__btn {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        cursor: pointer;
+      }
+      .rd-bar__btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+      }
+      .rd-bar__badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 6px;
+        border-left: 1px solid var(--border-primary);
+        color: var(--color-warning);
+      }
+      .rd-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: rgba(15, 17, 23, 0.82);
+        color: var(--text-primary);
+        z-index: 4;
+        text-align: center;
+      }
+      .rd-overlay__icon .li {
+        width: 30px;
+        height: 30px;
+        color: var(--accent-color);
+      }
+      .rd-overlay__title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .rd-overlay__sub {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .spin {
+        animation: rdspin 1.1s linear infinite;
+        transform-origin: 50% 50%;
+      }
+      @keyframes rdspin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      /* Schema-driven editor mockup (real form is DynamicForm). Layout altitude
+         only, theme vars only — shows the shared field base + protocol rows. */
+      .editor {
+        width: 560px;
+        max-width: 100%;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-secondary);
+        border-radius: 8px;
+        box-shadow: var(--shadow-overlay);
+        overflow: hidden;
+      }
+      .editor__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+        font-weight: 600;
+      }
+      .editor__body {
+        padding: 14px;
+      }
+      .form-group {
+        margin: 0 0 16px;
+      }
+      .form-group__title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+        padding-bottom: 4px;
+        margin: 0 0 10px;
+      }
+      .form-group__title .tag {
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: 600;
+        color: var(--accent-color);
+      }
+      .field {
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 8px;
+      }
+      .field__label {
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .input,
+      .select {
+        height: 28px;
+        padding: 0 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .input--mono {
+        font-family: var(--font-mono);
+      }
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+        color: var(--text-primary);
+        font-size: 12px;
+      }
+      .check-row .check {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 14px;
+      }
+      .check-row--on .check {
+        border-color: var(--accent-color);
+        background: var(--accent-color);
+        color: #fff;
+      }
+      .check-row .check .li {
+        width: 10px;
+        height: 10px;
+        stroke-width: 3;
+      }
+      .warn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--color-warning);
+        font-size: 11px;
+      }
+      .caret .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+      .supersedes {
+        border-left: 3px solid var(--accent-color);
+        background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Union of all mockup symbols. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-maximize" viewBox="0 0 24 24">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+        <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+        <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+        <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+      </symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24">
+        <path d="M10 8h.01" />
+        <path d="M12 12h.01" />
+        <path d="M14 8h.01" />
+        <path d="M16 12h.01" />
+        <path d="M18 8h.01" />
+        <path d="M6 8h.01" />
+        <path d="M7 16h10" />
+        <path d="M8 12h.01" />
+        <rect width="20" height="16" x="2" y="4" rx="2" />
+      </symbol>
+      <symbol id="i-clipboard" viewBox="0 0 24 24">
+        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      </symbol>
+      <symbol id="i-loader" viewBox="0 0 24 24">
+        <path d="M12 2v4" />
+        <path d="m16.2 7.8 2.9-2.9" />
+        <path d="M18 12h4" />
+        <path d="m16.2 16.2 2.9 2.9" />
+        <path d="M12 18v4" />
+        <path d="m4.9 19.1 2.9-2.9" />
+        <path d="M2 12h4" />
+        <path d="m4.9 4.9 2.9 2.9" />
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24">
+        <path
+          d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"
+        />
+        <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+        <path
+          d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"
+        />
+        <path d="m2 2 20 20" />
+      </symbol>
+      <symbol id="i-scaling" viewBox="0 0 24 24">
+        <path d="M12 3H5a2 2 0 0 0-2 2v14" />
+        <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+        <path d="M21 14v5a2 2 0 0 1-2 2h-5" />
+        <path d="M3 21 21 3" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Unified Graphical Remote-Desktop Sessions (VNC + RDP)</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >Epic:
+            <a href="https://github.com/armaxri/termiHub/issues/1678">#1678</a></span
+          >
+          <span
+            >Concept issue:
+            <a href="https://github.com/armaxri/termiHub/issues/1679">#1679</a></span
+          >
+          <span><code>docs/concepts/backlog/remote-desktop-sessions.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept remote-desktop-sessions</code> to
+          reconcile it with the implementation.
+        </p>
+      </blockquote>
+
+      <blockquote class="supersedes">
+        <p>
+          <strong>Supersedes two split concepts.</strong> This document is the single authoritative
+          design for graphical remote desktop in termiHub. It replaces the independently-written
+          <a href="https://github.com/armaxri/termiHub/issues/514">#514</a>
+          <code>vnc-sessions.html</code> and
+          <a href="https://github.com/armaxri/termiHub/issues/513">#513</a>
+          <code>rdp-sessions.html</code>, which each chose a <em>different</em> rendering transport
+          and therefore a different frontend. Those files remain for history and now point here.
+          XDMCP (<a href="https://github.com/armaxri/termiHub/issues/515">#515</a>) stays parked in
+          <code>future/</code>; the abstraction below is designed so it (or any later graphical
+          protocol) can plug in without reworking the UI.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#decision">Architecture Decision — Rust-side decode</a></li>
+          <li><a href="#split">Shared vs. Protocol-Specific</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Add built-in <strong>graphical remote-desktop sessions</strong> to termiHub for both
+          <strong>VNC</strong> (RFB — Remote Framebuffer) and <strong>RDP</strong> (Remote Desktop
+          Protocol). A remote desktop renders inside a termiHub tab on a
+          <code>&lt;canvas&gt;</code> element, alongside terminal tabs, participating in the tab bar,
+          drag-and-drop, and split views like any other connection.
+        </p>
+        <p>
+          <strong>Motivation.</strong> RDP (Windows) and VNC (Linux/macOS/Unix) are the two most
+          common remote-desktop protocols and both ship in MobaXterm. Adding them makes termiHub a
+          viable MobaXterm replacement for administrators who keep terminals and remote desktops in
+          one window.
+        </p>
+        <p>
+          <strong>The problem this concept exists to solve — drift.</strong> The wire protocols are
+          completely different (RFB vs. the RDP protocol) so the <em>backends</em> legitimately
+          differ, and that is fine. But the two original concepts were written separately and
+          already diverged on the one axis that matters most to the user — <em>how a frame reaches
+          the screen</em>: the VNC concept rendered with the <strong>noVNC JavaScript client</strong>
+          over a WebSocket-to-TCP proxy (decode in JS), while the RDP concept decoded with
+          <strong>IronRDP natively in Rust</strong> and pushed frames to a canvas (decode in Rust).
+          Two rendering transports means two canvases, two input-capture paths, two clipboard paths,
+          two toolbars, two resize handlers — they <em>will</em> drift and <em>won't</em> feel the
+          same. This concept fixes that by designing <strong>one shared user-facing/session layer</strong>
+          that both protocol backends plug into, mirroring how
+          <a href="https://github.com/armaxri/termiHub/issues/1335">#1335</a> introduced a
+          protocol-agnostic file-browser session layer that FTP and SFTP both use.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            <strong>Identical UX across protocols.</strong> Connecting, the connection editor, the
+            session tab/toolbar, credentials, clipboard, resize/scaling, fullscreen,
+            disconnect/reconnect, and the Open Connections entry must feel the same whether the
+            session is VNC or RDP.
+          </li>
+          <li>
+            <strong>One shared abstraction from the start.</strong> A single protocol-agnostic
+            graphical-session layer (frontend + session management + a Rust
+            <code>GraphicalBackend</code> trait). VNC and RDP are thin backend adapters behind it.
+          </li>
+          <li>
+            <strong>Inline in a tab.</strong> Renders in a <code>&lt;canvas&gt;</code>, never an
+            external window; full tab/split-view integration.
+          </li>
+          <li>
+            <strong>Reuse existing infrastructure.</strong> Schema-driven connection editor
+            (<code>DynamicForm</code>), the credential store, the connection sidebar, and the SSH
+            tunnel infrastructure — not new parallel systems.
+          </li>
+          <li><strong>Cross-platform</strong> on Windows, macOS, and Linux (pure-Rust decoders).</li>
+        </ul>
+
+        <h3>Non-Goals (v1)</h3>
+        <ul>
+          <li>Multi-monitor remote sessions (single monitor only).</li>
+          <li>RD Gateway / proxy and VNC repeaters (direct connections, or via existing SSH tunnel).</li>
+          <li>Smart-card / certificate authentication (password + NLA for RDP; RFB auth for VNC).</li>
+          <li>Image clipboard (text clipboard only; image is a stretch goal).</li>
+          <li>XDMCP (#515) — parked in <code>future/</code>, designed to plug in later.</li>
+        </ul>
+      </section>
+
+      <!-- ── Architecture Decision ──────────────────────────────────── -->
+      <section>
+        <h2 id="decision">
+          Architecture Decision — Rust-side decode for both
+          <a class="anchor" href="#decision">#</a>
+        </h2>
+        <p>
+          <strong>Decision (made by the maintainer):</strong> both protocols
+          <strong>decode in Rust</strong> and emit a single stream of
+          <strong>protocol-agnostic frame / cursor / clipboard / state events</strong> that one
+          shared frontend canvas renders. The frontend never knows which protocol it is. This
+          generalizes the RDP concept's approach to VNC as well.
+        </p>
+        <p>
+          <strong>Why this is the unifying choice.</strong> When decode happens behind the
+          <code>GraphicalBackend</code> trait, the <em>entire</em> frontend — canvas, input capture,
+          toolbar, overlays, resize, clipboard, fullscreen, status-bar segment — is protocol-blind
+          and shared. VNC and RDP cannot drift because there is only one of each of those things.
+          The seam between "same for the user" and "different on the wire" is drawn exactly at the
+          trait boundary.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>How frames reach the canvas</th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Rust-side decode</strong> (chosen)</td>
+                <td>
+                  Both backends decode in Rust (IronRDP for RDP; a Rust RFB client for VNC) and emit
+                  protocol-agnostic dirty-rect frame + cursor events. One shared
+                  <code>RemoteDesktopCanvas</code> paints them.
+                </td>
+                <td>
+                  <strong>Chosen.</strong> One frontend surface, identical input/clipboard/resize
+                  handling, no WebSocket proxy, no bundled JS protocol engines. Cost: replaces the
+                  VNC concept's noVNC plan with a Rust RFB decoder — trades noVNC's maturity for a
+                  single shared surface.
+                </td>
+              </tr>
+              <tr>
+                <td>JS-side decode (rejected)</td>
+                <td>
+                  noVNC decodes VNC in JS; <code>ironrdp-web</code> (WASM) decodes RDP in JS; both
+                  over a Rust WebSocket-to-TCP proxy.
+                </td>
+                <td>
+                  <strong>Rejected.</strong> Keeps noVNC's maturity, but leaves two different JS
+                  engines, a WS proxy to run and secure, and a much thinner shared surface — the
+                  exact drift this concept exists to prevent.
+                </td>
+              </tr>
+              <tr>
+                <td>External viewer launch</td>
+                <td>Shell out to mstsc / xfreerdp / a system VNC viewer.</td>
+                <td>Rejected — not integrated, no tab/split-view, poor UX.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Candidate Rust libraries (recommendations, not mandates)</h3>
+        <ul>
+          <li>
+            <strong>RDP → IronRDP</strong> — pure-Rust, cross-platform, no native deps, maintained
+            under the Microsoft org; RDP 6+ with bitmap decoding, input encoding, TLS, and CredSSP
+            (NLA). Kerberos and image clipboard are stretch.
+          </li>
+          <li>
+            <strong>VNC → a Rust RFB client</strong> — a maintained RFB/VNC crate that exposes
+            framebuffer updates and input encoding. The final crate choice is made during
+            implementation (<a href="https://github.com/armaxri/termiHub/issues/1681">#1681</a>); the
+            requirement is only that it decodes in Rust into the shared frame stream (no noVNC, no WS
+            proxy). Per the repo's "prefer libraries over custom code" rule, a mature crate is
+            strongly preferred over a hand-rolled RFB decoder.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Shared vs Protocol-Specific ────────────────────────────── -->
+      <section>
+        <h2 id="split">Shared vs. Protocol-Specific <a class="anchor" href="#split">#</a></h2>
+        <p>
+          The dividing line is deliberate: everything the user sees or touches is
+          <strong>shared</strong> and built once (implementation issue
+          <a href="https://github.com/armaxri/termiHub/issues/1680">#1680</a>); only wire-level
+          concerns live in the per-protocol backends
+          (<a href="https://github.com/armaxri/termiHub/issues/1681">#1681</a> VNC,
+          <a href="https://github.com/armaxri/termiHub/issues/1682">#1682</a> RDP).
+        </p>
+
+        <h3>Shared — built once in the layer (#1680)</h3>
+        <ul>
+          <li>
+            <strong>One tab content type</strong> <code>remote-desktop</code> (not separate
+            <code>vnc</code>/<code>rdp</code> types) → one <code>RemoteDesktopTab</code> /
+            <code>RemoteDesktopCanvas</code> component.
+          </li>
+          <li><strong>One canvas surface</strong> fed by protocol-agnostic frame + cursor events.</li>
+          <li>
+            <strong>One floating hover toolbar</strong>: host badge, resolution, Ctrl+Alt+Del,
+            clipboard, scaling, fullscreen, disconnect. Auto-hide.
+          </li>
+          <li>
+            <strong>One set of connection-state overlays</strong>: connecting / reconnecting
+            (max-3 auto-retry) / view-only, with tab state-dot semantics (amber connecting, green
+            connected).
+          </li>
+          <li><strong>One status-bar segment</strong>: type icon, <code>host:port</code>, resolution, encoding/color-depth.</li>
+          <li><strong>One session state machine</strong> and lifecycle (below).</li>
+          <li>
+            <strong>One input pipeline</strong>: keyboard/mouse capture, focus-boundary escape
+            hatch, modifier-release on focus loss, and pointer-coordinate reverse-scaling shared
+            across all scale modes (Fit to Tab / 1:1 Pixel / Match Window).
+          </li>
+          <li><strong>One clipboard model</strong>: bidirectional text sync + slide-out panel.</li>
+          <li>
+            <strong>One connection editor</strong>, rendered by <code>DynamicForm</code> over a
+            shared field base: host, port, username, password (credential store + "Save to store"),
+            scale mode, color depth, view-only, clipboard sync, auto-reconnect.
+          </li>
+          <li>
+            <strong>Shared sidebar/UX</strong>: connection-list entry with a distinct
+            <code>monitor</code> icon, context menu (Connect / Edit / Duplicate / Delete — no
+            SFTP/file-browser), and an Open Connections entry, identical to other types.
+          </li>
+          <li><strong>Shared credential-store integration</strong> and generic Tauri commands/events.</li>
+        </ul>
+
+        <h3>Protocol-specific — in each backend (the backends legitimately differ)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>VNC (RFB) — #1681</th>
+                <th>RDP — #1682</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Rust decoder</td>
+                <td>Rust RFB client</td>
+                <td>IronRDP</td>
+              </tr>
+              <tr>
+                <td>Auth</td>
+                <td>VNC password / none / VeNCrypt</td>
+                <td>NLA (CredSSP) / TLS / legacy RDP</td>
+              </tr>
+              <tr>
+                <td>Identity fields</td>
+                <td><strong>no domain</strong>; optional username (VeNCrypt)</td>
+                <td><strong>domain</strong> + security-mode select + cert-error handling</td>
+              </tr>
+              <tr>
+                <td>Addressing</td>
+                <td>display-number ↔ port interplay (<code>5900 + display</code>)</td>
+                <td>port <code>3389</code></td>
+              </tr>
+              <tr>
+                <td>Extras</td>
+                <td>encodings / quality preference; remote-cursor; SSH-tunnel reuse</td>
+                <td>drive redirection, audio, admin/console session, dynamic resize (Display Control Channel)</td>
+              </tr>
+              <tr>
+                <td>Clipboard wire</td>
+                <td>RFB <code>ServerCutText</code> / <code>ClientCutText</code></td>
+                <td>RDP clipboard channel</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Both forms are the <em>same</em> schema-driven editor differing only in these rows — the
+          user sees one consistent form (mockup below).
+        </p>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The remote desktop renders as a <code>&lt;canvas&gt;</code> filling the tab content area,
+          in the same tab bar as terminals. A thin toolbar floats at the top-center of the canvas on
+          hover (like a full-screen client's connection bar) and auto-hides when the pointer leaves.
+          The mockups are authoritative for layout; the same chrome is used for VNC and RDP — only
+          the status-segment text and the protocol icon differ.
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — remote-desktop session tab (runtime states)</h3>
+          <div class="mockup-note">
+            One shared tab type and one canvas surface. States 1–4 are the same component with
+            different overlays; a VNC session and an RDP session are pixel-identical here apart from
+            the status-segment text.
+          </div>
+
+          <div class="states">
+            <!-- 1 · Connected -->
+            <div>
+              <div class="state-label">1 · Connected — canvas, hover toolbar, status segment</div>
+              <div class="app" style="height: 320px">
+                <div class="app__body">
+                  <nav class="activity-bar">
+                    <div class="activity-bar__top">
+                      <button
+                        class="activity-bar__item activity-bar__item--active"
+                        title="Connections"
+                      >
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="activity-bar__indicator"></span>
+                      </button>
+                    </div>
+                    <div class="activity-bar__bottom">
+                      <button class="activity-bar__item" title="Settings">
+                        <svg class="li"><use href="#i-settings" /></svg>
+                      </button>
+                    </div>
+                  </nav>
+                  <aside class="sidebar">
+                    <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+                    <div class="sidebar__content">
+                      <div class="connection-tree__item connection-tree__item--selected">
+                        <svg class="li"><use href="#i-monitor" /></svg> win-server
+                      </div>
+                      <div class="connection-tree__item">
+                        <svg class="li"><use href="#i-monitor" /></svg> linux-desktop
+                      </div>
+                      <div class="connection-tree__item">
+                        <svg class="li"><use href="#i-network" /></svg> dev-box
+                      </div>
+                    </div>
+                  </aside>
+                  <div class="terminal-view">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">RDP: win-server</span>
+                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                      </div>
+                      <div class="tab">
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">SSH: dev-box</span>
+                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                      </div>
+                    </div>
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="rd-surface">
+                          <div class="rd-bar">
+                            <span class="rd-bar__host">
+                              <svg class="li"><use href="#i-monitor" /></svg> win-server.local
+                            </span>
+                            <span class="rd-bar__res">1920×1080</span>
+                            <button class="rd-bar__btn" title="Send Ctrl+Alt+Del">
+                              <svg class="li"><use href="#i-keyboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Clipboard">
+                              <svg class="li"><use href="#i-clipboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Scaling">
+                              <svg class="li"><use href="#i-scaling" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Fullscreen">
+                              <svg class="li"><use href="#i-maximize" /></svg>
+                            </button>
+                          </div>
+                          <span class="rd-surface__label">remote desktop</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">
+                      <svg class="li"><use href="#i-monitor" /></svg> win-server.local:3389 ·
+                      1920×1080 · 32-bit
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2 · Connecting -->
+            <div>
+              <div class="state-label">2 · Connecting overlay</div>
+              <div class="app" style="height: 320px">
+                <div class="app__body">
+                  <div class="terminal-view">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <span class="state-dot state-dot--connecting"></span>
+                        <span class="tab__title">RDP: win-server</span>
+                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                      </div>
+                    </div>
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="rd-surface">
+                          <div class="rd-overlay">
+                            <span class="rd-overlay__icon">
+                              <svg class="li spin"><use href="#i-loader" /></svg>
+                            </span>
+                            <div class="rd-overlay__title">Connecting to win-server.local…</div>
+                            <div class="rd-overlay__sub">TLS handshake · authentication</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">
+                      <svg class="li"><use href="#i-monitor" /></svg> win-server.local:3389 ·
+                      connecting…
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3 · Reconnecting -->
+            <div>
+              <div class="state-label">3 · Reconnecting overlay (attempt 2/3)</div>
+              <div class="app" style="height: 320px">
+                <div class="app__body">
+                  <div class="terminal-view">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <span class="state-dot state-dot--connecting"></span>
+                        <span class="tab__title">VNC: linux-desktop</span>
+                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                      </div>
+                    </div>
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="rd-surface">
+                          <span class="rd-surface__label">remote desktop</span>
+                          <div class="rd-overlay">
+                            <span class="rd-overlay__icon">
+                              <svg class="li spin"><use href="#i-refresh-cw" /></svg>
+                            </span>
+                            <div class="rd-overlay__title">Connection lost. Reconnecting…</div>
+                            <div class="rd-overlay__sub">attempt 2/3</div>
+                            <button class="btn">Cancel</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">
+                      <svg class="li"><use href="#i-monitor" /></svg> linux-desktop:5901 ·
+                      reconnecting (2/3)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4 · View-only -->
+            <div>
+              <div class="state-label">4 · Connected, view-only</div>
+              <div class="app" style="height: 320px">
+                <div class="app__body">
+                  <div class="terminal-view">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">VNC: linux-desktop</span>
+                        <span class="tab__close"><svg class="li"><use href="#i-x" /></svg></span>
+                      </div>
+                    </div>
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="rd-surface">
+                          <div class="rd-bar">
+                            <span class="rd-bar__host">
+                              <svg class="li"><use href="#i-monitor" /></svg> linux-desktop
+                            </span>
+                            <span class="rd-bar__res">1440×900</span>
+                            <button class="rd-bar__btn" title="Clipboard">
+                              <svg class="li"><use href="#i-clipboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Fullscreen">
+                              <svg class="li"><use href="#i-maximize" /></svg>
+                            </button>
+                            <span class="rd-bar__badge">
+                              <svg class="li"><use href="#i-eye-off" /></svg> View only
+                            </span>
+                          </div>
+                          <span class="rd-surface__label">remote desktop</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">
+                      <svg class="li"><use href="#i-monitor" /></svg> linux-desktop:5901 ·
+                      1440×900 · Tight · 24-bit
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> One shared tab type (<code>remote-desktop</code>) —
+                the tab title carries a <code>RDP:</code>/<code>VNC:</code> prefix and the
+                <code>monitor</code> icon; the state dot follows the shared state machine.
+              </li>
+              <li>
+                <span class="callout">B</span> <code>RemoteDesktopCanvas</code> — a plain dark
+                surface (not a screenshot); the backend paints decoded frames here.
+              </li>
+              <li>
+                <span class="callout">C</span> <code>RemoteDesktopToolbar</code> (hover, auto-hide):
+                host badge, resolution, Ctrl+Alt+Del, clipboard, scaling, fullscreen. Identical for
+                both protocols.
+              </li>
+              <li>
+                <span class="callout">D</span> Shared overlays — connecting (loader), reconnecting
+                (refresh-cw + attempt counter + Cancel), view-only badge.
+              </li>
+              <li>
+                <span class="callout">E</span> Shared status-bar segment — only the text differs by
+                protocol.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — schema-driven connection editor (same form, protocol rows differ)</h3>
+          <div class="mockup-note">
+            Rendered by the existing <code>DynamicForm</code>. The <strong>Connection</strong>,
+            <strong>Display</strong>, and <strong>Features</strong> groups are the shared field
+            base; the highlighted group is the only protocol-specific part — RDP contributes
+            <em>Domain + Security</em>, VNC contributes <em>Display number + Encoding</em> and has no
+            domain.
+          </div>
+          <div class="states">
+            <div>
+              <div class="state-label">RDP</div>
+              <div class="editor">
+                <div class="editor__header">
+                  <svg class="li"><use href="#i-monitor" /></svg> RDP (Remote Desktop) — New
+                  Connection
+                </div>
+                <div class="editor__body">
+                  <div class="form-group">
+                    <div class="form-group__title">Connection</div>
+                    <div class="field">
+                      <span class="field__label">Host</span
+                      ><span class="input input--mono">win-server.local</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Port</span><span class="input">3389</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Username</span><span class="input">admin</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Password</span
+                      ><span class="input">•••••••• <span class="warn">Save</span></span>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <div class="form-group__title">
+                      Security <span class="tag">· RDP only</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Domain</span><span class="input">CORP</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Security</span
+                      ><span class="select"
+                        >Auto <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                      ></span>
+                    </div>
+                    <div class="check-row">
+                      <span class="check"></span> Ignore certificate errors
+                      <span class="warn"
+                        ><svg class="li"><use href="#i-triangle-alert" /></svg> off by default</span
+                      >
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <div class="form-group__title">Display &amp; Features</div>
+                    <div class="field">
+                      <span class="field__label">Scale Mode</span
+                      ><span class="select"
+                        >Fit to Tab <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                      ></span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Color Depth</span
+                      ><span class="select"
+                        >32-bit <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                      ></span>
+                    </div>
+                    <div class="check-row check-row--on">
+                      <span class="check"><svg class="li"><use href="#i-check" /></svg></span>
+                      Clipboard Sync
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="state-label">VNC</div>
+              <div class="editor">
+                <div class="editor__header">
+                  <svg class="li"><use href="#i-monitor" /></svg> VNC (Virtual Network Computing) —
+                  New Connection
+                </div>
+                <div class="editor__body">
+                  <div class="form-group">
+                    <div class="form-group__title">Connection</div>
+                    <div class="field">
+                      <span class="field__label">Host</span
+                      ><span class="input input--mono">linux-desktop</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Display / Port</span
+                      ><span class="input">1 → 5901</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Password</span
+                      ><span class="input">•••••••• <span class="warn">Save</span></span>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <div class="form-group__title">
+                      Encoding <span class="tag">· VNC only</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Encoding</span
+                      ><span class="select"
+                        >Tight <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                      ></span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Quality</span
+                      ><span class="select"
+                        >Automatic <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                      ></span>
+                    </div>
+                    <div class="check-row check-row--on">
+                      <span class="check"><svg class="li"><use href="#i-check" /></svg></span> Show
+                      remote cursor
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <div class="form-group__title">Display &amp; Features</div>
+                    <div class="field">
+                      <span class="field__label">Scale Mode</span
+                      ><span class="select"
+                        >Fit to Window <span class="caret"><svg class="li"><use href="#i-chevron-down" /></svg></span
+                      ></span>
+                    </div>
+                    <div class="check-row">
+                      <span class="check"></span> View Only
+                    </div>
+                    <div class="check-row check-row--on">
+                      <span class="check"><svg class="li"><use href="#i-check" /></svg></span>
+                      Clipboard Sync
+                    </div>
+                    <div class="check-row">
+                      <span class="check"></span>
+                      <svg class="li"><use href="#i-lock" /></svg> Connect via SSH tunnel
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Shared field base — Host, Password (+ credential-store
+                Save), Scale Mode, Color Depth, Clipboard Sync, View Only — rendered identically for
+                both protocols.
+              </li>
+              <li>
+                <span class="callout">B</span> The only protocol-specific group. RDP: Domain +
+                Security mode + cert toggle. VNC: Display↔port, Encoding/Quality, remote cursor, and
+                the optional SSH-tunnel group. VNC has <em>no</em> domain field.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <p>Key rules that apply to both protocols through the shared layer:</p>
+        <ul>
+          <li>
+            <strong>Connection-type routing.</strong> Terminal types (ssh, local, telnet, serial,
+            docker) still go through the terminal <code>SessionManager</code>. A connection whose
+            capabilities report <code>graphical: true</code> routes to the
+            <code>GraphicalSessionManager</code> and opens a <code>remote-desktop</code> tab instead
+            of a terminal — the same way FTP's <code>terminal: false</code> opens a browser-only tab
+            today. Routing is by capability, not a hard-coded per-protocol branch.
+          </li>
+          <li>
+            <strong>Credentials.</strong> Password comes from the credential store (master password
+            or prompt) via the existing flow; "Save to store" writes it. Identical for VNC and RDP.
+          </li>
+          <li>
+            <strong>Scale modes.</strong> Fit to Tab (scale to fill, preserve aspect), 1:1 Pixel
+            (native, scrollbars if larger), Match Window (request a session resolution matching the
+            tab; dynamic resize on tab/split/window resize). Pointer coordinates are reverse-scaled
+            in one shared helper before reaching the backend.
+          </li>
+          <li>
+            <strong>Dynamic resize.</strong> RDP uses the Display Control Channel (8.1+); VNC uses
+            server-side desktop resize where supported. Servers that cannot resize stay at the
+            negotiated resolution and the canvas scales — the frontend behaves the same either way.
+          </li>
+          <li>
+            <strong>Keyboard capture.</strong> While the canvas has focus, key events are captured
+            and forwarded; termiHub's own shortcuts are suppressed except a configurable escape
+            hatch (default <code>Ctrl+Alt+Shift</code>) that releases focus back to termiHub for tab
+            switching. <code>Ctrl+Alt+Del</code> is a toolbar button (the OS would otherwise
+            intercept it).
+          </li>
+          <li>
+            <strong>Focus loss</strong> stops key forwarding and releases held modifiers to avoid
+            stuck keys.
+          </li>
+          <li>
+            <strong>Clipboard</strong> is bidirectional text (VNC:
+            <code>ServerCutText</code>/<code>ClientCutText</code>; RDP: clipboard channel), surfaced
+            through one shared slide-out panel with an auto-sync toggle. Image clipboard is a stretch
+            goal.
+          </li>
+          <li>
+            <strong>Reconnection</strong> retries up to 3 times on an unexpected drop, showing the
+            shared reconnect overlay; after the cap, a manual Reconnect prompt.
+          </li>
+        </ul>
+
+        <h3>Edge cases</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Auth failure</td>
+                <td>Inline error in the tab ("Authentication failed — check credentials"), retry with new credentials.</td>
+              </tr>
+              <tr>
+                <td>RDP certificate mismatch</td>
+                <td>Warning dialog with cert details; accept once or permanently for this host.</td>
+              </tr>
+              <tr>
+                <td>VNC over an insecure network</td>
+                <td>Offer/encourage the SSH-tunnel option (RFB auth is weak); reuse the existing tunnel infra.</td>
+              </tr>
+              <tr>
+                <td>Very large remote resolution</td>
+                <td>Cap framebuffer (e.g. 4096×2160) to bound memory; warn if the request exceeds the cap.</td>
+              </tr>
+              <tr>
+                <td>Tab loses focus mid-drag</td>
+                <td>Release all held mouse buttons and modifier keys.</td>
+              </tr>
+              <tr>
+                <td>Multi-monitor / gateway / smart-card</td>
+                <td>Out of scope for v1 (see Non-Goals).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Connection-type routing — capability decides the manager and tab</span
+          >
+          <pre class="mermaid">
+flowchart TD
+    A[User clicks Connect] --&gt; B{capabilities.graphical?}
+    B --&gt;|false, terminal:true| C[SessionManager -&gt; terminal tab]
+    B --&gt;|true| D[GraphicalSessionManager]
+    D --&gt; E[Open tab, contentType: remote-desktop]
+    D --&gt; F{type_id}
+    F --&gt;|vnc| G[VncBackend - RFB decode in Rust]
+    F --&gt;|rdp| H[RdpBackend - IronRDP decode in Rust]
+    G --&gt; I[Protocol-agnostic frame/cursor/clipboard/state events]
+    H --&gt; I
+    I --&gt; J[RemoteDesktopCanvas - one shared surface]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Shared session state machine (identical for VNC and RDP)</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Connecting: connect()
+    Connecting --&gt; Authenticating: transport up
+    Authenticating --&gt; Active: auth + first frame
+    Authenticating --&gt; AuthFailed: bad credentials
+    Connecting --&gt; ConnectFailed: network / TLS error
+    Active --&gt; Resizing: tab resize
+    Resizing --&gt; Active: new resolution
+    Active --&gt; Disconnected: network drop
+    Active --&gt; ServerClosed: server logoff
+    Active --&gt; [*]: user disconnect
+    Disconnected --&gt; Reconnecting: auto-retry
+    Reconnecting --&gt; Connecting: attempt (max 3)
+    Reconnecting --&gt; ShowPrompt: cap exceeded
+    ShowPrompt --&gt; Connecting: user reconnect
+    ShowPrompt --&gt; [*]: dismiss
+    AuthFailed --&gt; Connecting: retry
+    AuthFailed --&gt; [*]: dismiss
+    ConnectFailed --&gt; [*]: dismiss
+    ServerClosed --&gt; [*]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Frame pipeline — decode in Rust, one protocol-agnostic event to the canvas</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant S as Remote server (VNC or RDP)
+    participant B as GraphicalBackend (Rust decode)
+    participant M as GraphicalSessionManager
+    participant C as RemoteDesktopCanvas (frontend)
+    loop while active
+        S-&gt;&gt;B: protocol update PDU (RFB rects / RDP bitmap)
+        B-&gt;&gt;B: decode to RGBA dirty-rects
+        B-&gt;&gt;M: FrameUpdate {rects, width, height}
+        M-&gt;&gt;C: emit remote-desktop-frame
+        C-&gt;&gt;C: blit dirty-rects into &lt;canvas&gt;
+    end
+    Note over C,B: input travels the reverse path, protocol-agnostic
+    C-&gt;&gt;M: invoke remote_desktop_send_input {key/pointer}
+    M-&gt;&gt;B: send_input(event)
+    B-&gt;&gt;S: encode to RFB KeyEvent/PointerEvent or RDP input PDU
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Dynamic resize (Match Window mode)</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant C as Canvas (frontend)
+    participant M as GraphicalSessionManager
+    participant B as Backend
+    U-&gt;&gt;C: resize tab (split / window)
+    C-&gt;&gt;C: debounce 300ms
+    C-&gt;&gt;M: invoke remote_desktop_resize {w, h}
+    M-&gt;&gt;B: resize(w, h)
+    B-&gt;&gt;B: RDP: Display Control Channel / VNC: SetDesktopSize
+    B-&gt;&gt;M: FrameUpdate at new size
+    M-&gt;&gt;C: emit remote-desktop-frame {w, h}
+    C-&gt;&gt;C: resize canvas, repaint
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at concept-creation time. Three implementation issues realize
+          this concept, and their order is strict —
+          <a href="https://github.com/armaxri/termiHub/issues/1680">#1680</a> (shared layer) must
+          land before <a href="https://github.com/armaxri/termiHub/issues/1681">#1681</a> (VNC) and
+          <a href="https://github.com/armaxri/termiHub/issues/1682">#1682</a> (RDP), so no
+          overlapping UI is built twice.
+        </p>
+
+        <h3>The seam: a <code>GraphicalBackend</code> trait behind a capability flag</h3>
+        <p>
+          termiHub's existing <code>ConnectionType</code> trait
+          (<code>core/src/connection/mod.rs</code>) is byte-stream oriented (<code>write(&amp;[u8])</code>,
+          <code>subscribe_output() -&gt; bytes</code>, <code>resize(cols, rows)</code>) — a poor fit
+          for a framebuffer. The layer adds a sibling, framebuffer-oriented trait and reuses the same
+          registry/editor/sidebar/credential plumbing via a new capability flag, exactly as
+          <code>terminal: false</code> was added for FTP.
+        </p>
+        <pre class="mermaid">
+classDiagram
+    class Capabilities {
+        +bool terminal
+        +bool file_browser
+        +bool graphical  «new»
+        +bool resize
+    }
+    class GraphicalBackend {
+        <<trait>>
+        +connect(settings) Result
+        +disconnect() Result
+        +is_connected() bool
+        +subscribe_frames() FrameReceiver
+        +subscribe_cursor() CursorReceiver
+        +send_input(InputEvent) Result
+        +resize(w_px, h_px) Result
+        +get_clipboard() Option~String~
+        +set_clipboard(text) Result
+        +graphical_capabilities() GraphicalCapabilities
+    }
+    class VncBackend {
+        RFB client (Rust decode)
+    }
+    class RdpBackend {
+        IronRDP (Rust decode)
+    }
+    class MockRemoteDesktopBackend {
+        test pattern + synthetic cursor
+    }
+    GraphicalBackend <|.. VncBackend
+    GraphicalBackend <|.. RdpBackend
+    GraphicalBackend <|.. MockRemoteDesktopBackend
+        </pre>
+        <ul>
+          <li>
+            <code>FrameUpdate</code> carries decoded RGBA dirty-rects + full width/height;
+            <code>InputEvent</code> is a protocol-agnostic key/pointer/wheel union;
+            <code>GraphicalCapabilities</code> declares supported auth kinds, dynamic-resize,
+            clipboard, and view-only.
+          </li>
+          <li>
+            A graphical connection reports <code>terminal: false, graphical: true</code>, flows
+            through the <em>same</em> <code>ConnectionTypeRegistry</code>, connection editor,
+            sidebar, and credential store as every other type.
+          </li>
+        </ul>
+
+        <h3>Backend (Rust)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+                <th>Issue</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>core/src/connection/mod.rs</code></td>
+                <td><strong>Edit</strong> — add <code>graphical</code> to <code>Capabilities</code>; add <code>GraphicalBackend</code> trait + <code>FrameUpdate</code>/<code>InputEvent</code> types.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/session/graphical_manager.rs</code></td>
+                <td><strong>New</strong> — <code>GraphicalSessionManager</code>: keyed live sessions, shared state machine, event fan-out.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/commands/remote_desktop.rs</code></td>
+                <td><strong>New</strong> — generic commands <code>remote_desktop_connect/resize/send_input/send_clipboard/disconnect</code>.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/mock_remote_desktop.rs</code></td>
+                <td><strong>New</strong> — test-pattern backend so the layer merges and is E2E-testable with no real server.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/vnc/</code></td>
+                <td><strong>New</strong> — RFB adapter implementing <code>GraphicalBackend</code>; registers <code>vnc</code>.</td>
+                <td>#1681</td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/rdp/</code></td>
+                <td><strong>New</strong> — IronRDP adapter implementing <code>GraphicalBackend</code>; registers <code>rdp</code>.</td>
+                <td>#1682</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Frontend (React/TS)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+                <th>Issue</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/components/RemoteDesktop/RemoteDesktopTab.tsx</code></td>
+                <td><strong>New</strong> — canvas + toolbar + overlays; protocol-blind.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td><code>src/hooks/useRemoteDesktopSession.ts</code></td>
+                <td><strong>New</strong> — drives connect/resize/input/clipboard via the generic commands + events.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td><code>src/types/remoteDesktop.ts</code></td>
+                <td><strong>New</strong> — <code>TabContentType: "remote-desktop"</code>, event payload types.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td><code>src/services/api.ts</code>, <code>src/store/appStore.ts</code></td>
+                <td><strong>Edit</strong> — API wrappers + session state; additive.</td>
+                <td>#1680</td>
+              </tr>
+              <tr>
+                <td>VNC / RDP settings schema</td>
+                <td><strong>New</strong> — protocol rows layered on the shared field base (no editor component change).</td>
+                <td>#1681 / #1682</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <blockquote>
+          <p>
+            <strong>Anti-collision requirement for #1680.</strong> Backend registration must be
+            additive/registry-driven and the editor must be fully schema-driven, so that adding VNC
+            (#1681) or RDP (#1682) means only creating a new <code>backends/&lt;proto&gt;/</code>
+            module + schema and calling <code>registry.register(...)</code> — <em>no</em> edit to a
+            shared match arm or a hand-written editor switch. If that holds, #1681 and #1682 touch
+            disjoint files and may run in parallel; if not, they must be sequenced. The eventual code
+            follows the repo's <code>.claude/CLAUDE.md</code> and <code>docs/contributing.md</code>
+            (schema-driven forms, prefer libraries over custom code, tests-with-every-change).
+          </p>
+        </blockquote>
+
+        <h3>Security considerations</h3>
+        <ul>
+          <li>VNC RFB auth is weak; encourage the SSH-tunnel path and warn on plaintext connections.</li>
+          <li>RDP defaults to NLA (CredSSP); legacy RDP encryption is available only behind an explicit warning.</li>
+          <li>"Ignore certificate errors" is off by default and shown with a warning.</li>
+          <li>Passwords never touch config plaintext — always via the credential store.</li>
+          <li>Cap framebuffer dimensions to bound memory against a hostile/misconfigured server.</li>
+        </ul>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept remote-desktop-sessions</code>. Records the last commit
+            at which the concept and code were reconciled, plus open divergences. The concept is the
+            source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+          (design only)
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Shared graphical-session layer (canvas tab, toolbar, session manager, generic commands/events, <code>GraphicalBackend</code> trait, mock backend)</td>
+                <td>Not implemented</td>
+                <td>Missing</td>
+                <td>Implement #1680, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>VNC (RFB) backend adapter, decode in Rust</td>
+                <td>Not implemented</td>
+                <td>Missing</td>
+                <td>Implement #1681 after #1680</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>RDP (IronRDP) backend adapter, decode in Rust</td>
+                <td>Not implemented</td>
+                <td>Missing</td>
+                <td>Implement #1682 after #1680</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
