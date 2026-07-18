@@ -1,4 +1,4 @@
-import type { TransferProgress, TransferQueueState } from "@/services/api";
+import type { TransferProgress, TransferQueueState, TransferSnapshot } from "@/services/api";
 
 /**
  * The connection-type-agnostic state space of a queued file transfer, as shown
@@ -193,6 +193,53 @@ export function transferEntryFromProgress(
     error: state === "failed" ? (progress.message ?? "Transfer failed") : undefined,
     attempt: progress.attempt ?? prev?.attempt,
     maxAttempts: progress.maxAttempts ?? prev?.maxAttempts,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Fold a backend {@link TransferSnapshot} (from `transfer_list`) into a
+ * {@link TransferEntry}, for the reconcile backstop (#1645).
+ *
+ * Unlike a `transfer-progress` event, a snapshot carries the rich `state`
+ * directly. This is used only to **settle a stuck non-terminal row** to its true
+ * terminal state when the terminal event was dropped — it is never used to move
+ * a live row's progress (events own that), so it cannot regress an
+ * event-advanced row. `prev` is the existing row being settled; its `path` /
+ * retry counters / error are preserved where the snapshot does not supply them.
+ */
+export function transferEntryFromSnapshot(
+  snapshot: TransferSnapshot,
+  prev: TransferEntry | undefined,
+  now: number
+): TransferEntry {
+  const totalRaw = snapshot.total;
+  const totalBytes = totalRaw && totalRaw > 0 ? totalRaw : (prev?.totalBytes ?? null);
+  const state = snapshot.state;
+
+  let percent: number | null;
+  if (state === "completed") {
+    percent = 100;
+  } else if (totalBytes && totalBytes > 0) {
+    percent = Math.min(100, Math.max(0, Math.round((snapshot.transferred / totalBytes) * 100)));
+  } else {
+    percent = null;
+  }
+
+  return {
+    id: snapshot.transferId,
+    sessionId: snapshot.sessionId,
+    direction: snapshot.direction,
+    name: snapshot.fileName,
+    path: snapshot.path ?? prev?.path,
+    state,
+    transferred: snapshot.transferred,
+    totalBytes,
+    percent,
+    speedBytesPerSec: snapshot.speed > 0 ? snapshot.speed : null,
+    error: state === "failed" ? (prev?.error ?? "Transfer failed") : undefined,
+    attempt: snapshot.attempt || prev?.attempt,
+    maxAttempts: snapshot.maxAttempts || prev?.maxAttempts,
     updatedAt: now,
   };
 }
