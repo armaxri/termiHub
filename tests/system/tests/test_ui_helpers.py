@@ -8,7 +8,13 @@ import pytest
 
 from termihub_harness import find_connection, find_folder
 from termihub_harness.bridge import BridgeError
-from termihub_harness.ui import connection_item_testid, folder_toggle_testid, iter_tabs
+from termihub_harness.ui import (
+    active_leaf,
+    connection_item_testid,
+    find_leaf,
+    folder_toggle_testid,
+    iter_tabs,
+)
 from termihub_harness.ui.base import HarnessMixin
 from termihub_harness.ui.tabs import TabsUi
 
@@ -250,3 +256,34 @@ def test_iter_tabs_handles_a_single_leaf_and_empty_or_malformed_nodes():
     assert iter_tabs({"type": "leaf", "id": "p1", "tabs": []}) == []
     assert iter_tabs(None) == []
     assert iter_tabs({"type": "split", "children": [None, "junk"]}) == []
+
+
+_SPLIT_TREE = {
+    "type": "split",
+    "children": [
+        {"type": "leaf", "id": "p1", "tabs": [{"id": "a"}]},
+        {"type": "leaf", "id": "p2", "tabs": []},
+    ],
+}
+
+
+def test_find_leaf_locates_a_leaf_by_id_or_returns_none():
+    assert find_leaf(_SPLIT_TREE, "p1")["tabs"] == [{"id": "a"}]
+    assert find_leaf(_SPLIT_TREE, "p2")["tabs"] == []
+    assert find_leaf(_SPLIT_TREE, "missing") is None
+    # Malformed / partial nodes never raise.
+    assert find_leaf(None, "p1") is None
+    assert find_leaf({"type": "split", "children": [None, "junk"]}, "p1") is None
+
+
+def test_active_leaf_returns_the_active_panels_leaf():
+    # The freshly-split active panel (#1656) is empty while the other holds a tab.
+    driver = StubDriver({"activePanelId": "p2", "rootPanel": _SPLIT_TREE})
+    assert active_leaf(driver) == {"type": "leaf", "id": "p2", "tabs": []}
+
+
+def test_active_leaf_is_none_when_unresolved():
+    # No active panel, or a tree that hasn't loaded yet (BridgeError) → None.
+    assert active_leaf(StubDriver({"activePanelId": None, "rootPanel": _SPLIT_TREE})) is None
+    assert active_leaf(StubDriver({"rootPanel": _SPLIT_TREE})) is None
+    assert active_leaf(StubDriver({"activePanelId": "p1"})) is None
