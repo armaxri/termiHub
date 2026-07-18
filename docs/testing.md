@@ -290,37 +290,26 @@ Examples:
 
 ## CI Integration
 
-Add to `.github/workflows/test.yml`:
+The system/E2E suite runs in **two lanes**, split so per-PR CI stays fast while
+the app-launching suites still run on a cadence:
 
-```yaml
-name: Tests
+- **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR runs the bridge harness with `-m "not integration"`, so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
+- **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). A scheduled + `workflow_dispatch` job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
-on: [push, pull_request]
+The lane runs the app natively on each OS; only the **Docker fixtures** are
+Linux-only:
 
-jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - run: npm ci
-      - run: npm run test:coverage
-      - uses: codecov/codecov-action@v3
+| Leg                            | App launch + UI suites            | Docker-fixture suites (SSH/telnet/serial/agent)                            |
+| ------------------------------ | --------------------------------- | -------------------------------------------------------------------------- |
+| **Linux** (`ubuntu-latest`)    | Run headless under Xvfb           | Run — Docker Compose fixtures brought up in-job                            |
+| **macOS** (`macos-latest`)     | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon                   |
+| **Windows** (`windows-latest`) | Run natively (WebView2, no Xvfb)  | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
 
-  system-tests:
-    # System / E2E coverage runs through the Python bridge harness
-    # (tests/system/), which talks to the app over a WebSocket bridge and needs
-    # no tauri-driver — so it runs on all three OSes. See tests/system/README.md.
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: ./scripts/test-system-py.sh -m integration
-```
+The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
+present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
+the coverage it _can_ run rather than failing on fixtures it cannot reach. This
+Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
+carve-out](#ssh-tunnel-startstop-on-macos-manual-carve-out-933) and ADR-5.
 
 ### Windows Agent CI Coverage
 
@@ -596,6 +585,16 @@ Notes worth knowing before you use it:
 
 `agent/tests/deferred_update_hook_integration.rs` drives all of the above against
 a real child agent, including the unarmed (production) case.
+
+The desktop-UI consumer is `tests/system/tests/test_agent_update_apply_now_live.py`
+(#1520): it arms a **dedicated** deployed-agent container,
+`remote-agent-pending-update` (compose profile `agent`, host port 2214), by
+building the `remote-agent` image with `PENDING_UPDATE_VERSION` set — which bakes
+`PermitUserEnvironment yes` and `~testuser/.ssh/environment` so the env var reaches
+the desktop-launched `termihub-agent --stdio` process (the var can never be a CLI
+flag). It is a separate service from `remote-agent` on purpose: the on-attach
+update announcement would otherwise surface a banner in the banner-_surfacing_
+suite, whose gating tests assert none appears until they announce one.
 
 #### Python system-test harness — cross-platform shells (#886)
 
@@ -2331,7 +2330,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-UI-22–25                      | _manual_ (separator size/cursor, overflow scroll — visual)                                                                                                                               |
 | MT-AGENT (create/error/setup)    | `tests/system/tests/test_remote_agent.py` (create, error dialog, setup wizard vs. the password container)                                                                                |
 | MT-AGENT (live connect/sessions) | `tests/system/tests/test_remote_agent_live.py` (live connect + shells, child shell session, persistent-session reconnect, connected-agent menu — vs. the deployed-agent container, #995) |
-| MT-AGENT (update banner)         | `tests/system/tests/test_agent_update_banner_live.py` (surfacing/copy, staged + connected gates, dismiss/re-arm — #1520; Apply Now not driven, see the module docstring)                 |
+| MT-AGENT (update banner)         | `test_agent_update_banner_live.py` (surfacing, gates, dismiss) + `test_agent_update_apply_now_live.py` (Apply Now live deferred/busy vs. armed container — #1520/#1546)                  |
 | MT-CRED-04–08                    | `tests/system/tests/test_credential_store.py`                                                                                                                                            |
 | MT-RECOVERY-01–06                | `tests/system/tests/test_config_recovery.py`                                                                                                                                             |
 | MT-RECOVERY-07–12                | covered by `test_connection_crud.py` / `test_credential_store.py` / `test_export_import.py` / `test_external_files.py`                                                                   |
