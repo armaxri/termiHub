@@ -12,7 +12,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { useConnectSavedConnection } from "./useConnectSavedConnection";
-import type { SavedConnection } from "@/types/connection";
+import type { SavedConnection, ConnectionTypeInfo } from "@/types/connection";
 import {
   resolveCredential,
   createTerminal,
@@ -54,6 +54,33 @@ function makeSshConn(id: string, authMethod: string, savePassword?: boolean): Sa
         ...(savePassword !== undefined ? { savePassword } : {}),
       },
     },
+  };
+}
+
+/** A minimal registry entry; `terminal` omitted means terminal-capable. */
+function connType(typeId: string, terminal?: boolean): ConnectionTypeInfo {
+  return {
+    typeId,
+    displayName: typeId.toUpperCase(),
+    icon: "",
+    schema: { groups: [] },
+    capabilities: {
+      monitoring: false,
+      fileBrowser: true,
+      resize: false,
+      persistent: false,
+      ...(terminal !== undefined ? { terminal } : {}),
+    },
+  };
+}
+
+/** An FTP saved connection with a host but no credential-triggering authMethod. */
+function makeFtpConn(id: string): SavedConnection {
+  return {
+    id,
+    name: `FTP ${id}`,
+    folderId: null,
+    config: { type: "ftp", config: { host: "ftp.example.com", port: 21 } },
   };
 }
 
@@ -202,6 +229,37 @@ describe("useConnectSavedConnection", () => {
     });
     expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-stale", "password");
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("opens a terminal-less type (FTP) into a browser-only file-browser tab (#1335)", async () => {
+    useAppStore.setState({ connectionTypes: [connType("ftp", false), connType("ssh")] });
+    const { connect } = await renderHook();
+    await act(async () => {
+      await connect(makeFtpConn("browse"));
+    });
+    expect(addTabSpy).toHaveBeenCalledWith(
+      "FTP browse",
+      "ftp",
+      expect.anything(),
+      expect.objectContaining({ contentType: "file-browser" })
+    );
+    // A terminal-less connection must not mint a session up front here; the
+    // file-browser tab creates it via its own path once mounted.
+    expect(mockedCreateTerminal).not.toHaveBeenCalled();
+  });
+
+  it("opens a terminal-capable type into a normal terminal tab (no file-browser content type)", async () => {
+    useAppStore.setState({ connectionTypes: [connType("ftp", false), connType("ssh")] });
+    const { connect } = await renderHook();
+    await act(async () => {
+      await connect(makeSshConn("agent-auth", "agent"));
+    });
+    expect(addTabSpy).toHaveBeenCalledWith(
+      "SSH agent-auth",
+      "ssh",
+      expect.anything(),
+      expect.objectContaining({ contentType: undefined })
+    );
   });
 
   it("stores the passphrase as key_passphrase when the user opts in for key auth", async () => {

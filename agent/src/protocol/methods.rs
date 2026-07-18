@@ -843,6 +843,7 @@ mod tests {
                         file_browser: false,
                         resize: true,
                         persistent: false,
+                        terminal: true,
                     },
                 }],
                 max_sessions: 20,

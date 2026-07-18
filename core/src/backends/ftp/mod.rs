@@ -476,6 +476,9 @@ impl ConnectionType for Ftp {
             file_browser: true,
             resize: false,
             persistent: false,
+            // FTP has no interactive shell: the desktop opens it straight into a
+            // browser-only tab with no terminal session (#1335).
+            terminal: false,
         }
     }
 
@@ -597,6 +600,9 @@ mod tests {
         assert!(!caps.monitoring);
         assert!(!caps.resize);
         assert!(!caps.persistent);
+        // FTP has no interactive shell: it must report terminal-less so the
+        // desktop opens it into a browser-only tab with no terminal session (#1335).
+        assert!(!caps.terminal);
     }
 
     #[test]

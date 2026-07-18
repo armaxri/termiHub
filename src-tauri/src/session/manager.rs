@@ -1493,6 +1493,7 @@ mod tests {
                 file_browser: false,
                 resize: true,
                 persistent: false,
+                terminal: true,
             }
         }
         async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -1907,6 +1908,7 @@ mod tests {
                 file_browser: false,
                 resize: false,
                 persistent: false,
+                terminal: true,
             }
         }
         async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
@@ -2171,6 +2173,7 @@ mod tests {
                 file_browser: false,
                 resize: true,
                 persistent: false,
+                terminal: true,
             }
         }
         async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {

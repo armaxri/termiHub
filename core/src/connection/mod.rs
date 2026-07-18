@@ -40,6 +40,15 @@ pub type OutputSender = tokio::sync::mpsc::Sender<Vec<u8>>;
 ///
 /// The UI uses these flags to show or hide optional features
 /// (monitoring panels, file browser tabs, resize handles).
+/// Serde default for [`Capabilities::terminal`]: terminal-capable.
+///
+/// Ensures capabilities serialized before the `terminal` field existed
+/// (older agents/configs) deserialize as `terminal: true`, preserving the
+/// pre-existing behaviour where every connection type opened a terminal tab.
+fn default_terminal() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
@@ -51,6 +60,17 @@ pub struct Capabilities {
     pub resize: bool,
     /// Whether sessions of this type can persist across agent reconnections.
     pub persistent: bool,
+    /// Whether this connection type has an interactive terminal.
+    ///
+    /// Defaults to `true` for backward compatibility: capabilities serialized
+    /// before this field existed (older agents/configs) deserialize as
+    /// terminal-capable, and every pre-existing connection type is. Terminal-less
+    /// types — FTP, which browses files with no shell — set this to `false`, and
+    /// the desktop opens them straight into a browser-only tab with no terminal
+    /// session (no `create_connection`). Any future terminal-less type inherits
+    /// this without per-type special-casing.
+    #[serde(default = "default_terminal")]
+    pub terminal: bool,
 }
 
 /// Unified trait for all connection backends.
@@ -174,18 +194,57 @@ mod tests {
             file_browser: true,
             resize: true,
             persistent: false,
+            terminal: true,
         };
         let json = serde_json::to_value(&caps).unwrap();
         assert_eq!(json["monitoring"], true);
         assert_eq!(json["fileBrowser"], true);
         assert_eq!(json["resize"], true);
         assert_eq!(json["persistent"], false);
+        assert_eq!(json["terminal"], true);
 
         let deserialized: Capabilities = serde_json::from_value(json).unwrap();
         assert!(deserialized.monitoring);
         assert!(deserialized.file_browser);
         assert!(deserialized.resize);
         assert!(!deserialized.persistent);
+        assert!(deserialized.terminal);
+    }
+
+    #[test]
+    fn capabilities_terminal_defaults_true_when_absent() {
+        // Backward compatibility: capabilities serialized by an older agent or
+        // config predate the `terminal` field, so the wire form omits it. Such
+        // payloads must deserialize as terminal-capable, preserving the prior
+        // behaviour where every connection type opened a terminal tab.
+        let legacy = serde_json::json!({
+            "monitoring": false,
+            "fileBrowser": true,
+            "resize": false,
+            "persistent": false,
+        });
+        let deserialized: Capabilities = serde_json::from_value(legacy).unwrap();
+        assert!(
+            deserialized.terminal,
+            "missing `terminal` must default to true (terminal-capable)"
+        );
+    }
+
+    #[test]
+    fn capabilities_terminal_false_round_trips() {
+        // A terminal-less type (e.g. FTP) reports terminal: false, and that
+        // must survive a serialize → deserialize round trip unchanged.
+        let caps = Capabilities {
+            monitoring: false,
+            file_browser: true,
+            resize: false,
+            persistent: false,
+            terminal: false,
+        };
+        let json = serde_json::to_value(&caps).unwrap();
+        assert_eq!(json["terminal"], false);
+        let deserialized: Capabilities = serde_json::from_value(json).unwrap();
+        assert!(!deserialized.terminal);
     }
 
     #[test]
@@ -195,6 +254,7 @@ mod tests {
             file_browser: false,
             resize: false,
             persistent: false,
+            terminal: true,
         };
         let json = serde_json::to_value(&caps).unwrap();
         let obj = json.as_object().unwrap();
@@ -202,6 +262,7 @@ mod tests {
         assert!(obj.contains_key("fileBrowser"));
         assert!(obj.contains_key("resize"));
         assert!(obj.contains_key("persistent"));
+        assert!(obj.contains_key("terminal"));
         // Ensure snake_case keys are NOT present.
         assert!(!obj.contains_key("file_browser"));
     }

@@ -52,6 +52,7 @@ import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
+import { FileBrowserTab } from "@/components/Terminal/FileBrowserTab";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
@@ -448,6 +449,8 @@ export function SplitView() {
                   meta={zoomedTab.agentErrorMeta}
                   isVisible={true}
                 />
+              ) : zoomedTab.contentType === "file-browser" ? (
+                <FileBrowserTab key={`zoom-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
               ) : null}
             </div>
           </div>
@@ -673,6 +676,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               key={tab.id}
               tabId={tab.id}
               meta={tab.agentErrorMeta}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "file-browser" ? (
+            <FileBrowserTab
+              key={tab.id}
+              tabId={tab.id}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "terminal" &&
