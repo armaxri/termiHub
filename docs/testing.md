@@ -299,11 +299,11 @@ the app-launching suites still run on a cadence:
 The lane runs the app natively on each OS; only the **Docker fixtures** are
 Linux-only:
 
-| Leg | App launch + UI suites | Docker-fixture suites (SSH/telnet/serial/agent) |
-| --- | --- | --- |
-| **Linux** (`ubuntu-latest`) | Run headless under Xvfb | Run — Docker Compose fixtures brought up in-job |
-| **macOS** (`macos-latest`) | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon |
-| **Windows** (`windows-latest`) | Run natively (WebView2, no Xvfb) | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
+| Leg                            | App launch + UI suites            | Docker-fixture suites (SSH/telnet/serial/agent)                            |
+| ------------------------------ | --------------------------------- | -------------------------------------------------------------------------- |
+| **Linux** (`ubuntu-latest`)    | Run headless under Xvfb           | Run — Docker Compose fixtures brought up in-job                            |
+| **macOS** (`macos-latest`)     | Run natively (WKWebView, no Xvfb) | **Self-skip** — hosted runner has no Linux Docker daemon                   |
+| **Windows** (`windows-latest`) | Run natively (WebView2, no Xvfb)  | **Self-skip** — runner's Docker daemon runs Windows, not Linux, containers |
 
 The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
 present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
