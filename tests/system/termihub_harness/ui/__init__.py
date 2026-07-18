@@ -43,10 +43,12 @@ from .files import FilesUi, file_row_testid
 from .layout import LayoutUi
 from .manual import ManualUi
 from .lookups import (
+    active_leaf,
     connection_item_testid,
     connections,
     find_connection,
     find_folder,
+    find_leaf,
     folder_toggle_testid,
     folders,
     iter_tabs,
@@ -90,4 +92,6 @@ __all__ = [
     "folder_toggle_testid",
     "file_row_testid",
     "iter_tabs",
+    "find_leaf",
+    "active_leaf",
 ]

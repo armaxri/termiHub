@@ -18,6 +18,13 @@
 //! - **One watcher per editor instance**, keyed by an opaque `watch_id` supplied
 //!   by the frontend. Re-watching the same id replaces the previous watcher, and
 //!   dropping it stops the underlying OS watch — so a closed tab leaks nothing.
+//!
+//! The sidebar file browser (#1626) reuses this same machinery through the
+//! [`FileWatchManager::watch_dir`] variant: instead of filtering events to one
+//! target file name, it watches a **directory** (non-recursively) and fires on
+//! any add / remove / rename / modify of a direct child, so the listing can
+//! refresh itself. It shares the debounce, the per-`watch_id` keying and the
+//! leak-free teardown; only the event filter and the emitted event name differ.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -42,6 +49,17 @@ const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(300);
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FileChangedPayload {
+    watch_id: String,
+    path: String,
+}
+
+/// Emitted to the frontend when the contents of a watched local directory
+/// change on disk (a direct child added / removed / renamed / modified). The
+/// `watch_id` routes the event back to the browser instance that registered the
+/// watch; `path` echoes the watched directory (#1626).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirChangedPayload {
     watch_id: String,
     path: String,
 }
@@ -138,6 +156,84 @@ impl FileWatchManager {
         Ok(())
     }
 
+    /// Start (or replace) a watch on the directory `path` for `watch_id`. On any
+    /// add / remove / rename / modify of a direct child, a `local-dir-changed`
+    /// event carrying `watch_id` and `path` is emitted to the frontend so the
+    /// file-browser listing can refresh (#1626).
+    pub fn watch_dir(
+        &self,
+        app: AppHandle,
+        watch_id: String,
+        path: String,
+    ) -> Result<(), TerminalError> {
+        self.watch_dir_with_sink(watch_id, path, move |watch_id, path| {
+            let _ = app.emit("local-dir-changed", DirChangedPayload { watch_id, path });
+        })
+    }
+
+    /// Core of [`Self::watch_dir`], parameterised by the notification `sink` so
+    /// the OS-watch pipeline can be exercised against a real directory without a
+    /// Tauri `AppHandle`. The sink is called with `(watch_id, path)` on each
+    /// debounced change to a direct child of the watched directory.
+    fn watch_dir_with_sink<F>(
+        &self,
+        watch_id: String,
+        path: String,
+        sink: F,
+    ) -> Result<(), TerminalError>
+    where
+        F: Fn(String, String) + Send + 'static,
+    {
+        // The directory itself is the watch root (non-recursive), so events for
+        // its direct children are reported; a filter keeps out deeper events that
+        // the platform's recursive backend (e.g. FSEvents) may still surface.
+        let watch_dir = PathBuf::from(&path);
+
+        // Match against the canonical form: macOS FSEvents reports canonical
+        // `/private/var/...` paths even for a `/var/...` (symlinked) watch, so a
+        // raw compare would miss every event. Fall back to the raw path when the
+        // directory cannot be resolved.
+        let dir_for_cb = canonicalize_or(&watch_dir);
+        let watch_id_cb = watch_id.clone();
+        let emit_path = path.clone();
+
+        let mut debouncer = new_debouncer(
+            DEBOUNCE_TIMEOUT,
+            None,
+            move |result: DebounceEventResult| match result {
+                Ok(events) => {
+                    let touched = events
+                        .iter()
+                        .flat_map(|ev| ev.paths.iter())
+                        .any(|p| is_dir_child_or_self(p, &dir_for_cb));
+                    if touched {
+                        sink(watch_id_cb.clone(), emit_path.clone());
+                    }
+                }
+                Err(errors) => {
+                    for e in errors {
+                        warn!("local dir watch error: {e}");
+                    }
+                }
+            },
+        )
+        .map_err(|e| TerminalError::EditorError(format!("failed to create dir watcher: {e}")))?;
+
+        debouncer
+            .watch(&watch_dir, RecursiveMode::NonRecursive)
+            .map_err(|e| {
+                TerminalError::EditorError(format!("failed to watch {}: {e}", watch_dir.display()))
+            })?;
+
+        // Inserting over an existing id drops the previous debouncer, which stops
+        // its OS watch and background thread — so re-targeting to a new directory
+        // (or the same browser re-watching) leaks nothing.
+        let mut guard = self.watchers.lock().unwrap_or_else(|e| e.into_inner());
+        guard.insert(watch_id.clone(), debouncer);
+        debug!(watch_id, "watching local directory for external changes");
+        Ok(())
+    }
+
     /// Stop watching for `watch_id`. Unknown ids are a harmless no-op.
     pub fn unwatch(&self, watch_id: &str) {
         let mut guard = self.watchers.lock().unwrap_or_else(|e| e.into_inner());
@@ -155,6 +251,33 @@ fn paths_match(event_path: &Path, target: &Path) -> bool {
     match (event_path.file_name(), target.file_name()) {
         (Some(a), Some(b)) => a == b,
         _ => event_path == target,
+    }
+}
+
+/// Canonicalize `p`, falling back to `p` unchanged when it cannot be resolved
+/// (e.g. a just-removed child, or a non-existent path in a unit test). Directory
+/// matching canonicalizes both sides so a symlinked path prefix does not defeat
+/// the compare — macOS FSEvents reports canonical `/private/var/...` paths for a
+/// `/var/...` watch.
+fn canonicalize_or(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// Whether a filesystem event path is a **direct child** of the watched
+/// directory (an entry the listing shows) or the directory itself. This scopes
+/// the browser refresh to add / remove / rename / modify of the listing's own
+/// entries and filters out deeper events a recursive OS backend may surface.
+///
+/// `canonical_dir` must already be canonicalized (see [`canonicalize_or`]); the
+/// event path (or, for a child, its still-existing parent) is canonicalized here
+/// so the two are compared in the same form.
+fn is_dir_child_or_self(event_path: &Path, canonical_dir: &Path) -> bool {
+    if canonicalize_or(event_path) == canonical_dir {
+        return true;
+    }
+    match event_path.parent() {
+        Some(parent) => canonicalize_or(parent) == canonical_dir,
+        None => false,
     }
 }
 
@@ -260,6 +383,136 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(400));
         std::fs::write(&file, "after teardown").expect("external write");
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(800)).is_err(),
+            "no event should arrive after unwatch"
+        );
+    }
+
+    #[test]
+    fn dir_matches_direct_child() {
+        assert!(is_dir_child_or_self(
+            Path::new("/home/u/new.txt"),
+            Path::new("/home/u")
+        ));
+    }
+
+    #[test]
+    fn dir_matches_itself() {
+        assert!(is_dir_child_or_self(
+            Path::new("/home/u"),
+            Path::new("/home/u")
+        ));
+    }
+
+    #[test]
+    fn dir_ignores_grandchild() {
+        // A modify deep in a subtree is not a change to this listing's entries.
+        assert!(!is_dir_child_or_self(
+            Path::new("/home/u/sub/deep.txt"),
+            Path::new("/home/u")
+        ));
+    }
+
+    #[test]
+    fn dir_ignores_sibling_entry() {
+        assert!(!is_dir_child_or_self(
+            Path::new("/home/other.txt"),
+            Path::new("/home/u")
+        ));
+    }
+
+    /// End-to-end against a real directory: creating a new file in the watched
+    /// directory must drive the sink with the directory's `watch_id`. Exercises
+    /// the actual OS watcher, not a mock.
+    #[test]
+    fn dir_sink_fires_on_child_created() {
+        use std::sync::mpsc;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let manager = FileWatchManager::new();
+        let (tx, rx) = mpsc::channel();
+        manager
+            .watch_dir_with_sink(
+                "d1".to_string(),
+                dir.path().to_string_lossy().to_string(),
+                move |watch_id, _path| {
+                    let _ = tx.send(watch_id);
+                },
+            )
+            .expect("watch starts");
+
+        // Let the OS watch arm before writing (FSEvents in particular is lazy).
+        std::thread::sleep(Duration::from_millis(400));
+        std::fs::write(dir.path().join("added.txt"), "hello").expect("create child");
+
+        let got = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a change event should arrive");
+        assert_eq!(got, "d1");
+
+        manager.unwatch("d1");
+    }
+
+    /// Removing an entry from the watched directory must also drive the sink —
+    /// the listing has to reflect deletions, not just additions.
+    #[test]
+    fn dir_sink_fires_on_child_removed() {
+        use std::sync::mpsc;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, "bye").expect("seed child");
+
+        let manager = FileWatchManager::new();
+        let (tx, rx) = mpsc::channel();
+        manager
+            .watch_dir_with_sink(
+                "d1".to_string(),
+                dir.path().to_string_lossy().to_string(),
+                move |watch_id, _path| {
+                    let _ = tx.send(watch_id);
+                },
+            )
+            .expect("watch starts");
+
+        std::thread::sleep(Duration::from_millis(400));
+        std::fs::remove_file(&victim).expect("remove child");
+
+        let got = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a removal event should arrive");
+        assert_eq!(got, "d1");
+
+        manager.unwatch("d1");
+    }
+
+    /// Dropping the directory watch (via `unwatch`) stops delivery: changes after
+    /// teardown must not reach the sink — the resource-cleanup guarantee.
+    #[test]
+    fn dir_sink_stops_after_unwatch() {
+        use std::sync::mpsc;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let manager = FileWatchManager::new();
+        let (tx, rx) = mpsc::channel();
+        manager
+            .watch_dir_with_sink(
+                "d1".to_string(),
+                dir.path().to_string_lossy().to_string(),
+                move |watch_id, _path| {
+                    let _ = tx.send(watch_id);
+                },
+            )
+            .expect("watch starts");
+
+        manager.unwatch("d1");
+        // Drain any event that may have been queued before teardown.
+        while rx.try_recv().is_ok() {}
+
+        std::thread::sleep(Duration::from_millis(400));
+        std::fs::write(dir.path().join("after.txt"), "late").expect("create child");
 
         assert!(
             rx.recv_timeout(Duration::from_millis(800)).is_err(),

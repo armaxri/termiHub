@@ -109,9 +109,17 @@ import type {
   ContainerSpawn,
   ShellSpawn,
   TransferProgress,
+  TransferSnapshot,
 } from "@/services/api";
 import type { SpawnRequestPayload } from "@/services/events";
-import { transferEntryFromProgress, type TransferEntry } from "@/types/transfer";
+import {
+  isTerminalTransferState,
+  transferEntryFromProgress,
+  transferEntryFromSeed,
+  transferEntryFromSnapshot,
+  type TransferEntry,
+  type TransferSeed,
+} from "@/types/transfer";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { EmbeddedServerConfig, ServerState as EmbeddedServerState } from "@/types/embeddedServer";
@@ -762,6 +770,22 @@ interface AppState {
   setTransferQueueMinimized: (minimized: boolean) => void;
   /** Fold a `transfer-progress` event into the queue (upsert, retaining terminal rows). */
   applyTransferProgressToQueue: (progress: TransferProgress) => void;
+  /**
+   * Seed a `queued` queue row from a transfer's registration snapshot (#1632),
+   * so the panel opens without waiting for a `transfer-progress` event that may
+   * be dropped/delayed under memory pressure. Idempotent: a no-op when a row for
+   * the id already exists, so it never clobbers a further-along event-fed row.
+   */
+  seedTransferQueue: (seed: TransferSeed) => void;
+  /**
+   * Reconcile the queue against a backend `transfer_list` snapshot (#1645), the
+   * backstop for a dropped *terminal* `transfer-progress` event. Settles any
+   * still-open row whose backend snapshot reports a terminal state to that
+   * state. Idempotent and conservative: it never resurrects a removed row,
+   * never clobbers an already-terminal row, and never moves a live (active)
+   * row — event delivery owns live progress; this only settles stuck rows.
+   */
+  reconcileTransferQueue: (snapshots: TransferSnapshot[]) => void;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -1258,6 +1282,46 @@ function collectRestoreCohort(groups: TabGroup[]): {
   const pendingTabIds = tabs.filter((t) => t.contentType === "terminal").map((t) => t.id);
   const preFailedCount = tabs.filter((t) => t.contentType === "agent-error").length;
   return { pendingTabIds, preFailedCount };
+}
+
+/**
+ * Resolve the stable identity of the remote session backing an editor tab, used
+ * as part of the {@link AppState.openEditorTab} dedup key (#1599).
+ *
+ * The raw session id is deliberately *not* used: it changes when a connection
+ * reconnects, which would spawn a duplicate tab instead of refreshing the
+ * existing one. Instead this returns a value that stays constant across a
+ * reconnect of the same logical connection but differs between distinct
+ * connections, so opening the same path on two different hosts yields two tabs
+ * while reconnecting one host refreshes its tab:
+ *
+ * - SFTP (`sftpSessionId`) → the session's `hostLabel` (`user@host:port`). A
+ *   reconnect mints a new session id under the same label.
+ * - Session layer (`sessionBrowser`) → the id of the terminal tab that owns the
+ *   session. A reconnect swaps the session id but keeps the same tab.
+ *
+ * Returns `undefined` for local tabs and for remote tabs whose identity cannot
+ * be resolved (unknown host, or no owning tab found); callers then fall back to
+ * path-only dedup, preserving the pre-#1599 behaviour.
+ */
+function resolveEditorSessionKey(
+  state: { rootPanel: PanelNode; sftpSessions: Record<string, SftpSessionEntry> },
+  isRemote: boolean,
+  sftpSessionId?: string,
+  sessionBrowser?: EditorSessionRef
+): string | undefined {
+  if (!isRemote) return undefined;
+  if (sftpSessionId) {
+    const hostLabel = state.sftpSessions[sftpSessionId]?.hostLabel;
+    return hostLabel ? `sftp:${hostLabel}` : undefined;
+  }
+  if (sessionBrowser) {
+    const owner = getAllLeaves(state.rootPanel)
+      .flatMap((l) => l.tabs)
+      .find((t) => t.sessionId === sessionBrowser.sessionId);
+    return owner ? `session:${owner.id}` : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -2385,13 +2449,19 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
-        // Look for an existing editor tab for this file
+        // Stable identity of the backing session, so the same path opened from
+        // two different remote sessions gets two tabs while a reconnect of the
+        // same connection refreshes one (#1599).
+        const sessionKey = resolveEditorSessionKey(state, isRemote, sftpSessionId, sessionBrowser);
+
+        // Look for an existing editor tab for this file on the same session.
         for (const leaf of allLeaves) {
           const existing = leaf.tabs.find(
             (t) =>
               t.contentType === "editor" &&
               t.editorMeta?.filePath === filePath &&
-              t.editorMeta?.isRemote === isRemote
+              t.editorMeta?.isRemote === isRemote &&
+              t.editorMeta?.sessionKey === sessionKey
           );
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
@@ -2406,9 +2476,19 @@ export const useAppStore = create<AppState>((set, get) => {
                 let updatedMeta = t.editorMeta;
                 if (isRemote && t.editorMeta) {
                   if (sftpSessionId) {
-                    updatedMeta = { ...t.editorMeta, sftpSessionId, sessionBrowser: undefined };
+                    updatedMeta = {
+                      ...t.editorMeta,
+                      sftpSessionId,
+                      sessionBrowser: undefined,
+                      sessionKey,
+                    };
                   } else if (sessionBrowser) {
-                    updatedMeta = { ...t.editorMeta, sessionBrowser, sftpSessionId: undefined };
+                    updatedMeta = {
+                      ...t.editorMeta,
+                      sessionBrowser,
+                      sftpSessionId: undefined,
+                      sessionKey,
+                    };
                   }
                 }
                 return { ...t, isActive: true, editorMeta: updatedMeta };
@@ -2431,6 +2511,7 @@ export const useAppStore = create<AppState>((set, get) => {
           sftpSessionId,
           permissions,
           sessionBrowser,
+          sessionKey,
         };
         const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
         newTab.editorMeta = editorMeta;
@@ -3704,6 +3785,37 @@ export const useAppStore = create<AppState>((set, get) => {
         const prev = state.transferQueue[progress.transferId];
         const entry = transferEntryFromProgress(progress, prev, Date.now());
         return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
+      }),
+
+    seedTransferQueue: (seed: TransferSeed) =>
+      set((state) => {
+        // Idempotent: never overwrite a row an event already advanced (#1632).
+        if (seed.id in state.transferQueue) return {};
+        const entry = transferEntryFromSeed(seed, Date.now());
+        return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
+      }),
+
+    reconcileTransferQueue: (snapshots: TransferSnapshot[]) =>
+      set((state) => {
+        const now = Date.now();
+        let next: Record<string, TransferEntry> | null = null;
+        for (const snap of snapshots) {
+          // Only a *genuinely settled* terminal snapshot settles a row. A live
+          // rich `failed` handle mid auto-retry (or awaiting a manual retry)
+          // reports `settled: false` though its state is `failed`, so a
+          // transient failure is never folded into a terminal row the reconcile
+          // guard would then never re-settle (#1657). Events own live progress,
+          // so a non-terminal snapshot must never move an active row anyway.
+          if (!snap.settled || !isTerminalTransferState(snap.state)) continue;
+          const prev = state.transferQueue[snap.transferId];
+          // Seed owns row creation; do not resurrect a row the user removed.
+          if (!prev) continue;
+          // Already settled (an event beat us here): idempotent no-op.
+          if (isTerminalTransferState(prev.state)) continue;
+          next ??= { ...state.transferQueue };
+          next[snap.transferId] = transferEntryFromSnapshot(snap, prev, now);
+        }
+        return next ? { transferQueue: next } : {};
       }),
 
     retrySftp: async () => {

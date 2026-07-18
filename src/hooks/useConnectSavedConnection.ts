@@ -49,6 +49,20 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
       let config = connection.config;
       const cfg = config.config as unknown as Record<string, unknown>;
 
+      // A terminal-less connection type (Capabilities.terminal === false, e.g.
+      // FTP) opens into a browser-only tab instead of a terminal tab — no xterm,
+      // no PTY. The tab still owns a session so the sidebar file browser can route
+      // to it. Resolved from the registry capabilities (protocol-agnostic, never a
+      // per-type hardcode); an unknown type or absent flag stays terminal (#1335).
+      const effectiveTypeId =
+        config.type === "remote-session"
+          ? ((cfg.sessionType as string | undefined) ?? config.type)
+          : config.type;
+      const isTerminalLess =
+        useAppStore.getState().connectionTypes.find((ct) => ct.typeId === effectiveTypeId)
+          ?.capabilities.terminal === false;
+      const contentType = isTerminalLess ? ("file-browser" as const) : undefined;
+
       // Connections with authMethod and password support credential store resolution
       if (cfg.authMethod && cfg.host) {
         const authMethod = cfg.authMethod as string;
@@ -68,6 +82,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         if (!needsCredential) {
           addTab(connection.name, connection.config.type, config, {
             terminalOptions: connection.terminalOptions,
+            contentType,
           });
           return;
         }
@@ -81,6 +96,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         if (typeof cfg.password === "string" && cfg.password.length > 0) {
           addTab(connection.name, connection.config.type, config, {
             terminalOptions: connection.terminalOptions,
+            contentType,
           });
           return;
         }
@@ -111,6 +127,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
             addTab(connection.name, connection.config.type, preConfig, {
               terminalOptions: connection.terminalOptions,
               sessionId,
+              contentType,
             });
             return;
           } catch (err) {
@@ -125,6 +142,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
               // Non-auth failure — let the Terminal component handle the error
               addTab(connection.name, connection.config.type, config, {
                 terminalOptions: connection.terminalOptions,
+                contentType,
               });
               return;
             }
@@ -164,6 +182,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
 
       addTab(connection.name, connection.config.type, config, {
         terminalOptions: connection.terminalOptions,
+        contentType,
       });
     },
     [addTab, requestPassword]

@@ -179,6 +179,7 @@ impl ConnectionType for Telnet {
             file_browser: false,
             resize: false,
             persistent: false,
+            terminal: true,
         }
     }
 

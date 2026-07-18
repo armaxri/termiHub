@@ -1,0 +1,193 @@
+name: System Integration (nightly)
+
+# Runs the Python bridge harness **integration** lane — the suites marked
+# `@pytest.mark.integration`, which launch the REAL built desktop app (and, where
+# a suite needs them, the Docker SSH/telnet fixtures). Per-PR CI only ever runs
+# `-m "not integration"` (see code-quality.yml → System-Test Harness), so every
+# one of these ~360 tests is otherwise merely *collected*, never *run*. That dark
+# lane is how stale-testid rot slipped in unnoticed (#1568): a green PR proves the
+# harness *collects*, not that it *works*.
+#
+# This job closes that gap on a nightly cadence, separate from per-PR CI (owner's
+# decision on #1569): per-PR stays fast and unchanged, and any rot in the
+# integration lane surfaces within a day instead of at the next accidental
+# discovery. It is Docker-bound and builds the app, so it is deliberately NOT a
+# per-PR check.
+#
+# The bridge drives the app over a WebSocket bridge — not a native WebView driver
+# — so the lane runs on **Linux, macOS, and Windows** (#804/#1649). macOS is the
+# point: `tauri-driver` never had a WKWebView driver, so macOS app-UI testing was
+# manual-only before the bridge; now the built `.app` launches and is driven
+# natively in CI. The **Docker fixtures stay Linux-only**: the GitHub-hosted
+# macOS and Windows runners have no usable Linux Docker daemon (macOS runners
+# ship no Docker; the Windows runner's daemon runs Windows, not Linux,
+# containers), so the fixture-backed suites (SSH/telnet/serial/agent) self-skip
+# there while the app-launch/UI integration suites run. This mirrors the
+# long-standing Docker-daemon caveat in ADR-5 and the SSH-tunnel macOS carve-out
+# (docs/testing.md).
+#
+# Trigger by hand from the Actions tab ("Run workflow") to validate a change to
+# the harness, the fixtures, or this workflow without waiting for the nightly run.
+
+on:
+  schedule:
+    # 04:42 UTC daily — off the top of the hour to dodge scheduler congestion,
+    # and clear of the 03:17 core-fixtures nightly (integration-fixtures.yml) so
+    # the two Docker-heavy lanes do not contend for a runner at once.
+    - cron: "42 4 * * *"
+  workflow_dispatch:
+
+# A run is self-contained (its own app build + throwaway containers); cancel an
+# in-flight run when a newer one starts on the same ref.
+concurrency:
+  group: system-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  system-integration:
+    name: System-Test Harness (integration lane, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # The lane builds the app (debug) and launches it once per suite against live
+    # Docker fixtures; a generous ceiling keeps a slow image build or a hung app
+    # from being read as success, while still bounding a wedged run.
+    timeout-minutes: 120
+
+    strategy:
+      # One red platform must not cancel the others — each leg is independent
+      # evidence, and the macOS/Windows legs run a different (Docker-less) subset
+      # than Linux, so a Linux failure says nothing about them and vice versa.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    env:
+      # webkit2gtk-only knobs — read solely by the Linux WebKitGTK webview under
+      # Xvfb, harmless no-ops on the macOS (WKWebView) and Windows (WebView2)
+      # runners. Disable the DMABUF and compositing paths that assume a real
+      # GPU/display so the webview renders in software on a headless runner, and
+      # silence the at-spi accessibility-bus warnings that otherwise flood the
+      # app log on a headless box.
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+      NO_AT_BRIDGE: "1"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          # Pin uv itself (issue #1552): "latest" resolves through the GitHub
+          # Releases API, which flakes and fast-fails unrelated to the run.
+          version: '0.11.29'
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: tests/system/uv.lock
+
+      - name: Install system dependencies (Tauri + headless display)
+        # Linux only: the Tauri webview build/runtime deps (mirrors dev-build.yml)
+        # plus xvfb, so the app has a virtual X display to launch into. socat backs
+        # the virtual serial-port suites; without it those integration tests skip.
+        # macOS ships WKWebView and Windows ships WebView2, so neither needs these.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xvfb \
+            socat
+
+      - name: Install serial fixture dependency (socat)
+        # macOS only: socat backs the virtual serial-port suites the same way it
+        # does on Linux; without it those integration tests skip cleanly. Windows
+        # has no socat equivalent, so its serial suites remain manual.
+        if: runner.os == 'macOS'
+        run: brew install socat
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the agent (release)
+        # The agent-lifecycle integration suites (AgentInstance) resolve
+        # target/release/termihub-agent; build it so they run instead of skipping.
+        run: cargo build --release -p termihub-agent
+
+      - name: Build the desktop app (debug)
+        # The integration lane launches the real app; the harness resolves the
+        # debug bundle (target/debug/…) when no release build is present. Debug
+        # builds far faster than release, which is what we want for a nightly.
+        run: pnpm tauri build --debug
+
+      - name: Bring up the Docker fixtures
+        # Linux only. Pre-build and start the profile-less SSH/telnet fixtures so
+        # image builds happen once here (visible as their own step) rather than
+        # inside a per-suite fixture under its bring-up timeout. The harness'
+        # ComposeFixture then finds them already up; profile-gated fixtures
+        # (agent/stress/fault/ftp) are brought up on demand by the suites that
+        # need them — the agent image must be staged by the harness first. The
+        # macOS/Windows runners have no usable Linux Docker daemon, so their
+        # fixture-backed suites self-skip instead (see the header note).
+        if: runner.os == 'Linux'
+        run: |
+          docker compose -f tests/docker/docker-compose.yml up -d --build
+
+      - name: Run the integration lane (Linux, headless via Xvfb)
+        # Fail loudly: a real test failure fails the job (that is the whole point
+        # — surface rot). Xvfb gives the app a display; the harness owns launching
+        # the app and driving the fixtures. Suites whose fixtures are unavailable
+        # skip cleanly rather than error.
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ./tests/system/pytest.sh -m integration -v --durations=25
+
+      - name: Run the integration lane (macOS/Windows, native display)
+        # No Xvfb — the runner has a real (or headless-native) display and drives
+        # the app's own webview (WKWebView / WebView2) through the bridge. The
+        # Docker-fixture suites self-skip here (no Linux daemon); the app-launch
+        # and UI integration suites run natively. This is the coverage the bridge
+        # newly unlocks on macOS, where `tauri-driver` never had a WKWebView
+        # driver. Run under Git Bash on Windows so pytest.sh executes as written.
+        if: runner.os != 'Linux'
+        shell: bash
+        run: ./tests/system/pytest.sh -m integration -v --durations=25
+
+      - name: Dump container logs on failure
+        # Linux only — the other legs bring up no containers.
+        if: failure() && runner.os == 'Linux'
+        run: docker compose -f tests/docker/docker-compose.yml --profile all logs --tail=200
+
+      - name: Upload failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: system-integration-artifacts-${{ matrix.os }}
+          path: tests/system/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Tear down the fixtures
+        # Linux only — nothing was brought up on the other legs.
+        if: always() && runner.os == 'Linux'
+        run: docker compose -f tests/docker/docker-compose.yml --profile all down -v

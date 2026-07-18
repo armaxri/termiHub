@@ -144,8 +144,11 @@ class TestLocalShell(
         self.ensure_terminal()
         self.driver.click("terminal-view-split-horizontal")
         self.wait(lambda: self.leaf_count() >= 2, what="the view to split into two leaves")
-        # A terminal in the freshly-split (active) panel must accept input.
-        self.ensure_terminal()
+        # The freshly-split panel is the active one but starts empty; a plain
+        # ``ensure_terminal`` sees the *other* panel's terminal and skips it,
+        # leaving input with no active terminal (#1656). Ensure a terminal in the
+        # active panel specifically.
+        self.ensure_terminal_in_active_panel()
         marker = "SPLIT_PANEL_OK"
         self.run_command(f"echo {marker}")
         assert marker in self.wait_for_output(marker)

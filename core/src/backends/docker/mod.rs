@@ -124,6 +124,12 @@ fn podman_socket_uri() -> Option<String> {
             return Some(format!("unix://{path}"));
         }
     }
+    // macOS: Podman runs in a VM whose Docker-compatible API socket lives under
+    // the per-user `$TMPDIR` (none of the paths above exist on macOS). See #1622.
+    #[cfg(target_os = "macos")]
+    if let Some(uri) = runtime::podman_machine_socket() {
+        return Some(uri);
+    }
     None
 }
 
@@ -154,7 +160,11 @@ async fn connect_to_runtime(runtime: &ContainerRuntime) -> Result<bollard::Docke
         ContainerRuntime::Auto => connect_auto().await,
         ContainerRuntime::Podman => {
             let uri = podman_socket_uri().ok_or_else(|| {
-                SessionError::SpawnFailed("Could not determine Podman socket path".to_string())
+                SessionError::SpawnFailed(
+                    "Could not determine Podman socket path. Ensure a Podman machine is \
+                     running (`podman machine start`) or set CONTAINER_HOST to the socket."
+                        .to_string(),
+                )
             })?;
             let client = connect_via_uri(&uri)?;
             client.version().await.map_err(|e| {
@@ -599,6 +609,7 @@ impl ConnectionType for Docker {
             file_browser: true,
             resize: true,
             persistent: true,
+            terminal: true,
         }
     }
 
@@ -1459,9 +1470,9 @@ mod tests {
             "explicit Docker must not land on Podman"
         );
 
-        // Podman must still reach Podman when a socket is discoverable.
-        // (On macOS `podman_socket_uri()` may not locate the machine socket —
-        // a pre-existing gap tracked separately — so this step is best-effort.)
+        // Podman must still reach Podman when a socket is discoverable. On
+        // macOS the machine API socket is now located via #1622; this step
+        // stays best-effort so the test also runs on Docker-only hosts.
         match connect_to_runtime(&ContainerRuntime::Podman).await {
             Ok(podman) => {
                 let podman_ver = podman.version().await.unwrap();
@@ -1486,6 +1497,40 @@ mod tests {
         assert!(
             !runtime::version_is_podman(&auto_ver),
             "Auto must prefer real Docker over Podman-behind-docker.sock"
+        );
+    }
+
+    /// Manual, host-dependent diagnostic for #1622. Requires a macOS host with
+    /// a **running Podman machine** (`podman machine start`). Proves that
+    /// explicit `runtime: Podman` resolves the machine's API socket and reaches
+    /// the Podman daemon, where before this fix `podman_socket_uri()` returned
+    /// `None`. Run with:
+    /// `cargo test -p termihub-core --features docker -- --ignored --nocapture
+    ///  connect_to_runtime_reaches_macos_podman_machine`.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "requires a macOS host with a running Podman machine"]
+    async fn connect_to_runtime_reaches_macos_podman_machine() {
+        let uri = podman_socket_uri()
+            .expect("a running Podman machine's API socket must be resolvable on macOS");
+        println!("runtime=Podman -> resolved socket {uri}");
+        assert!(
+            uri.contains("-api.sock"),
+            "expected the machine API socket, got: {uri}"
+        );
+
+        let client = connect_to_runtime(&ContainerRuntime::Podman)
+            .await
+            .expect("explicit Podman should reach the machine daemon on this host");
+        let version = client.version().await.unwrap();
+        println!(
+            "runtime=Podman -> podman={} server={:?}",
+            runtime::version_is_podman(&version),
+            version.version
+        );
+        assert!(
+            runtime::version_is_podman(&version),
+            "explicit Podman must reach a Podman daemon"
         );
     }
 }

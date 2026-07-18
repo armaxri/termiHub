@@ -58,6 +58,7 @@ import { baseNameSelectionEnd } from "@/utils/fileNameSelection";
 import { frontendLog } from "@/utils/frontendLog";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
+import { useLocalDirWatch } from "@/hooks/useLocalDirWatch";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import "./FileBrowser.css";
@@ -894,6 +895,12 @@ export function FileBrowser() {
   );
 
   const { isDragOver } = useOsFileDrop(containerRef, handleOsDrop);
+
+  // Auto-refresh the local listing when its directory changes on disk under
+  // another process (#1626). Event-driven via the backend directory watcher;
+  // local transport only (remote external-change detection is #1627). The
+  // toolbar Refresh button stays as a manual backstop.
+  useLocalDirWatch(mode === "local", mode === "local" ? currentPath : null, refresh);
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const retrySftp = useAppStore((s) => s.retrySftp);

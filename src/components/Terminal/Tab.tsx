@@ -46,6 +46,11 @@ interface TabProps {
   onSetColor?: () => void;
   /** Per-tab connection status; drives the status dot. `undefined` hides the dot. */
   status?: TabStatus;
+  /**
+   * Title to display, disambiguated when two editor tabs share a basename
+   * (#1640). Falls back to `tab.title` when omitted.
+   */
+  displayTitle?: string;
 }
 
 export function Tab({
@@ -63,7 +68,9 @@ export function Tab({
   onRename,
   onSetColor,
   status,
+  displayTitle,
 }: TabProps) {
+  const shownTitle = displayTitle ?? tab.title;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
     data: { panelId: tab.panelId, type: "tab" },
@@ -105,7 +112,7 @@ export function Tab({
           onClose();
         }
       }}
-      title={tab.title}
+      title={shownTitle}
       data-testid={`tab-${tab.id}`}
       {...attributes}
       {...listeners}
@@ -124,7 +131,7 @@ export function Tab({
       )}
       <span className="tab__title">
         {isDirty && <span className="tab__dirty-dot" />}
-        {tab.title}
+        {shownTitle}
       </span>
       {tab.persistentConnectionId && <span className="tab__persistent-badge">∞</span>}
       {tab.spawned && (

@@ -235,6 +235,34 @@ services:
       timeout: 3s
       retries: 5
 
+  # Deployed agent armed to hold a pending_update (#1520 / #1546): identical to
+  # `remote-agent`, but built with PENDING_UPDATE_VERSION so the agent it launches
+  # stages a pending update and announces it on attach — the live driver for the
+  # banner's "Apply Now → deferred/busy" path. Kept a *separate* service (not the
+  # shared `remote-agent`) so its unconditional update announcement never leaks
+  # into the banner-surfacing suite, whose gating tests assert no banner appears
+  # until they announce one.
+  remote-agent-pending-update:
+    build:
+      context: ./remote-agent
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+      args:
+        PENDING_UPDATE_VERSION: "9.9.9"
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-remote-agent-pending
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_REMOTE_AGENT_PENDING_PORT:-2214}:22"
+    networks:
+      - test-net
+    profiles:
+      - agent
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # ============================================================
   # Telnet
   # ============================================================

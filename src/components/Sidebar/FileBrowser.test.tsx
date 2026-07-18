@@ -21,6 +21,7 @@ vi.mock("@/themes", () => ({
 
 vi.mock("@/services/events", () => ({
   onVscodeEditComplete: vi.fn(() => Promise.resolve(vi.fn())),
+  onLocalDirChanged: vi.fn(() => Promise.resolve(vi.fn())),
 }));
 
 vi.mock("@/services/api", async (importOriginal) => {

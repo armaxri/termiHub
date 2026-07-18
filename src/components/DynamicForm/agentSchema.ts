@@ -103,8 +103,9 @@ export const AGENT_SCHEMA: SettingsSchema = {
           default: "immediate",
           description:
             "How this agent's binary is updated when a newer desktop version deploys. " +
-            "Only Immediate is active today; Coordinated and Deferred are saved and take " +
-            "effect once those subsystems land.",
+            "Immediate and Coordinated are active; Coordinated notifies other connected " +
+            "hosts and lets them reconnect cleanly before applying (Unix agents — Windows " +
+            "falls back to Immediate). Deferred is saved and takes effect once it lands.",
         },
         {
           key: "allowSelfUpdate",

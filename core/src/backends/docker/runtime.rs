@@ -141,6 +141,72 @@ fn contains_podman(s: &str) -> bool {
     s.to_ascii_lowercase().contains("podman")
 }
 
+/// Resolve the local API socket of the running Podman **machine** on macOS.
+///
+/// On macOS (and Windows) Podman runs inside a VM, so there is no native
+/// `/run/.../podman.sock`; the machine instead exposes a Docker-compatible API
+/// on a per-user Unix socket under the user's private temp directory:
+///
+/// ```text
+/// $TMPDIR/podman/<machine>-api.sock
+/// ```
+///
+/// e.g. `/var/folders/…/T/podman/podman-machine-default-api.sock`. This is the
+/// same endpoint the `podman` Docker CLI context points at, and the one
+/// reported by `podman machine inspect` → `ConnectionInfo.PodmanSocket.Path`.
+/// The path is per-user and non-deterministic (macOS randomises `$TMPDIR`), so
+/// it cannot be a fixed constant — we read `$TMPDIR` and look for the socket.
+///
+/// Returns `None` when `$TMPDIR` is unset or no machine API socket is present
+/// (typically: no Podman machine has been started). Reading the socket rather
+/// than shelling out to `podman machine inspect` keeps resolution fast and
+/// dependency-free, mirroring the config-based Docker context resolution added
+/// for #1600.
+#[cfg(target_os = "macos")]
+pub(super) fn podman_machine_socket() -> Option<String> {
+    let tmpdir = non_empty_env("TMPDIR")?;
+    podman_machine_socket_in(Path::new(&tmpdir))
+}
+
+/// Pure helper for [`podman_machine_socket`]: find a Podman machine API socket
+/// under `<tmpdir>/podman/`. Split out so it can be unit-tested against a
+/// fixture directory without depending on the real `$TMPDIR` or a running
+/// Podman machine.
+///
+/// Prefers the default machine's socket (`podman-machine-default-api.sock`);
+/// otherwise falls back to any single `*-api.sock` present (covering a
+/// non-default machine name), picking the lexicographically first for
+/// determinism.
+///
+/// Compiled on macOS (where it is used) and in test builds on every platform,
+/// so the resolution logic is covered by the cross-platform CI test lane.
+#[cfg(any(target_os = "macos", test))]
+fn podman_machine_socket_in(tmpdir: &Path) -> Option<String> {
+    let dir = tmpdir.join("podman");
+
+    // Prefer the default machine's API socket when it exists.
+    let default = dir.join("podman-machine-default-api.sock");
+    if default.exists() {
+        return Some(format!("unix://{}", default.display()));
+    }
+
+    // Otherwise fall back to any single machine API socket (non-default name).
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("-api.sock"))
+        })
+        .collect();
+    candidates.sort();
+    candidates
+        .into_iter()
+        .next()
+        .map(|path| format!("unix://{}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +325,91 @@ mod tests {
     fn detects_podman_from_platform_when_components_absent() {
         let v = version_with(None, Some("linux/amd64/podman"));
         assert!(version_is_podman(&v));
+    }
+
+    /// Create an empty file at `path`, making parent directories as needed.
+    /// Stands in for the machine API socket (a Unix socket is also a file entry
+    /// on disk, so `Path::exists()` and `read_dir` treat our fixture the same).
+    fn touch(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn resolves_default_podman_machine_socket() {
+        // Regression for #1622: on macOS the machine API socket lives at
+        // `$TMPDIR/podman/podman-machine-default-api.sock`; it must be resolved
+        // rather than returning `None` (which fails explicit runtime: Podman).
+        let tmp = TempDir::new().unwrap();
+        let sock = tmp
+            .path()
+            .join("podman")
+            .join("podman-machine-default-api.sock");
+        touch(&sock);
+
+        assert_eq!(
+            podman_machine_socket_in(tmp.path()),
+            Some(format!("unix://{}", sock.display()))
+        );
+    }
+
+    #[test]
+    fn resolves_non_default_machine_socket() {
+        // A user with a custom-named machine still resolves via the single
+        // `*-api.sock` fallback.
+        let tmp = TempDir::new().unwrap();
+        let sock = tmp
+            .path()
+            .join("podman")
+            .join("podman-machine-work-api.sock");
+        touch(&sock);
+
+        assert_eq!(
+            podman_machine_socket_in(tmp.path()),
+            Some(format!("unix://{}", sock.display()))
+        );
+    }
+
+    #[test]
+    fn prefers_default_machine_socket_over_others() {
+        let tmp = TempDir::new().unwrap();
+        let default = tmp
+            .path()
+            .join("podman")
+            .join("podman-machine-default-api.sock");
+        touch(&default);
+        touch(
+            &tmp.path()
+                .join("podman")
+                .join("podman-machine-work-api.sock"),
+        );
+
+        assert_eq!(
+            podman_machine_socket_in(tmp.path()),
+            Some(format!("unix://{}", default.display()))
+        );
+    }
+
+    #[test]
+    fn no_socket_when_machine_dir_absent() {
+        // No Podman machine started (or no Podman installed): no `podman/` dir,
+        // so resolution yields `None` and the caller reports the machine as
+        // unavailable rather than picking a wrong socket.
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(podman_machine_socket_in(tmp.path()), None);
+    }
+
+    #[test]
+    fn no_socket_when_dir_has_no_api_sock() {
+        // The machine dir exists (gvproxy sockets, logs) but no API socket —
+        // e.g. a stopped machine. Must not match a non-API socket.
+        let tmp = TempDir::new().unwrap();
+        touch(
+            &tmp.path()
+                .join("podman")
+                .join("podman-machine-default-gvproxy.sock"),
+        );
+        touch(&tmp.path().join("podman").join("gvproxy.log"));
+        assert_eq!(podman_machine_socket_in(tmp.path()), None);
     }
 }

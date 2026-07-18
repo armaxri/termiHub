@@ -18,6 +18,8 @@ from termihub_harness.manual import (
 )
 
 from termihub_harness import (
+    REMOTE_AGENT_PENDING_PORT,
+    REMOTE_AGENT_PENDING_SERVICE,
     REMOTE_AGENT_PORT,
     REMOTE_AGENT_SERVICE,
     SSH_BANNER_PORT,
@@ -286,6 +288,31 @@ def remote_agent_fixtures():
         )
     except ContainerRuntimeUnavailable as exc:
         pytest.skip(f"deployed-agent container fixture unavailable: {exc}")
+    return fixture
+
+
+@pytest.fixture(scope="session")
+def remote_agent_pending_fixtures():
+    """Armed deployed-agent container (compose profile ``agent``, port 2214).
+
+    Same image as ``remote-agent`` but built with ``PENDING_UPDATE_VERSION`` set,
+    so every agent it launches stages a ``pending_update`` and announces it on
+    attach (the #1546 env hook, delivered via sshd's per-user environment). This
+    is the only way to drive the deferred-update banner's "Apply Now →
+    deferred/busy" path against a live agent (#1520). Reuses the shared agent
+    binary staging, and skips cleanly on the same contract as
+    :func:`remote_agent_fixtures`.
+    """
+    try:
+        stage_remote_agent_binary()
+        fixture = ComposeFixture()
+        fixture.ensure(
+            REMOTE_AGENT_PENDING_SERVICE,
+            ports=[(SSH_HOST, REMOTE_AGENT_PENDING_PORT)],
+            build=True,
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"armed deployed-agent container fixture unavailable: {exc}")
     return fixture
 
 

@@ -746,6 +746,17 @@ export async function sftpListDir(sessionId: string, path: string): Promise<File
 }
 
 /**
+ * Get metadata (size, mtime, permissions) for a single remote file via SFTP.
+ *
+ * Backs the editor's remote external-change detection (#1627): a stat is a
+ * single metadata round-trip, so it is the cheap poll primitive used to spot an
+ * out-of-band change before deciding to re-read the file.
+ */
+export async function sftpStat(sessionId: string, path: string): Promise<FileEntry> {
+  return await invoke<FileEntry>("sftp_stat", { sessionId, path });
+}
+
+/**
  * Resolve a remote path to its canonical absolute form via SFTP realpath.
  *
  * Pass `"."` to resolve the session's home directory instead of guessing
@@ -815,6 +826,14 @@ export interface TransferSnapshot {
   /** Remote path of the transferred file, when the backend supplies one (#1531). */
   path?: string;
   state: TransferQueueState;
+  /**
+   * Whether this snapshot is a *genuinely* settled outcome the reconcile may
+   * fold into a stuck row (#1657). Stricter than `isTerminalTransferState`: a
+   * live rich (FTP) transfer that is momentarily `failed` mid auto-retry — or
+   * awaiting a manual retry — reports `state: "failed"` with `settled: false`,
+   * so a transient failure is never reconciled into a terminal `failed` row.
+   */
+  settled: boolean;
   transferred: number;
   total: number;
   speed: number;
@@ -883,17 +902,25 @@ async function awaitTransfer(transferId: string): Promise<number> {
  *
  * Registers a background transfer on a dedicated channel and resolves with the
  * bytes transferred once it completes (#1245).
+ *
+ * `onRegistered` fires once with the backend `transferId` the instant the start
+ * command returns — over the reliable request/response channel, before any
+ * best-effort `transfer-progress` event. Callers use it to seed the Transfer
+ * Queue so the panel opens even if progress events are dropped/delayed under
+ * memory pressure (#1632).
  */
 export async function sftpDownload(
   sessionId: string,
   remotePath: string,
-  localPath: string
+  localPath: string,
+  onRegistered?: (transferId: string) => void
 ): Promise<number> {
   const transferId = await invoke<string>("sftp_download", {
     sessionId,
     remotePath,
     localPath,
   });
+  onRegistered?.(transferId);
   return await awaitTransfer(transferId);
 }
 
@@ -902,17 +929,23 @@ export async function sftpDownload(
  *
  * Registers a background transfer on a dedicated channel and resolves with the
  * bytes transferred once it completes (#1245).
+ *
+ * `onRegistered` fires once with the backend `transferId` the instant the start
+ * command returns (see {@link sftpDownload}), for seeding the Transfer Queue
+ * ahead of any progress event (#1632).
  */
 export async function sftpUpload(
   sessionId: string,
   localPath: string,
-  remotePath: string
+  remotePath: string,
+  onRegistered?: (transferId: string) => void
 ): Promise<number> {
   const transferId = await invoke<string>("sftp_upload", {
     sessionId,
     localPath,
     remotePath,
   });
+  onRegistered?.(transferId);
   return await awaitTransfer(transferId);
 }
 
@@ -1069,6 +1102,23 @@ export async function unwatchLocalFile(watchId: string): Promise<void> {
   await invoke("unwatch_local_file", { watchId });
 }
 
+/**
+ * Start watching a local directory for external on-disk changes (#1626).
+ *
+ * `watchId` is an opaque per-browser-instance key; the resulting
+ * `local-dir-changed` events carry it back so the right file browser refreshes.
+ * Re-watching the same id replaces the previous watch (used to re-target when
+ * the browsed directory changes).
+ */
+export async function watchLocalDir(watchId: string, path: string): Promise<void> {
+  await invoke("watch_local_dir", { watchId, path });
+}
+
+/** Stop watching a local directory previously registered with {@link watchLocalDir}. */
+export async function unwatchLocalDir(watchId: string): Promise<void> {
+  await invoke("unwatch_local_dir", { watchId });
+}
+
 /** Read a remote file's contents as a UTF-8 string via SFTP. */
 export async function sftpReadFileContent(sessionId: string, remotePath: string): Promise<string> {
   return await invoke<string>("sftp_read_file_content", { sessionId, remotePath });
@@ -1160,6 +1210,16 @@ export async function sessionListFiles(sessionId: string, path: string): Promise
 /** Read a file via a session's file browser capability. Returns raw bytes. */
 export async function sessionReadFile(sessionId: string, path: string): Promise<number[]> {
   return await invoke<number[]>("session_read_file", { sessionId, path });
+}
+
+/**
+ * Get metadata for a single file via a session's file browser capability.
+ *
+ * Backs the editor's remote external-change detection (#1627): the frontend
+ * re-stats the open file on an interval and compares `modified`/`size`.
+ */
+export async function sessionStat(sessionId: string, path: string): Promise<FileEntry> {
+  return await invoke<FileEntry>("session_stat", { sessionId, path });
 }
 
 /** Write raw bytes to a file via a session's file browser capability. */
@@ -1555,10 +1615,15 @@ export interface ConnectedHost {
 /**
  * Result of deploying or updating the agent on a remote host.
  *
- * Discriminated on `kind`: `deployed` is the normal outcome; the update path
- * returns `otherHostsConnected` when the connected-host guard blocks an
- * unforced update because other hosts are attached — the desktop then shows the
- * warning and may retry via {@link updateAgentForce}.
+ * Discriminated on `kind`:
+ * - `deployed` — the normal outcome of a deploy or immediate update.
+ * - `otherHostsConnected` — the connected-host guard blocked an unforced
+ *   immediate update because other hosts are attached; the desktop shows the
+ *   warning and may retry via {@link updateAgentForce}.
+ * - `coordinated` — a coordinated-strategy update (#1616) was dispatched on a
+ *   Unix host: the binary was staged and handed to `agent.request_update`, which
+ *   notified every other connected host and let the agent self-apply. Windows
+ *   coordinated updates fall back to the immediate path and return `deployed`.
  */
 export type AgentDeployResult =
   | {
@@ -1575,6 +1640,23 @@ export type AgentDeployResult =
   | {
       kind: "otherHostsConnected";
       hosts: ConnectedHost[];
+    }
+  | {
+      kind: "coordinated";
+      /**
+       * `true` when the agent was idle and applied immediately (the connection
+       * is expected to drop as the binary swaps); `false` when deferred until the
+       * last of `activeSessions` disconnects.
+       */
+      applied: boolean;
+      /** Sessions the update will wait on when `applied` is false. */
+      activeSessions: number;
+      /** How many *other* connected hosts were sent the `update_pending` notice. */
+      notifiedClients: number;
+      /** `true` when every notified host disconnected inside the window. */
+      allAcked: boolean;
+      /** Hosts still attached when the coordination window closed. */
+      remainingClients: string[];
     };
 
 /** Probe a remote host for an existing agent binary. */

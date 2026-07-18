@@ -31,11 +31,11 @@ pub struct ExternalAgentFile {
 
 /// Strategy governing how a shared remote agent binary is updated.
 ///
-/// Only [`UpdateStrategy::Immediate`] has an implemented dispatch path today
-/// (hard shutdown + redeploy). `Coordinated` (SI-5) and `Deferred` (SI-6) are
-/// configuration-only until those subsystems land; selecting them currently
-/// resolves back to `Immediate` at update time (see
-/// [`RemoteAgentConfig::effective_update_strategy`]).
+/// `Immediate` (hard shutdown + redeploy) and `Coordinated` (stage the binary,
+/// then broadcast a notice and let other hosts disconnect cleanly before the
+/// agent self-applies, #1616) both have dispatch paths. `Deferred` (SI-6) is
+/// still configuration-only and resolves back to `Immediate` at update time
+/// (see [`RemoteAgentConfig::effective_update_strategy`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdateStrategy {
@@ -44,7 +44,8 @@ pub enum UpdateStrategy {
     #[default]
     Immediate,
     /// Broadcast an update notice to connected hosts and wait for a clean
-    /// disconnect before applying. Not yet implemented (SI-5).
+    /// disconnect before applying. Dispatched via a staged `agent.request_update`
+    /// on Unix hosts; Windows falls back to `Immediate` (#1616).
     Coordinated,
     /// Defer the update until the last session disconnects. Not yet
     /// implemented (SI-6).
@@ -213,16 +214,26 @@ impl RemoteAgentConfig {
 
     /// The update strategy that can actually be honored at update time today.
     ///
-    /// Only [`UpdateStrategy::Immediate`] has an implemented dispatch path
-    /// (hard shutdown + redeploy). `Coordinated` (SI-5) and `Deferred` (SI-6)
-    /// have no dispatch path yet, so they fall back to `Immediate` — the
-    /// configured preference is still persisted so it takes effect once those
-    /// subsystems land. See #1354.
+    /// `Immediate` (hard shutdown + redeploy) and `Coordinated` (staged
+    /// `agent.request_update` on Unix; the desktop-push deploy trigger, #1616)
+    /// both have a dispatch path. `Deferred` (SI-6) has none yet, so it falls
+    /// back to `Immediate` — the configured preference is still persisted so it
+    /// takes effect once that subsystem lands. See #1354.
+    ///
+    /// Note the platform split for `Coordinated` is decided at deploy time, not
+    /// here: the agent's apply-from-path self-swap is Unix-only
+    /// (`agent/src/update/apply.rs`), so a `Coordinated` update targeting a
+    /// Windows host falls back to an immediate deploy in
+    /// [`crate::commands::agent`]. This method reports the *configured* dispatch
+    /// intent, which the command layer then resolves per remote OS.
     pub fn effective_update_strategy(&self) -> UpdateStrategy {
         match self.update_strategy {
             UpdateStrategy::Immediate => UpdateStrategy::Immediate,
-            // No coordinated/deferred dispatch path exists yet — fall back.
-            UpdateStrategy::Coordinated | UpdateStrategy::Deferred => UpdateStrategy::Immediate,
+            // Coordinated now has a dispatch path (#1616): stage the binary, then
+            // hand it to `agent.request_update` on Unix hosts.
+            UpdateStrategy::Coordinated => UpdateStrategy::Coordinated,
+            // No deferred desktop-push dispatch path exists yet — fall back.
+            UpdateStrategy::Deferred => UpdateStrategy::Immediate,
         }
     }
 
@@ -910,23 +921,27 @@ mod tests {
         assert!(!config.allow_self_update);
     }
 
-    /// Only the immediate dispatch path exists today; coordinated/deferred fall
-    /// back to it until SI-5/SI-6 land.
+    /// Immediate and Coordinated both have a dispatch path (#1616); Deferred
+    /// still falls back to Immediate until SI-6 lands. Coordinated resolving to
+    /// itself is what lets `run_update_agent` route the desktop-push deploy
+    /// through the staged `agent.request_update` path (the per-OS Windows
+    /// fallback is applied later, at deploy time).
     #[test]
-    fn effective_update_strategy_falls_back_to_immediate() {
-        for requested in [
-            UpdateStrategy::Immediate,
-            UpdateStrategy::Coordinated,
-            UpdateStrategy::Deferred,
-        ] {
+    fn effective_update_strategy_resolves_per_dispatch_availability() {
+        let cases = [
+            (UpdateStrategy::Immediate, UpdateStrategy::Immediate),
+            (UpdateStrategy::Coordinated, UpdateStrategy::Coordinated),
+            (UpdateStrategy::Deferred, UpdateStrategy::Immediate),
+        ];
+        for (requested, expected) in cases {
             let config = RemoteAgentConfig {
                 update_strategy: requested,
                 ..RemoteAgentConfig::default()
             };
             assert_eq!(
                 config.effective_update_strategy(),
-                UpdateStrategy::Immediate,
-                "requested {requested:?} should currently resolve to Immediate"
+                expected,
+                "requested {requested:?} should resolve to {expected:?}"
             );
         }
     }

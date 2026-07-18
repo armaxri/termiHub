@@ -64,11 +64,14 @@ class AgentUi(HarnessMixin):
     SETUP_ARCH = "agent-setup-arch-select"
 
     # Deferred-update banner (#1352), rendered under a *connected* agent's row.
-    # The id suffix is the agent id. (Apply Now — `agent-update-banner-apply-*` —
-    # is not driven yet; both its outcomes are unassertable live, see #1546 and
-    # tests/system/tests/test_agent_update_banner_live.py.)
+    # The id suffix is the agent id. Apply Now's *deferred/busy* outcome is driven
+    # live against the armed agent container in
+    # tests/system/tests/test_agent_update_apply_now_live.py (#1520 / #1546); its
+    # applied-immediately outcome stays unassertable live (the idle apply re-execs
+    # before the RPC responds) and remains a Vitest case.
     UPDATE_BANNER = "agent-update-banner"
     UPDATE_BANNER_DISMISS = "agent-update-banner-dismiss"
+    UPDATE_BANNER_APPLY = "agent-update-banner-apply"
 
     # ── lookups ─────────────────────────────────────────────────────────────────
     def remote_agents(self) -> list[dict[str, Any]]:
@@ -393,3 +396,25 @@ class AgentUi(HarnessMixin):
         """Click the banner's Dismiss and wait for it to disappear."""
         self.driver.click(f"{self.UPDATE_BANNER_DISMISS}-{agent_id}")
         self.wait_no_agent_update_banner(agent_id)
+
+    def apply_agent_update_now(self, agent_id: str) -> None:
+        """Click the banner's "Apply Now" button (does not wait for an outcome).
+
+        Fires the ``requestAgentDeferredUpdate`` desktop command against the live
+        agent's ``agent.request_deferred_update`` RPC. On a *busy* agent the RPC
+        defers (``applied: false``) and the handler dismisses the banner; the
+        caller waits on that dismissal (or on :meth:`agent_update_dismissed`).
+        """
+        self.driver.click(f"{self.UPDATE_BANNER_APPLY}-{agent_id}")
+
+    def agent_update_dismissed(self, agent_id: str) -> bool:
+        """Whether the banner for ``agent_id`` is flagged dismissed in the store.
+
+        Reads ``agentUpdatesDismissed[agent_id]``. A *deferred* Apply Now sets this
+        (the staged update still stands — it lands on the last disconnect — so only
+        the banner is suppressed), whereas an Apply Now that *errored* leaves it
+        false and the banner up. It therefore distinguishes the deferred success
+        from a failure without reading the toast (which carries no ``data-testid``).
+        """
+        value = self.driver.get_state("agentUpdatesDismissed")
+        return bool(value.get(agent_id)) if isinstance(value, dict) else False

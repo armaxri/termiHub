@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   transferEntryFromProgress,
+  transferEntryFromSnapshot,
   stateFromPhase,
   isTerminalTransferState,
   formatThroughput,
   type TransferEntry,
 } from "./transfer";
-import type { TransferProgress } from "@/services/api";
+import type { TransferProgress, TransferSnapshot } from "@/services/api";
 
 function progress(overrides: Partial<TransferProgress> = {}): TransferProgress {
   return {
@@ -17,6 +18,24 @@ function progress(overrides: Partial<TransferProgress> = {}): TransferProgress {
     transferred: 0,
     total: 100,
     phase: "transferring",
+    ...overrides,
+  };
+}
+
+function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
+  return {
+    transferId: "t1",
+    sessionId: "sess-a",
+    direction: "download",
+    fileName: "file.txt",
+    path: "/remote/file.txt",
+    state: "completed",
+    settled: true,
+    transferred: 100,
+    total: 100,
+    speed: 0,
+    attempt: 0,
+    maxAttempts: 3,
     ...overrides,
   };
 }
@@ -148,6 +167,69 @@ describe("transferEntryFromProgress", () => {
       0
     );
     expect(entry.path).toBe("/new/path.txt");
+  });
+});
+
+describe("transferEntryFromSnapshot (#1645)", () => {
+  it("settles a completed snapshot to a full, 100% row", () => {
+    const entry = transferEntryFromSnapshot(snapshot({ state: "completed" }), undefined, 1000);
+    expect(entry).toMatchObject({
+      id: "t1",
+      sessionId: "sess-a",
+      direction: "download",
+      name: "file.txt",
+      path: "/remote/file.txt",
+      state: "completed",
+      transferred: 100,
+      totalBytes: 100,
+      percent: 100,
+      updatedAt: 1000,
+    });
+  });
+
+  it("maps a failed snapshot to a failed row with a fallback error", () => {
+    const entry = transferEntryFromSnapshot(
+      snapshot({ state: "failed", transferred: 30 }),
+      undefined,
+      0
+    );
+    expect(entry.state).toBe("failed");
+    expect(entry.error).toBe("Transfer failed");
+  });
+
+  it("preserves the prior row's path and error where the snapshot lacks them", () => {
+    const prev: TransferEntry = {
+      id: "t1",
+      sessionId: "sess-a",
+      direction: "download",
+      name: "file.txt",
+      path: "/prev/path.txt",
+      state: "active",
+      transferred: 50,
+      totalBytes: 100,
+      percent: 50,
+      speedBytesPerSec: 1000,
+      error: "earlier error",
+      updatedAt: 0,
+    };
+    const entry = transferEntryFromSnapshot(
+      snapshot({ path: undefined, state: "failed" }),
+      prev,
+      2000
+    );
+    expect(entry.path).toBe("/prev/path.txt");
+    expect(entry.error).toBe("earlier error");
+  });
+
+  it("reports an indeterminate percent when the total is unknown", () => {
+    const entry = transferEntryFromSnapshot(
+      snapshot({ state: "cancelled", total: 0, transferred: 10 }),
+      undefined,
+      0
+    );
+    expect(entry.state).toBe("cancelled");
+    expect(entry.percent).toBeNull();
+    expect(entry.totalBytes).toBeNull();
   });
 });
 

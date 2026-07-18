@@ -541,6 +541,32 @@ describe("api service", () => {
       expect(result).toBe(2048);
     });
 
+    it("sftpDownload fires onRegistered with the transfer id before completion (#1632)", async () => {
+      mockedInvoke.mockResolvedValue("transfer-seed-d");
+      const onRegistered = vi.fn();
+
+      const pending = sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt", onRegistered);
+      // onRegistered must fire from the command's synchronous return, ahead of
+      // any transfer-progress event (which may be dropped under memory pressure).
+      await vi.waitFor(() => expect(onRegistered).toHaveBeenCalledWith("transfer-seed-d"));
+
+      await fireWhenListening({ transferId: "transfer-seed-d", phase: "done", transferred: 1 });
+      await pending;
+      expect(onRegistered).toHaveBeenCalledTimes(1);
+    });
+
+    it("sftpUpload fires onRegistered with the transfer id before completion (#1632)", async () => {
+      mockedInvoke.mockResolvedValue("transfer-seed-u");
+      const onRegistered = vi.fn();
+
+      const pending = sftpUpload("sftp-1", "/local/file.txt", "/remote/file.txt", onRegistered);
+      await vi.waitFor(() => expect(onRegistered).toHaveBeenCalledWith("transfer-seed-u"));
+
+      await fireWhenListening({ transferId: "transfer-seed-u", phase: "done", transferred: 1 });
+      await pending;
+      expect(onRegistered).toHaveBeenCalledTimes(1);
+    });
+
     it("sftpDownload rejects when the transfer is cancelled", async () => {
       mockedInvoke.mockResolvedValue("transfer-3");
 

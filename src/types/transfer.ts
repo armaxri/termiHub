@@ -1,4 +1,4 @@
-import type { TransferProgress, TransferQueueState } from "@/services/api";
+import type { TransferProgress, TransferQueueState, TransferSnapshot } from "@/services/api";
 
 /**
  * The connection-type-agnostic state space of a queued file transfer, as shown
@@ -64,6 +64,55 @@ export interface TransferEntry {
   maxAttempts?: number;
   /** Wall-clock ms of the last update, used to compute throughput deltas. */
   updatedAt: number;
+}
+
+/**
+ * The minimal description of a transfer known at **registration time** — before
+ * any `transfer-progress` event has been delivered (#1632).
+ *
+ * A transfer command (`sftp_download` / `sftp_upload`) returns its `transferId`
+ * synchronously over the reliable request/response IPC channel, whereas live
+ * progress arrives as best-effort fan-out events that can be dropped or delayed
+ * when the webview is starved (e.g. under memory pressure / jetsam). Seeding the
+ * queue from this snapshot at registration makes the Transfer Queue panel open
+ * as soon as a transfer is known, independent of whether any progress event is
+ * ever observed — a later event simply upserts the row.
+ */
+export interface TransferSeed {
+  /** The backend `transferId` returned by the start command. */
+  id: string;
+  /** Owning SFTP/FTP session id. */
+  sessionId: string;
+  /** Upload or download. */
+  direction: TransferDirection;
+  /** Display name (file name). */
+  name: string;
+  /** Remote path, when known. */
+  path?: string;
+  /** Total bytes when already known (uploads), else `null`/omitted. */
+  totalBytes?: number | null;
+}
+
+/**
+ * Build a `queued` {@link TransferEntry} from a {@link TransferSeed}, for the
+ * pre-event registration seed (#1632). Progress/throughput are unknown until the
+ * first `transfer-progress` event folds over this row.
+ */
+export function transferEntryFromSeed(seed: TransferSeed, now: number): TransferEntry {
+  const totalBytes = seed.totalBytes && seed.totalBytes > 0 ? seed.totalBytes : null;
+  return {
+    id: seed.id,
+    sessionId: seed.sessionId,
+    direction: seed.direction,
+    name: seed.name,
+    path: seed.path,
+    state: "queued",
+    transferred: 0,
+    totalBytes,
+    percent: null,
+    speedBytesPerSec: null,
+    updatedAt: now,
+  };
 }
 
 /**
@@ -144,6 +193,53 @@ export function transferEntryFromProgress(
     error: state === "failed" ? (progress.message ?? "Transfer failed") : undefined,
     attempt: progress.attempt ?? prev?.attempt,
     maxAttempts: progress.maxAttempts ?? prev?.maxAttempts,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Fold a backend {@link TransferSnapshot} (from `transfer_list`) into a
+ * {@link TransferEntry}, for the reconcile backstop (#1645).
+ *
+ * Unlike a `transfer-progress` event, a snapshot carries the rich `state`
+ * directly. This is used only to **settle a stuck non-terminal row** to its true
+ * terminal state when the terminal event was dropped — it is never used to move
+ * a live row's progress (events own that), so it cannot regress an
+ * event-advanced row. `prev` is the existing row being settled; its `path` /
+ * retry counters / error are preserved where the snapshot does not supply them.
+ */
+export function transferEntryFromSnapshot(
+  snapshot: TransferSnapshot,
+  prev: TransferEntry | undefined,
+  now: number
+): TransferEntry {
+  const totalRaw = snapshot.total;
+  const totalBytes = totalRaw && totalRaw > 0 ? totalRaw : (prev?.totalBytes ?? null);
+  const state = snapshot.state;
+
+  let percent: number | null;
+  if (state === "completed") {
+    percent = 100;
+  } else if (totalBytes && totalBytes > 0) {
+    percent = Math.min(100, Math.max(0, Math.round((snapshot.transferred / totalBytes) * 100)));
+  } else {
+    percent = null;
+  }
+
+  return {
+    id: snapshot.transferId,
+    sessionId: snapshot.sessionId,
+    direction: snapshot.direction,
+    name: snapshot.fileName,
+    path: snapshot.path ?? prev?.path,
+    state,
+    transferred: snapshot.transferred,
+    totalBytes,
+    percent,
+    speedBytesPerSec: snapshot.speed > 0 ? snapshot.speed : null,
+    error: state === "failed" ? (prev?.error ?? "Transfer failed") : undefined,
+    attempt: snapshot.attempt || prev?.attempt,
+    maxAttempts: snapshot.maxAttempts || prev?.maxAttempts,
     updatedAt: now,
   };
 }

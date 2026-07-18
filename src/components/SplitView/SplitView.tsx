@@ -34,6 +34,7 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { isWindows, isMac } from "@/utils/platform";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -51,6 +52,7 @@ import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
+import { FileBrowserTab } from "@/components/Terminal/FileBrowserTab";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
@@ -96,6 +98,13 @@ export function SplitView() {
     }
     return null;
   }, [zoomedTabId, rootPanel]);
+
+  // Disambiguated title for the zoomed editor tab (#1640), matching the tab strip.
+  const zoomedTabTitle = useMemo(() => {
+    if (!zoomedTab) return "";
+    const allTabs = getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs);
+    return getEditorTabDisplayTitle(zoomedTab, allTabs);
+  }, [zoomedTab, rootPanel]);
 
   const dismissZoom = useCallback(() => setZoomedTabId(null), [setZoomedTabId]);
 
@@ -286,7 +295,7 @@ export function SplitView() {
                       className="zoom-overlay__icon"
                     />
                   )}
-                  <span className="zoom-overlay__title">{zoomedTab.title}</span>
+                  <span className="zoom-overlay__title">{zoomedTabTitle}</span>
                   <span className="zoom-overlay__hint">
                     {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} · Esc to close
                   </span>
@@ -440,6 +449,8 @@ export function SplitView() {
                   meta={zoomedTab.agentErrorMeta}
                   isVisible={true}
                 />
+              ) : zoomedTab.contentType === "file-browser" ? (
+                <FileBrowserTab key={`zoom-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
               ) : null}
             </div>
           </div>
@@ -665,6 +676,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               key={tab.id}
               tabId={tab.id}
               meta={tab.agentErrorMeta}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "file-browser" ? (
+            <FileBrowserTab
+              key={tab.id}
+              tabId={tab.id}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "terminal" &&

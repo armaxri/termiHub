@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
+import { getAllLeaves } from "@/utils/panelTree";
+import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { deriveTabStatus } from "@/utils/tabStatus";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
 import { reopenPayloadForTab, showReopenToast } from "@/utils/reopenTab";
@@ -19,6 +21,7 @@ interface TabBarProps {
 
 export function TabBar({ panelId, tabs }: TabBarProps) {
   const isFocused = useAppStore((s) => s.activePanelId === panelId);
+  const rootPanel = useAppStore((s) => s.rootPanel);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);
@@ -104,6 +107,11 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
   const renameTabData = renameTabId ? tabs.find((t) => t.id === renameTabId) : null;
 
+  // Editor-tab title disambiguation (#1640) is judged across the whole active
+  // tab group, so two same-basename editor tabs are distinguishable even when
+  // they live in different split panels.
+  const allTabs = useMemo(() => getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs), [rootPanel]);
+
   return (
     <div className={`tab-bar${isFocused ? " tab-bar--focused" : ""}`}>
       <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
@@ -126,6 +134,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               tabColor={tabColors[tab.id]}
               onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}
+              displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
               status={
                 tab.contentType === "terminal"
                   ? deriveTabStatus(
