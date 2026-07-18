@@ -23,6 +23,7 @@ const CONTEXT_BY_CONTENT_TYPE: Record<TabContentType, ActiveContext> = {
   "network-diagnostic": "form",
   "log-viewer": "other",
   "agent-error": "other",
+  "file-browser": "other",
 };
 
 /**
