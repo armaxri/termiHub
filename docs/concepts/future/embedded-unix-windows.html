@@ -353,20 +353,46 @@
       <header class="concept-header">
         <h1>Embedded Unix Command Environment on Windows</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Superseded · will not be implemented</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/519">#519</a></span
           >
-          <span><code>docs/concepts/backlog/embedded-unix-windows.html</code></span>
+          <span><code>docs/concepts/future/embedded-unix-windows.html</code></span>
         </div>
       </header>
 
-      <blockquote>
+      <blockquote style="border-left-color: var(--color-warning)">
         <p>
-          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
-          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
-          concept is the source of truth; run <code>/sync-concept embedded-unix-windows</code> to
-          reconcile it with the implementation.
+          <strong>⚠ Superseded — retired concept, kept for history.</strong> This concept (bundling
+          BusyBox-w32 + standalone Unix binaries with the Windows build) has been
+          <strong>replaced</strong> by
+          <a href="git-bash-provisioning.html"><strong>Guided Git Bash Installation</strong></a>
+          (<code>docs/concepts/backlog/git-bash-provisioning.html</code>). The product decision on
+          <a href="https://github.com/armaxri/termiHub/issues/519">#519</a> is to
+          <strong>detect Git for Windows and guide the user through installing it</strong> — using
+          the installed Git Bash as the Unix-shell + coreutils provider — rather than shipping an
+          embedded environment.
+        </p>
+        <p>
+          <strong>Why:</strong> termiHub needs none of these binaries for its own features (SSH/SFTP
+          run on <code>russh</code>, not <code>ssh.exe</code>; OSC&nbsp;7 CWD tracking already works
+          with Git Bash). Git for Windows already provides essentially the whole tool list (bash,
+          coreutils, curl, OpenSSH, tar/gzip/xz, git, vim, less) from one well-maintained installer,
+          and termiHub <em>already</em> detects Git Bash (<code>resolve_git_bash</code> /
+          <code>GIT_BASH_PATHS</code>). Bundling is a heavy, recurring maintenance/security
+          liability (BusyBox-w32 antivirus false positives, an update CDN, and owning CVE response
+          for bundled <code>curl</code>/OpenSSH). The full analysis lives on
+          <a href="https://github.com/armaxri/termiHub/issues/519">#519</a>; the replacement work is
+          tracked by <a href="https://github.com/armaxri/termiHub/issues/1671">#1671</a> (detection
+          hardening) and
+          <a href="https://github.com/armaxri/termiHub/issues/1672">#1672</a> (detect-and-guide
+          install).
+        </p>
+        <p>
+          Moved to <code>future/</code> and left unimplemented. It is retained only as a last-resort
+          reference for the narrow offline / corporate-locked-machine case where a user genuinely
+          cannot install Git for Windows. Everything below is the original concept, kept verbatim
+          for that history — it is <strong>not</strong> the current plan.
         </p>
       </blockquote>
 
