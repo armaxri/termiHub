@@ -210,6 +210,7 @@ pub fn run() {
         .plugin(tauri_plugin_cli::init())
         .manage(SftpManager::new())
         .manage(TransferRegistry::new())
+        .manage(files::watcher::FileWatchManager::new())
         .manage(NetworkManager::new())
         .manage(x_server_manager.clone())
         .manage(x_server_consent_registry.clone())
@@ -724,6 +725,8 @@ pub fn run() {
             commands::files::local_rename,
             commands::files::local_read_file,
             commands::files::local_write_file,
+            commands::files::watch_local_file,
+            commands::files::unwatch_local_file,
             commands::files::sftp_read_file_content,
             commands::files::sftp_write_file_content,
             commands::files::sftp_write_file_content_elevated,

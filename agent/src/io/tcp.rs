@@ -28,9 +28,6 @@ pub async fn run_tcp_listener(
     allow_self_update: bool,
     update_strategy: crate::update::UpdateStrategy,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    info!("Listening on {}", listener.local_addr()?);
-
     let (notification_tx, mut notification_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
     let registry = Arc::new(build_registry());
@@ -79,6 +76,25 @@ pub async fn run_tcp_listener(
     if let Some(test_update) = test_update.as_ref() {
         test_update.seed(&session_manager).await;
     }
+
+    // Test-only (#1579): stretch the startup window so a regression test can
+    // observe the bind/accept ordering deterministically. `None` — and so a
+    // zero-cost no-op — in production. Runs BEFORE the bind below so that the
+    // simulated slow init happens while the port is still un-connectable,
+    // exactly as the real #1551 startup work now does.
+    startup_test_delay().await;
+
+    // Bind and announce readiness only now, after all the startup work above
+    // has finished (#1579). Binding earlier makes `Listening on …` a lie: the
+    // kernel accepts connections into the listen backlog the instant the socket
+    // is bound, so a client's `connect` succeeds while this task is still deep
+    // in `SessionManager::new`'s #1551 binary byte-compare, `ensure_default_shell`
+    // and `recover_sessions` — and then the client's `initialize` stalls with no
+    // reader until the accept loop below is finally reached. By binding last, the
+    // log line is a true readiness signal and an early client is cleanly refused
+    // (the desktop retries with backoff) instead of accepted-then-stalled.
+    let listener = TcpListener::bind(addr).await?;
+    info!("Listening on {}", listener.local_addr()?);
 
     loop {
         tokio::select! {
@@ -166,4 +182,22 @@ pub async fn run_tcp_listener(
     session_manager.close_all().await;
 
     Ok(())
+}
+
+/// Test-only startup delay gate (#1579).
+///
+/// When `TERMIHUB_TEST_STARTUP_DELAY_MS` is set to a positive integer, sleep
+/// that many milliseconds on the startup path just before the listener binds.
+/// This lets `agent/tests/tcp_listener_readiness.rs` reproduce the class of slow
+/// init (`SessionManager::new`'s #1551 binary byte-compare, session recovery)
+/// that made the accept-before-ready race observable, without depending on real
+/// machine load. Unset in production, so this is a single failed env lookup.
+async fn startup_test_delay() {
+    if let Some(ms) = std::env::var("TERMIHUB_TEST_STARTUP_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    }
 }

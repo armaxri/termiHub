@@ -130,6 +130,28 @@
   min-width: 0;
 }
 
+/*
+ * Dismissible notice shown when the file changed on disk while the buffer had
+ * unsaved edits (#1620). Warning-toned like the read-only banner (informational,
+ * not a failure); tokens only. The clean-buffer case reloads silently and shows
+ * no banner.
+ */
+.file-editor__disk-changed-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background-color: color-mix(in srgb, var(--color-warning) 12%, var(--bg-secondary));
+  border-bottom: 1px solid var(--color-warning);
+  color: var(--color-warning);
+  font-size: var(--font-size-sm);
+}
+
+.file-editor__disk-changed-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
 @keyframes file-editor-spin {
   from {
     transform: rotate(0deg);

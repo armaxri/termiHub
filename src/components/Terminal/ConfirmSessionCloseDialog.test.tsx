@@ -119,7 +119,7 @@ describe("ConfirmSessionCloseDialog", () => {
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
   });
 
-  it("Don't ask again persists confirmCloseLiveSession=false", () => {
+  it("Don't ask again then Confirm persists confirmCloseLiveSession=false", () => {
     const updateSettings = vi.fn(() => Promise.resolve());
     useAppStore.setState({ updateSettings });
     useAppStore.getState().addTab("x", "local");
@@ -136,10 +136,59 @@ describe("ConfirmSessionCloseDialog", () => {
       })
     );
 
+    // Ticking alone must not write — the preference is deferred to confirm.
     act(() => q("confirm-dialog-dont-ask-again").click());
+    expect(updateSettings).not.toHaveBeenCalled();
 
+    // Confirming commits the deferred preference.
+    act(() => q("confirm-dialog-confirm").click());
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ confirmCloseLiveSession: false })
     );
+  });
+
+  it("Don't ask again then Cancel does NOT persist the preference", () => {
+    const updateSettings = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ updateSettings });
+    useAppStore.getState().addTab("y", "local");
+    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    render();
+
+    act(() =>
+      useAppStore.getState().setPendingSessionCloseConfirm({
+        kind: "tab",
+        tabId: panel.tabs[0].id,
+        panelId: panel.id,
+        label: "y",
+        reopen: null,
+      })
+    );
+
+    act(() => q("confirm-dialog-dont-ask-again").click());
+    act(() => q("confirm-dialog-cancel").click());
+
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("Confirm without ticking leaves the preference untouched", () => {
+    const updateSettings = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ updateSettings });
+    useAppStore.getState().addTab("z", "local");
+    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    render();
+
+    act(() =>
+      useAppStore.getState().setPendingSessionCloseConfirm({
+        kind: "tab",
+        tabId: panel.tabs[0].id,
+        panelId: panel.id,
+        label: "z",
+        reopen: null,
+      })
+    );
+
+    act(() => q("confirm-dialog-confirm").click());
+
+    expect(updateSettings).not.toHaveBeenCalled();
   });
 });
