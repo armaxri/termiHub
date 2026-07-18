@@ -141,7 +141,10 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
 
         {phase === "error" && (
           <>
-            <AlertCircle size={32} className="file-browser-tab__icon file-browser-tab__icon--error" />
+            <AlertCircle
+              size={32}
+              className="file-browser-tab__icon file-browser-tab__icon--error"
+            />
             <p className="file-browser-tab__heading">Could not open connection</p>
             {error && <p className="file-browser-tab__error">{error}</p>}
             <button

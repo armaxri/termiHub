@@ -442,11 +442,7 @@ export function SplitView() {
                   isVisible={true}
                 />
               ) : zoomedTab.contentType === "file-browser" ? (
-                <FileBrowserTab
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  isVisible={true}
-                />
+                <FileBrowserTab key={`zoom-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
               ) : null}
             </div>
           </div>

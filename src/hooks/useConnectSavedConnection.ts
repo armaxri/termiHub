@@ -59,10 +59,8 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           ? ((cfg.sessionType as string | undefined) ?? config.type)
           : config.type;
       const isTerminalLess =
-        useAppStore
-          .getState()
-          .connectionTypes.find((ct) => ct.typeId === effectiveTypeId)?.capabilities.terminal ===
-        false;
+        useAppStore.getState().connectionTypes.find((ct) => ct.typeId === effectiveTypeId)
+          ?.capabilities.terminal === false;
       const contentType = isTerminalLess ? ("file-browser" as const) : undefined;
 
       // Connections with authMethod and password support credential store resolution

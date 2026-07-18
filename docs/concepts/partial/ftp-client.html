@@ -1903,8 +1903,8 @@ registry.register(Box::new(FtpBackend::new()));
             <tbody>
               <tr>
                 <td colspan="5" style="text-align: center; color: var(--text-secondary)">
-                  None open. The last functional divergence (#1, the terminal-less tab) was
-                  resolved on 2026-07-18 — see Resolved below.
+                  None open. The last functional divergence (#1, the terminal-less tab) was resolved
+                  on 2026-07-18 — see Resolved below.
                 </td>
               </tr>
             </tbody>
@@ -1927,16 +1927,16 @@ registry.register(Box::new(FtpBackend::new()));
                 <td>1</td>
                 <td>
                   <strong>Terminal-less tab, via a <code>terminal</code> capability flag.</strong>
-                  Resolved by the protocol-agnostic route (#1335), not an <code>ftp</code>
-                  hardcode. A <code>terminal: bool</code> field was added to the connection-level
+                  Resolved by the protocol-agnostic route (#1335), not an <code>ftp</code> hardcode.
+                  A <code>terminal: bool</code> field was added to the connection-level
                   <code>Capabilities</code> (core), defaulting to <code>true</code> via
                   <code>#[serde(default)]</code> so agents/configs predating the field still
                   deserialize as terminal-capable; every existing type reports <code>true</code> and
                   FTP reports <code>false</code>. On the desktop, a connection whose type reports
-                  <code>terminal: false</code> opens into a new <code>file-browser</code> tab content
-                  type: <code>FileBrowserTab</code> mints and owns the session through its own path
-                  (not <code>Terminal.tsx</code>/no PTY) so the sidebar file browser routes to
-                  <code>tab.sessionId</code>, and renders the non-terminal placeholder body. Any
+                  <code>terminal: false</code> opens into a new <code>file-browser</code> tab
+                  content type: <code>FileBrowserTab</code> mints and owns the session through its
+                  own path (not <code>Terminal.tsx</code>/no PTY) so the sidebar file browser routes
+                  to <code>tab.sessionId</code>, and renders the non-terminal placeholder body. Any
                   future terminal-less type inherits this with no per-type special-casing. Concept
                   matches as-built; no code change.
                 </td>
