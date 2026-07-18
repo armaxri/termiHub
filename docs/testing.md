@@ -1537,6 +1537,32 @@ desktops (or two app instances) both connected to that same agent.
    plain **Update**; clicking it updates without any extra confirmation (same as
    before this change).
 
+### Guided Git for Windows install (#1672)
+
+Verifies the detect-and-guide flow that offers to install Git for Windows when no
+Unix shell is present. **Windows only** — the gate and helpers are unit-tested on
+every CI platform, but the guided install (winget terminal tab, git-scm.com deep
+link, and post-install re-detection) cannot be exercised by per-PR CI. Tracked in
+issue 1672 and its PR.
+
+Prerequisites: a Windows machine with **Git for Windows not installed** (no Git
+Bash, no WSL bash detected).
+
+1. Launch termiHub and open **Settings → General → Default Shell**.
+2. Confirm the picker shows a **"Git Bash — set up…"** entry (it must not appear
+   once Git Bash or a WSL distro is detected).
+3. Select it → a **"Set up Git Bash"** dialog opens. Nothing is installed yet.
+4. Click **Open git-scm.com** → the official download page opens in the browser.
+   Close the browser; the dialog remains.
+5. Click **Install in terminal** → a local terminal tab titled **"Install Git for
+   Windows"** opens, pre-loaded with `winget install --id Git.Git -e`, and the
+   dialog closes with a success toast.
+6. Complete the winget install in that tab (drive any UAC prompt).
+7. Re-open **Settings → General → Default Shell** (no app restart) → **Git Bash**
+   now appears as a normal selectable row and the "set up…" entry is gone.
+8. On a machine that already has Git Bash or WSL bash, confirm the "set up…" entry
+   never appears.
+
 ### Windows Explorer context-menu registration (#1368)
 
 Verifies that shell-integration registration writes/removes the Windows Explorer
