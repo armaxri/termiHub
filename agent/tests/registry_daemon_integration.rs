@@ -9,17 +9,30 @@
 //!
 //! The registry endpoint is a fixed per-user path by design (that is what makes
 //! it findable). Tests must therefore never touch the live one: every test
-//! points its agents at a unique endpoint in a `TempDir` via
-//! `TERMIHUB_REGISTRY_ENDPOINT`, which the spawned agents pass on to any
-//! registry they spawn through the inherited environment. Without this, these
-//! tests would fight each other, the developer's own agents, and the parallel
-//! development checkouts, all over one socket.
+//! points its agents at a **unique** endpoint via `TERMIHUB_REGISTRY_ENDPOINT`,
+//! which the spawned agents pass on to any registry they spawn through the
+//! inherited environment. Without this, these tests would fight each other, the
+//! developer's own agents, and the parallel development checkouts, all over one
+//! rendezvous. On unix the endpoint is a `.sock` inside a per-test `TempDir`; on
+//! windows it is a per-test `\\.\pipe\` name (the `\\.\pipe\` namespace has no
+//! directory to scope it, so uniqueness comes from the name itself — see
+//! [`unique_endpoint`]).
+//!
+//! # Cross-platform
+//!
+//! The registry speaks the same length-prefixed frames over a **unix domain
+//! socket** on unix and a **windows named pipe** on windows, and the named-pipe
+//! endpoint is a genuinely distinct code path (its name embeds `%USERNAME%`
+//! because there is no `0o700` socket-dir analog to scope it). So this suite
+//! runs on **both** platforms: the process-spawning and TCP JSON-RPC scaffolding
+//! is already portable, and the two things that were not — the raw
+//! frame-speaking [`RawWorker`] transport and the endpoint-readiness probe — are
+//! abstracted over the platform ([`RawTransport`], [`endpoint_reachable`]) so
+//! every scenario is proven on the wire the production agent actually uses.
 //!
 //! ```sh
 //! cargo test -p termihub-agent --test registry_daemon_integration
 //! ```
-
-#![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -145,11 +158,40 @@ fn spawn_registry(registry_endpoint: &str) -> RegistryProcess {
     RegistryProcess { child }
 }
 
-/// Wait for the registry's endpoint to appear on disk.
+/// Whether something is currently listening at `endpoint`.
+///
+/// A connect attempt, not a `Path::exists`: a `\\.\pipe\` name is not a
+/// filesystem path, so `exists` is meaningless for it, whereas a connect probe
+/// answers the only question that matters — is the registry actually reachable —
+/// identically on both transports. The probe opens and immediately drops an
+/// anonymous connection (it never registers), which the registry treats as any
+/// short-lived client.
+#[cfg(unix)]
+fn endpoint_reachable(endpoint: &str) -> bool {
+    std::os::unix::net::UnixStream::connect(endpoint).is_ok()
+}
+
+/// Windows connect-probe: open the named pipe as a file. A present pipe opens; a
+/// missing one yields `ERROR_FILE_NOT_FOUND`; a momentarily busy one yields
+/// `ERROR_PIPE_BUSY` (231) — which still means the registry is up.
+#[cfg(windows)]
+fn endpoint_reachable(endpoint: &str) -> bool {
+    const ERROR_PIPE_BUSY: i32 = 231;
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(endpoint)
+    {
+        Ok(_) => true,
+        Err(e) => e.raw_os_error() == Some(ERROR_PIPE_BUSY),
+    }
+}
+
+/// Wait for the registry's endpoint to start accepting connections.
 fn wait_for_endpoint(endpoint: &str) -> bool {
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     while Instant::now() < deadline {
-        if std::path::Path::new(endpoint).exists() {
+        if endpoint_reachable(endpoint) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -289,11 +331,56 @@ fn wait_for_connections(client: &mut Client, expected: &[&str]) -> Vec<String> {
     last
 }
 
+/// A unique, reachable registry endpoint for one test.
+///
+/// On unix the per-test `TempDir` scopes the socket; on windows the `\\.\pipe\`
+/// namespace is machine-global with no directory to scope it, so uniqueness must
+/// live in the name (pid + a per-process counter), exactly as the production
+/// registry's per-user pipe name carries the user rather than relying on a dir.
+/// Two test processes in one CI job therefore never collide, and neither fights
+/// the developer's live registry.
+#[cfg(unix)]
 fn unique_endpoint(dir: &TempDir, tag: &str) -> String {
     dir.path()
         .join(format!("registry-{tag}.sock"))
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(windows)]
+fn unique_endpoint(_dir: &TempDir, tag: &str) -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    format!(
+        r"\\.\pipe\termihub-itest-{}-{}-{tag}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// An endpoint that can be neither connected to nor bound, so a worker pointed at
+/// it fails to connect *and* fails to auto-spawn a registry — the setup for
+/// "the registry cannot run at all".
+///
+/// On unix that is a socket path inside a non-existent directory. On windows a
+/// pipe *name* has no parent directory, so instead we make the name itself
+/// invalid: a backslash is the one character a pipe name may not contain, so
+/// `CreateFile`/`CreateNamedPipe` reject it.
+#[cfg(unix)]
+fn unbindable_endpoint(dir: &TempDir) -> String {
+    dir.path()
+        .join("no-such-dir")
+        .join("registry.sock")
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(windows)]
+fn unbindable_endpoint(_dir: &TempDir) -> String {
+    format!(
+        r"\\.\pipe\termihub-itest-noreg-{}\invalid",
+        std::process::id()
+    )
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -350,7 +437,7 @@ fn a_worker_spawns_the_registry_when_none_is_running() {
     let dir = TempDir::new().expect("temp dir");
     let endpoint = unique_endpoint(&dir, "autospawn");
     assert!(
-        !std::path::Path::new(&endpoint).exists(),
+        !endpoint_reachable(&endpoint),
         "test must start with no registry"
     );
 
@@ -368,7 +455,7 @@ fn a_worker_spawns_the_registry_when_none_is_running() {
         "a worker should have spawned a registry and both should be visible"
     );
     assert!(
-        std::path::Path::new(&endpoint).exists(),
+        endpoint_reachable(&endpoint),
         "the auto-spawned registry should own {endpoint}"
     );
     // The auto-spawned registry is not ours to kill — it exits on its own once
@@ -445,14 +532,9 @@ fn a_killed_worker_is_garbage_collected_by_the_registry() {
 #[test]
 fn an_agent_works_and_reports_itself_when_the_registry_cannot_run() {
     let dir = TempDir::new().expect("temp dir");
-    // A path inside a non-existent directory: unconnectable, and un-bindable by
-    // a spawned registry, so the worker's auto-spawn fails too.
-    let endpoint = dir
-        .path()
-        .join("no-such-dir")
-        .join("registry.sock")
-        .to_string_lossy()
-        .into_owned();
+    // An endpoint that is unconnectable *and* un-bindable by a spawned registry,
+    // so the worker's auto-spawn fails too and it must fall back to its own view.
+    let endpoint = unbindable_endpoint(&dir);
 
     let agent = spawn_agent(&endpoint);
     let mut desktop = Client::connect(&agent.addr);
@@ -566,19 +648,152 @@ const MSG_BROADCAST: u8 = 0x13;
 const MSG_ACK: u8 = 0x90;
 const MSG_EVENT: u8 = 0x92;
 
+/// The transport under a [`RawWorker`]: a unix domain socket on unix, a windows
+/// named pipe on windows. Both carry the identical length-prefixed frames, so
+/// only the connect/read/write/timeout primitives differ — every scenario above
+/// them is shared.
+trait RawTransport {
+    /// Write a whole frame, then flush.
+    fn write_frame(&mut self, buf: &[u8]);
+    /// Fill `buf` completely, or return `false` on timeout / EOF / error.
+    fn read_full(&mut self, buf: &mut [u8]) -> bool;
+    /// Set the timeout applied to subsequent [`read_full`](Self::read_full) calls.
+    fn set_read_timeout(&mut self, timeout: Duration);
+}
+
+/// Connect a raw transport to the registry endpoint, with a generous read
+/// timeout matching the unix suite's original 10 s.
+fn connect_transport(endpoint: &str) -> Box<dyn RawTransport> {
+    platform::connect(endpoint)
+}
+
+#[cfg(unix)]
+mod platform {
+    use super::{Duration, RawTransport};
+    use std::io::{Read, Write};
+
+    struct UnixTransport {
+        stream: std::os::unix::net::UnixStream,
+    }
+
+    impl RawTransport for UnixTransport {
+        fn write_frame(&mut self, buf: &[u8]) {
+            self.stream.write_all(buf).expect("write frame");
+            self.stream.flush().expect("flush frame");
+        }
+
+        fn read_full(&mut self, buf: &mut [u8]) -> bool {
+            self.stream.read_exact(buf).is_ok()
+        }
+
+        fn set_read_timeout(&mut self, timeout: Duration) {
+            self.stream
+                .set_read_timeout(Some(timeout))
+                .expect("set read timeout");
+        }
+    }
+
+    pub(super) fn connect(endpoint: &str) -> Box<dyn RawTransport> {
+        let stream =
+            std::os::unix::net::UnixStream::connect(endpoint).expect("connect registry socket");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("set read timeout");
+        Box::new(UnixTransport { stream })
+    }
+}
+
+#[cfg(windows)]
+mod platform {
+    use super::{Duration, Instant, RawTransport};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+
+    /// A windows named-pipe client driven by its own current-thread runtime.
+    ///
+    /// The named pipe has no `SO_RCVTIMEO`, so a real read timeout — which the
+    /// suite needs to prove "a broadcast is *not* echoed to its sender" — comes
+    /// from `tokio::time::timeout` around an async `read_exact`, rather than a
+    /// blocking-socket option as on unix.
+    struct PipeTransport {
+        // Field order is drop order: the client must drop (deregister from the
+        // IO driver, close the handle) *before* the runtime it is bound to.
+        client: NamedPipeClient,
+        read_timeout: Duration,
+        rt: tokio::runtime::Runtime,
+    }
+
+    impl RawTransport for PipeTransport {
+        fn write_frame(&mut self, buf: &[u8]) {
+            let Self { rt, client, .. } = self;
+            rt.block_on(async {
+                client.write_all(buf).await.expect("write frame");
+                client.flush().await.expect("flush frame");
+            });
+        }
+
+        fn read_full(&mut self, buf: &mut [u8]) -> bool {
+            let Self {
+                rt,
+                client,
+                read_timeout,
+            } = self;
+            rt.block_on(async {
+                matches!(
+                    tokio::time::timeout(*read_timeout, client.read_exact(buf)).await,
+                    Ok(Ok(_))
+                )
+            })
+        }
+
+        fn set_read_timeout(&mut self, timeout: Duration) {
+            self.read_timeout = timeout;
+        }
+    }
+
+    pub(super) fn connect(endpoint: &str) -> Box<dyn RawTransport> {
+        // A pipe instance can be momentarily busy between the registry accepting
+        // one client and staging the next; ERROR_PIPE_BUSY (231) is worth a brief
+        // retry, anything else is fatal.
+        const ERROR_PIPE_BUSY: i32 = 231;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let client = rt.block_on(async {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match ClientOptions::new().open(endpoint) {
+                    Ok(client) => break client,
+                    Err(e)
+                        if e.raw_os_error() == Some(ERROR_PIPE_BUSY)
+                            && Instant::now() < deadline =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    Err(e) => panic!("connect registry pipe {endpoint}: {e}"),
+                }
+            }
+        });
+        Box::new(PipeTransport {
+            rt,
+            client,
+            read_timeout: Duration::from_secs(10),
+        })
+    }
+}
+
 /// A worker speaking the registry protocol directly, standing in for the agent
 /// worker that #1351 will make broadcast.
 struct RawWorker {
-    stream: std::os::unix::net::UnixStream,
+    conn: Box<dyn RawTransport>,
 }
 
 impl RawWorker {
     fn connect(endpoint: &str) -> Self {
-        let stream = std::os::unix::net::UnixStream::connect(endpoint).expect("connect registry");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .expect("set read timeout");
-        Self { stream }
+        Self {
+            conn: connect_transport(endpoint),
+        }
     }
 
     /// `[type: 1][length: 4 BE][payload]` — the session daemons' framing.
@@ -587,18 +802,26 @@ impl RawWorker {
         frame.push(msg_type);
         frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         frame.extend_from_slice(payload);
-        self.stream.write_all(&frame).expect("write frame");
-        self.stream.flush().expect("flush frame");
+        self.conn.write_frame(&frame);
     }
 
     fn recv(&mut self) -> Option<(u8, Vec<u8>)> {
-        use std::io::Read;
         let mut header = [0u8; 5];
-        self.stream.read_exact(&mut header).ok()?;
+        if !self.conn.read_full(&mut header) {
+            return None;
+        }
         let len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
         let mut payload = vec![0u8; len];
-        self.stream.read_exact(&mut payload).ok()?;
+        if !self.conn.read_full(&mut payload) {
+            return None;
+        }
         Some((header[0], payload))
+    }
+
+    /// Shorten (or lengthen) the read timeout for subsequent [`recv`](Self::recv)
+    /// calls — used to assert that *nothing* arrives within a bound.
+    fn set_read_timeout(&mut self, timeout: Duration) {
+        self.conn.set_read_timeout(timeout);
     }
 
     /// Register and wait for the ACK, so the caller knows the registry has
@@ -675,10 +898,7 @@ fn a_broadcast_from_one_worker_reaches_another_workers_process() {
 
     // The sender must not receive its own broadcast. Its client already handled
     // the event locally; echoing it back would double-deliver.
-    sender
-        .stream
-        .set_read_timeout(Some(Duration::from_millis(500)))
-        .expect("shorten timeout");
+    sender.set_read_timeout(Duration::from_millis(500));
     assert!(
         sender.recv().is_none(),
         "a broadcast must never be echoed to its origin"
