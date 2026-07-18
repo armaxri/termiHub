@@ -826,6 +826,14 @@ export interface TransferSnapshot {
   /** Remote path of the transferred file, when the backend supplies one (#1531). */
   path?: string;
   state: TransferQueueState;
+  /**
+   * Whether this snapshot is a *genuinely* settled outcome the reconcile may
+   * fold into a stuck row (#1657). Stricter than `isTerminalTransferState`: a
+   * live rich (FTP) transfer that is momentarily `failed` mid auto-retry — or
+   * awaiting a manual retry — reports `state: "failed"` with `settled: false`,
+   * so a transient failure is never reconciled into a terminal `failed` row.
+   */
+  settled: boolean;
   transferred: number;
   total: number;
   speed: number;

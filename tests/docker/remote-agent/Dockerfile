@@ -45,6 +45,27 @@ RUN chown -R testuser:testuser /home/testuser/.ssh && \
     chmod 700 /home/testuser/.ssh && \
     chmod 600 /home/testuser/.ssh/authorized_keys
 
+# ── Deferred-update E2E arming (#1520 / #1546) ──────────────────────────────────
+# When PENDING_UPDATE_VERSION is a non-empty build arg, arm this image so the
+# desktop-launched agent holds a `pending_update` and announces it on attach — the
+# only way to drive the banner's "Apply Now → deferred/busy" path live, since the
+# gating env var (TERMIHUB_AGENT_TEST_PENDING_UPDATE) is deliberately not a CLI
+# flag and can never appear in the desktop's SSH exec command (see the hook docs,
+# agent/src/update/test_hook.rs). The var reaches the agent process via sshd's
+# per-user environment file: `PermitUserEnvironment yes` makes sshd apply
+# ~testuser/.ssh/environment to exec channels (the `termihub-agent --stdio` launch),
+# so a `pending_update` is staged on every connect. The default image leaves this
+# arg empty and behaves byte-for-byte as before — only the dedicated
+# `remote-agent-pending-update` compose service passes a version.
+ARG PENDING_UPDATE_VERSION=""
+RUN if [ -n "$PENDING_UPDATE_VERSION" ]; then \
+        printf 'PermitUserEnvironment yes\n' >> /etc/ssh/sshd_config && \
+        printf 'TERMIHUB_AGENT_TEST_PENDING_UPDATE=%s\n' "$PENDING_UPDATE_VERSION" \
+            > /home/testuser/.ssh/environment && \
+        chown testuser:testuser /home/testuser/.ssh/environment && \
+        chmod 600 /home/testuser/.ssh/environment; \
+    fi
+
 # Deploy the pre-built agent binary to the POSIX default install path. The file
 # is staged into the build context by the harness fixture before `build`.
 COPY termihub-agent /home/testuser/.local/bin/termihub-agent

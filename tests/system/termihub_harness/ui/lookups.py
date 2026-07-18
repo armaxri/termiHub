@@ -71,6 +71,41 @@ def iter_tabs(root: Any) -> list[dict[str, Any]]:
     return tabs
 
 
+def find_leaf(root: Any, leaf_id: str) -> Optional[dict[str, Any]]:
+    """The ``leaf`` panel dict with ``id == leaf_id`` in a panel tree, or ``None``.
+
+    Mirrors the app's ``findLeaf`` over the ``getState("rootPanel")`` tree so the
+    harness can reason about a *specific* panel (e.g. the active one) rather than
+    the flattened tab list :func:`iter_tabs` returns.
+    """
+    if not isinstance(root, dict):
+        return None
+    if root.get("type") == "leaf":
+        return root if root.get("id") == leaf_id else None
+    for child in root.get("children") or []:
+        found = find_leaf(child, leaf_id)
+        if found is not None:
+            return found
+    return None
+
+
+def active_leaf(driver: Driver) -> Optional[dict[str, Any]]:
+    """The currently-active leaf panel (``activePanelId`` in ``rootPanel``), or ``None``.
+
+    This is the panel ``addTab`` and terminal input actually target, so it is the
+    panel a test must reason about after a split — where the freshly-created,
+    *active* panel is empty while other panels still hold terminals (#1656).
+    """
+    try:
+        active_id = driver.get_state("activePanelId")
+        root = driver.get_state("rootPanel")
+    except BridgeError:
+        return None
+    if not active_id:
+        return None
+    return find_leaf(root, active_id)
+
+
 def connection_item_testid(connection_id: str) -> str:
     """The ``data-testid`` of the sidebar item for a connection id."""
     return f"connection-item-{connection_id}"

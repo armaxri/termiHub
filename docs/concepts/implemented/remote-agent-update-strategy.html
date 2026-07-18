@@ -294,9 +294,9 @@
       <header class="concept-header">
         <h1>Remote Agent Update Strategy</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span>Coordinated updates for shared remote agents</span>
-          <span><code>docs/concepts/backlog/remote-agent-update-strategy.html</code></span>
+          <span><code>docs/concepts/implemented/remote-agent-update-strategy.html</code></span>
         </div>
       </header>
 
@@ -1633,11 +1633,10 @@ pub struct UpdatePendingNotification {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-12 (SI-1 / #1346) ·
-          <strong>Status:</strong> partially implemented — the topology model and per-process
-          <code>ConnectionRegistry</code> are in code; the update RPCs, UI, and update logic remain
-          backlog. A full <code>/sync-concept remote-agent-update-strategy</code> pass is warranted
-          as later sub-issues land.
+          <strong>Last synced:</strong> 2026-07-18 (status reconciliation) · previously 2026-07-12
+          (SI-1 / #1346) · <strong>Status:</strong> converged (no open functional gaps). The
+          agent-update epic <a href="https://github.com/armaxri/termiHub/issues/1345">#1345</a>
+          closed fully-delivered; concept moved <code>backlog/</code> → <code>implemented/</code>.
         </p>
 
         <h3>Open divergences</h3>
@@ -1654,14 +1653,7 @@ pub struct UpdatePendingNotification {
             </thead>
             <tbody>
               <tr>
-                <td>1</td>
-                <td>
-                  Update RPCs / notifications, sidebar badge + chip, update dialogs, deferred-update
-                  daemon flow, SHA-256 integrity (Approaches 1–4, Phases 1–3)
-                </td>
-                <td>Not implemented — backlog (sub-issues #1347, #1349, #1350)</td>
-                <td>Missing</td>
-                <td>Implement per <code>concept</code> order, then re-sync</td>
+                <td colspan="5">None open — the remaining divergence resolved; see Resolved below.</td>
               </tr>
             </tbody>
           </table>
@@ -1678,6 +1670,20 @@ pub struct UpdatePendingNotification {
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>2026-07-18</td>
+                <td>#1345</td>
+                <td>
+                  Update RPCs, notifications, sidebar badge, update dialog, deferred-update daemon
+                  and SHA-256 integrity all shipped: <code>agent/src/update/</code> (download,
+                  coordinate, apply, github, version, <code>checksum.rs</code>),
+                  <code>agent/src/registry_daemon/</code> (deferred-update daemon),
+                  <code>src/components/AgentVersionBadge/</code>,
+                  <code>src/components/AgentUpdateBanner/</code>,
+                  <code>src/components/Sidebar/UpdateAgentDialog.tsx</code> and the
+                  <code>useAgentUpdatePendingEvents</code> / <code>useAgentUpdateEvents</code> hooks.
+                </td>
+              </tr>
               <tr>
                 <td>2026-07-12</td>
                 <td>—</td>

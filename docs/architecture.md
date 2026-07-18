@@ -946,7 +946,7 @@ Backend → Frontend:  Tauri Events (push-based, JSON-serialized)
 ### Spawn IPC & Shell-Integration Registration
 
 The **"Open in termiHub" shell integration** (`src-tauri/src/spawn/`, concept
-[`shell-context-menu-integration.html`](concepts/partial/shell-context-menu-integration.html),
+[`shell-context-menu-integration.html`](concepts/implemented/shell-context-menu-integration.html),
 epic #1363) lets an OS file-manager context-menu entry or a `termiHub spawn --location <path>`
 CLI call open a new session tab **in the already-running window** (brought to focus), or launch the
 app first if none is running. Both sources — plus a deliberately-deferred `termihub://spawn` deep
@@ -1199,7 +1199,7 @@ sequenceDiagram
 ### FTP Client Sessions and the Transfer Queue
 
 termiHub ships a first-class **FTP/FTPS client** connection type (epic #1331, concept
-`docs/concepts/partial/ftp-client.html`, implements #518). It lets users connect to FTP servers for
+`docs/concepts/implemented/ftp-client.html`, implements #518). It lets users connect to FTP servers for
 remote file browsing and transfer and is **distinct** from the two pre-existing FTP-adjacent
 features it must not be confused with: the **SFTP file browser** (an SSH subsystem,
 `src-tauri/src/files/sftp.rs`) and the **embedded FTP _server_**
@@ -1294,32 +1294,18 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
 - Single store simplifies state access and debugging
 - No context provider wrappers needed
 
-### ADR-5: E2E System Tests Run in Docker (Linux Only)
+### ADR-5: System and E2E Tests Run Through the Cross-Platform Bridge
 
-> **Status update (epic #799):** The WebdriverIO/`tauri-driver` system-test
-> suites have been migrated to the host-native **Python bridge harness**
-> (`tests/system/`, run via `./scripts/test-system-py.sh`), which works on
-> macOS, Linux, and Windows without Docker-in-the-loop for the app itself.
-> The WebdriverIO scaffold was fully retired in #1027 (`wdio.conf.js`,
-> `tests/e2e/`, and the `@wdio/*` devDependencies removed); the only remaining
-> `tauri-driver` consumer is the smoke test (`scripts/smoke-test.sh`). The
-> context and trade-offs below are retained as the original record — they still
-> describe why `tauri-driver`-based UI checks are Linux/Windows-only.
+**Context:** Tauri's `tauri-driver` (the WebDriver proxy for E2E tests) only supports Linux (WebKitGTK) and Windows (Edge WebView2). On macOS it prints "not supported on this platform" and exits, because Apple provides no WKWebView driver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in apps ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068), no upstream fix expected). The original suite was therefore a WebdriverIO/`tauri-driver` runner boxed into a Docker+Xvfb Linux container so that even macOS developers could run it — at the cost of testing the Linux build, never the native macOS app.
 
-**Context:** Tauri's `tauri-driver` (the WebDriver proxy for E2E tests) only supports Linux (WebKitGTK) and Windows (Edge WebView2). On macOS, it prints "not supported on this platform" and exits because Apple provides no WKWebView driver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in apps. This is a known Tauri limitation ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)) with no upstream fix expected.
+**Decision (current):** The system/E2E suite is the host-native **Python bridge harness** (`tests/system/`, run via `./scripts/test-system-py.sh`). It drives the app over a WebSocket **bridge** rather than a native WebView driver, so it launches and drives the **real per-platform build on macOS, Linux, and Windows** — no `tauri-driver`, no WKWebView driver, no Docker-in-the-loop for the app itself. Under epic #799 every WebdriverIO spec was ported to it; the WebdriverIO scaffold (`wdio.conf.js`, `tests/e2e/`, the `@wdio/*` devDependencies) was fully retired in #1027, and the unified suite now runs on **all three platforms in CI** — the nightly integration lane ([`system-integration.yml`](../.github/workflows/system-integration.yml)) carries Linux, macOS, and Windows legs (#804/#1649). macOS is no longer manual-only for integration testing: the built `.app` is launched and driven natively.
 
-**Decision:** Run E2E system tests inside a Docker container with a Linux environment (Xvfb + WebKitGTK + WebKitWebDriver + tauri-driver). This allowed developers on macOS to run the full E2E suite locally without needing a CI service.
+**What stays Linux-bound (and why):**
 
-**Rationale:**
+- **Docker fixtures.** The SSH/telnet/serial/agent fixtures in `tests/docker/` are Linux containers driven by a Linux Docker daemon. GitHub-hosted macOS/Windows runners have no usable Linux daemon (macOS ships no Docker; the Windows runner runs Windows, not Linux, containers), so the fixture-backed suites **self-skip** on those legs while the app-launch/UI suites run. Locally, Docker Desktop on macOS runs the containers in a Linux VM with no host networking, which is why the live SSH-tunnel cases also carve out to macOS-manual (see [testing.md](testing.md#ssh-tunnel-startstop-on-macos-manual-carve-out-933)).
+- **The smoke test.** The one remaining `tauri-driver` consumer is `scripts/smoke-test.sh`; its W3C-WebDriver UI checks run on Linux/Windows and fall back to process/`osascript` checks on macOS. macOS-specific _rendering_ behaviour (WKWebView quirks) is still verified via [manual testing](testing.md#manual-testing).
 
-- Docker is already used for test infrastructure — a comprehensive fleet of 13 containers in `tests/docker/` covers SSH variants, telnet, serial, SFTP stress, and network fault injection (see [tests/docker/README.md](../tests/docker/README.md))
-- Runs locally without external cloud services or CI
-- Tests the Linux build of the app, which shares the same React UI and Rust backend logic
-- Developers on Linux can also run E2E tests natively without Docker
-
-**Trade-off:** Tests run against the Linux build, not the native macOS build. macOS-specific rendering behavior (WKWebView quirks) must be verified via manual testing. See [Manual Testing](testing.md#manual-testing).
-
-**Future consideration:** The experimental [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) project (Feb 2026) provides a WKWebView WebDriver via a Tauri plugin. If it matures, it could enable native macOS E2E testing without Docker. Evaluate periodically.
+**Trade-off:** The cross-platform app-behaviour suite is real on every OS, but Docker-fixture coverage and low-level rendering checks remain Linux-centric / manual on macOS. This is a documented, narrow gap rather than the former "all macOS integration testing is manual".
 
 ### ADR-6: Credential Storage (Evolved)
 
@@ -1422,13 +1408,13 @@ A first-time, download-backed Windows provision is gated on a connect-time conse
 - Matches each platform's reality and user expectations instead of forcing one model everywhere.
 - Keeps core transport-agnostic — the provisioning policy and OS-specific flows live in `src-tauri`, registered via a trait, so core (and the agent) carry no X-server code.
 - Consent + verified download + "adopt but never kill external servers" keeps the trust and resource-cleanup contracts explicit (no silent installs, no orphan processes).
-- The per-platform decision, lifecycle, and consent gate are pure/injectable, so they are covered by host-agnostic unit tests; only the irreducible "a real window renders" step stays manual (per [ADR-5](#adr-5-e2e-system-tests-run-in-docker-linux-only); see the X11 matrix in [testing.md](testing.md#x11--gui-forwarding)).
+- The per-platform decision, lifecycle, and consent gate are pure/injectable, so they are covered by host-agnostic unit tests; only the irreducible "a real window renders" step stays manual (per [ADR-5](#adr-5-system-and-e2e-tests-run-through-the-cross-platform-bridge); see the X11 matrix in [testing.md](testing.md#x11--gui-forwarding)).
 
 **Trade-off:** Three code paths instead of one. The Windows path installs VcXsrv via **winget** and the macOS path installs XQuartz via **Homebrew** (#1318) — termiHub runs each as a separate process but does not host/redistribute them, so neither carries a redistribution obligation (the earlier GPL-3.0 pinned-artifact concern, #1076, was dropped with that approach). Full E2E rendering cannot be automated in CI, so the cross-platform release matrix is a documented human step.
 
 ### ADR-11: Per-Process Agent Connection Tracking (Multi-Host Model)
 
-**Context:** The remote-agent update strategy epic (#1345, concept `docs/concepts/backlog/remote-agent-update-strategy.html`) needs an agent to answer "who else is connected?" so a desktop can update a shared agent without silently killing another desktop's sessions. The concept assumed **one shared agent process that knows all connected clients**. The code does not work that way: `AgentConnectionManager::connect_agent` (`src-tauri/src/terminal/agent_manager.rs`) opens a **russh exec channel per desktop** and runs `termihub-agent --stdio` (`RemoteAgentConfig::agent_exec_command`), so there is **one agent OS process per desktop→agent channel**, and that process's `AgentHandler`/`HandlerState` serves exactly one client. The `--listen` TCP mode (`agent/src/io/tcp.rs`) shares a `SessionManager` across connections but still accepts **one client at a time**. The layer of detached session **daemons** (`termihub-agent --daemon <id>`, unix socket / Windows named pipe) outlives the worker and replays a ring buffer on re-attach. This gap (SI-1, #1346) is the foundational risk for every cross-client feature in the epic.
+**Context:** The remote-agent update strategy epic (#1345, concept `docs/concepts/implemented/remote-agent-update-strategy.html`) needs an agent to answer "who else is connected?" so a desktop can update a shared agent without silently killing another desktop's sessions. The concept assumed **one shared agent process that knows all connected clients**. The code does not work that way: `AgentConnectionManager::connect_agent` (`src-tauri/src/terminal/agent_manager.rs`) opens a **russh exec channel per desktop** and runs `termihub-agent --stdio` (`RemoteAgentConfig::agent_exec_command`), so there is **one agent OS process per desktop→agent channel**, and that process's `AgentHandler`/`HandlerState` serves exactly one client. The `--listen` TCP mode (`agent/src/io/tcp.rs`) shares a `SessionManager` across connections but still accepts **one client at a time**. The layer of detached session **daemons** (`termihub-agent --daemon <id>`, unix socket / Windows named pipe) outlives the worker and replays a ring buffer on re-attach. This gap (SI-1, #1346) is the foundational risk for every cross-client feature in the epic.
 
 > **Correction (#1574).** As originally written, this ADR claimed the session daemons were host-side state _shared across workers_, and built its rationale on it. That is **factually wrong**, verified at `1c554c6e`. The session daemons are shared across **time**, not across **workers**:
 >
@@ -1489,7 +1475,7 @@ This **is** ADR-11's option (a), adopted deliberately. ADR-11 rejected (a) for t
 
 ### ADR-12: Connection-Type-Agnostic Transfer Queue
 
-**Context:** The FTP client epic (#1331, concept `docs/concepts/partial/ftp-client.html`) needs a transfer queue with per-transfer progress, pause/resume/retry, and bounded concurrency. termiHub already had a transfer subsystem for SFTP — `src-tauri/src/files/transfer.rs` (#1245) — but it only offered one-shot cancellable up/downloads with no queue, concurrency limit, pause/resume, or panel UI. Two shapes were possible: (a) build an **FTP-specific** queue inside `core/src/backends/ftp/` (as the concept's skeleton sketched), or (b) **generalize the existing transfer subsystem** into a protocol-agnostic queue that FTP is the first consumer of.
+**Context:** The FTP client epic (#1331, concept `docs/concepts/implemented/ftp-client.html`) needs a transfer queue with per-transfer progress, pause/resume/retry, and bounded concurrency. termiHub already had a transfer subsystem for SFTP — `src-tauri/src/files/transfer.rs` (#1245) — but it only offered one-shot cancellable up/downloads with no queue, concurrency limit, pause/resume, or panel UI. Two shapes were possible: (a) build an **FTP-specific** queue inside `core/src/backends/ftp/` (as the concept's skeleton sketched), or (b) **generalize the existing transfer subsystem** into a protocol-agnostic queue that FTP is the first consumer of.
 
 **Decision:** Adopt **(b)**. The queue model, states (queued/active/paused/completed/failed-with-retry), concurrency gate, `REST`-based resume, and exponential-backoff retry live in the shared `src-tauri/src/files/transfer/` module and are driven by generic `transfer_pause`/`transfer_resume`/`transfer_cancel`/`transfer_retry`/`transfer_list` IPC commands and a single `transfer-progress` event stream. FTP is wired in via `src-tauri/src/files/transfer/ftp.rs`; the frontend panel (`src/components/TransferQueue/`) is likewise protocol-agnostic. The existing `TransferRegistry`/`CancellationToken` plumbing is **extended, never forked**.
 
@@ -1504,7 +1490,7 @@ This **is** ADR-11's option (a), adopted deliberately. ADR-11 rejected (a) for t
 ### ADR-13: Multi-Instance with a Spawn IPC Rendezvous
 
 **Context:** The "Open in termiHub" shell integration (epic #1363, concept
-[`shell-context-menu-integration.html`](concepts/partial/shell-context-menu-integration.html)) must
+[`shell-context-menu-integration.html`](concepts/implemented/shell-context-menu-integration.html)) must
 route an OS context-menu click or a `termiHub spawn` CLI call into a session tab **in the
 already-running window**, focusing it — or launch the app if none is running. termiHub is
 **deliberately multi-instance**: `lib.rs` polls `connections.json` mtime and emits
@@ -1605,7 +1591,7 @@ graph TD
 | **Single-threaded IPC**                          | Tauri commands run on the main thread by default                                                                                                                                                           | Heavy operations use `tauri::async_runtime::spawn`                                                                                                                                                                                                                               |
 | **Session limit**                                | Hard cap at 50 concurrent terminals (desktop), 20 concurrent sessions (agent)                                                                                                                              | Sufficient for target use case; can be raised if needed                                                                                                                                                                                                                          |
 | **No automated cross-platform tests for serial** | Serial tests require physical hardware                                                                                                                                                                     | Docker-based virtual serial via socat in `examples/`                                                                                                                                                                                                                             |
-| **No native macOS E2E tests**                    | `tauri-driver` does not support macOS (no WKWebView driver exists); E2E tests run in Docker against the Linux build                                                                                        | Manual testing for macOS-specific behavior; evaluate [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) as it matures (see ADR-5)                                                                                                                   |
+| **macOS: Docker fixtures + WKWebView rendering** | The cross-platform bridge suite runs natively on macOS (no `tauri-driver`), but the Docker SSH/telnet/serial fixtures need a Linux daemon and the smoke test's WKWebView UI checks have no macOS driver    | Bridge app-launch/UI integration runs on the macOS CI leg; Docker-fixture suites self-skip and low-level macOS rendering stays manual (see ADR-5)                                                                                                                                |
 | **Agent daemon IPC transport abstraction**       | The session daemon's IPC channel is abstracted behind `DaemonTransport` — a Unix domain socket (`0o700`) on unix, a Windows named pipe (per-user DACL) on windows                                          | Named pipes are the direct security analog of `0o700` Unix sockets (no exposed TCP port). The launcher spawns a detached daemon on both platforms (orphaned child on unix; `DETACHED_PROCESS`/`CREATE_NEW_PROCESS_GROUP` on windows), so persistent sessions work cross-platform |
 | **Agent state.json not crash-safe**              | Agent state is persisted as plain JSON; a crash mid-write could corrupt the file                                                                                                                           | Acceptable trade-off — daemon sockets provide independent recovery path even if state.json is lost                                                                                                                                                                               |
 | **Schema-driven forms less flexible**            | Schema-driven `DynamicField` cannot handle truly custom UI layouts (e.g., interactive previews, connection test buttons embedded in the form)                                                              | Sufficient for all current connection types; extension points can be added if a future type requires custom UI                                                                                                                                                                   |

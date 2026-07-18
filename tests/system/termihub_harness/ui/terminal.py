@@ -12,7 +12,7 @@ from typing import Optional
 from ..bridge import BridgeError
 from ..systemtest import DEFAULT_WAIT_TIMEOUT
 from .base import HarnessMixin
-from .lookups import iter_tabs
+from .lookups import active_leaf, iter_tabs
 
 NEW_TERMINAL = "terminal-view-new-terminal"
 
@@ -75,6 +75,35 @@ class TerminalUi(HarnessMixin):
             lambda: any(buf.strip() for buf in self._terminal_buffers()),
             what="a terminal with a shell prompt",
         )
+
+    def ensure_terminal_in_active_panel(self) -> None:
+        """Ensure the **active** panel holds a readable terminal.
+
+        Unlike :meth:`ensure_terminal`, which is satisfied by a terminal *anywhere*
+        in the tree, this targets the panel that ``addTab`` and terminal input
+        actually hit — ``activePanelId``. Right after a split the freshly-created
+        active panel is empty while the original panel still holds a readable
+        terminal, so the tree-wide check would wrongly conclude "a terminal exists"
+        and never populate the new panel — leaving input with nowhere to go ("no
+        active terminal", #1656). Synchronise on the *active panel's own* terminal
+        instead: create one there if it has none, then wait until that terminal is
+        readable (a non-empty active buffer is exactly the ``getActiveTabId`` +
+        registered-xterm signal input needs).
+        """
+        leaf = active_leaf(self.driver)
+        has_terminal = bool(leaf and any(
+            (tab.get("contentType") or "terminal") == "terminal" for tab in (leaf.get("tabs") or [])
+        ))
+        if not has_terminal:
+            self.driver.click(NEW_TERMINAL)
+        self.wait(self._active_terminal_ready, what="a readable terminal in the active panel")
+
+    def _active_terminal_ready(self) -> bool:
+        """Whether the active tab is a terminal with a shell prompt already printed."""
+        try:
+            return bool(self.driver.read_terminal().strip())
+        except BridgeError:
+            return False
 
     def open_new_terminal(self) -> None:
         """Click the toolbar "new terminal" button to open another terminal tab.
