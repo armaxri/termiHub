@@ -34,6 +34,7 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { isWindows, isMac } from "@/utils/platform";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -96,6 +97,13 @@ export function SplitView() {
     }
     return null;
   }, [zoomedTabId, rootPanel]);
+
+  // Disambiguated title for the zoomed editor tab (#1640), matching the tab strip.
+  const zoomedTabTitle = useMemo(() => {
+    if (!zoomedTab) return "";
+    const allTabs = getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs);
+    return getEditorTabDisplayTitle(zoomedTab, allTabs);
+  }, [zoomedTab, rootPanel]);
 
   const dismissZoom = useCallback(() => setZoomedTabId(null), [setZoomedTabId]);
 
@@ -286,7 +294,7 @@ export function SplitView() {
                       className="zoom-overlay__icon"
                     />
                   )}
-                  <span className="zoom-overlay__title">{zoomedTab.title}</span>
+                  <span className="zoom-overlay__title">{zoomedTabTitle}</span>
                   <span className="zoom-overlay__hint">
                     {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} · Esc to close
                   </span>
