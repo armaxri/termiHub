@@ -523,14 +523,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     // Happy path: the buffer is clean, so reflect the new content silently.
     applyDiskContent(disk);
     frontendLog("file_editor", `reloaded tab ${tabId} from external on-disk change`);
-  }, [
-    isUnsavedScratch,
-    readEffectiveContent,
-    savedContent,
-    content,
-    tabId,
-    applyDiskContent,
-  ]);
+  }, [isUnsavedScratch, readEffectiveContent, savedContent, content, tabId, applyDiskContent]);
 
   // Banner action "Reload from disk" (#1620, #1627): discard the unsaved buffer
   // edits and load the on-disk version (local or remote). Reuses the clean-case
