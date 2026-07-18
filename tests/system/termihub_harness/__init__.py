@@ -30,6 +30,7 @@ from .fixtures import (
     TELNET_SERVICE,
     ComposeFixture,
     ContainerRuntimeUnavailable,
+    SshServerControl,
     container_runtime,
     stage_remote_agent_binary,
     wait_for_port,

@@ -25,7 +25,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from . import dev_local
 
@@ -313,3 +313,95 @@ def stage_remote_agent_binary(*, build_timeout: float = 900.0) -> Path:
     shutil.copy2(built, staged)
     staged.chmod(0o755)
     return staged
+
+
+# ── Server-side SSH disconnect control (issue #1650) ──────────────────────────
+#: Process-title fragment every sshd session process for the test user carries
+#: (``sshd: testuser [priv]`` / ``sshd: testuser@pts/0``). Matched against
+#: ``/proc/<pid>/cmdline`` so no ``procps`` is needed in the minimal image.
+_SSHD_SESSION_MATCH = f"sshd: {SSH_USERNAME}"
+
+#: POSIX-shell one-liner that prints the PID of every process whose cmdline
+#: contains :data:`_SSHD_SESSION_MATCH`. ``tr`` turns the NUL-separated cmdline
+#: into spaces; ``case`` avoids depending on ``grep``/``pgrep`` (absent from the
+#: container base image). The scanning shell itself is skipped (``$$``): its own
+#: cmdline embeds the match literal below, so it would otherwise self-match. Runs
+#: under the container's ``/bin/sh`` (dash).
+_SSHD_PID_SCAN = (
+    'for p in /proc/[0-9]*; do '
+    'pid=${p#/proc/}; '
+    '[ "$pid" = "$$" ] && continue; '
+    'c=$(tr "\\0" " " < "$p/cmdline" 2>/dev/null) || continue; '
+    f'case "$c" in *"{_SSHD_SESSION_MATCH}"*) echo "$pid";; esac; '
+    "done"
+)
+
+
+class SshServerControl:
+    """Server-side control of a shared SSH container for the disconnect test.
+
+    Lets one test drop *its own* live SSH connection at the server without
+    disturbing sibling sessions on the same shared container (issue #1650). The
+    per-connection sshd process is identified by diffing the session-PID set
+    around the connect, so only this test's session is killed — no container is
+    stopped or restarted, so every suite sharing the container is unaffected.
+
+    The abrupt ``SIGKILL`` (rather than a clean SSH logout) is what makes this a
+    *server-side drop*: the TCP connection is severed with no protocol-level
+    close, which the client observes as a dropped session (``terminal-exit`` →
+    the disconnect overlay), i.e. the SSH-06 scenario.
+    """
+
+    def __init__(self, service: str = SSH_PASSWORD_SERVICE) -> None:
+        self._service = service
+        #: The container name compose publishes for ``service`` under this
+        #: checkout (mirrors ``container_name`` in the compose file).
+        self._container = f"{dev_local.compose_project()}-{service}"
+        self._runtime = container_runtime()
+
+    @property
+    def available(self) -> bool:
+        """Whether a container runtime is reachable to exec into the container."""
+        return self._runtime is not None
+
+    def session_pids(self) -> set[str]:
+        """PIDs of the sshd session processes currently serving the test user."""
+        out = self._exec(["sh", "-c", _SSHD_PID_SCAN])
+        return {line.strip() for line in out.split() if line.strip()}
+
+    def kill_sessions(self, pids: Iterable[str]) -> None:
+        """``SIGKILL`` the given sshd session PIDs — an abrupt server-side drop."""
+        targets = [pid for pid in pids if pid]
+        if not targets:
+            return
+        # -9 so the connection is severed at once; the container's sshd keeps
+        # listening for other/future sessions (only these PIDs die).
+        self._exec(["kill", "-9", *targets])
+
+    def _exec(self, argv: Sequence[str], *, timeout: float = 30.0) -> str:
+        """Run ``argv`` inside the container via the detected runtime.
+
+        Raises :class:`ContainerRuntimeUnavailable` (→ a clean ``pytest.skip`` at
+        the call site) when no runtime is reachable or the exec fails.
+        """
+        if self._runtime is None:
+            raise ContainerRuntimeUnavailable(
+                "no container runtime available to exec into "
+                f"{self._container} (need Docker or Podman)"
+            )
+        cmd = [self._runtime, "exec", self._container, *argv]
+        try:
+            result = subprocess.run(
+                cmd, check=True, timeout=timeout, capture_output=True, text=True
+            )
+        except subprocess.CalledProcessError as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`exec` into {self._container} failed (exit {exc.returncode}):\n"
+                f"{_tail(exc.stderr or exc.stdout)}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ContainerRuntimeUnavailable(
+                f"`exec` into {self._container} timed out after {timeout}s:\n"
+                f"{_tail(exc.stderr)}"
+            ) from exc
+        return result.stdout
