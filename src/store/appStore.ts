@@ -3800,9 +3800,13 @@ export const useAppStore = create<AppState>((set, get) => {
         const now = Date.now();
         let next: Record<string, TransferEntry> | null = null;
         for (const snap of snapshots) {
-          // Only a terminal snapshot settles a row — events own live progress,
-          // so a snapshot must never move an active row (it may lag / read 0).
-          if (!isTerminalTransferState(snap.state)) continue;
+          // Only a *genuinely settled* terminal snapshot settles a row. A live
+          // rich `failed` handle mid auto-retry (or awaiting a manual retry)
+          // reports `settled: false` though its state is `failed`, so a
+          // transient failure is never folded into a terminal row the reconcile
+          // guard would then never re-settle (#1657). Events own live progress,
+          // so a non-terminal snapshot must never move an active row anyway.
+          if (!snap.settled || !isTerminalTransferState(snap.state)) continue;
           const prev = state.transferQueue[snap.transferId];
           // Seed owns row creation; do not resurrect a row the user removed.
           if (!prev) continue;
