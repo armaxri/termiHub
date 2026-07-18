@@ -67,6 +67,55 @@ export interface TransferEntry {
 }
 
 /**
+ * The minimal description of a transfer known at **registration time** — before
+ * any `transfer-progress` event has been delivered (#1632).
+ *
+ * A transfer command (`sftp_download` / `sftp_upload`) returns its `transferId`
+ * synchronously over the reliable request/response IPC channel, whereas live
+ * progress arrives as best-effort fan-out events that can be dropped or delayed
+ * when the webview is starved (e.g. under memory pressure / jetsam). Seeding the
+ * queue from this snapshot at registration makes the Transfer Queue panel open
+ * as soon as a transfer is known, independent of whether any progress event is
+ * ever observed — a later event simply upserts the row.
+ */
+export interface TransferSeed {
+  /** The backend `transferId` returned by the start command. */
+  id: string;
+  /** Owning SFTP/FTP session id. */
+  sessionId: string;
+  /** Upload or download. */
+  direction: TransferDirection;
+  /** Display name (file name). */
+  name: string;
+  /** Remote path, when known. */
+  path?: string;
+  /** Total bytes when already known (uploads), else `null`/omitted. */
+  totalBytes?: number | null;
+}
+
+/**
+ * Build a `queued` {@link TransferEntry} from a {@link TransferSeed}, for the
+ * pre-event registration seed (#1632). Progress/throughput are unknown until the
+ * first `transfer-progress` event folds over this row.
+ */
+export function transferEntryFromSeed(seed: TransferSeed, now: number): TransferEntry {
+  const totalBytes = seed.totalBytes && seed.totalBytes > 0 ? seed.totalBytes : null;
+  return {
+    id: seed.id,
+    sessionId: seed.sessionId,
+    direction: seed.direction,
+    name: seed.name,
+    path: seed.path,
+    state: "queued",
+    transferred: 0,
+    totalBytes,
+    percent: null,
+    speedBytesPerSec: null,
+    updatedAt: now,
+  };
+}
+
+/**
  * Map a backend {@link TransferProgress} legacy `phase` to a queue
  * {@link TransferQueueState}, for events that predate the #1336 `state` field.
  */
