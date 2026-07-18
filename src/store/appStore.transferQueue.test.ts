@@ -33,7 +33,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import type { TransferProgress } from "@/services/api";
+import type { TransferProgress, TransferSnapshot } from "@/services/api";
 import type { TransferEntry } from "@/types/transfer";
 
 function entry(overrides: Partial<TransferEntry> = {}): TransferEntry {
@@ -61,6 +61,23 @@ function progress(overrides: Partial<TransferProgress> = {}): TransferProgress {
     transferred: 0,
     total: 100,
     phase: "transferring",
+    ...overrides,
+  };
+}
+
+function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
+  return {
+    transferId: "t1",
+    sessionId: "sess-a",
+    direction: "download",
+    fileName: "file.txt",
+    path: "/remote/file.txt",
+    state: "completed",
+    transferred: 100,
+    total: 100,
+    speed: 0,
+    attempt: 0,
+    maxAttempts: 3,
     ...overrides,
   };
 }
@@ -231,6 +248,82 @@ describe("appStore — transfer queue slice (#1337)", () => {
         totalBytes: 2048,
         state: "queued",
       });
+    });
+  });
+
+  describe("reconcileTransferQueue (#1645)", () => {
+    it("settles a stuck seeded row when its terminal event was never delivered", () => {
+      // The exact #1645 scenario: a transfer is seeded (#1632), completes on the
+      // backend, but *every* transfer-progress event — including the terminal
+      // one — is dropped. The row is stuck at `queued`; a backend snapshot must
+      // settle it to `completed`.
+      const store = useAppStore.getState();
+      store.seedTransferQueue({
+        id: "t1",
+        sessionId: "sess-a",
+        direction: "download",
+        name: "file.txt",
+        path: "/remote/file.txt",
+      });
+      expect(useAppStore.getState().transferQueue["t1"].state).toBe("queued");
+
+      store.reconcileTransferQueue([snapshot({ state: "completed", transferred: 100 })]);
+
+      expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({
+        state: "completed",
+        transferred: 100,
+        percent: 100,
+      });
+    });
+
+    it("settles a stuck active row to failed/cancelled from a terminal snapshot", () => {
+      const store = useAppStore.getState();
+      store.addTransfer(entry({ id: "t1", state: "active", transferred: 40 }));
+      store.reconcileTransferQueue([snapshot({ state: "failed", transferred: 40 })]);
+      expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({ state: "failed" });
+    });
+
+    it("is idempotent — never clobbers a row an event already settled", () => {
+      const store = useAppStore.getState();
+      // An event already settled the row to cancelled…
+      store.applyTransferProgressToQueue(progress({ phase: "cancelled", transferred: 20 }));
+      expect(useAppStore.getState().transferQueue["t1"].state).toBe("cancelled");
+      // …a later snapshot reporting a different terminal state must not override.
+      store.reconcileTransferQueue([snapshot({ state: "completed", transferred: 100 })]);
+      expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({
+        state: "cancelled",
+        transferred: 20,
+      });
+    });
+
+    it("does not move a live (active) row — a non-terminal snapshot is ignored", () => {
+      const store = useAppStore.getState();
+      store.addTransfer(entry({ id: "t1", state: "active", transferred: 60, percent: 60 }));
+      // A lagging snapshot that still reads active/0 must not regress the row.
+      store.reconcileTransferQueue([snapshot({ state: "active", transferred: 0 })]);
+      expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({
+        state: "active",
+        transferred: 60,
+      });
+    });
+
+    it("does not resurrect a row that is not (or no longer) in the queue", () => {
+      const store = useAppStore.getState();
+      store.reconcileTransferQueue([snapshot({ transferId: "ghost", state: "completed" })]);
+      expect(useAppStore.getState().transferQueue["ghost"]).toBeUndefined();
+    });
+
+    it("settles only the stuck rows, leaving others untouched", () => {
+      const store = useAppStore.getState();
+      store.seedTransferQueue({ id: "stuck", sessionId: "s", direction: "download", name: "a" });
+      store.addTransfer(entry({ id: "done", state: "completed" }));
+      store.reconcileTransferQueue([
+        snapshot({ transferId: "stuck", state: "completed" }),
+        snapshot({ transferId: "done", state: "cancelled" }), // must be ignored (already terminal)
+      ]);
+      const q = useAppStore.getState().transferQueue;
+      expect(q["stuck"].state).toBe("completed");
+      expect(q["done"].state).toBe("completed");
     });
   });
 });
