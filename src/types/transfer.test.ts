@@ -30,6 +30,7 @@ function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
     fileName: "file.txt",
     path: "/remote/file.txt",
     state: "completed",
+    settled: true,
     transferred: 100,
     total: 100,
     speed: 0,

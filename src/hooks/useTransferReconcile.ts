@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useAppStore } from "@/store/appStore";
 import { transferList } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
@@ -28,10 +28,15 @@ const RECONCILE_INTERVAL_MS = 4000;
  */
 export function useTransferReconcile(): void {
   const reconcileTransferQueue = useAppStore((s) => s.reconcileTransferQueue);
-  // Re-runs the effect only when this boolean flips (Object.is equality), so the
-  // poll starts when a transfer begins and stops when the last row settles.
-  const hasPending = useAppStore((s) =>
-    Object.values(s.transferQueue).some((e) => !isTerminalTransferState(e.state))
+  // Select the queue slice by reference (O(1) per store mutation), then derive
+  // the pending flag with `useMemo` so the O(rows) scan runs *only* when the
+  // queue actually changes — not on every unrelated `setState` (#1657). The
+  // effect below still re-runs only when this boolean flips, so the poll starts
+  // when a transfer begins and stops when the last row settles.
+  const transferQueue = useAppStore((s) => s.transferQueue);
+  const hasPending = useMemo(
+    () => Object.values(transferQueue).some((e) => !isTerminalTransferState(e.state)),
+    [transferQueue]
   );
 
   useEffect(() => {
