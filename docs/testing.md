@@ -1273,7 +1273,7 @@ actually surfaces the entry on right-click, the full install → click → unins
 that file manager, and the binary-path **staleness banner**. Those are consolidated here as one
 per-OS manual pass. All registration is **user-level — it must never prompt for admin/elevation.**
 See the concept
-[`shell-context-menu-integration.html`](../docs/concepts/partial/shell-context-menu-integration.html)
+[`shell-context-menu-integration.html`](../docs/concepts/implemented/shell-context-menu-integration.html)
 and [ADR-13](architecture.md#adr-13-multi-instance-with-a-spawn-ipc-rendezvous).
 
 **Common setup (all platforms).**
@@ -2210,7 +2210,7 @@ drive real transfers. See PR #1530.
    disappears when the queue is emptied.
 5. **Visual review (light + dark):** switch themes and confirm the bar colours
    (accent/amber/green/red), status text colours, and count badge match the
-   concept mockup (`docs/concepts/partial/ftp-client.html`), with no raw scroll
+   concept mockup (`docs/concepts/implemented/ftp-client.html`), with no raw scroll
    bar or off-token colours.
 
 ### Remote system monitoring
