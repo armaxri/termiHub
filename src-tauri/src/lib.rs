@@ -649,6 +649,7 @@ pub fn run() {
             // Session-based file browsing
             commands::session::session_list_files,
             commands::session::session_read_file,
+            commands::session::session_stat,
             commands::session::session_write_file,
             commands::session::session_delete_file,
             commands::session::session_rename_file,
@@ -701,6 +702,7 @@ pub fn run() {
             commands::files::sftp_open,
             commands::files::sftp_close,
             commands::files::sftp_list_dir,
+            commands::files::sftp_stat,
             commands::files::sftp_realpath,
             commands::files::sftp_check_writable,
             commands::files::sftp_download,

@@ -60,6 +60,25 @@ pub async fn sftp_list_dir(
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
+/// Get metadata (size, mtime, permissions) for a single remote file via SFTP.
+///
+/// Backs the editor's remote external-change detection (#1627): the frontend
+/// re-stats the open file on an interval and compares `modified`/`size` to spot
+/// an out-of-band change. A stat is a single metadata round-trip — far cheaper
+/// than re-reading the file — so this is the lightweight poll primitive.
+#[tauri::command]
+pub async fn sftp_stat(
+    session_id: String,
+    path: String,
+    manager: State<'_, SftpManager>,
+) -> Result<FileEntry, TerminalError> {
+    debug!(session_id, path, "SFTP stat");
+    let session = manager.get_session(&session_id)?;
+    tokio::task::spawn_blocking(move || lock_session(&session)?.stat(&path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+}
+
 /// Resolve a remote path to its canonical absolute form via SFTP realpath.
 ///
 /// Passing `"."` yields the session's home directory so the file browser can
