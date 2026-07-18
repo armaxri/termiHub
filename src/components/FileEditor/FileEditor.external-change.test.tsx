@@ -141,6 +141,14 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
+function clickButton(testId: string): void {
+  const btn = query(testId) as HTMLButtonElement | null;
+  expect(btn, `${testId} should be present`).not.toBeNull();
+  act(() => {
+    btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
 function editContent(value: string): void {
   const ta = query("mock-monaco") as HTMLTextAreaElement;
   const setter = Object.getOwnPropertyDescriptor(
@@ -252,5 +260,74 @@ describe("FileEditor — external on-disk change reload (#1620)", () => {
     expect(currentModelValue).toBe("line one\nmy local edit\n");
     expect(query("file-editor-disk-changed-banner")).not.toBeNull();
     expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("'Reload from disk' discards unsaved edits and loads the on-disk version", async () => {
+    render();
+    await flush();
+
+    editContent("line one\nmy local edit\n");
+    await flush();
+    await fireExternalChange("line one\nexternal edit\n");
+    // Precondition: conflict banner up, buffer dirty, disk version differs.
+    expect(query("file-editor-disk-changed-banner")).not.toBeNull();
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(false);
+
+    clickButton("file-editor-disk-changed-reload");
+    await flush();
+
+    // Buffer now holds the disk content, is clean (matches disk), banner gone.
+    expect(currentModelValue).toBe("line one\nexternal edit\n");
+    expect(query("file-editor-disk-changed-banner")).toBeNull();
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("'Keep my changes' dismisses the banner, keeps edits dirty, and a later save still writes", async () => {
+    render();
+    await flush();
+
+    editContent("line one\nmy local edit\n");
+    await flush();
+    await fireExternalChange("line one\nexternal edit\n");
+    expect(query("file-editor-disk-changed-banner")).not.toBeNull();
+
+    clickButton("file-editor-disk-changed-keep");
+    await flush();
+
+    // Banner dismissed, but the buffer keeps the local edits and stays dirty.
+    expect(query("file-editor-disk-changed-banner")).toBeNull();
+    expect(currentModelValue).toBe("line one\nmy local edit\n");
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(false);
+
+    // A subsequent save is not blocked and writes the user's version to disk.
+    mockedInvoke.mockClear();
+    clickButton("file-editor-save");
+    await flush();
+    const writeCall = mockedInvoke.mock.calls.find((c) => c[0] === "local_write_file");
+    expect(writeCall, "save should invoke local_write_file").toBeDefined();
+    expect((writeCall![1] as { content: string }).content).toBe("line one\nmy local edit\n");
+    // Buffer is now saved/clean.
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("re-surfaces the banner when the file changes on disk again after 'Keep my changes'", async () => {
+    render();
+    await flush();
+
+    editContent("line one\nmy local edit\n");
+    await flush();
+    await fireExternalChange("line one\nexternal edit\n");
+    expect(query("file-editor-disk-changed-banner")).not.toBeNull();
+
+    clickButton("file-editor-disk-changed-keep");
+    await flush();
+    expect(query("file-editor-disk-changed-banner")).toBeNull();
+
+    // A *new* on-disk change (not the one already dismissed) surfaces again —
+    // dismissing one change does not mute the file.
+    await fireExternalChange("line one\nanother external edit\n");
+    expect(query("file-editor-disk-changed-banner")).not.toBeNull();
+    // Edits still preserved.
+    expect(currentModelValue).toBe("line one\nmy local edit\n");
   });
 });
