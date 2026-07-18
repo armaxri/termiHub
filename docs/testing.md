@@ -293,7 +293,7 @@ Examples:
 The system/E2E suite runs in **two lanes**, split so per-PR CI stays fast while
 the app-launching suites still run on a cadence:
 
-- **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → *System-Test Harness*). Every PR runs the bridge harness with `-m "not integration"`, so it proves the harness *collects* all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
+- **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR runs the bridge harness with `-m "not integration"`, so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
 - **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). A scheduled + `workflow_dispatch` job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
 The lane runs the app natively on each OS; only the **Docker fixtures** are
@@ -307,7 +307,7 @@ Linux-only:
 
 The fixture-backed suites `pytest.skip()` cleanly when no Docker runtime is
 present (`conftest.py` → `docker_compose`), so a macOS/Windows leg is green on
-the coverage it *can* run rather than failing on fixtures it cannot reach. This
+the coverage it _can_ run rather than failing on fixtures it cannot reach. This
 Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
 carve-out](#ssh-tunnel-startstop-on-macos-manual-carve-out-933) and ADR-5.
 
