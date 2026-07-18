@@ -746,6 +746,17 @@ export async function sftpListDir(sessionId: string, path: string): Promise<File
 }
 
 /**
+ * Get metadata (size, mtime, permissions) for a single remote file via SFTP.
+ *
+ * Backs the editor's remote external-change detection (#1627): a stat is a
+ * single metadata round-trip, so it is the cheap poll primitive used to spot an
+ * out-of-band change before deciding to re-read the file.
+ */
+export async function sftpStat(sessionId: string, path: string): Promise<FileEntry> {
+  return await invoke<FileEntry>("sftp_stat", { sessionId, path });
+}
+
+/**
  * Resolve a remote path to its canonical absolute form via SFTP realpath.
  *
  * Pass `"."` to resolve the session's home directory instead of guessing
@@ -1177,6 +1188,16 @@ export async function sessionListFiles(sessionId: string, path: string): Promise
 /** Read a file via a session's file browser capability. Returns raw bytes. */
 export async function sessionReadFile(sessionId: string, path: string): Promise<number[]> {
   return await invoke<number[]>("session_read_file", { sessionId, path });
+}
+
+/**
+ * Get metadata for a single file via a session's file browser capability.
+ *
+ * Backs the editor's remote external-change detection (#1627): the frontend
+ * re-stats the open file on an interval and compares `modified`/`size`.
+ */
+export async function sessionStat(sessionId: string, path: string): Promise<FileEntry> {
+  return await invoke<FileEntry>("session_stat", { sessionId, path });
 }
 
 /** Write raw bytes to a file via a session's file browser capability. */
