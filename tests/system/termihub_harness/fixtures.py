@@ -81,8 +81,22 @@ TELNET_PORT = dev_local.service_port("TERMIHUB_TEST_TELNET_PORT", 2301)
 #: running the setup wizard (see :func:`stage_remote_agent_binary` and #995).
 REMOTE_AGENT_SERVICE = "remote-agent"
 REMOTE_AGENT_PORT = dev_local.service_port("TERMIHUB_TEST_REMOTE_AGENT_PORT", 2211)
+#: Service + host port for the *armed* deployed-agent container (compose profile
+#: ``agent``). Built from the same context as ``remote-agent`` but with
+#: ``PENDING_UPDATE_VERSION`` set, so the agent it launches holds a
+#: ``pending_update`` and announces it on attach — the live driver for the
+#: deferred-update banner's "Apply Now → deferred/busy" path (#1520 / #1546).
+REMOTE_AGENT_PENDING_SERVICE = "remote-agent-pending-update"
+REMOTE_AGENT_PENDING_PORT = dev_local.service_port(
+    "TERMIHUB_TEST_REMOTE_AGENT_PENDING_PORT", 2214
+)
+#: Version the armed image advertises (mirrors the compose build arg), so the test
+#: can assert the banner names it.
+REMOTE_AGENT_PENDING_VERSION = "9.9.9"
 #: Build context the harness stages the per-arch agent binary into before the
-#: image is built (git-ignored — see the sibling ``.gitignore``).
+#: image is built (git-ignored — see the sibling ``.gitignore``). Shared by both
+#: the plain and the armed deployed-agent images (same context, different build
+#: arg), so :func:`stage_remote_agent_binary` stages the binary once for both.
 _REMOTE_AGENT_BUILD_CONTEXT = REPO_ROOT / "tests" / "docker" / "remote-agent"
 
 #: Map a ``platform.machine()`` value to the static-musl target triple whose
