@@ -40,6 +40,21 @@ class TestTabManagement(TerminalUi, TabsUi, SystemTest):
         self.close_tab(target)
         self.wait(lambda: target not in self.tab_ids(), what="the tab to close")
 
+    def test_closing_a_live_session_tab_dismisses_confirm_dialog(self):
+        # Regression for #1654: a tab holding a live terminal session raises
+        # ConfirmSessionCloseDialog on close (``confirmCloseLiveSession`` defaults
+        # on). ``close_tab`` must dismiss it, otherwise the tab never closes and
+        # ``close_all_tabs`` loops re-clicking the X against a stuck dialog.
+        self._reset()
+        self.driver.click(NEW)
+        self.wait(lambda: len(self.tab_ids()) >= 2, what="a second live-session tab")
+        target = self.tab_ids()[-1]
+        self.close_tab(target)
+        self.wait(lambda: target not in self.tab_ids(), what="the live-session tab to close")
+        assert not self.driver.exists(
+            "confirm-session-close-dialog"
+        ), "the live-session confirm dialog must be dismissed, not left blocking the close"
+
     def test_right_click_opens_the_tab_context_menu(self):
         self._reset()
         tab = self.tab_ids()[0]
