@@ -946,7 +946,7 @@ Backend → Frontend:  Tauri Events (push-based, JSON-serialized)
 ### Spawn IPC & Shell-Integration Registration
 
 The **"Open in termiHub" shell integration** (`src-tauri/src/spawn/`, concept
-[`shell-context-menu-integration.html`](concepts/partial/shell-context-menu-integration.html),
+[`shell-context-menu-integration.html`](concepts/implemented/shell-context-menu-integration.html),
 epic #1363) lets an OS file-manager context-menu entry or a `termiHub spawn --location <path>`
 CLI call open a new session tab **in the already-running window** (brought to focus), or launch the
 app first if none is running. Both sources — plus a deliberately-deferred `termihub://spawn` deep
@@ -1199,7 +1199,7 @@ sequenceDiagram
 ### FTP Client Sessions and the Transfer Queue
 
 termiHub ships a first-class **FTP/FTPS client** connection type (epic #1331, concept
-`docs/concepts/partial/ftp-client.html`, implements #518). It lets users connect to FTP servers for
+`docs/concepts/implemented/ftp-client.html`, implements #518). It lets users connect to FTP servers for
 remote file browsing and transfer and is **distinct** from the two pre-existing FTP-adjacent
 features it must not be confused with: the **SFTP file browser** (an SSH subsystem,
 `src-tauri/src/files/sftp.rs`) and the **embedded FTP _server_**
@@ -1414,7 +1414,7 @@ A first-time, download-backed Windows provision is gated on a connect-time conse
 
 ### ADR-11: Per-Process Agent Connection Tracking (Multi-Host Model)
 
-**Context:** The remote-agent update strategy epic (#1345, concept `docs/concepts/backlog/remote-agent-update-strategy.html`) needs an agent to answer "who else is connected?" so a desktop can update a shared agent without silently killing another desktop's sessions. The concept assumed **one shared agent process that knows all connected clients**. The code does not work that way: `AgentConnectionManager::connect_agent` (`src-tauri/src/terminal/agent_manager.rs`) opens a **russh exec channel per desktop** and runs `termihub-agent --stdio` (`RemoteAgentConfig::agent_exec_command`), so there is **one agent OS process per desktop→agent channel**, and that process's `AgentHandler`/`HandlerState` serves exactly one client. The `--listen` TCP mode (`agent/src/io/tcp.rs`) shares a `SessionManager` across connections but still accepts **one client at a time**. The layer of detached session **daemons** (`termihub-agent --daemon <id>`, unix socket / Windows named pipe) outlives the worker and replays a ring buffer on re-attach. This gap (SI-1, #1346) is the foundational risk for every cross-client feature in the epic.
+**Context:** The remote-agent update strategy epic (#1345, concept `docs/concepts/implemented/remote-agent-update-strategy.html`) needs an agent to answer "who else is connected?" so a desktop can update a shared agent without silently killing another desktop's sessions. The concept assumed **one shared agent process that knows all connected clients**. The code does not work that way: `AgentConnectionManager::connect_agent` (`src-tauri/src/terminal/agent_manager.rs`) opens a **russh exec channel per desktop** and runs `termihub-agent --stdio` (`RemoteAgentConfig::agent_exec_command`), so there is **one agent OS process per desktop→agent channel**, and that process's `AgentHandler`/`HandlerState` serves exactly one client. The `--listen` TCP mode (`agent/src/io/tcp.rs`) shares a `SessionManager` across connections but still accepts **one client at a time**. The layer of detached session **daemons** (`termihub-agent --daemon <id>`, unix socket / Windows named pipe) outlives the worker and replays a ring buffer on re-attach. This gap (SI-1, #1346) is the foundational risk for every cross-client feature in the epic.
 
 > **Correction (#1574).** As originally written, this ADR claimed the session daemons were host-side state _shared across workers_, and built its rationale on it. That is **factually wrong**, verified at `1c554c6e`. The session daemons are shared across **time**, not across **workers**:
 >
@@ -1475,7 +1475,7 @@ This **is** ADR-11's option (a), adopted deliberately. ADR-11 rejected (a) for t
 
 ### ADR-12: Connection-Type-Agnostic Transfer Queue
 
-**Context:** The FTP client epic (#1331, concept `docs/concepts/partial/ftp-client.html`) needs a transfer queue with per-transfer progress, pause/resume/retry, and bounded concurrency. termiHub already had a transfer subsystem for SFTP — `src-tauri/src/files/transfer.rs` (#1245) — but it only offered one-shot cancellable up/downloads with no queue, concurrency limit, pause/resume, or panel UI. Two shapes were possible: (a) build an **FTP-specific** queue inside `core/src/backends/ftp/` (as the concept's skeleton sketched), or (b) **generalize the existing transfer subsystem** into a protocol-agnostic queue that FTP is the first consumer of.
+**Context:** The FTP client epic (#1331, concept `docs/concepts/implemented/ftp-client.html`) needs a transfer queue with per-transfer progress, pause/resume/retry, and bounded concurrency. termiHub already had a transfer subsystem for SFTP — `src-tauri/src/files/transfer.rs` (#1245) — but it only offered one-shot cancellable up/downloads with no queue, concurrency limit, pause/resume, or panel UI. Two shapes were possible: (a) build an **FTP-specific** queue inside `core/src/backends/ftp/` (as the concept's skeleton sketched), or (b) **generalize the existing transfer subsystem** into a protocol-agnostic queue that FTP is the first consumer of.
 
 **Decision:** Adopt **(b)**. The queue model, states (queued/active/paused/completed/failed-with-retry), concurrency gate, `REST`-based resume, and exponential-backoff retry live in the shared `src-tauri/src/files/transfer/` module and are driven by generic `transfer_pause`/`transfer_resume`/`transfer_cancel`/`transfer_retry`/`transfer_list` IPC commands and a single `transfer-progress` event stream. FTP is wired in via `src-tauri/src/files/transfer/ftp.rs`; the frontend panel (`src/components/TransferQueue/`) is likewise protocol-agnostic. The existing `TransferRegistry`/`CancellationToken` plumbing is **extended, never forked**.
 
@@ -1490,7 +1490,7 @@ This **is** ADR-11's option (a), adopted deliberately. ADR-11 rejected (a) for t
 ### ADR-13: Multi-Instance with a Spawn IPC Rendezvous
 
 **Context:** The "Open in termiHub" shell integration (epic #1363, concept
-[`shell-context-menu-integration.html`](concepts/partial/shell-context-menu-integration.html)) must
+[`shell-context-menu-integration.html`](concepts/implemented/shell-context-menu-integration.html)) must
 route an OS context-menu click or a `termiHub spawn` CLI call into a session tab **in the
 already-running window**, focusing it — or launch the app if none is running. termiHub is
 **deliberately multi-instance**: `lib.rs` polls `connections.json` mtime and emits
