@@ -95,9 +95,18 @@ fn pending_update_is_applied(
 
 /// Whether two paths are existing regular files with identical contents.
 ///
-/// Compares lengths first so the (rare) SHA-256 pass only runs on a real
-/// candidate. Any I/O error means "cannot prove identical" → `false`, which
-/// keeps the pending update rather than dropping it on a guess.
+/// Two cheap metadata checks settle the common cases before a single byte is
+/// read: a non-file or a **size mismatch** returns immediately, which is what a
+/// genuinely different staged update looks like (a new build differs in length).
+/// Only when the sizes match are the contents compared — byte for byte, with an
+/// early exit on the first mismatch (see [`streams_identical`]). This is cheaper
+/// than hashing both files: the identical case pays a plain memory compare
+/// instead of SHA-256 over every byte, and a same-length-but-different binary
+/// stops at the first differing byte rather than reading both to the end. It is
+/// also strictly correct — an exact byte compare has no hash-collision risk.
+///
+/// Any I/O error means "cannot prove identical" → `false`, which keeps the
+/// pending update rather than dropping it on a guess.
 fn files_identical(a: &Path, b: &Path) -> bool {
     let (Ok(meta_a), Ok(meta_b)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
         return false;
@@ -105,21 +114,45 @@ fn files_identical(a: &Path, b: &Path) -> bool {
     if !meta_a.is_file() || !meta_b.is_file() || meta_a.len() != meta_b.len() {
         return false;
     }
-    match (file_digest(a), file_digest(b)) {
-        (Some(da), Some(db)) => da == db,
-        _ => false,
+    streams_identical(a, b).unwrap_or(false)
+}
+
+/// Byte-compare two files chunk by chunk, returning `false` at the first
+/// differing byte. Neither file is ever fully buffered, and a mismatch early in
+/// the file exits without reading the rest. Errors surface as `Err`, which the
+/// caller treats as "cannot prove identical".
+fn streams_identical(a: &Path, b: &Path) -> std::io::Result<bool> {
+    let mut fa = std::fs::File::open(a)?;
+    let mut fb = std::fs::File::open(b)?;
+    let mut buf_a = [0u8; 16 * 1024];
+    let mut buf_b = [0u8; 16 * 1024];
+    loop {
+        let na = fill(&mut fa, &mut buf_a)?;
+        let nb = fill(&mut fb, &mut buf_b)?;
+        if na != nb || buf_a[..na] != buf_b[..nb] {
+            return Ok(false);
+        }
+        if na == 0 {
+            return Ok(true);
+        }
     }
 }
 
-/// SHA-256 of a file's contents, streamed so a large binary is never fully
-/// buffered. `None` on any I/O error.
-fn file_digest(path: &Path) -> Option<[u8; 32]> {
-    use sha2::{Digest, Sha256};
+/// Read into `buf` until it is full or EOF, retrying short and interrupted
+/// reads; returns the number of bytes read (`0` only at EOF).
+fn fill(file: &mut std::fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::Read;
 
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).ok()?;
-    Some(hasher.finalize().into())
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
 }
 
 /// Applies a staged agent update by swapping the running binary and re-execing.
@@ -357,11 +390,19 @@ mod tests {
         std::fs::write(&differ_late, &late).unwrap();
 
         let mut state = state_with(pending("9.9.9", &identical));
-        assert!(prune_applied_pending_update(&mut state, "0.1.0", Some(&running)));
+        assert!(prune_applied_pending_update(
+            &mut state,
+            "0.1.0",
+            Some(&running)
+        ));
         assert!(state.update.pending_update.is_none());
 
         let mut state = state_with(pending("9.9.9", &differ_late));
-        assert!(!prune_applied_pending_update(&mut state, "0.1.0", Some(&running)));
+        assert!(!prune_applied_pending_update(
+            &mut state,
+            "0.1.0",
+            Some(&running)
+        ));
         assert!(state.update.pending_update.is_some());
     }
 
