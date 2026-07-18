@@ -1876,16 +1876,16 @@ registry.register(Box::new(FtpBackend::new()));
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-16 at commit <code>dba98550</code> ·
-          <strong>Status:</strong> diverged (partially implemented — one open functional gap, #1335)
+          <strong>Last synced:</strong> 2026-07-18 (divergence #1 resolved) · previously 2026-07-16
+          at commit <code>dba98550</code> · <strong>Status:</strong> converged (no open functional
+          gaps)
         </p>
         <p>
-          Synced as part of #1340 (SI-9, docs / changelog / concept wrap-up). Because #1340 is a
-          docs-only issue (feature logic SI-1..SI-8 is out of scope), code was <em>not</em> changed
-          here; the one functional divergence (#1) is tracked by open sub-issue #1335, and the
-          skeleton/illustrative divergences (#2–#5) are reconciled by documenting the as-built code
-          in this ledger. Divergence #6 (TLS backend) is a design-reality concept edit, applied
-          above.
+          Originally synced as part of #1340 (SI-9, docs / changelog / concept wrap-up); the
+          skeleton/illustrative divergences (#2–#5) were reconciled by documenting the as-built code
+          in this ledger, and divergence #6 (TLS backend) is a design-reality concept edit applied
+          above. The final functional divergence (#1, the terminal-less tab) was resolved on
+          2026-07-18 by #1335 via the <code>terminal</code> capability flag — see Resolved below.
         </p>
 
         <h3>Open divergences</h3>
@@ -1902,28 +1902,9 @@ registry.register(Box::new(FtpBackend::new()));
             </thead>
             <tbody>
               <tr>
-                <td>1</td>
-                <td>
-                  FTP sessions open <em>directly into the file browser view — no terminal tab is
-                  created</em>; the tab body shows a non-terminal placeholder ("FTP sessions open
-                  into the file browser; there is no terminal output").
-                </td>
-                <td>
-                  Browsing itself is now wired (#1335): an FTP tab dispatches through the session
-                  layer, so <code>session_*</code> commands route file operations via the connection
-                  type's <code>file_browser()</code>. But an FTP connection still opens a
-                  <em>terminal</em> tab whose body is a dead terminal: the tab is what mints the
-                  session (<code>Terminal.tsx</code> → <code>create_connection</code>), and
-                  <code>Capabilities</code> has no flag saying a type lacks a terminal, so the UI
-                  cannot tell which types should skip the terminal body.
-                </td>
-                <td>Missing</td>
-                <td>
-                  Needs a decision before implementing: either add a <code>terminal</code> flag to
-                  <code>Capabilities</code> (a core change that also crosses the agent protocol) and
-                  render a non-terminal tab body from it, or special-case the <code>ftp</code> type
-                  in the frontend (cheaper, but not protocol-agnostic). Tracked by
-                  <a href="https://github.com/armaxri/termiHub/issues/1335">#1335</a> (SI-4).
+                <td colspan="5" style="text-align: center; color: var(--text-secondary)">
+                  None open. The last functional divergence (#1, the terminal-less tab) was
+                  resolved on 2026-07-18 — see Resolved below.
                 </td>
               </tr>
             </tbody>
@@ -1941,6 +1922,25 @@ registry.register(Box::new(FtpBackend::new()));
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>2026-07-18</td>
+                <td>1</td>
+                <td>
+                  <strong>Terminal-less tab, via a <code>terminal</code> capability flag.</strong>
+                  Resolved by the protocol-agnostic route (#1335), not an <code>ftp</code>
+                  hardcode. A <code>terminal: bool</code> field was added to the connection-level
+                  <code>Capabilities</code> (core), defaulting to <code>true</code> via
+                  <code>#[serde(default)]</code> so agents/configs predating the field still
+                  deserialize as terminal-capable; every existing type reports <code>true</code> and
+                  FTP reports <code>false</code>. On the desktop, a connection whose type reports
+                  <code>terminal: false</code> opens into a new <code>file-browser</code> tab content
+                  type: <code>FileBrowserTab</code> mints and owns the session through its own path
+                  (not <code>Terminal.tsx</code>/no PTY) so the sidebar file browser routes to
+                  <code>tab.sessionId</code>, and renders the non-terminal placeholder body. Any
+                  future terminal-less type inherits this with no per-type special-casing. Concept
+                  matches as-built; no code change.
+                </td>
+              </tr>
               <tr>
                 <td>2026-07-16</td>
                 <td>2</td>
