@@ -153,4 +153,84 @@ describe("appStore — transfer queue slice (#1337)", () => {
       expect(q["t1"].transferred).toBe(60);
     });
   });
+
+  describe("seedTransferQueue (#1632)", () => {
+    it("opens the panel by adding a queued row without any transfer-progress event", () => {
+      // The reported failure: every `transfer-progress` event for a transfer is
+      // dropped/delayed under memory pressure, so the panel never opens. Seeding
+      // from the registration snapshot makes the slice non-empty on its own.
+      expect(useAppStore.getState().transferQueue).toEqual({});
+
+      useAppStore.getState().seedTransferQueue({
+        id: "seed-1",
+        sessionId: "sess-a",
+        direction: "download",
+        name: "file.txt",
+        path: "/remote/file.txt",
+      });
+
+      const row = useAppStore.getState().transferQueue["seed-1"];
+      expect(row).toMatchObject({
+        id: "seed-1",
+        sessionId: "sess-a",
+        direction: "download",
+        name: "file.txt",
+        path: "/remote/file.txt",
+        state: "queued",
+        transferred: 0,
+        totalBytes: null,
+        percent: null,
+      });
+    });
+
+    it("is idempotent — never clobbers a row an event already advanced", () => {
+      const store = useAppStore.getState();
+      // An event arrives first and advances the row well past `queued`…
+      store.applyTransferProgressToQueue(
+        progress({ transferId: "t1", phase: "done", transferred: 100 })
+      );
+      // …then a late seed for the same id must not reset it to `queued`.
+      store.seedTransferQueue({
+        id: "t1",
+        sessionId: "sess-a",
+        direction: "download",
+        name: "file.txt",
+      });
+      expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({
+        state: "completed",
+        transferred: 100,
+        percent: 100,
+      });
+    });
+
+    it("a later event upserts (does not duplicate) a seeded row", () => {
+      const store = useAppStore.getState();
+      store.seedTransferQueue({
+        id: "t1",
+        sessionId: "sess-a",
+        direction: "download",
+        name: "file.txt",
+      });
+      store.applyTransferProgressToQueue(progress({ transferId: "t1", transferred: 40 }));
+
+      const q = useAppStore.getState().transferQueue;
+      expect(Object.keys(q)).toHaveLength(1);
+      expect(q["t1"]).toMatchObject({ state: "active", transferred: 40 });
+    });
+
+    it("carries a known total (upload) through to the seeded row", () => {
+      useAppStore.getState().seedTransferQueue({
+        id: "up-1",
+        sessionId: "sess-a",
+        direction: "upload",
+        name: "big.bin",
+        totalBytes: 2048,
+      });
+      expect(useAppStore.getState().transferQueue["up-1"]).toMatchObject({
+        direction: "upload",
+        totalBytes: 2048,
+        state: "queued",
+      });
+    });
+  });
 });

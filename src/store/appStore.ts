@@ -111,7 +111,12 @@ import type {
   TransferProgress,
 } from "@/services/api";
 import type { SpawnRequestPayload } from "@/services/events";
-import { transferEntryFromProgress, type TransferEntry } from "@/types/transfer";
+import {
+  transferEntryFromProgress,
+  transferEntryFromSeed,
+  type TransferEntry,
+  type TransferSeed,
+} from "@/types/transfer";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { EmbeddedServerConfig, ServerState as EmbeddedServerState } from "@/types/embeddedServer";
@@ -762,6 +767,13 @@ interface AppState {
   setTransferQueueMinimized: (minimized: boolean) => void;
   /** Fold a `transfer-progress` event into the queue (upsert, retaining terminal rows). */
   applyTransferProgressToQueue: (progress: TransferProgress) => void;
+  /**
+   * Seed a `queued` queue row from a transfer's registration snapshot (#1632),
+   * so the panel opens without waiting for a `transfer-progress` event that may
+   * be dropped/delayed under memory pressure. Idempotent: a no-op when a row for
+   * the id already exists, so it never clobbers a further-along event-fed row.
+   */
+  seedTransferQueue: (seed: TransferSeed) => void;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -3760,6 +3772,14 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => {
         const prev = state.transferQueue[progress.transferId];
         const entry = transferEntryFromProgress(progress, prev, Date.now());
+        return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
+      }),
+
+    seedTransferQueue: (seed: TransferSeed) =>
+      set((state) => {
+        // Idempotent: never overwrite a row an event already advanced (#1632).
+        if (seed.id in state.transferQueue) return {};
+        const entry = transferEntryFromSeed(seed, Date.now());
         return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
       }),
 
