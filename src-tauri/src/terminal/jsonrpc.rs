@@ -87,17 +87,26 @@ pub enum HandshakeOutcome {
     Response(Value),
     /// An error response to our request — carries the error message.
     Rejected(String),
-    /// Some other message (a notification, or a reply for a different id) that
-    /// arrived before our response. Skip it and keep waiting.
+    /// A notification that arrived before our response. It is not the init
+    /// response, but it must not be lost: the caller buffers it and replays it
+    /// once `initialize` completes (#1660). Previously these were dropped, so an
+    /// agent notification emitted during the handshake window (e.g. a staged
+    /// `agent.update_available` sent on attach) was silently discarded.
+    Buffer { method: String, params: Value },
+    /// Some other message (a reply for a different id) that arrived before our
+    /// response. Skip it and keep waiting.
     Skip,
 }
 
 /// Decide how to handle `msg` while waiting for the response to `request_id`.
 ///
 /// The agent may emit notifications before it answers `initialize` — for
-/// example, output from a session it recovered on startup. Those must be
-/// skipped rather than mistaken for the initialize response (which previously
-/// surfaced as "Unexpected response to initialize" and failed the connection).
+/// example, output from a session it recovered on startup, or an
+/// `agent.update_available` notice for a staged update. Those must not be
+/// mistaken for the initialize response (which previously surfaced as
+/// "Unexpected response to initialize" and failed the connection), but they
+/// also must not be dropped: they are returned as [`HandshakeOutcome::Buffer`]
+/// so the caller can replay them once init completes (#1660).
 pub fn classify_handshake_message(msg: JsonRpcMessage, request_id: u64) -> HandshakeOutcome {
     match msg {
         JsonRpcMessage::Response { id, result } if id == request_id => {
@@ -105,6 +114,9 @@ pub fn classify_handshake_message(msg: JsonRpcMessage, request_id: u64) -> Hands
         }
         JsonRpcMessage::Error { id, message, .. } if id == request_id => {
             HandshakeOutcome::Rejected(message)
+        }
+        JsonRpcMessage::Notification { method, params } => {
+            HandshakeOutcome::Buffer { method, params }
         }
         _ => HandshakeOutcome::Skip,
     }
@@ -243,15 +255,23 @@ mod tests {
     }
 
     #[test]
-    fn classify_skips_notification_before_response() {
-        // A session the agent recovered on startup may emit output before the
-        // agent answers `initialize`; that notification must be skipped, not
-        // mistaken for the initialize response.
+    fn classify_buffers_notification_before_response() {
+        // Regression for #1660: a notification arriving before the agent answers
+        // `initialize` must not be mistaken for the initialize response, but it
+        // must also not be dropped — it is buffered for replay after init. This
+        // covers both a recovered-session `connection.output` and an
+        // `agent.update_available` notice staged on attach.
         let msg = JsonRpcMessage::Notification {
-            method: "connection.output".into(),
-            params: serde_json::json!({"sessionId": "abc"}),
+            method: "agent.update_available".into(),
+            params: serde_json::json!({"availableVersion": "1.2.3", "staged": true}),
         };
-        assert_eq!(classify_handshake_message(msg, 1), HandshakeOutcome::Skip);
+        assert_eq!(
+            classify_handshake_message(msg, 1),
+            HandshakeOutcome::Buffer {
+                method: "agent.update_available".into(),
+                params: serde_json::json!({"availableVersion": "1.2.3", "staged": true}),
+            }
+        );
     }
 
     #[test]
