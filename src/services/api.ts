@@ -1069,6 +1069,23 @@ export async function unwatchLocalFile(watchId: string): Promise<void> {
   await invoke("unwatch_local_file", { watchId });
 }
 
+/**
+ * Start watching a local directory for external on-disk changes (#1626).
+ *
+ * `watchId` is an opaque per-browser-instance key; the resulting
+ * `local-dir-changed` events carry it back so the right file browser refreshes.
+ * Re-watching the same id replaces the previous watch (used to re-target when
+ * the browsed directory changes).
+ */
+export async function watchLocalDir(watchId: string, path: string): Promise<void> {
+  await invoke("watch_local_dir", { watchId, path });
+}
+
+/** Stop watching a local directory previously registered with {@link watchLocalDir}. */
+export async function unwatchLocalDir(watchId: string): Promise<void> {
+  await invoke("unwatch_local_dir", { watchId });
+}
+
 /** Read a remote file's contents as a UTF-8 string via SFTP. */
 export async function sftpReadFileContent(sessionId: string, remotePath: string): Promise<string> {
   return await invoke<string>("sftp_read_file_content", { sessionId, remotePath });

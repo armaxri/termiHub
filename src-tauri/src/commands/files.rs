@@ -360,6 +360,33 @@ pub fn unwatch_local_file(
     manager.unwatch(&watch_id);
 }
 
+/// Start watching a local directory for external on-disk changes (#1626).
+///
+/// `watch_id` is an opaque per-browser-instance key the frontend also matches
+/// the resulting `local-dir-changed` events against; re-watching the same id
+/// replaces the previous watch (used to re-target when the browsed directory
+/// changes). Only the local file browser watches — remote (SFTP / session)
+/// browsers use their own transports and never call this.
+#[tauri::command]
+pub fn watch_local_dir(
+    watch_id: String,
+    path: String,
+    manager: State<'_, crate::files::watcher::FileWatchManager>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), TerminalError> {
+    manager.watch_dir(app_handle, watch_id, path)
+}
+
+/// Stop watching a local directory previously registered with
+/// [`watch_local_dir`]. Unknown ids are a harmless no-op.
+#[tauri::command]
+pub fn unwatch_local_dir(
+    watch_id: String,
+    manager: State<'_, crate::files::watcher::FileWatchManager>,
+) {
+    manager.unwatch(&watch_id);
+}
+
 /// Read a remote file's contents as a UTF-8 string via SFTP.
 #[tauri::command]
 pub async fn sftp_read_file_content(

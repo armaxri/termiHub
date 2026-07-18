@@ -51,6 +51,7 @@ vi.mock("@/services/events", () => ({
       return Promise.resolve(vi.fn());
     }
   ),
+  onLocalDirChanged: vi.fn(() => Promise.resolve(vi.fn())),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
