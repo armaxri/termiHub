@@ -162,12 +162,20 @@ pub async fn sftp_download(
     let (dedicated, total) = open_transfer_channel(session, Some(remote_path.clone())).await?;
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
-    let token = registry.register(&transfer_id);
+    let file_name = file_name_of(&remote_path);
+    let token = registry.register(
+        &transfer_id,
+        &session_id,
+        TransferDirection::Download,
+        &file_name,
+        &remote_path,
+        total,
+    );
     let ctx = TransferContext {
         transfer_id: transfer_id.clone(),
         session_id,
         direction: TransferDirection::Download,
-        file_name: file_name_of(&remote_path),
+        file_name,
         path: remote_path.clone(),
         total,
     };
@@ -211,7 +219,15 @@ pub async fn sftp_upload(
         .unwrap_or(0);
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
-    let token = registry.register(&transfer_id);
+    let file_name = file_name_of(&remote_path);
+    let token = registry.register(
+        &transfer_id,
+        &session_id,
+        TransferDirection::Upload,
+        &file_name,
+        &remote_path,
+        total,
+    );
     let ctx = TransferContext {
         transfer_id: transfer_id.clone(),
         session_id,
@@ -222,7 +238,7 @@ pub async fn sftp_upload(
         // so this is unchanged for them — but an SFTP→SFTP paste uploads from
         // a local temp copy (`/tmp/termihub-paste-<ts>-<name>`), and the
         // destination name is the one the user actually knows the file by.
-        file_name: file_name_of(&remote_path),
+        file_name,
         path: remote_path.clone(),
         total,
     };

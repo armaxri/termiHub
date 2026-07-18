@@ -30,7 +30,14 @@ export type TabContentType =
   | "log-viewer"
   | "tunnel-editor"
   | "workspace-editor"
-  | "network-diagnostic";
+  | "network-diagnostic"
+  /**
+   * A terminal-less connection (e.g. FTP, `Capabilities.terminal === false`).
+   * The tab owns a live session so the sidebar file browser can route to it,
+   * but renders a non-terminal placeholder body instead of an xterm terminal
+   * (#1335).
+   */
+  | "file-browser";
 
 /**
  * Reference to a session-layer file browser backing a remote editor tab (#1557).

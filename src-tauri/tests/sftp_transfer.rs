@@ -146,7 +146,14 @@ async fn cancel_mid_transfer_cleans_up_partial_file() {
 
     let registry = TransferRegistry::new();
     let transfer_id = "cancel-test".to_string();
-    let token = registry.register(&transfer_id);
+    let token = registry.register(
+        &transfer_id,
+        "s",
+        TransferDirection::Download,
+        "100mb.bin",
+        "/home/testuser/sftp-test/large-files/100mb.bin",
+        100 * 1024 * 1024,
+    );
     let sink = RecordingSink::default();
     let ctx = TransferContext {
         transfer_id: transfer_id.clone(),
@@ -269,7 +276,14 @@ async fn browsing_stays_live_during_transfer() {
     let dest_str = dest.to_string_lossy().to_string();
 
     let registry = TransferRegistry::new();
-    let token = registry.register("live-test");
+    let token = registry.register(
+        "live-test",
+        "s",
+        TransferDirection::Download,
+        "100mb.bin",
+        "/home/testuser/sftp-test/large-files/100mb.bin",
+        100 * 1024 * 1024,
+    );
     let sink = RecordingSink::default();
     let ctx = TransferContext {
         transfer_id: "live-test".to_string(),

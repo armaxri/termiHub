@@ -188,6 +188,7 @@ mod tests {
                 file_browser: false,
                 resize: true,
                 persistent: false,
+                terminal: true,
             }
         }
         async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -320,6 +321,7 @@ mod tests {
                 file_browser: true,
                 resize: true,
                 persistent: false,
+                terminal: true,
             },
         };
         let json = serde_json::to_string(&info).unwrap();

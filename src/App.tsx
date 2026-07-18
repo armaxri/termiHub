@@ -25,6 +25,7 @@ import { ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
+import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useAgentUpdateEvents } from "@/hooks/useAgentUpdateEvents";
@@ -108,6 +109,7 @@ function App() {
   useKeyboardShortcuts();
   useTunnelEvents();
   useTransferEvents();
+  useTransferReconcile();
   useEmbeddedServerEvents();
   useCredentialStoreEvents();
   useAgentUpdateEvents();

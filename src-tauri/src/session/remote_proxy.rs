@@ -71,6 +71,7 @@ impl RemoteProxy {
                 file_browser: false,
                 resize: true,
                 persistent: false,
+                terminal: true,
             }),
             std_output_rx: Mutex::new(None),
             connected: AtomicBool::new(false),
@@ -124,6 +125,7 @@ impl RemoteProxy {
                 file_browser: false,
                 resize: true,
                 persistent: true,
+                terminal: true,
             }),
             std_output_rx: Mutex::new(Some(std_rx)),
             connected: AtomicBool::new(true),
@@ -159,6 +161,7 @@ impl ConnectionType for RemoteProxy {
                 file_browser: false,
                 resize: true,
                 persistent: false,
+                terminal: true,
             })
     }
 
