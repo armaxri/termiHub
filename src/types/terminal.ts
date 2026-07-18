@@ -72,6 +72,24 @@ export interface EditorTabMeta {
    */
   sessionBrowser?: EditorSessionRef;
   /**
+   * Stable identity of the remote session backing this tab, used to deduplicate
+   * editor tabs (#1599). The raw session id is the wrong key on its own: it
+   * changes on reconnect, so keying on it would open a duplicate tab instead of
+   * refreshing the existing one. This holds a value that is *stable across a
+   * reconnect of the same logical connection* but *distinct between different
+   * connections*:
+   *
+   * - SFTP tabs → the session's `hostLabel` (`user@host:port`); a reconnect to
+   *   the same host reuses the label.
+   * - Session-layer tabs → the id of the terminal tab that owns the backing
+   *   session; a reconnect swaps the session id but keeps the tab.
+   *
+   * Undefined for local tabs (deduped on path alone) and for remote tabs whose
+   * identity could not be resolved, in which case dedup falls back to
+   * path + `isRemote` only (the pre-#1599 behaviour).
+   */
+  sessionKey?: string;
+  /**
    * Unix permission string (e.g. `-rw-r--r--`) for a remote file, captured from
    * the file-browser listing when the editor was opened. Surfaced in the
    * read-only badge tooltip; `null`/absent when unknown (local files or a

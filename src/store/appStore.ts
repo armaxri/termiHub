@@ -1261,6 +1261,46 @@ function collectRestoreCohort(groups: TabGroup[]): {
 }
 
 /**
+ * Resolve the stable identity of the remote session backing an editor tab, used
+ * as part of the {@link AppState.openEditorTab} dedup key (#1599).
+ *
+ * The raw session id is deliberately *not* used: it changes when a connection
+ * reconnects, which would spawn a duplicate tab instead of refreshing the
+ * existing one. Instead this returns a value that stays constant across a
+ * reconnect of the same logical connection but differs between distinct
+ * connections, so opening the same path on two different hosts yields two tabs
+ * while reconnecting one host refreshes its tab:
+ *
+ * - SFTP (`sftpSessionId`) → the session's `hostLabel` (`user@host:port`). A
+ *   reconnect mints a new session id under the same label.
+ * - Session layer (`sessionBrowser`) → the id of the terminal tab that owns the
+ *   session. A reconnect swaps the session id but keeps the same tab.
+ *
+ * Returns `undefined` for local tabs and for remote tabs whose identity cannot
+ * be resolved (unknown host, or no owning tab found); callers then fall back to
+ * path-only dedup, preserving the pre-#1599 behaviour.
+ */
+function resolveEditorSessionKey(
+  state: { rootPanel: PanelNode; sftpSessions: Record<string, SftpSessionEntry> },
+  isRemote: boolean,
+  sftpSessionId?: string,
+  sessionBrowser?: EditorSessionRef
+): string | undefined {
+  if (!isRemote) return undefined;
+  if (sftpSessionId) {
+    const hostLabel = state.sftpSessions[sftpSessionId]?.hostLabel;
+    return hostLabel ? `sftp:${hostLabel}` : undefined;
+  }
+  if (sessionBrowser) {
+    const owner = getAllLeaves(state.rootPanel)
+      .flatMap((l) => l.tabs)
+      .find((t) => t.sessionId === sessionBrowser.sessionId);
+    return owner ? `session:${owner.id}` : undefined;
+  }
+  return undefined;
+}
+
+/**
  * Enumerate every live tab across all tab groups (the active group is
  * represented by the live `rootPanel`, the others by their stored trees). Used
  * by the bulk-reconnect control to filter captured failed ids down to tabs that
@@ -2385,13 +2425,19 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
-        // Look for an existing editor tab for this file
+        // Stable identity of the backing session, so the same path opened from
+        // two different remote sessions gets two tabs while a reconnect of the
+        // same connection refreshes one (#1599).
+        const sessionKey = resolveEditorSessionKey(state, isRemote, sftpSessionId, sessionBrowser);
+
+        // Look for an existing editor tab for this file on the same session.
         for (const leaf of allLeaves) {
           const existing = leaf.tabs.find(
             (t) =>
               t.contentType === "editor" &&
               t.editorMeta?.filePath === filePath &&
-              t.editorMeta?.isRemote === isRemote
+              t.editorMeta?.isRemote === isRemote &&
+              t.editorMeta?.sessionKey === sessionKey
           );
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
@@ -2406,9 +2452,19 @@ export const useAppStore = create<AppState>((set, get) => {
                 let updatedMeta = t.editorMeta;
                 if (isRemote && t.editorMeta) {
                   if (sftpSessionId) {
-                    updatedMeta = { ...t.editorMeta, sftpSessionId, sessionBrowser: undefined };
+                    updatedMeta = {
+                      ...t.editorMeta,
+                      sftpSessionId,
+                      sessionBrowser: undefined,
+                      sessionKey,
+                    };
                   } else if (sessionBrowser) {
-                    updatedMeta = { ...t.editorMeta, sessionBrowser, sftpSessionId: undefined };
+                    updatedMeta = {
+                      ...t.editorMeta,
+                      sessionBrowser,
+                      sftpSessionId: undefined,
+                      sessionKey,
+                    };
                   }
                 }
                 return { ...t, isActive: true, editorMeta: updatedMeta };
@@ -2431,6 +2487,7 @@ export const useAppStore = create<AppState>((set, get) => {
           sftpSessionId,
           permissions,
           sessionBrowser,
+          sessionKey,
         };
         const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
         newTab.editorMeta = editorMeta;
