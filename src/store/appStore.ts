@@ -154,6 +154,12 @@ import {
   captureAllTabGroups,
   getWorkspaceLeaves,
 } from "@/utils/workspaceLayout";
+import { Macro } from "@/types/macro";
+import {
+  listMacros as apiListMacros,
+  saveMacro as apiSaveMacro,
+  deleteMacro as apiDeleteMacro,
+} from "@/services/macroApi";
 import {
   saveLastSession as apiSaveLastSession,
   loadLastSession as apiLoadLastSession,
@@ -1116,6 +1122,14 @@ interface AppState {
   stopEmbeddedServer: (serverId: string) => Promise<void>;
   updateEmbeddedServerState: (state: EmbeddedServerState) => void;
   quickShareServer: (path: string, protocol: ServerType) => Promise<string>;
+
+  // Macros
+  macros: Macro[];
+  loadMacros: () => Promise<void>;
+  /** Save (add or update) a macro, then refresh the list. Returns the stored macro. */
+  saveMacroToBackend: (macro: Macro) => Promise<Macro>;
+  /** Delete a macro by ID; only mutates local state after the backend delete resolves. */
+  deleteMacroFromBackend: (macroId: string) => Promise<void>;
 
   // Workspaces
   workspaces: WorkspaceSummary[];
@@ -3207,6 +3221,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().loadEmbeddedServers();
       // Load workspaces
       get().loadWorkspaces();
+      // Load macros
+      get().loadMacros();
       // Load app mode (portable vs. installed) for status bar and settings display
       await get().loadAppMode();
       // Load credential store status (dialog opens on-demand when credentials are needed)
@@ -5359,6 +5375,33 @@ export const useAppStore = create<AppState>((set, get) => {
       // Refresh server list so the new entry shows up in the sidebar.
       await get().loadEmbeddedServers();
       return serverId;
+    },
+
+    // Macros
+    macros: [],
+
+    loadMacros: async () => {
+      try {
+        const macros = await apiListMacros();
+        set({ macros });
+      } catch (err) {
+        console.error("Failed to load macros:", err);
+      }
+    },
+
+    saveMacroToBackend: async (macro) => {
+      const saved = await apiSaveMacro(macro);
+      await get().loadMacros();
+      return saved;
+    },
+
+    deleteMacroFromBackend: async (macroId) => {
+      // Only mutate local state after the backend delete resolves, and rethrow
+      // on failure so the caller can surface the error (mirrors workspaces).
+      await apiDeleteMacro(macroId);
+      set((state) => ({
+        macros: state.macros.filter((m) => m.id !== macroId),
+      }));
     },
 
     // Workspaces

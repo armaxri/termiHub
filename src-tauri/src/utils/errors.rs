@@ -52,6 +52,9 @@ pub enum TerminalError {
     #[error("Workspace error: {0}")]
     WorkspaceError(String),
 
+    #[error("Macro error: {0}")]
+    MacroError(String),
+
     #[error("Network error: {0}")]
     NetworkError(String),
 
