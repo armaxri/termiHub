@@ -609,6 +609,7 @@ impl ConnectionType for Docker {
             file_browser: true,
             resize: true,
             persistent: true,
+            terminal: true,
         }
     }
 

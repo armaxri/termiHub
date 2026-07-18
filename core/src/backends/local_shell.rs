@@ -340,6 +340,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             // every platform (Unix domain socket on unix, named pipe on
             // windows — see `agent::daemon::transport`).
             persistent: true,
+            terminal: true,
         }
     }
 
