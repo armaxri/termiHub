@@ -545,17 +545,10 @@ describe("api service", () => {
       mockedInvoke.mockResolvedValue("transfer-seed-d");
       const onRegistered = vi.fn();
 
-      const pending = sftpDownload(
-        "sftp-1",
-        "/remote/file.txt",
-        "/local/file.txt",
-        onRegistered
-      );
+      const pending = sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt", onRegistered);
       // onRegistered must fire from the command's synchronous return, ahead of
       // any transfer-progress event (which may be dropped under memory pressure).
-      await vi.waitFor(() =>
-        expect(onRegistered).toHaveBeenCalledWith("transfer-seed-d")
-      );
+      await vi.waitFor(() => expect(onRegistered).toHaveBeenCalledWith("transfer-seed-d"));
 
       await fireWhenListening({ transferId: "transfer-seed-d", phase: "done", transferred: 1 });
       await pending;
@@ -566,15 +559,8 @@ describe("api service", () => {
       mockedInvoke.mockResolvedValue("transfer-seed-u");
       const onRegistered = vi.fn();
 
-      const pending = sftpUpload(
-        "sftp-1",
-        "/local/file.txt",
-        "/remote/file.txt",
-        onRegistered
-      );
-      await vi.waitFor(() =>
-        expect(onRegistered).toHaveBeenCalledWith("transfer-seed-u")
-      );
+      const pending = sftpUpload("sftp-1", "/local/file.txt", "/remote/file.txt", onRegistered);
+      await vi.waitFor(() => expect(onRegistered).toHaveBeenCalledWith("transfer-seed-u"));
 
       await fireWhenListening({ transferId: "transfer-seed-u", phase: "done", transferred: 1 });
       await pending;
