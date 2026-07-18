@@ -110,10 +110,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   // Editor-tab title disambiguation (#1640) is judged across the whole active
   // tab group, so two same-basename editor tabs are distinguishable even when
   // they live in different split panels.
-  const allTabs = useMemo(
-    () => getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs),
-    [rootPanel]
-  );
+  const allTabs = useMemo(() => getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs), [rootPanel]);
 
   return (
     <div className={`tab-bar${isFocused ? " tab-bar--focused" : ""}`}>

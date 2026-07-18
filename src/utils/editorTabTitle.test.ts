@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { EditorTabMeta, TerminalTab } from "@/types/terminal";
-import {
-  getEditorSessionQualifier,
-  getEditorTabDisplayTitle,
-} from "./editorTabTitle";
+import { getEditorSessionQualifier, getEditorTabDisplayTitle } from "./editorTabTitle";
 
 function makeTab(overrides: Partial<TerminalTab> & { id: string }): TerminalTab {
   return {

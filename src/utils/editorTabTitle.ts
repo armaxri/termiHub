@@ -68,8 +68,7 @@ export function getEditorTabDisplayTitle(
 
   // Only disambiguate when a different editor tab shows the same basename.
   const isAmbiguous = allTabs.some(
-    (other) =>
-      other.id !== tab.id && other.contentType === "editor" && other.title === tab.title
+    (other) => other.id !== tab.id && other.contentType === "editor" && other.title === tab.title
   );
   if (!isAmbiguous) return tab.title;
 
