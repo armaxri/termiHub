@@ -269,12 +269,11 @@ pub fn detect_available_shells() -> Vec<String> {
         shells.push("powershell".to_string());
         shells.push("cmd".to_string());
 
-        // Check for Git Bash
-        for path in GIT_BASH_PATHS {
-            if Path::new(path).exists() {
-                shells.push("gitbash".to_string());
-                break;
-            }
+        // Check for Git Bash across every known install location (registry,
+        // user-scope, PATH, scoop, Program Files) — shares the same resolver
+        // as launch, so what we offer is exactly what we launch.
+        if resolve_git_bash_path().is_some() {
+            shells.push("gitbash".to_string());
         }
     }
 
@@ -465,17 +464,148 @@ fn resolve_powershell() -> (String, Vec<String>) {
 
 /// Resolve the full path to Git Bash on Windows.
 ///
-/// Falls back to the bare name on non-Windows platforms.
+/// Probes every known install location (see [`git_bash_candidates`]) in
+/// priority order. Falls back to the bare `bash.exe` name when no install is
+/// found, and on non-Windows platforms.
 fn resolve_git_bash() -> (String, Vec<String>) {
     #[cfg(windows)]
     {
-        for path in GIT_BASH_PATHS {
-            if Path::new(path).exists() {
-                return ((*path).to_string(), vec!["--login".into()]);
-            }
+        if let Some(path) = resolve_git_bash_path() {
+            return (path.to_string_lossy().into_owned(), vec!["--login".into()]);
         }
     }
     ("bash.exe".into(), vec!["--login".into()])
+}
+
+/// Return the first candidate for which `exists` reports true, preserving the
+/// candidate order (highest-priority install location first).
+///
+/// Pure and platform-agnostic: the caller injects both the ordered candidate
+/// list and the existence predicate, which is what makes the Windows Git Bash
+/// resolution order unit-testable on any platform (the predicate stands in for
+/// the filesystem). Compiled on Windows (where it drives resolution) and under
+/// `test` (so the order is exercised on every CI platform).
+#[cfg(any(windows, test))]
+fn first_existing_path(candidates: &[PathBuf], exists: impl Fn(&Path) -> bool) -> Option<&PathBuf> {
+    candidates.iter().find(|p| exists(p.as_path()))
+}
+
+/// Remove duplicate paths while preserving first-seen order.
+///
+/// Two probes can legitimately point at the same install (e.g. the registry's
+/// `InstallPath` and a hardcoded `Program Files` fallback), so the candidate
+/// list is de-duplicated before probing to avoid redundant existence checks.
+#[cfg(any(windows, test))]
+fn dedup_preserving_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    paths
+        .into_iter()
+        .filter(|p| seen.insert(p.clone()))
+        .collect()
+}
+
+/// Resolve the concrete Git Bash `bash.exe` path on Windows, probing every
+/// known install location in priority order. `None` when Git Bash is not found.
+///
+/// Single source of truth: both [`resolve_git_bash`] (launch) and
+/// [`detect_available_shells`] (offer the `gitbash` option) go through this, so
+/// a detected install and a launched install can never disagree.
+#[cfg(windows)]
+fn resolve_git_bash_path() -> Option<PathBuf> {
+    let candidates = git_bash_candidates();
+    first_existing_path(&candidates, |p| p.exists()).cloned()
+}
+
+/// Build the ordered list of Git Bash (`bash.exe`) locations to probe, most
+/// reliable / most specific first:
+///
+/// 1. Git for Windows registry `InstallPath` (HKCU, then HKLM, incl. the 32-bit
+///    `WOW6432Node` view) → `<InstallPath>\bin\bash.exe`
+/// 2. User-scope install → `%LOCALAPPDATA%\Programs\Git\bin\bash.exe`
+/// 3. PATH-derived: locate `git.exe` and derive its sibling
+///    `<git-root>\bin\bash.exe` (covers winget / choco / custom installs)
+/// 4. scoop per-user shim → `%USERPROFILE%\scoop\apps\git\current\bin\bash.exe`
+/// 5. The two well-known `Program Files` fallbacks ([`GIT_BASH_PATHS`])
+///
+/// The list is de-duplicated (order preserved) so an install found by two
+/// probes is only tried once.
+#[cfg(windows)]
+fn git_bash_candidates() -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. Registry InstallPath (user-scope HKCU first, then machine-scope HKLM).
+    candidates.extend(registry_git_install_paths());
+
+    // 2. User-scope install under LOCALAPPDATA (winget --scope user, portable).
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(local_app_data)
+                .join("Programs")
+                .join("Git")
+                .join("bin")
+                .join("bash.exe"),
+        );
+    }
+
+    // 3. PATH-derived: git.exe -> <install-root>\bin\bash.exe.
+    if let Some(bash) = git_bash_from_path() {
+        candidates.push(bash);
+    }
+
+    // 4. scoop per-user install.
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        candidates.push(
+            PathBuf::from(user_profile)
+                .join("scoop")
+                .join("apps")
+                .join("git")
+                .join("current")
+                .join("bin")
+                .join("bash.exe"),
+        );
+    }
+
+    // 5. Hardcoded Program Files fallbacks (machine-scope default installs).
+    candidates.extend(GIT_BASH_PATHS.iter().map(PathBuf::from));
+
+    dedup_preserving_order(candidates)
+}
+
+/// Read Git for Windows' `InstallPath` value from the registry and map each hit
+/// to `<InstallPath>\bin\bash.exe`. Checks HKCU (user-scope installs) before
+/// HKLM (machine-scope), plus the 32-bit `WOW6432Node` view of HKLM.
+#[cfg(windows)]
+fn registry_git_install_paths() -> Vec<PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    let lookups = [
+        (HKEY_CURRENT_USER, r"SOFTWARE\GitForWindows"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\GitForWindows"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\GitForWindows"),
+    ];
+
+    let mut paths = Vec::new();
+    for (hive, subkey) in lookups {
+        if let Ok(key) = RegKey::predef(hive).open_subkey(subkey) {
+            if let Ok(install_path) = key.get_value::<String, _>("InstallPath") {
+                paths.push(PathBuf::from(install_path).join("bin").join("bash.exe"));
+            }
+        }
+    }
+    paths
+}
+
+/// Locate `git.exe` on `PATH` and derive the sibling Git Bash.
+///
+/// Git for Windows places `git.exe` in `<install-root>\cmd` (and also
+/// `<install-root>\bin`); in either case the install root is the grandparent
+/// directory and `bash.exe` lives in `<install-root>\bin`.
+#[cfg(windows)]
+fn git_bash_from_path() -> Option<PathBuf> {
+    let git_exe = which::which("git").ok()?;
+    let install_root = git_exe.parent()?.parent()?;
+    Some(install_root.join("bin").join("bash.exe"))
 }
 
 #[cfg(test)]
@@ -1069,6 +1199,114 @@ mod tests {
                 "bash should resolve to Git Bash on Windows, got: {cmd}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Git Bash resolution order (first_existing_path / dedup_preserving_order)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn first_existing_path_returns_first_present_in_order() {
+        let candidates = vec![
+            PathBuf::from(r"C:\absent\a\bin\bash.exe"),
+            PathBuf::from(r"C:\present\b\bin\bash.exe"),
+            PathBuf::from(r"C:\present\c\bin\bash.exe"),
+        ];
+        let present = [
+            PathBuf::from(r"C:\present\b\bin\bash.exe"),
+            PathBuf::from(r"C:\present\c\bin\bash.exe"),
+        ];
+        let got = first_existing_path(&candidates, |p| present.iter().any(|q| q == p));
+        assert_eq!(got, Some(&PathBuf::from(r"C:\present\b\bin\bash.exe")));
+    }
+
+    #[test]
+    fn first_existing_path_priority_wins_over_later_matches() {
+        // Even when every candidate exists, the earliest (highest-priority) one
+        // is returned — this is the whole point of the ordering.
+        let candidates = vec![
+            PathBuf::from(r"C:\registry\Git\bin\bash.exe"),
+            PathBuf::from(r"C:\Program Files\Git\bin\bash.exe"),
+        ];
+        let got = first_existing_path(&candidates, |_| true);
+        assert_eq!(got, Some(&PathBuf::from(r"C:\registry\Git\bin\bash.exe")));
+    }
+
+    #[test]
+    fn first_existing_path_none_when_all_absent() {
+        let candidates = vec![
+            PathBuf::from(r"C:\a\bash.exe"),
+            PathBuf::from(r"C:\b\bash.exe"),
+        ];
+        assert_eq!(first_existing_path(&candidates, |_| false), None);
+    }
+
+    #[test]
+    fn first_existing_path_uses_real_filesystem_existence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("missing-bash.exe");
+        let present = dir.path().join("present-bash.exe");
+        std::fs::write(&present, b"#!/bin/sh\n").expect("write present");
+        let candidates = vec![missing, present.clone()];
+        let got = first_existing_path(&candidates, |p| p.exists());
+        assert_eq!(got, Some(&present));
+    }
+
+    #[test]
+    fn dedup_preserving_order_removes_later_duplicates() {
+        let input = vec![
+            PathBuf::from(r"C:\a"),
+            PathBuf::from(r"C:\b"),
+            PathBuf::from(r"C:\a"),
+            PathBuf::from(r"C:\c"),
+            PathBuf::from(r"C:\b"),
+        ];
+        let out = dedup_preserving_order(input);
+        assert_eq!(
+            out,
+            vec![
+                PathBuf::from(r"C:\a"),
+                PathBuf::from(r"C:\b"),
+                PathBuf::from(r"C:\c"),
+            ]
+        );
+    }
+
+    /// The full candidate list must include the hardcoded `Program Files`
+    /// fallbacks and be de-duplicated, whatever the machine's install layout.
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_candidates_include_fallbacks_and_are_deduped() {
+        let candidates = git_bash_candidates();
+        let as_str: Vec<String> = candidates
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        for fallback in GIT_BASH_PATHS {
+            assert!(
+                as_str.iter().any(|c| c == fallback),
+                "expected hardcoded fallback {fallback} among candidates: {as_str:?}"
+            );
+        }
+        let mut seen = std::collections::HashSet::new();
+        assert!(
+            candidates.iter().all(|p| seen.insert(p.clone())),
+            "candidate list must be de-duplicated: {as_str:?}"
+        );
+    }
+
+    /// `resolve_git_bash_path` and the `gitbash` entry from
+    /// `detect_available_shells` are the same source of truth: the shell is
+    /// offered iff a concrete `bash.exe` resolves.
+    #[cfg(windows)]
+    #[test]
+    fn detect_gitbash_matches_resolver() {
+        let resolved = resolve_git_bash_path().is_some();
+        let offered = detect_available_shells().contains(&"gitbash".to_string());
+        assert_eq!(
+            resolved, offered,
+            "gitbash offered={offered} but resolver present={resolved} — must agree"
+        );
     }
 
     // -----------------------------------------------------------------------
