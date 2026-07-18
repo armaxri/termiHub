@@ -604,7 +604,7 @@ building the `remote-agent` image with `PENDING_UPDATE_VERSION` set — which ba
 `PermitUserEnvironment yes` and `~testuser/.ssh/environment` so the env var reaches
 the desktop-launched `termihub-agent --stdio` process (the var can never be a CLI
 flag). It is a separate service from `remote-agent` on purpose: the on-attach
-update announcement would otherwise surface a banner in the banner-*surfacing*
+update announcement would otherwise surface a banner in the banner-_surfacing_
 suite, whose gating tests assert none appears until they announce one.
 
 #### Python system-test harness — cross-platform shells (#886)
@@ -2341,7 +2341,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-UI-22–25                      | _manual_ (separator size/cursor, overflow scroll — visual)                                                                                                                               |
 | MT-AGENT (create/error/setup)    | `tests/system/tests/test_remote_agent.py` (create, error dialog, setup wizard vs. the password container)                                                                                |
 | MT-AGENT (live connect/sessions) | `tests/system/tests/test_remote_agent_live.py` (live connect + shells, child shell session, persistent-session reconnect, connected-agent menu — vs. the deployed-agent container, #995) |
-| MT-AGENT (update banner)         | `tests/system/tests/test_agent_update_banner_live.py` (surfacing/copy, staged + connected gates, dismiss/re-arm — #1520) and `tests/system/tests/test_agent_update_apply_now_live.py` (Apply Now → live deferred/busy branch vs. the armed `remote-agent-pending-update` container — #1520/#1546; applied-immediately toast stays a Vitest case, unreachable live)        |
+| MT-AGENT (update banner)         | `test_agent_update_banner_live.py` (surfacing, gates, dismiss) + `test_agent_update_apply_now_live.py` (Apply Now live deferred/busy vs. armed container — #1520/#1546)                  |
 | MT-CRED-04–08                    | `tests/system/tests/test_credential_store.py`                                                                                                                                            |
 | MT-RECOVERY-01–06                | `tests/system/tests/test_config_recovery.py`                                                                                                                                             |
 | MT-RECOVERY-07–12                | covered by `test_connection_crud.py` / `test_credential_store.py` / `test_export_import.py` / `test_external_files.py`                                                                   |
