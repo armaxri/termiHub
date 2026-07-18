@@ -13,8 +13,8 @@ vi.mock("@/services/events", () => ({
   }),
 }));
 
-const watchLocalDir = vi.fn(() => Promise.resolve());
-const unwatchLocalDir = vi.fn(() => Promise.resolve());
+const watchLocalDir = vi.fn<(id: string, path: string) => Promise<void>>(() => Promise.resolve());
+const unwatchLocalDir = vi.fn<(id: string) => Promise<void>>(() => Promise.resolve());
 vi.mock("@/services/api", () => ({
   watchLocalDir: (id: string, path: string) => watchLocalDir(id, path),
   unwatchLocalDir: (id: string) => unwatchLocalDir(id),
