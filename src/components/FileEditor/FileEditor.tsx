@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Copy,
   Download,
+  RotateCcw,
   X,
 } from "lucide-react";
 import { Button, toast } from "@/components/ui";
@@ -428,6 +429,26 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     if (!isDirty && diskChangedWhileDirty) setDiskChangedWhileDirty(false);
   }, [isDirty, diskChangedWhileDirty]);
 
+  // Adopt `disk` as the new buffer-and-saved content, discarding any local
+  // edits. Monaco is uncontrolled, so update its model directly (preserving
+  // cursor/scroll) when mounted; otherwise updating state is enough and the
+  // load path renders from it. Setting savedContent === the new content leaves
+  // the buffer clean (content === savedContent). (#1620)
+  const applyDiskContent = useCallback((disk: string) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (editor && model) {
+      const view = editor.saveViewState();
+      setSavedContent(disk);
+      // Fires onChange -> setContent(disk); the buffer stays clean.
+      model.setValue(disk);
+      if (view) editor.restoreViewState(view);
+    } else {
+      setContent(disk);
+      setSavedContent(disk);
+    }
+  }, []);
+
   // Reflect the current on-disk contents of a locally-watched file (#1620).
   // Invoked (debounced) when the OS reports the open file changed underneath us.
   const reloadFromDisk = useCallback(async () => {
@@ -453,35 +474,56 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     const hasUnsavedEdits = content !== null && content !== savedContent;
     if (hasUnsavedEdits) {
       // Genuine conflict: the file changed on disk while the buffer has local
-      // edits. Detection only — do NOT clobber either side. The resolution
-      // policy (reload / keep / merge / prompt) is a deferred, user-visible
-      // decision, so we just surface a non-destructive notice.
+      // edits. Detection only — do NOT clobber either side. The user resolves
+      // it from the banner (Reload from disk / Keep my changes, #1620); until
+      // then edits are kept and disk is untouched. Re-surfaces on each new
+      // external change (savedContent is left untouched by "Keep my changes").
       frontendLog(
         "file_editor",
-        `external change detected for tab ${tabId} with unsaved edits — deferring (no reload)`
+        `external change detected for tab ${tabId} with unsaved edits — surfacing conflict banner`
       );
       setDiskChangedWhileDirty(true);
       return;
     }
 
-    // Happy path: the buffer is clean, so reflect the new content. Monaco is
-    // uncontrolled, so update its model directly; preserve cursor/scroll.
-    const editor = editorRef.current;
-    const model = editor?.getModel();
-    if (editor && model) {
-      const view = editor.saveViewState();
-      setSavedContent(disk);
-      // Fires onChange -> setContent(disk); the buffer stays clean.
-      model.setValue(disk);
-      if (view) editor.restoreViewState(view);
-    } else {
-      // Not mounted yet (still loading) — updating state is enough; the load
-      // path renders from it.
-      setContent(disk);
-      setSavedContent(disk);
-    }
+    // Happy path: the buffer is clean, so reflect the new content silently.
+    applyDiskContent(disk);
     frontendLog("file_editor", `reloaded tab ${tabId} from external on-disk change`);
-  }, [meta.isRemote, isUnsavedScratch, effectivePath, savedContent, content, tabId]);
+  }, [meta.isRemote, isUnsavedScratch, effectivePath, savedContent, content, tabId, applyDiskContent]);
+
+  // Banner action "Reload from disk" (#1620): discard the unsaved buffer edits
+  // and load the on-disk version. Reuses the clean-case reload path; the only
+  // difference is it proceeds despite a dirty buffer. Once applied, the buffer
+  // matches disk (clean), which also clears the conflict banner.
+  const handleReloadFromDisk = useCallback(async () => {
+    if (meta.isRemote || isUnsavedScratch) return;
+    let disk: string;
+    try {
+      disk = await localReadFile(effectivePath);
+    } catch (err) {
+      frontendLog(
+        "file_editor",
+        `conflict reload-from-disk read failed for tab ${tabId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return;
+    }
+    applyDiskContent(disk);
+    setDiskChangedWhileDirty(false);
+    frontendLog("file_editor", `reloaded tab ${tabId} from disk, discarding unsaved edits`);
+  }, [meta.isRemote, isUnsavedScratch, effectivePath, tabId, applyDiskContent]);
+
+  // Banner action "Keep my changes" (#1620): dismiss the conflict banner and
+  // ignore the on-disk change. Clears the pending-conflict state so a later
+  // save is not blocked, but deliberately does NOT touch savedContent — the
+  // buffer stays dirty (the user still has unsaved edits) and a subsequent
+  // save overwrites disk with their version, which is the existing behaviour.
+  // If the file changes on disk again, the watcher re-surfaces the banner.
+  const handleKeepMyChanges = useCallback(() => {
+    setDiskChangedWhileDirty(false);
+    frontendLog("file_editor", `kept unsaved edits for tab ${tabId}, ignoring on-disk change`);
+  }, [tabId]);
 
   // Keep a stable ref so the (path-scoped) watch effect's event handler always
   // calls the latest reload logic without re-subscribing on every keystroke.
@@ -1116,11 +1158,31 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             nothing was overwritten.
           </span>
           <Button
+            variant="secondary"
+            size="sm"
+            icon={<RotateCcw size={14} />}
+            onClick={handleReloadFromDisk}
+            title="Discard your unsaved edits and load the version on disk"
+            data-testid="file-editor-disk-changed-reload"
+          >
+            Reload from disk
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<FileEdit size={14} />}
+            onClick={handleKeepMyChanges}
+            title="Keep your unsaved edits; ignore the on-disk change until you next save"
+            data-testid="file-editor-disk-changed-keep"
+          >
+            Keep my changes
+          </Button>
+          <Button
             variant="ghost"
             size="sm"
             iconOnly
             icon={<X size={14} />}
-            onClick={() => setDiskChangedWhileDirty(false)}
+            onClick={handleKeepMyChanges}
             title="Dismiss"
             aria-label="Dismiss on-disk change notice"
             data-testid="file-editor-disk-changed-dismiss"
