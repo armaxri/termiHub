@@ -67,6 +67,20 @@ pub enum TransferStateTag {
     Cancelled,
 }
 
+impl TransferStateTag {
+    /// Whether this tag is a settled outcome the reconcile treats as final
+    /// (`completed`/`failed`/`cancelled`). Unlike [`TransferState::is_terminal`]
+    /// — which is about the state machine's own no-further-transitions states —
+    /// this mirrors the frontend's `TERMINAL_TRANSFER_STATES`, where a
+    /// permanently `failed` transfer is also a settled row (#1645).
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            TransferStateTag::Completed | TransferStateTag::Failed | TransferStateTag::Cancelled
+        )
+    }
+}
+
 /// An event that may drive a [`TransferState`] transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferEvent {
