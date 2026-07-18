@@ -101,16 +101,16 @@ These features have something built, but there are meaningful gaps. See the
 
 Not started yet — realistic and planned for the near to medium term.
 
-| Document                                                                                               | Summary                                                                                      |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones |
-| [broadcast-input.html](backlog/broadcast-input.html)                                                   | Synchronised input across multiple terminals simultaneously                                  |
-| [embedded-unix-windows.html](backlog/embedded-unix-windows.html)                                       | Bundle BusyBox-w32 + Unix tools with the Windows build                                       |
-| [macos-code-signing-notarization.md](backlog/macos-code-signing-notarization.md)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)          |
-| [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                   |
-| [rdp-sessions.html](backlog/rdp-sessions.html)                                                         | Embedded RDP (Remote Desktop Protocol) client sessions                                       |
-| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                     |
-| [vnc-sessions.html](backlog/vnc-sessions.html)                                                         | Embedded noVNC client with WebSocket-to-TCP proxy                                            |
+| Document                                                                                               | Summary                                                                                       |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones  |
+| [broadcast-input.html](backlog/broadcast-input.html)                                                   | Synchronised input across multiple terminals simultaneously                                   |
+| [git-bash-provisioning.html](backlog/git-bash-provisioning.html)                                       | Detect Git for Windows and guide its install; use Git Bash as the Windows Unix-tools provider |
+| [macos-code-signing-notarization.md](backlog/macos-code-signing-notarization.md)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)           |
+| [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                    |
+| [rdp-sessions.html](backlog/rdp-sessions.html)                                                         | Embedded RDP (Remote Desktop Protocol) client sessions                                        |
+| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                      |
+| [vnc-sessions.html](backlog/vnc-sessions.html)                                                         | Embedded noVNC client with WebSocket-to-TCP proxy                                             |
 
 ---
 
@@ -119,10 +119,11 @@ Not started yet — realistic and planned for the near to medium term.
 Speculative features, long-horizon research, or low-priority legacy protocols.
 These may eventually be implemented, but there is no active plan.
 
-| Document                                                  | Summary                                           | Why future                                          |
-| --------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
-| [package-manager.html](future/package-manager.html)       | Plugin/tool repository with dependency resolution | Blocked on plugin system                            |
-| [plugin-system.html](future/plugin-system.html)           | Dynamic extension API (Rust + JS)                 | Very high complexity, no active demand              |
-| [remote-client-mode.html](future/remote-client-mode.html) | termiHub as a browser/iPad app via WebSocket      | Significant architectural change                    |
-| [rlogin-rsh.md](future/rlogin-rsh.md)                     | Legacy BSD rlogin/rsh protocol support            | Superseded by SSH; rarely needed                    |
-| [xdmcp-sessions.md](future/xdmcp-sessions.md)             | XDMCP remote desktop sessions                     | Requires X11 server embedding; very high complexity |
+| Document                                                        | Summary                                                | Why future                                                                       |
+| --------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| [embedded-unix-windows.html](future/embedded-unix-windows.html) | Bundle BusyBox-w32 + Unix tools with the Windows build | Superseded by [git-bash-provisioning](backlog/git-bash-provisioning.html) (#519) |
+| [package-manager.html](future/package-manager.html)             | Plugin/tool repository with dependency resolution      | Blocked on plugin system                                                         |
+| [plugin-system.html](future/plugin-system.html)                 | Dynamic extension API (Rust + JS)                      | Very high complexity, no active demand                                           |
+| [remote-client-mode.html](future/remote-client-mode.html)       | termiHub as a browser/iPad app via WebSocket           | Significant architectural change                                                 |
+| [rlogin-rsh.md](future/rlogin-rsh.md)                           | Legacy BSD rlogin/rsh protocol support                 | Superseded by SSH; rarely needed                                                 |
+| [xdmcp-sessions.md](future/xdmcp-sessions.md)                   | XDMCP remote desktop sessions                          | Requires X11 server embedding; very high complexity                              |
