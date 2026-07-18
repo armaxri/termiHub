@@ -639,15 +639,19 @@ impl AgentConnectionManager {
                 TerminalError::RemoteError(format!("Write initialize failed: {}", e))
             })?;
 
-            // Read the initialize response from the channel, skipping any
-            // notifications the agent emits before it answers (e.g. output
-            // from a session it recovered on startup). We loop until we see
-            // the message whose id matches our initialize request; otherwise
-            // a pre-initialize notification would be misread as the response
-            // ("Unexpected response to initialize"). A generous cap guards
-            // against a runaway agent that never sends the response.
+            // Read the initialize response from the channel. The agent may emit
+            // notifications before it answers (e.g. output from a session it
+            // recovered on startup, or a staged `agent.update_available` notice
+            // sent on attach). We loop until we see the message whose id matches
+            // our initialize request; otherwise a pre-initialize notification
+            // would be misread as the response ("Unexpected response to
+            // initialize"). Those notifications are buffered here and replayed
+            // once init completes (#1660) rather than dropped, so an on-attach
+            // notification is delivered to the desktop handlers. A generous cap
+            // guards against a runaway agent that never sends the response.
             const MAX_PRE_INIT_MESSAGES: u32 = 1000;
             let mut skipped: u32 = 0;
+            let mut pending_notifications: Vec<(String, Value)> = Vec::new();
             let mut line_buf = String::new();
             let (capabilities, agent_version, protocol_version, client_id) = loop {
                 let resp_line =
@@ -709,6 +713,20 @@ impl AgentConnectionManager {
                             message
                         )));
                     }
+                    jsonrpc::HandshakeOutcome::Buffer { method, params } => {
+                        skipped += 1;
+                        if skipped > MAX_PRE_INIT_MESSAGES {
+                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                            return Err(TerminalError::RemoteError(
+                                "Agent sent too many messages before the initialize response"
+                                    .into(),
+                            ));
+                        }
+                        // Retain the notification and replay it after init so an
+                        // on-attach notice is not dropped (#1660).
+                        pending_notifications.push((method, params));
+                        continue;
+                    }
                     jsonrpc::HandshakeOutcome::Skip => {
                         skipped += 1;
                         if skipped > MAX_PRE_INIT_MESSAGES {
@@ -750,6 +768,7 @@ impl AgentConnectionManager {
                     settings_task,
                     request_id,
                     agents_weak_task,
+                    pending_notifications,
                 )
                 .await;
             });
@@ -1646,6 +1665,7 @@ async fn agent_io_task(
     agent_settings: AgentSettings,
     mut request_id: u64,
     agents: WeakAgentMap,
+    pending_notifications: Vec<(String, Value)>,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
@@ -1654,6 +1674,23 @@ async fn agent_io_task(
     let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, String>>> =
         HashMap::new();
     let mut connection_error: Option<String> = None;
+
+    // Replay notifications that arrived during the `initialize` handshake before
+    // entering the live loop (#1660). Agent-level notices (`agent.update_*`) go
+    // straight to the frontend; session/monitoring notifications route through
+    // the (as-yet-empty) sender maps and are no-ops until a session registers,
+    // matching how a post-init notification for an unknown session behaves.
+    for (method, params) in &pending_notifications {
+        dispatch_agent_notification(
+            &app_handle,
+            &agent_id,
+            method,
+            params,
+            &session_outputs,
+            &monitoring_outputs,
+            &b64,
+        );
+    }
 
     // Keep the current session handle alive. On reconnect this is replaced so
     // the old session is dropped and the new one is held for the next loop iteration.
@@ -1770,21 +1807,9 @@ async fn agent_io_task(
                                         }
                                     }
                                     Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
-                                        if method == "agent.update_available" {
-                                            emit_agent_update_available(
-                                                &app_handle,
-                                                &agent_id,
-                                                &params,
-                                            );
-                                        }
-                                        if method == "agent.update_pending" {
-                                            emit_remote_agent_update_pending(
-                                                &app_handle,
-                                                &agent_id,
-                                                &params,
-                                            );
-                                        }
-                                        handle_notification(
+                                        dispatch_agent_notification(
+                                            &app_handle,
+                                            &agent_id,
                                             &method,
                                             &params,
                                             &session_outputs,
@@ -1838,7 +1863,7 @@ async fn agent_io_task(
         info!("Agent {}: connection lost, attempting reconnect", agent_id);
 
         match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
-            Ok((new_session, new_channel)) => {
+            Ok((new_session, new_channel, reconnect_notifications)) => {
                 // Replace the current session handle with the new one.
                 // This drops the old (broken) session and keeps the new one alive
                 // for the next iteration of the outer loop.
@@ -1846,6 +1871,22 @@ async fn agent_io_task(
                 channel = new_channel;
                 line_buf.clear();
                 connection_error = None;
+
+                // Replay any notifications the agent emitted before answering
+                // `initialize` on this reconnect (#1660). Sessions are already
+                // registered here, so a buffered `connection.output` routes to
+                // its channel and an `agent.update_*` notice reaches the frontend.
+                for (method, params) in &reconnect_notifications {
+                    dispatch_agent_notification(
+                        &app_handle,
+                        &agent_id,
+                        method,
+                        params,
+                        &session_outputs,
+                        &monitoring_outputs,
+                        &b64,
+                    );
+                }
 
                 // G7 (#1239): reconcile the output/monitoring senders against the
                 // sessions the agent actually recovered. Senders keyed by ids that
@@ -1953,6 +1994,34 @@ async fn list_recovered_session_ids(
     }
 }
 
+/// Dispatch a single agent notification to every place that consumes it.
+///
+/// Surfaces the agent-level update notices (`agent.update_available`,
+/// `agent.update_pending`) to the frontend, then routes session/monitoring
+/// notifications to their registered channels via [`handle_notification`].
+///
+/// Shared by the live I/O loop and the pre-init replay path (#1660): a
+/// notification that arrived during the `initialize` handshake is buffered and
+/// replayed through this same function once init completes, so on-attach
+/// notifications are no longer silently dropped.
+fn dispatch_agent_notification(
+    app_handle: &AppHandle,
+    agent_id: &str,
+    method: &str,
+    params: &Value,
+    session_outputs: &HashMap<String, OutputSender>,
+    monitoring_outputs: &HashMap<String, MonitoringSender>,
+    b64: &base64::engine::GeneralPurpose,
+) {
+    if method == "agent.update_available" {
+        emit_agent_update_available(app_handle, agent_id, params);
+    }
+    if method == "agent.update_pending" {
+        emit_remote_agent_update_pending(app_handle, agent_id, params);
+    }
+    handle_notification(method, params, session_outputs, monitoring_outputs, b64);
+}
+
 /// Handle a notification from the agent.
 ///
 /// Routes `connection.output` to session output channels and
@@ -2004,12 +2073,20 @@ fn handle_notification(
 ///
 /// Respects the `alive` flag — if it becomes `false` during the inter-attempt
 /// delay the function returns immediately so the caller can exit cleanly.
+#[allow(clippy::type_complexity)]
 async fn reconnect_agent(
     config: &RemoteAgentConfig,
     agent_settings: &AgentSettings,
     request_id: &mut u64,
     alive: &Arc<AtomicBool>,
-) -> Result<(SshSession, russh::Channel<russh::client::Msg>), String> {
+) -> Result<
+    (
+        SshSession,
+        russh::Channel<russh::client::Msg>,
+        Vec<(String, Value)>,
+    ),
+    String,
+> {
     const MAX_RETRIES: u32 = 10;
     const MAX_BACKOFF_SECS: u64 = 30;
 
@@ -2097,6 +2174,11 @@ async fn reconnect_agent(
         let mut line_buf = String::new();
         let mut skipped: u32 = 0;
         let mut success = false;
+        // Notifications the agent emits before answering `initialize` on this
+        // reconnect — buffered for replay after the channel is handed back, so
+        // an on-attach notice is not dropped (#1660). Reset per attempt: a
+        // failed attempt's buffer belongs to a channel that is being discarded.
+        let mut buffered: Vec<(String, Value)> = Vec::new();
         loop {
             let resp_line =
                 match read_handshake_line(&mut channel, &config.host, &mut line_buf).await {
@@ -2135,6 +2217,18 @@ async fn reconnect_agent(
                     );
                     break;
                 }
+                jsonrpc::HandshakeOutcome::Buffer { method, params } => {
+                    skipped += 1;
+                    if skipped > MAX_PRE_INIT_MESSAGES {
+                        warn!(
+                            "Reconnect attempt {} failed (too many messages before init response)",
+                            attempt + 1
+                        );
+                        break;
+                    }
+                    buffered.push((method, params));
+                    continue;
+                }
                 jsonrpc::HandshakeOutcome::Skip => {
                     skipped += 1;
                     if skipped > MAX_PRE_INIT_MESSAGES {
@@ -2150,7 +2244,7 @@ async fn reconnect_agent(
         }
 
         if success {
-            return Ok((session, channel));
+            return Ok((session, channel, buffered));
         }
     }
 
@@ -2555,6 +2649,65 @@ mod tests {
         assert_eq!(stats.hostname, "myhost");
         assert!((stats.cpu_usage_percent - 50.0).abs() < f64::EPSILON);
         assert_eq!(stats.os_info, "Linux 6.1");
+    }
+
+    /// Regression test for #1660: a notification the agent emits *before* it
+    /// answers `initialize` must be buffered during the handshake and replayed
+    /// afterwards, not silently dropped. This reproduces the handshake read
+    /// loop's classification over a message stream (notification, then the init
+    /// response) and confirms the buffered notification still reaches the
+    /// desktop handlers. Before the fix, `classify_handshake_message` returned
+    /// `Skip` for the notification and the pre-init notice was discarded.
+    #[test]
+    fn preinit_notification_is_buffered_and_replayed() {
+        let request_id: u64 = 1;
+
+        // The agent emits a session output notification, then answers initialize.
+        let payload = base64::engine::general_purpose::STANDARD.encode(b"hello");
+        let lines = [
+            format!(
+                r#"{{"jsonrpc":"2.0","method":"connection.output","params":{{"session_id":"sess-1","data":"{payload}"}}}}"#
+            ),
+            r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}"#.to_string(),
+        ];
+
+        // Drive the same classification the handshake loop uses, collecting
+        // pre-init notifications until the initialize response arrives.
+        let mut buffered: Vec<(String, Value)> = Vec::new();
+        let mut saw_response = false;
+        for line in &lines {
+            let msg = jsonrpc::parse_message(line).expect("valid message");
+            match jsonrpc::classify_handshake_message(msg, request_id) {
+                jsonrpc::HandshakeOutcome::Response(_) => {
+                    saw_response = true;
+                    break;
+                }
+                jsonrpc::HandshakeOutcome::Buffer { method, params } => {
+                    buffered.push((method, params));
+                }
+                jsonrpc::HandshakeOutcome::Rejected(m) => panic!("unexpected rejection: {m}"),
+                jsonrpc::HandshakeOutcome::Skip => panic!("notification should be buffered"),
+            }
+        }
+
+        assert!(saw_response, "should have seen the initialize response");
+        assert_eq!(buffered.len(), 1, "pre-init notification must be retained");
+        assert_eq!(buffered[0].0, "connection.output");
+
+        // Replaying the buffered notification after init reaches the registered
+        // session output channel — the same dispatch the live loop performs.
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
+        let monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
+        session_outputs.insert("sess-1".to_string(), tx);
+
+        for (method, params) in &buffered {
+            handle_notification(method, params, &session_outputs, &monitoring_outputs, &b64);
+        }
+
+        let data = rx.try_recv().expect("buffered output should be delivered");
+        assert_eq!(data, b"hello".to_vec());
     }
 
     /// handle_notification silently ignores monitoring data for unknown hosts.
