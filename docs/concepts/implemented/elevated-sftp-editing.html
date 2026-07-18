@@ -313,11 +313,11 @@
       <header class="concept-header">
         <h1>Elevated (sudo) SFTP Editing + Early Read-Only Detection</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/970">#970</a></span
           >
-          <span><code>docs/concepts/backlog/elevated-sftp-editing.html</code></span>
+          <span><code>docs/concepts/implemented/elevated-sftp-editing.html</code></span>
         </div>
       </header>
 
@@ -1575,8 +1575,11 @@ flowchart LR
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> <code>6e5d9586</code> (base develop commit at concept
-          creation) · <strong>Status:</strong> concept only — not yet implemented
+          <strong>Last synced:</strong> 2026-07-18 (status reconciliation) · previously
+          <code>6e5d9586</code> at concept creation · <strong>Status:</strong> converged (no open
+          functional gaps). The elevated-sudo epic
+          <a href="https://github.com/armaxri/termiHub/issues/1323">#1323</a> closed fully-delivered;
+          concept moved <code>backlog/</code> → <code>implemented/</code>.
         </p>
 
         <h3>Open divergences</h3>
@@ -1593,36 +1596,7 @@ flowchart LR
             </thead>
             <tbody>
               <tr>
-                <td>1</td>
-                <td>
-                  Early read-only detection (probe + <code>FileEntry.writable</code>, badge, banner)
-                </td>
-                <td>Not implemented — save failure is only surfaced at save time (#969)</td>
-                <td>Missing</td>
-                <td>Implement per <code>concept.md</code> §1, then re-sync</td>
-              </tr>
-              <tr>
-                <td>2</td>
-                <td>Elevated (sudo) save via exec channel + temp upload</td>
-                <td>
-                  Not implemented — only direct SFTP <code>create</code>/<code>write_all</code>
-                </td>
-                <td>Missing</td>
-                <td>Implement per <code>concept.md</code> §2, then re-sync</td>
-              </tr>
-              <tr>
-                <td>3</td>
-                <td><code>CredentialType::SudoPassword</code> for opt-in persistence</td>
-                <td>Only <code>Password</code> and <code>KeyPassphrase</code> exist</td>
-                <td>Missing</td>
-                <td>Implement per <code>concept.md</code> §3, then re-sync</td>
-              </tr>
-              <tr>
-                <td>4</td>
-                <td><code>SudoPromptDialog</code> component</td>
-                <td>No such component</td>
-                <td>Missing</td>
-                <td>Build alongside the elevated-save UI</td>
+                <td colspan="5">None open — all four divergences resolved; see Resolved below.</td>
               </tr>
             </tbody>
           </table>
@@ -1659,9 +1633,39 @@ flowchart LR
             </thead>
             <tbody>
               <tr>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>2026-07-18</td>
+                <td>1</td>
+                <td>
+                  Early read-only detection — the write-open probe (#1324/#1325) sets
+                  <code>writable</code> (<code>true</code>/<code>false</code>/<code>"unknown"</code>)
+                  in <code>src/components/FileEditor/FileEditor.tsx</code>; <code>false</code>
+                  surfaces the read-only badge and dismissible banner.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-18</td>
+                <td>2</td>
+                <td>
+                  Elevated (sudo) save — <code>sftpWriteFileContentElevated</code> /
+                  <code>ElevatedWriteResult</code> via the exec channel (#1328) in
+                  <code>src-tauri/src/files/sftp.rs</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-18</td>
+                <td>3</td>
+                <td>
+                  <code>CredentialType::SudoPassword</code> shipped in
+                  <code>src-tauri/src/credential/types.rs</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-18</td>
+                <td>4</td>
+                <td>
+                  <code>SudoPromptDialog</code> shipped at
+                  <code>src/components/FileEditor/SudoPromptDialog.tsx</code>.
+                </td>
               </tr>
             </tbody>
           </table>

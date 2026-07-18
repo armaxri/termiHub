@@ -438,9 +438,9 @@
       <header class="concept-header">
         <h1>Shell Context Menu &amp; CLI Spawn Integration</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span>GitHub Issue: <a href="#">TBD</a></span>
-          <span><code>docs/concepts/backlog/shell-context-menu-integration.html</code></span>
+          <span><code>docs/concepts/implemented/shell-context-menu-integration.html</code></span>
         </div>
       </header>
 
@@ -2233,14 +2233,14 @@ interface SpawnChoice {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-16 at commit <code>dba98550</code> ·
-          <strong>Status:</strong> diverged (partial — the core spawn/IPC/CLI path and all three
-          per-OS registrations are implemented; one sub-issue, the in-app Session Picker
-          <a href="https://github.com/armaxri/termiHub/issues/1366">#1366</a>, is still open, and the
-          deep-link source is deliberately deferred). Concept moved <code>backlog/</code> →
-          <code>partial/</code> as the epic
-          <a href="https://github.com/armaxri/termiHub/issues/1363">#1363</a> wrap-up
-          (<a href="https://github.com/armaxri/termiHub/issues/1373">#1373</a>).
+          <strong>Last synced:</strong> 2026-07-18 (status reconciliation) · previously 2026-07-16
+          at commit <code>dba98550</code> · <strong>Status:</strong> converged (the in-app Session
+          Picker <a href="https://github.com/armaxri/termiHub/issues/1366">#1366</a> shipped as
+          <code>src/components/Spawn/SpawnPicker.tsx</code>, resolving the last functional
+          divergence; the <code>termihub://</code> deep-link source remains deliberately deferred as
+          future/out-of-scope). Concept moved <code>partial/</code> → <code>implemented/</code> as
+          the epic <a href="https://github.com/armaxri/termiHub/issues/1363">#1363</a> closed
+          fully-delivered.
         </p>
 
         <h3>Open divergences</h3>
@@ -2256,25 +2256,6 @@ interface SpawnChoice {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>1</td>
-                <td>
-                  In-app <strong>Session Picker</strong> dialog for local / WSL / Docker / Podman,
-                  reached via the <code>--pick</code> flag and the "Show session picker" fallback when
-                  no connection type resolves.
-                </td>
-                <td>
-                  No picker dialog component exists (no <code>SessionPicker</code> under
-                  <code>src/components/</code>). The <code>--pick</code> flag and the
-                  <code>ShowSessionPicker</code> fallback are modelled in the config/resolver
-                  (<code>connection/shell_integration.rs</code>) but have no UI to present.
-                </td>
-                <td>Missing</td>
-                <td>
-                  Implement per SI-3
-                  <a href="https://github.com/armaxri/termiHub/issues/1366">#1366</a>, then re-sync.
-                </td>
-              </tr>
               <tr>
                 <td>2</td>
                 <td>
@@ -2306,6 +2287,19 @@ interface SpawnChoice {
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>2026-07-18</td>
+                <td>#1366</td>
+                <td>
+                  In-app <strong>Session Picker</strong> — shipped as
+                  <code>src/components/Spawn/SpawnPicker.tsx</code> (the interactive picker for
+                  <code>--pick</code>, grouping this host's real spawn targets into Local shells / WSL
+                  / Docker / Podman). The <code>--pick</code> request routes to
+                  <code>SPAWN_PICKER_REQUESTED_EVENT</code> in
+                  <code>src-tauri/src/spawn/handler.rs</code>. Resolves the last open functional
+                  divergence; concept matches as-built.
+                </td>
+              </tr>
               <tr>
                 <td>2026-07</td>
                 <td>#1364</td>

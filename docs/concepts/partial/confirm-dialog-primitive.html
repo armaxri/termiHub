@@ -61,13 +61,13 @@
       <header class="concept-header">
         <h1>ConfirmDialog Primitive</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Partial · primitive built, named call-site migration pending</span>
           <span
             >GitHub Issue:
             <a href="https://github.com/armaxri/termiHub/issues/1391">#1391</a> (follow-up to
             <a href="https://github.com/armaxri/termiHub/issues/1348">#1348</a>)</span
           >
-          <span><code>docs/concepts/backlog/confirm-dialog-primitive.html</code></span>
+          <span><code>docs/concepts/partial/confirm-dialog-primitive.html</code></span>
         </div>
       </header>
 
@@ -741,7 +741,12 @@ export interface ConfirmDialogProps {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+          <strong>Last synced:</strong> 2026-07-18 (status reconciliation) ·
+          <strong>Status:</strong> diverged (partial — the <code>ConfirmDialog</code> primitive
+          shipped with the <code>ConfirmDontAskAgain</code> Checkbox opt-out and is used by several
+          dialogs, but the three call sites this concept names still build on raw <code>Modal</code>
+          and the Port Scanner large-scan suppression is unbuilt). Concept moved
+          <code>backlog/</code> → <code>partial/</code>.
         </p>
         <div class="table-wrap">
           <table>
@@ -758,26 +763,35 @@ export interface ConfirmDialogProps {
               <tr>
                 <td>1</td>
                 <td><code>ConfirmDialog</code> primitive in <code>src/components/ui/</code></td>
-                <td>Does not exist; confirm shape hand-rolled per call site</td>
-                <td>Missing</td>
-                <td>Implement per this concept, then re-sync</td>
+                <td>
+                  <strong>Resolved</strong> — <code>src/components/ui/ConfirmDialog.tsx</code> exists
+                  (Modal + Button + optional <code>Checkbox</code>) with a
+                  <code>ConfirmDontAskAgain</code> opt-out prop, and is used by several dialogs
+                  (ConfirmSessionCloseDialog, TabBar, UnlockDialog, OpenConnectionsModal, …).
+                </td>
+                <td>Resolved</td>
+                <td>—</td>
               </tr>
               <tr>
                 <td>2</td>
-                <td>Three call sites migrated onto <code>ConfirmDialog</code></td>
+                <td>Three named call sites migrated onto <code>ConfirmDialog</code></td>
                 <td>
-                  <code>ConfirmDeleteDialog.tsx</code>, Port Scanner + WoL modals each build on raw
-                  <code>Modal</code>
+                  Still open — <code>Sidebar/ConfirmDeleteDialog.tsx</code>, the Port Scanner
+                  large-scan modal and the WoL save modal all still build on raw <code>Modal</code>.
                 </td>
                 <td>Missing</td>
-                <td>Migrate during implementation; preserve existing test ids</td>
+                <td>Migrate the three named call sites; preserve existing test ids</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>"Don't warn again" affordance on the large-scan warning</td>
-                <td>Port Scanner warning has no suppression option</td>
+                <td>
+                  Still open — the primitive supports it via <code>ConfirmDontAskAgain</code>, but
+                  <code>PortScannerPanel.tsx</code>'s warning is a raw <code>Modal</code> with only
+                  Cancel / Start and no suppression option.
+                </td>
                 <td>Missing</td>
-                <td>Add via <code>dontWarnAgain</code> + a caller-owned stored preference</td>
+                <td>Add via the primitive's opt-out + a caller-owned stored preference</td>
               </tr>
             </tbody>
           </table>
