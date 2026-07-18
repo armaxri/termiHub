@@ -727,6 +727,8 @@ pub fn run() {
             commands::files::local_write_file,
             commands::files::watch_local_file,
             commands::files::unwatch_local_file,
+            commands::files::watch_local_dir,
+            commands::files::unwatch_local_dir,
             commands::files::sftp_read_file_content,
             commands::files::sftp_write_file_content,
             commands::files::sftp_write_file_content_elevated,
