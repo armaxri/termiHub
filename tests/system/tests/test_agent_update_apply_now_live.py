@@ -19,19 +19,35 @@ announce one. So this drives a dedicated armed image,
 ``remote-agent-pending-update`` (compose profile ``agent``, port 2214), built from
 the same context with ``PENDING_UPDATE_VERSION`` set.
 
+## Two independent pieces, and why the banner is still injected
+
+Driving Apply Now's deferred branch live needs **two** things, and the armed
+container provides only the second:
+
+1. **A surfaced banner.** The #1546 hook does emit ``agent.update_available`` on
+   attach — but the *desktop* drops it: that notification arrives during the
+   ``initialize`` handshake, and the connect path classifies every pre-initialize
+   message as skip-and-discard (``agent_manager.rs`` → ``HandshakeOutcome::Skip``)
+   to avoid misreading a notification as the init response. So the banner is
+   surfaced the same proven way as the surfacing suite — ``emitEvent`` through the
+   real ``listen`` path (the store fold is what the banner renders from). In
+   production this handshake-window drop is moot: the real trigger is the 24h
+   self-update timer, which never fires in the sub-second handshake.
+2. **A real ``pending_update`` on the live agent.** This is the armed container's
+   job (the #1546 hook, delivered via sshd's per-user environment). Without it,
+   "Apply Now" — which sends no binary and consumes the agent's staged update —
+   would get ``NoPendingUpdate`` and error, not defer.
+
 ## What is driven here, and the coverage boundary
 
-The reachable Apply-Now outcome against a live agent is the **deferred / busy**
-branch:
+With both in place, the reachable Apply-Now outcome against a live agent is the
+**deferred / busy** branch:
 
-* the armed agent announces its staged update on attach, so the banner surfaces
-  through the real ``listen`` path with **no injected event** (unlike the
-  surfacing suite, which must fake the stimulus with ``emitEvent``),
 * with a real shell session open the agent is busy, so "Apply Now" drives the
   live ``requestAgentDeferredUpdate`` desktop command → ``agent.request_deferred_update``
   RPC → ``applied: false`` — the one seam no other test exercises through the
   desktop UI (Vitest mocks the command; the Rust integration suites drive the RPC
-  directly),
+  directly), and it defers against the agent's *real* staged update, not a faked one,
 * the deferred handler dismisses the banner while **keeping** the staged update
   (it still lands on the last disconnect) and **never interrupts** the session.
 
@@ -62,6 +78,7 @@ from termihub_harness import (
     SidebarUi,
     SystemTest,
     TabsUi,
+    TerminalUi,
     unique_name,
 )
 
@@ -75,6 +92,7 @@ class TestAgentUpdateApplyNowLive(
     SettingsUi,
     SidebarUi,
     TabsUi,
+    TerminalUi,
     SystemTest,
 ):
     """Drive the banner's deferred Apply-Now path against the armed agent container."""
@@ -103,26 +121,32 @@ class TestAgentUpdateApplyNowLive(
     def test_apply_now_defers_while_a_session_is_busy(self):
         agent = self._create_and_connect("agent-apply-now-deferred")
 
-        # The armed agent announces its staged update on attach (#1546 hook), so
-        # the banner surfaces through the real listener without any injected event.
+        # Make the agent busy first: a live shell session on the agent holds up an
+        # immediate apply, so "Apply Now" is forced down the deferred branch. A live
+        # terminal is the signal the session is established over the agent (the
+        # ephemeral shell is the agent's active-session count, not the desktop's
+        # `agentSessions` store, which tracks only registered/persistent sessions).
+        before = self.tab_count()
+        self.new_shell_session(agent["name"])
+        self.wait(lambda: self.tab_count() > before, what="the new shell-session tab")
+        self.wait(self.has_terminal, what="the agent shell terminal session to go live")
+
+        # Surface the banner through the real listener (see the module docstring on
+        # why the hook's on-attach notification is dropped by the desktop handshake).
+        # The armed agent independently holds the *real* pending_update that makes
+        # the Apply Now RPC below defer rather than error.
+        self.announce_agent_update(
+            agent["id"], available_version=REMOTE_AGENT_PENDING_VERSION
+        )
         text = self.wait_agent_update_banner(agent["id"])
         assert REMOTE_AGENT_PENDING_VERSION in text
         update = self.agent_update_state(agent["id"])
         assert update is not None
         assert update["staged"] is True
 
-        # Make the agent busy: an open shell session holds up an immediate apply,
-        # so "Apply Now" is forced down the deferred branch.
-        before = self.tab_count()
-        self.new_shell_session(agent["name"])
-        self.wait(lambda: self.tab_count() > before, what="the new shell-session tab")
-        self.wait(
-            lambda: len(self.agent_sessions(agent["id"])) >= 1,
-            what="the agent to report an active session",
-        )
-
         # Apply Now → live requestAgentDeferredUpdate command → the agent's
-        # request_deferred_update RPC. Busy, so it defers (applied: false).
+        # request_deferred_update RPC. Busy + a real staged update, so it defers
+        # (applied: false) against the agent's genuine pending_update.
         self.apply_agent_update_now(agent["id"])
 
         # The deferred handler dismisses the banner (an errored apply would leave
@@ -135,8 +159,8 @@ class TestAgentUpdateApplyNowLive(
         self.wait_no_agent_update_banner(agent["id"])
 
         # Deferred keeps the staged update — it still lands on the last disconnect
-        # — and never interrupts the active session.
+        # — and never interrupts the busy session (its terminal stays live).
         assert self.agent_update_state(agent["id"]) is not None
         assert (
-            len(self.agent_sessions(agent["id"])) >= 1
+            self.has_terminal()
         ), "the deferred request must not tear down the busy session"
