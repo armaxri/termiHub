@@ -73,6 +73,7 @@ function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
     fileName: "file.txt",
     path: "/remote/file.txt",
     state: "completed",
+    settled: true,
     transferred: 100,
     total: 100,
     speed: 0,
@@ -279,8 +280,24 @@ describe("appStore — transfer queue slice (#1337)", () => {
     it("settles a stuck active row to failed/cancelled from a terminal snapshot", () => {
       const store = useAppStore.getState();
       store.addTransfer(entry({ id: "t1", state: "active", transferred: 40 }));
-      store.reconcileTransferQueue([snapshot({ state: "failed", transferred: 40 })]);
+      store.reconcileTransferQueue([snapshot({ state: "failed", settled: true, transferred: 40 })]);
       expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({ state: "failed" });
+    });
+
+    it("does NOT settle a row from a transient rich `failed` snapshot (settled:false, #1657)", () => {
+      // A rich (FTP) transfer that is momentarily `failed` mid auto-retry — or
+      // awaiting a manual retry — lists as `failed` but `settled: false`. The
+      // reconcile must leave the row non-terminal, so a subsequent recovery (or
+      // its dropped terminal event) can still settle it correctly.
+      const store = useAppStore.getState();
+      store.addTransfer(entry({ id: "t1", state: "active", transferred: 40, percent: 40 }));
+      store.reconcileTransferQueue([
+        snapshot({ state: "failed", settled: false, transferred: 40 }),
+      ]);
+      expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({
+        state: "active",
+        transferred: 40,
+      });
     });
 
     it("is idempotent — never clobbers a row an event already settled", () => {

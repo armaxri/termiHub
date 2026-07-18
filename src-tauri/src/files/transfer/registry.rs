@@ -54,6 +54,19 @@ pub struct TransferSnapshot {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub path: String,
     pub state: TransferStateTag,
+    /// Whether this snapshot is a *genuinely* settled outcome the frontend
+    /// reconcile may fold into a stuck row (#1657).
+    ///
+    /// This is stricter than [`TransferStateTag::is_terminal`]. A **live** rich
+    /// (FTP) handle in a `failed` state is not settled: it may still auto-retry
+    /// after backoff, or sit awaiting a manual retry — so it reports
+    /// `state: failed` with `settled: false`. Only [`TransferState::is_terminal`]
+    /// states from a live handle (`completed`/`cancelled`) and
+    /// [retained-terminal](Self) snapshots (a completed/cancelled rich transfer,
+    /// or a genuinely-final legacy SFTP transfer) are `settled`. This stops a
+    /// transient mid-retry failure from being reconciled into a terminal
+    /// `failed` row (which the reconcile guard would then never re-settle).
+    pub settled: bool,
     pub transferred: u64,
     pub total: u64,
     pub speed: u64,
@@ -177,6 +190,10 @@ impl TransferHandle {
             file_name: self.file_name.clone(),
             path: self.path.clone(),
             state: c.state.tag(),
+            // A live rich handle is settled only when genuinely terminal
+            // (completed/cancelled). A live `failed` handle may still auto-retry
+            // or await a manual retry, so it is *not* settled (#1657).
+            settled: c.state.is_terminal(),
             transferred: c.transferred,
             total: c.total,
             speed: c.speed,
@@ -218,6 +235,8 @@ impl LegacyEntry {
             file_name: self.file_name.clone(),
             path: self.path.clone(),
             state: TransferStateTag::Active,
+            // A live legacy transfer is always in-flight, never settled (#1657).
+            settled: false,
             transferred: 0,
             total: self.total,
             speed: 0,
@@ -401,7 +420,11 @@ impl TransferRegistry {
 
     /// Push a terminal snapshot into the retention history, then evict anything
     /// past the capacity or TTL bound. Callers hold the state lock.
-    fn record_terminal_locked(state: &mut RegistryState, snapshot: TransferSnapshot) {
+    fn record_terminal_locked(state: &mut RegistryState, mut snapshot: TransferSnapshot) {
+        // A retained terminal is, by definition, a genuinely-final outcome the
+        // reconcile may settle a stuck row to — including a legacy SFTP failure
+        // (which, unlike a live rich `failed` handle, never retries) (#1657).
+        snapshot.settled = true;
         let now = Instant::now();
         state
             .terminal
@@ -957,6 +980,66 @@ mod tests {
         assert_eq!(list.len(), 1, "the completed transfer is retained");
         assert_eq!(list[0].transfer_id, "r1");
         assert_eq!(list[0].state, TransferStateTag::Completed);
+        assert!(list[0].settled, "a retained completed transfer is settled");
+    }
+
+    // --- Genuinely-settled vs transient rich `failed` (#1657) ---
+
+    #[test]
+    fn a_live_rich_failed_handle_is_listed_failed_but_not_settled() {
+        // A rich (FTP) transfer that failed an attempt but may still auto-retry
+        // (retryable) — or has exhausted retries and sits awaiting a manual
+        // retry (non-retryable) — is a *live* handle. It must surface its
+        // `failed` state for display, but must NOT be `settled`, so a reconcile
+        // never folds a still-recoverable transfer into a terminal `failed` row
+        // (#1657).
+        for attempt in [1, MAX_RETRIES] {
+            let reg = TransferRegistry::new();
+            let h = enq(&reg, "r1", "sess-a");
+            reg.request_slot(&h); // Queued → Active
+            h.transition(TransferEvent::Fail { attempt }); // Active → Failed
+            assert!(
+                matches!(h.state(), TransferState::Failed { .. }),
+                "the handle is in a failed state"
+            );
+
+            let list = reg.list(None);
+            assert_eq!(list.len(), 1, "the live failed handle is still listed");
+            assert_eq!(list[0].state, TransferStateTag::Failed);
+            assert!(
+                !list[0].settled,
+                "a live rich `failed` handle (attempt {attempt}) is not settled — it may still retry"
+            );
+        }
+    }
+
+    #[test]
+    fn a_retained_legacy_failure_is_settled() {
+        // Unlike a live rich `failed` handle, a legacy SFTP transfer that failed
+        // is genuinely final (it does not retry through the registry), so its
+        // retained snapshot is settled and a reconcile may fold it in (#1657).
+        let reg = TransferRegistry::new();
+        reg.register("s1", "sess-a", TransferDirection::Download, "f", "/f", 100);
+        reg.finish_legacy("s1", TransferStateTag::Failed, 30);
+
+        let list = reg.list(None);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].state, TransferStateTag::Failed);
+        assert!(
+            list[0].settled,
+            "a retained legacy failure is genuinely settled"
+        );
+    }
+
+    #[test]
+    fn a_live_active_rich_handle_is_not_settled() {
+        let reg = TransferRegistry::new();
+        let h = enq(&reg, "r1", "sess-a");
+        reg.request_slot(&h); // Active
+        let list = reg.list(None);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].state, TransferStateTag::Active);
+        assert!(!list[0].settled, "a live active transfer is not settled");
     }
 
     #[test]

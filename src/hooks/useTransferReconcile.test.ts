@@ -9,14 +9,24 @@ vi.mock("@/services/api", async () => {
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
+// Spy on `isTerminalTransferState` (keeping its real behaviour) so a test can
+// prove the pending-row scan is memoized and does not re-run on unrelated store
+// mutations (#1657).
+vi.mock("@/types/transfer", async () => {
+  const actual = await vi.importActual<typeof import("@/types/transfer")>("@/types/transfer");
+  return { ...actual, isTerminalTransferState: vi.fn(actual.isTerminalTransferState) };
+});
+
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { useTransferReconcile } from "./useTransferReconcile";
 import { useAppStore } from "@/store/appStore";
 import { transferList } from "@/services/api";
+import { isTerminalTransferState } from "@/types/transfer";
 import type { TransferSnapshot } from "@/services/api";
 
 const mockTransferList = vi.mocked(transferList);
+const mockIsTerminal = vi.mocked(isTerminalTransferState);
 
 function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
   return {
@@ -26,6 +36,7 @@ function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
     fileName: "file.txt",
     path: "/remote/file.txt",
     state: "completed",
+    settled: true,
     transferred: 100,
     total: 100,
     speed: 0,
@@ -111,5 +122,49 @@ describe("useTransferReconcile (#1645)", () => {
     await mountHook();
 
     expect(mockTransferList).not.toHaveBeenCalled();
+  });
+
+  it("does not settle a stuck row from a transient rich `failed` snapshot (settled:false, #1657)", async () => {
+    // The row is seeded/stuck at `queued`; the backend reports the transfer as
+    // `failed` but `settled: false` — a live rich handle mid auto-retry. The
+    // reconcile must leave the row non-terminal so a later recovery can settle
+    // it, rather than freezing it at `failed`.
+    useAppStore.getState().seedTransferQueue({
+      id: "t1",
+      sessionId: "sess-a",
+      direction: "download",
+      name: "file.txt",
+      path: "/remote/file.txt",
+    });
+    mockTransferList.mockResolvedValue([snapshot({ state: "failed", settled: false })]);
+
+    await mountHook();
+
+    expect(mockTransferList).toHaveBeenCalled();
+    expect(useAppStore.getState().transferQueue["t1"].state).toBe("queued");
+  });
+
+  it("does not re-scan the queue for pending rows on an unrelated store mutation (#1657)", async () => {
+    // With a pending row present, the pending-row derivation is memoized on the
+    // `transferQueue` reference, so an unrelated `setState` (which leaves that
+    // reference untouched) must not re-run the O(rows) scan.
+    useAppStore.getState().seedTransferQueue({
+      id: "t1",
+      sessionId: "sess-a",
+      direction: "download",
+      name: "file.txt",
+      path: "/remote/file.txt",
+    });
+
+    await mountHook();
+    // The mount's initial render already ran the scan; from here it must not.
+    mockIsTerminal.mockClear();
+
+    act(() => {
+      // A mutation to an unrelated slice — the queue reference is unchanged.
+      useAppStore.setState({ tabCwds: { "tab-1": "/home/user" } });
+    });
+
+    expect(mockIsTerminal).not.toHaveBeenCalled();
   });
 });
