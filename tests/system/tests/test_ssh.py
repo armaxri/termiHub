@@ -23,6 +23,7 @@ from termihub_harness import (
     SSH_KEY_PATH,
     SSH_PASSWORD_PORT,
     SSH_USERNAME,
+    SshServerControl,
     SystemTest,
     TabsUi,
     TerminalUi,
@@ -228,15 +229,67 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
         )
 
 
-# SSH-06 (server disconnect mid-session) and SSH-07 (X11 forwarding) were left
-# unimplemented in the WebdriverIO suite for the same reasons here: stopping a
-# shared container mid-test would break sibling tests, and X11 needs an X server
-# on the host. Tracked as follow-ups.
-@pytest.mark.skip(reason="needs to stop a shared container mid-test (SSH-06)")
-def test_handles_server_disconnect():
-    ...
+@pytest.mark.usefixtures("ssh_password_fixtures")
+class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
+    """SSH-06: a mid-session server-side disconnect surfaces the disconnect UX.
+
+    The WebdriverIO suite left this unimplemented because stopping the shared
+    ``ssh-password`` container mid-test would break the sibling SSH suites that
+    share it. Instead of touching the container, :class:`SshServerControl` kills
+    only the single sshd session *this* test opened — identified by diffing the
+    session-PID set around the connect — so the container keeps serving every
+    other suite untouched (#1650). The abrupt ``SIGKILL`` (not a clean logout) is
+    a genuine server-side drop, so the client classifies it as a dropped session
+    (``terminal-exit`` with ``reason: "dropped"``) and shows the disconnect
+    overlay rather than entering the calmer clean-exit / view-mode path.
+    """
+
+    def test_handles_server_disconnect(self):
+        control = SshServerControl()
+        if not control.available:
+            pytest.skip("no container runtime to drop the SSH session server-side")
+
+        # Baseline sshd sessions before this test connects, so the session this
+        # connection spawns can be isolated by set difference and killed alone.
+        pids_before = control.session_pids()
+
+        name = unique_name("ssh-disconnect")
+        self.create_ssh_connection(
+            name,
+            host=HOST,
+            port=SSH_PASSWORD_PORT,
+            username=SSH_USERNAME,
+            connect=True,
+        )
+        self.handle_password_prompt()
+        tab = self.wait(lambda: self.find_tab(name), what="the SSH tab")
+        self.wait(self.has_terminal, what="the SSH terminal session")
+        tab_id = tab["id"]
+
+        # Drop *only* this connection's sshd session at the server.
+        new_pids = control.session_pids() - pids_before
+        assert new_pids, "expected a new sshd session for the SSH connection"
+        control.kill_sessions(new_pids)
+
+        # The client must surface the disconnect: the tab's session is marked
+        # exited and the disconnect overlay (offering a reconnect) appears. This
+        # is the reconnect/error UX the scenario exists to verify — not weakened
+        # to a bare "did not crash" check.
+        self.wait(
+            lambda: self.driver.get_state("terminalExitedTabs").get(tab_id) is True,
+            what="the SSH tab to be marked disconnected",
+        )
+        assert self.driver.exists("terminal-disconnect-overlay")
+        assert self.driver.exists("terminal-disconnect-reconnect-btn")
+
+        # A dropped session must leave the tab in place (disconnect ≠ tab closed),
+        # so the user can read the scrollback and reconnect.
+        assert self.find_tab(name) is not None
 
 
+# SSH-07 (X11 forwarding) was left unimplemented in the WebdriverIO suite because
+# it needs an X server on the host; automated end-to-end X11 forwarding is instead
+# covered by core/tests/ssh_x11.rs (a fake loopback X server, no host display).
 @pytest.mark.skip(
     reason="needs an X server on the host (SSH-07); automated end-to-end X11 "
     "forwarding is instead covered by core/tests/ssh_x11.rs, which uses a fake "
