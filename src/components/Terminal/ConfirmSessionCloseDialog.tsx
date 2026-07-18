@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { showReopenToast } from "@/utils/reopenTab";
@@ -9,8 +10,12 @@ import { showReopenToast } from "@/utils/reopenTab";
  *
  * Reads `pendingSessionCloseConfirm` from the store; renders nothing when no
  * request is pending. Confirming performs the close (and, for a tab with a known
- * connection, fires an Undo/Reopen toast). The dialog's "Don't ask again" toggle
- * persists `confirmCloseLiveSession: false` so future closes skip the prompt.
+ * connection, fires an Undo/Reopen toast). The dialog's "Don't ask again"
+ * checkbox is local state that only takes effect on confirm: confirming with it
+ * ticked persists `confirmCloseLiveSession: false` so future closes skip the
+ * prompt, while cancelling discards the tick and leaves the setting untouched.
+ * This honours the checkbox contract from {@link ConfirmDialog} (a checkbox
+ * applies on confirm, not the moment it is ticked).
  */
 export function ConfirmSessionCloseDialog() {
   const request = useAppStore((s) => s.pendingSessionCloseConfirm);
@@ -19,24 +24,28 @@ export function ConfirmSessionCloseDialog() {
   const removePanel = useAppStore((s) => s.removePanel);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
-  const dontAsk = settings.confirmCloseLiveSession === false;
+  // Local, deferred checkbox state — committed only on confirm, discarded on cancel.
+  const [dontAsk, setDontAsk] = useState(false);
 
   if (!request) return null;
 
-  const handleCancel = () => setRequest(null);
+  const handleCancel = () => {
+    setDontAsk(false);
+    setRequest(null);
+  };
 
   const handleConfirm = () => {
+    if (dontAsk) {
+      void updateSettings({ ...settings, confirmCloseLiveSession: false });
+    }
     if (request.kind === "tab") {
       closeTab(request.tabId, request.panelId);
       showReopenToast(request.reopen);
     } else {
       removePanel(request.panelId);
     }
+    setDontAsk(false);
     setRequest(null);
-  };
-
-  const handleDontAskChange = (checked: boolean) => {
-    void updateSettings({ ...settings, confirmCloseLiveSession: !checked });
   };
 
   const isTab = request.kind === "tab";
@@ -56,7 +65,7 @@ export function ConfirmSessionCloseDialog() {
       onCancel={handleCancel}
       dontAskAgain={{
         checked: dontAsk,
-        onChange: handleDontAskChange,
+        onChange: setDontAsk,
         label: "Don't ask again",
       }}
       data-testid="confirm-session-close-dialog"

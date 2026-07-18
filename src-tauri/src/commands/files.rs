@@ -334,6 +334,32 @@ pub fn local_write_file(path: String, content: String) -> Result<(), TerminalErr
     crate::files::local::write_file_content(&path, &content)
 }
 
+/// Start watching a local file for external on-disk changes (#1620).
+///
+/// `watch_id` is an opaque per-editor-instance key the frontend also matches the
+/// resulting `local-file-changed` events against; re-watching the same id
+/// replaces the previous watch. Only local editor files are watched — remote
+/// (SFTP / session) files never call this.
+#[tauri::command]
+pub fn watch_local_file(
+    watch_id: String,
+    path: String,
+    manager: State<'_, crate::files::watcher::FileWatchManager>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), TerminalError> {
+    manager.watch(app_handle, watch_id, path)
+}
+
+/// Stop watching a local file previously registered with [`watch_local_file`].
+/// Unknown ids are a harmless no-op.
+#[tauri::command]
+pub fn unwatch_local_file(
+    watch_id: String,
+    manager: State<'_, crate::files::watcher::FileWatchManager>,
+) {
+    manager.unwatch(&watch_id);
+}
+
 /// Read a remote file's contents as a UTF-8 string via SFTP.
 #[tauri::command]
 pub async fn sftp_read_file_content(

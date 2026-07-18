@@ -1053,6 +1053,22 @@ export async function localWriteFile(path: string, content: string): Promise<voi
   await invoke("local_write_file", { path, content });
 }
 
+/**
+ * Start watching a local file for external on-disk changes (#1620).
+ *
+ * `watchId` is an opaque per-editor-instance key; the resulting
+ * `local-file-changed` events carry it back so the right editor reloads.
+ * Re-watching the same id replaces the previous watch.
+ */
+export async function watchLocalFile(watchId: string, path: string): Promise<void> {
+  await invoke("watch_local_file", { watchId, path });
+}
+
+/** Stop watching a local file previously registered with {@link watchLocalFile}. */
+export async function unwatchLocalFile(watchId: string): Promise<void> {
+  await invoke("unwatch_local_file", { watchId });
+}
+
 /** Read a remote file's contents as a UTF-8 string via SFTP. */
 export async function sftpReadFileContent(sessionId: string, remotePath: string): Promise<string> {
   return await invoke<string>("sftp_read_file_content", { sessionId, remotePath });

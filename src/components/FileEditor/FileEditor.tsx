@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useId } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import {
@@ -26,6 +26,8 @@ import { getCurrentTheme, onThemeChange } from "@/themes";
 import {
   localReadFile,
   localWriteFile,
+  watchLocalFile,
+  unwatchLocalFile,
   sftpReadFileContent,
   sftpWriteFileContent,
   sftpWriteFileContentElevated,
@@ -41,6 +43,7 @@ import {
   TransferTerminalError,
   type ElevatedWriteResult,
 } from "@/services/api";
+import { onLocalFileChanged } from "@/services/events";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
 import { SaveCopyDialog } from "./SaveCopyDialog";
@@ -178,6 +181,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // persistent state indicator; only the banner is dismissible.
   const [readonlyBannerDismissed, setReadonlyBannerDismissed] = useState(false);
 
+  // Set when the file changed on disk while the buffer had unsaved edits (#1620).
+  // This is the genuine-conflict case: we detect it and surface a non-destructive
+  // notice, but deliberately do NOT auto-reload (which would clobber the user's
+  // edits) — the resolution policy is a deferred decision. The clean case (no
+  // unsaved edits) reloads silently instead and never sets this.
+  const [diskChangedWhileDirty, setDiskChangedWhileDirty] = useState(false);
+
   // Elevated ("sudo") edit mode. Once a save is authorized with sudo, the tab
   // stays in elevated mode for the rest of the session: a persistent `sudo`
   // marker is shown and subsequent saves route through the elevated path.
@@ -211,6 +221,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const isUnsavedScratch = meta.scratch === true && scratchSavedPath === null;
   // The effective path used for display, language detection and saving.
   const effectivePath = scratchSavedPath ?? meta.filePath;
+  // Stable, per-editor-instance key for the local file watch (#1620). Keyed off
+  // React's useId rather than the tab id so a second instance for the same tab
+  // (e.g. the zoom overlay, `keepModel`) gets its own watch and its own cleanup,
+  // and never tears down the other instance's watcher.
+  const watchId = useId();
   const fileName = getBasename(effectivePath);
   const detectedLanguage = resolveLanguage(fileName, fileLanguageMappings);
   // Scratch buffers share the synthetic file name, so key the Monaco model on
@@ -406,6 +421,121 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     if (content === null || savedContent === null) return;
     setEditorDirty(tabId, isDirty);
   }, [isDirty, content, savedContent, tabId, setEditorDirty]);
+
+  // Once the buffer is clean again (saved, or edits reverted), a pending
+  // disk-changed conflict notice no longer applies (#1620).
+  useEffect(() => {
+    if (!isDirty && diskChangedWhileDirty) setDiskChangedWhileDirty(false);
+  }, [isDirty, diskChangedWhileDirty]);
+
+  // Reflect the current on-disk contents of a locally-watched file (#1620).
+  // Invoked (debounced) when the OS reports the open file changed underneath us.
+  const reloadFromDisk = useCallback(async () => {
+    // Only local, on-disk editor buffers are watched.
+    if (meta.isRemote || isUnsavedScratch) return;
+    let disk: string;
+    try {
+      disk = await localReadFile(effectivePath);
+    } catch (err) {
+      frontendLog(
+        "file_editor",
+        `external-change reload read failed for tab ${tabId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return;
+    }
+    // Nothing new relative to what we last loaded/saved. This also silently
+    // absorbs the watcher event fired by our own save (disk === savedContent
+    // afterwards), so saving never triggers a spurious reload.
+    if (disk === savedContent) return;
+
+    const hasUnsavedEdits = content !== null && content !== savedContent;
+    if (hasUnsavedEdits) {
+      // Genuine conflict: the file changed on disk while the buffer has local
+      // edits. Detection only — do NOT clobber either side. The resolution
+      // policy (reload / keep / merge / prompt) is a deferred, user-visible
+      // decision, so we just surface a non-destructive notice.
+      frontendLog(
+        "file_editor",
+        `external change detected for tab ${tabId} with unsaved edits — deferring (no reload)`
+      );
+      setDiskChangedWhileDirty(true);
+      return;
+    }
+
+    // Happy path: the buffer is clean, so reflect the new content. Monaco is
+    // uncontrolled, so update its model directly; preserve cursor/scroll.
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (editor && model) {
+      const view = editor.saveViewState();
+      setSavedContent(disk);
+      // Fires onChange -> setContent(disk); the buffer stays clean.
+      model.setValue(disk);
+      if (view) editor.restoreViewState(view);
+    } else {
+      // Not mounted yet (still loading) — updating state is enough; the load
+      // path renders from it.
+      setContent(disk);
+      setSavedContent(disk);
+    }
+    frontendLog("file_editor", `reloaded tab ${tabId} from external on-disk change`);
+  }, [meta.isRemote, isUnsavedScratch, effectivePath, savedContent, content, tabId]);
+
+  // Keep a stable ref so the (path-scoped) watch effect's event handler always
+  // calls the latest reload logic without re-subscribing on every keystroke.
+  const reloadFromDiskRef = useRef(reloadFromDisk);
+  reloadFromDiskRef.current = reloadFromDisk;
+
+  // Watch the open local file for external on-disk changes and reflect them
+  // (#1620). Remote (SFTP / session) files use their own transports and are not
+  // watched here; an unsaved scratch buffer has no on-disk file yet.
+  useEffect(() => {
+    if (meta.isRemote || isUnsavedScratch) return;
+    const filePath = effectivePath;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const start = async () => {
+      try {
+        await watchLocalFile(watchId, filePath);
+      } catch (err) {
+        frontendLog(
+          "file_editor",
+          `failed to start local file watch for tab ${tabId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+      const off = await onLocalFileChanged((changedWatchId) => {
+        if (changedWatchId !== watchId) return;
+        // Coalesce bursts on the frontend too — belt-and-braces over the
+        // backend debounce.
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          void reloadFromDiskRef.current();
+        }, 150);
+      });
+      // The effect may have been torn down while awaiting; drop the listener.
+      if (disposed) {
+        off();
+      } else {
+        unlisten = off;
+      }
+    };
+    void start();
+
+    return () => {
+      disposed = true;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      unlisten?.();
+      void unwatchLocalFile(watchId).catch(() => {
+        // best-effort teardown
+      });
+    };
+  }, [meta.isRemote, isUnsavedScratch, effectivePath, watchId, tabId]);
 
   // A file that failed to load (e.g. the connection dropped) shows the
   // error-only view, which doesn't render the UnsavedChangesDialog. If such a
@@ -971,6 +1101,29 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             title="Dismiss"
             aria-label="Dismiss read-only notice"
             data-testid="file-editor-readonly-banner-dismiss"
+          />
+        </div>
+      )}
+      {diskChangedWhileDirty && (
+        <div
+          className="file-editor__disk-changed-banner"
+          role="status"
+          data-testid="file-editor-disk-changed-banner"
+        >
+          <AlertCircle size={14} />
+          <span className="file-editor__disk-changed-banner-text">
+            This file changed on disk while you have unsaved changes. Your edits are kept and
+            nothing was overwritten.
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<X size={14} />}
+            onClick={() => setDiskChangedWhileDirty(false)}
+            title="Dismiss"
+            aria-label="Dismiss on-disk change notice"
+            data-testid="file-editor-disk-changed-dismiss"
           />
         </div>
       )}
