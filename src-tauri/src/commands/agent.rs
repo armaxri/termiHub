@@ -14,7 +14,7 @@ use crate::terminal::agent_manager::{
     AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
-use crate::terminal::backend::RemoteAgentConfig;
+use crate::terminal::backend::{RemoteAgentConfig, UpdateStrategy};
 
 /// Connect to a remote agent via SSH.
 ///
@@ -658,6 +658,13 @@ pub async fn update_agent_force(
 
 /// Shared body for [`update_agent`] / [`update_agent_force`]. `force` skips the
 /// connected-host guard.
+///
+/// Routes to the update path for the configured strategy:
+/// - `Coordinated` → stage the binary, then dispatch `agent.request_update` so
+///   the agent notifies other hosts and self-applies (Unix); Windows falls back
+///   to the immediate path because the agent's self-swap is Unix-only (#1616).
+/// - `Immediate` (and `Deferred`, which has no desktop-push dispatch path yet) →
+///   the hard shutdown + redeploy path.
 async fn run_update_agent(
     force: bool,
     agent_id: String,
@@ -667,9 +674,6 @@ async fn run_update_agent(
     manager: Arc<dyn AgentRpcClient>,
     cancellation: State<'_, AgentDeployCancellation>,
 ) -> Result<AgentDeployResult, String> {
-    // Route to the update path for the configured strategy. Only the immediate
-    // path (hard shutdown + redeploy) exists today; coordinated/deferred fall
-    // back to it until SI-5/SI-6 land (see #1354 and its follow-ups).
     let requested = config.update_strategy;
     let effective = config.effective_update_strategy();
     if requested != effective {
@@ -677,15 +681,49 @@ async fn run_update_agent(
             agent_id,
             ?requested,
             ?effective,
-            "Update strategy not yet implemented; falling back to immediate update"
+            "Update strategy has no desktop-push dispatch path; falling back to immediate update"
         );
     }
+    if effective == UpdateStrategy::Coordinated {
+        return run_coordinated_update(
+            force,
+            agent_id,
+            config,
+            deploy_config,
+            app_handle,
+            manager,
+            cancellation,
+        )
+        .await;
+    }
+    run_immediate_update(
+        force,
+        agent_id,
+        config,
+        deploy_config,
+        app_handle,
+        manager,
+        cancellation,
+    )
+    .await
+}
+
+/// The immediate desktop-push update: hard shutdown + redeploy. Also the
+/// Windows fallback for a `Coordinated` strategy (#1616).
+async fn run_immediate_update(
+    force: bool,
+    agent_id: String,
+    config: RemoteAgentConfig,
+    deploy_config: AgentDeployConfig,
+    app_handle: tauri::AppHandle,
+    manager: Arc<dyn AgentRpcClient>,
+    cancellation: State<'_, AgentDeployCancellation>,
+) -> Result<AgentDeployResult, String> {
     info!(
         agent_id,
         host = %config.host,
-        strategy = ?effective,
         force,
-        "Updating agent on remote host"
+        "Updating agent on remote host (immediate)"
     );
     let aid = agent_id.clone();
     let list_manager = manager.clone();
@@ -711,4 +749,254 @@ async fn run_update_agent(
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// The coordinated desktop-push update (#1616): stage the binary, then hand it
+/// to `agent.request_update` so the agent broadcasts `agent.update_pending` to
+/// every *other* connected host, gives them a clean disconnect window, and
+/// self-applies (swap + re-exec) — never hard-cutting sessions.
+///
+/// The connected-host guard is intentionally skipped: the notice *is* the
+/// courtesy. On a **Windows** host the agent cannot self-swap a running binary
+/// (`agent/src/update/apply.rs` is Unix-only), so this falls back to the
+/// immediate deploy path — exactly today's behaviour, with the guard intact.
+async fn run_coordinated_update(
+    force: bool,
+    agent_id: String,
+    config: RemoteAgentConfig,
+    deploy_config: AgentDeployConfig,
+    app_handle: tauri::AppHandle,
+    manager: Arc<dyn AgentRpcClient>,
+    cancellation: State<'_, AgentDeployCancellation>,
+) -> Result<AgentDeployResult, String> {
+    info!(
+        agent_id,
+        host = %config.host,
+        force,
+        "Updating agent on remote host (coordinated)"
+    );
+
+    // 1. Stage the binary (connect, detect OS, upload to temp on Unix).
+    let token = cancellation.register(&agent_id);
+    let registry = cancellation.inner().clone();
+    let stage_id = agent_id.clone();
+    let stage_config = config.clone();
+    let stage_deploy = deploy_config.clone();
+    let stage_app = app_handle.clone();
+    let stage_token = token.clone();
+    let complete_id = agent_id.clone();
+    let complete_token = token.clone();
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        let result = crate::terminal::agent_deploy::stage_agent_binary(
+            &stage_id,
+            &stage_config,
+            &stage_deploy,
+            &stage_app,
+            Some(&stage_token),
+        )
+        .map_err(|e| e.to_string());
+        registry.complete(&complete_id, &complete_token);
+        result
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))?;
+
+    // 2. Windows: the agent cannot self-swap — fall back to the immediate deploy
+    //    (shutdown + redeploy), which keeps the connected-host guard intact.
+    let Some(binary_path) = staged.upload_path else {
+        warn!(
+            agent_id,
+            remote_os = %staged.remote_os,
+            "Coordinated update on a Windows host; falling back to immediate deploy (agent self-swap is Unix-only)"
+        );
+        return run_immediate_update(
+            force,
+            agent_id,
+            config,
+            deploy_config,
+            app_handle,
+            manager,
+            cancellation,
+        )
+        .await;
+    };
+
+    // 3. Unix: dispatch the coordinated RPC. The agent notifies other hosts,
+    //    waits out the window, then self-applies from the staged path.
+    let rpc_agent = agent_id.clone();
+    let rpc_manager = manager.clone();
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let rpc_result = tauri::async_runtime::spawn_blocking(move || {
+        let mut params = serde_json::Map::new();
+        params.insert("binaryPath".to_string(), Value::String(binary_path));
+        params.insert("version".to_string(), Value::String(version));
+        rpc_manager.send_request(&rpc_agent, "agent.request_update", Value::Object(params))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match rpc_result {
+        Ok(value) => Ok(coordinated_deploy_result(&value)),
+        Err(e) => {
+            let msg = e.to_string();
+            // A dropped connection right after dispatch is the agent applying an
+            // idle update — swap + re-exec tears down the transport. That is
+            // expected success, not a failure (mirrors the self-update path).
+            if is_expected_apply_disconnect(&msg) {
+                info!(
+                    agent_id,
+                    "Coordinated update dispatched; connection dropped as the agent swaps + re-execs (expected)"
+                );
+                Ok(AgentDeployResult::Coordinated {
+                    applied: true,
+                    active_sessions: 0,
+                    notified_clients: 0,
+                    all_acked: true,
+                    remaining_clients: Vec::new(),
+                })
+            } else {
+                Err(msg)
+            }
+        }
+    }
+}
+
+/// Build an [`AgentDeployResult::Coordinated`] from the `agent.request_update`
+/// JSON-RPC result (#1616). Mirrors the field extraction in
+/// [`request_agent_update`]'s [`CoordinatedUpdateResponse`].
+fn coordinated_deploy_result(value: &Value) -> AgentDeployResult {
+    AgentDeployResult::Coordinated {
+        applied: value
+            .get("applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        active_sessions: value
+            .get("activeSessions")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        notified_clients: value
+            .get("notifiedClients")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        all_acked: value
+            .get("allAcked")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        remaining_clients: value
+            .get("remainingClients")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// Whether an error from `agent.request_update` is the expected transport drop
+/// caused by the agent swapping its binary and re-execing on an idle apply,
+/// rather than a genuine failure. Mirrors the frontend `AgentUpdateBanner`
+/// classifier so the happy path (idle agent updates) reports success (#1616).
+fn is_expected_apply_disconnect(message: &str) -> bool {
+    let raw = message.to_ascii_lowercase();
+    [
+        "disconnect",
+        "connection",
+        "closed",
+        "timeout",
+        "reset",
+        "eof",
+        "not connected",
+        "broken pipe",
+    ]
+    .iter()
+    .any(|needle| raw.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The coordinated deploy result carries the RPC's coordination outcome so
+    /// the desktop can report "N hosts notified, M still attached" (#1616).
+    #[test]
+    fn coordinated_deploy_result_maps_rpc_fields() {
+        let value = json!({
+            "applied": false,
+            "activeSessions": 2,
+            "notifiedClients": 3,
+            "allAcked": false,
+            "remainingClients": ["id-7", "id-8"],
+        });
+        let result = coordinated_deploy_result(&value);
+        match result {
+            AgentDeployResult::Coordinated {
+                applied,
+                active_sessions,
+                notified_clients,
+                all_acked,
+                remaining_clients,
+            } => {
+                assert!(!applied);
+                assert_eq!(active_sessions, 2);
+                assert_eq!(notified_clients, 3);
+                assert!(!all_acked);
+                assert_eq!(remaining_clients, vec!["id-7", "id-8"]);
+            }
+            other => panic!("expected Coordinated, got {other:?}"),
+        }
+    }
+
+    /// Missing/garbage fields degrade to safe defaults rather than panicking.
+    #[test]
+    fn coordinated_deploy_result_defaults_on_missing_fields() {
+        let result = coordinated_deploy_result(&json!({}));
+        assert_eq!(
+            result,
+            AgentDeployResult::Coordinated {
+                applied: false,
+                active_sessions: 0,
+                notified_clients: 0,
+                all_acked: false,
+                remaining_clients: vec![],
+            }
+        );
+    }
+
+    /// A transport drop right after dispatch is the agent swapping + re-execing,
+    /// not a failure — the coordinated deploy reports it as applied success.
+    #[test]
+    fn expected_apply_disconnect_recognizes_transport_drops() {
+        for msg in [
+            "Connection reset by peer",
+            "agent disconnected",
+            "channel closed",
+            "request timeout",
+            "unexpected EOF",
+            "not connected",
+            "broken pipe",
+        ] {
+            assert!(
+                is_expected_apply_disconnect(msg),
+                "{msg:?} should be an expected apply disconnect"
+            );
+        }
+    }
+
+    /// A genuine RPC/application error must NOT be masked as success.
+    #[test]
+    fn expected_apply_disconnect_rejects_real_errors() {
+        for msg in [
+            "binary not found: /tmp/termihub-agent-upload",
+            "invalid params",
+            "permission denied",
+        ] {
+            assert!(
+                !is_expected_apply_disconnect(msg),
+                "{msg:?} is a real error and must surface"
+            );
+        }
+    }
 }

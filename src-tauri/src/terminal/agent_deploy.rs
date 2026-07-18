@@ -169,6 +169,57 @@ pub enum AgentDeployResult {
     /// connected to the agent and would be hard-cut by the update.
     #[serde(rename_all = "camelCase")]
     OtherHostsConnected { hosts: Vec<ConnectedHost> },
+    /// A coordinated desktop-push update was dispatched to the agent (Unix
+    /// hosts, #1616). The binary was staged and handed to `agent.request_update`,
+    /// which broadcast `agent.update_pending` to every other connected host,
+    /// gave them a window to disconnect, then applied the staged binary through
+    /// the deferred-apply path (swap + re-exec). Because the agent re-execs, the
+    /// desktop cannot verify the installed version here — it reconnects to
+    /// observe the new version, exactly like the coordinated self-update path.
+    #[serde(rename_all = "camelCase")]
+    Coordinated {
+        /// `true` when the agent was idle and applied immediately (the
+        /// connection is expected to drop as the binary swaps); `false` when the
+        /// update was deferred until the last of `active_sessions` disconnects.
+        applied: bool,
+        /// Sessions still active on the agent (0 when applied immediately).
+        active_sessions: u32,
+        /// How many *other* hosts were sent the `agent.update_pending` notice.
+        notified_clients: u32,
+        /// `true` when every notified host disconnected inside the window (or
+        /// there was nobody to notify); `false` when the window closed with
+        /// hosts still attached.
+        all_acked: bool,
+        /// `client_id`s still attached when the window closed. Empty on success.
+        remaining_clients: Vec<String>,
+    },
+}
+
+/// A binary staged for a coordinated update (#1616) — uploaded to the remote
+/// temp path but not installed. Handed to `agent.request_update{binaryPath}`,
+/// which the agent applies via its Unix-only self-swap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedBinary {
+    /// Detected remote OS string (e.g. `"Linux"`, `"Darwin"`, `"Windows_NT"`).
+    pub remote_os: String,
+    /// `true` when the remote host is Windows. The agent cannot self-swap a
+    /// running binary there (`agent/src/update/apply.rs` is Unix-only), so no
+    /// binary is uploaded and the caller must fall back to an immediate deploy.
+    pub is_windows: bool,
+    /// Remote temp path where the new binary was uploaded. `Some` on Unix (the
+    /// value to pass as `binaryPath`); `None` on Windows.
+    pub upload_path: Option<String>,
+}
+
+/// Whether a coordinated desktop-push update can use the agent's self-swap path
+/// on a host reporting `remote_os`.
+///
+/// Only Unix hosts qualify: the agent applies a staged `binaryPath` by replacing
+/// its own running executable and re-execing, which `agent/src/update/apply.rs`
+/// implements for Unix only. A Windows host must fall back to an immediate
+/// deploy (shutdown + redeploy) instead (#1616).
+pub fn coordinated_self_swap_supported(remote_os: &str) -> bool {
+    !agent_binary::is_windows_os(remote_os)
 }
 
 /// Decide whether an update may proceed given the hosts (other than the
@@ -462,6 +513,164 @@ where
     deploy_agent(agent_id, config, deploy_config, app_handle, cancel)
 }
 
+// ── Coordinated staging (#1616) ──────────────────────────────────────────
+
+/// Stage the agent binary for a coordinated desktop-push update (#1616).
+///
+/// Connects and detects the remote OS. On **Windows** the agent cannot self-swap
+/// a running binary, so this returns early ([`StagedBinary::is_windows`] = true,
+/// no upload) and the caller falls back to an immediate deploy. On **Unix** it
+/// resolves and validates the new binary and uploads it to the temp path
+/// *without* installing it, returning that path so the caller can hand it to
+/// `agent.request_update{binaryPath}` — the agent then broadcasts the notice,
+/// waits, and self-applies (swap + re-exec).
+///
+/// Unlike [`update_agent`], this never shuts the agent down or runs the
+/// connected-host guard: the `agent.update_pending` notice *is* the courtesy to
+/// other hosts, and the swap is the agent's job, not the desktop's.
+pub fn stage_agent_binary(
+    agent_id: &str,
+    config: &RemoteAgentConfig,
+    deploy_config: &AgentDeployConfig,
+    app_handle: &AppHandle,
+    cancel: Option<&CancellationToken>,
+) -> Result<StagedBinary, TerminalError> {
+    let remote_path = deploy_config
+        .remote_path
+        .as_deref()
+        .unwrap_or(DEFAULT_REMOTE_PATH);
+
+    // 1. SSH connect
+    bail_if_cancelled(cancel)?;
+    emit_progress(
+        app_handle,
+        agent_id,
+        "connecting",
+        "Connecting to host…",
+        -1.0,
+    );
+    let ssh_config = config.to_ssh_config();
+    let session = connect_and_authenticate(&ssh_config)?;
+
+    // 2. Detect remote OS/arch
+    bail_if_cancelled(cancel)?;
+    emit_progress(
+        app_handle,
+        agent_id,
+        "detecting",
+        "Detecting remote system…",
+        -1.0,
+    );
+    let (remote_os, remote_arch) = detect_remote_info(&session)?;
+
+    // Windows agents cannot self-swap a running binary (apply.rs is Unix-only):
+    // stop here so the caller falls back to an immediate deploy (#1616).
+    if !coordinated_self_swap_supported(&remote_os) {
+        info!(
+            agent_id,
+            %remote_os, "Coordinated update: Windows host cannot self-swap; caller falls back to immediate deploy"
+        );
+        return Ok(StagedBinary {
+            remote_os,
+            is_windows: true,
+            upload_path: None,
+        });
+    }
+
+    let arch_suffix = agent_binary::artifact_name_for_os_arch(&remote_os, &remote_arch)
+        .ok_or_else(|| {
+            TerminalError::RemoteError(format!(
+                "Unsupported remote platform: {remote_os} {remote_arch}"
+            ))
+        })?;
+
+    // 3. Resolve binary locally
+    bail_if_cancelled(cancel)?;
+    emit_progress(
+        app_handle,
+        agent_id,
+        "resolving",
+        "Resolving agent binary…",
+        0.1,
+    );
+    let version = env!("CARGO_PKG_VERSION");
+    let agent_id_owned = agent_id.to_string();
+    let app_clone = app_handle.clone();
+    let binary_path =
+        agent_binary::resolve_agent_binary(app_handle, version, arch_suffix, move |dl, total| {
+            let pct = if total > 0 {
+                dl as f64 / total as f64
+            } else {
+                -1.0
+            };
+            emit_progress(
+                &app_clone,
+                &agent_id_owned,
+                "downloading",
+                &format!("Downloading agent binary ({dl} bytes)…"),
+                pct,
+            );
+        })
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to resolve binary: {e}")))?;
+
+    // 4. Validate ELF architecture (POSIX hosts only reach here)
+    emit_progress(
+        app_handle,
+        agent_id,
+        "validating",
+        "Validating binary architecture…",
+        0.3,
+    );
+    let binary_path_str = binary_path.to_string_lossy();
+    if let Ok(elf_arch) = detect_binary_arch(&binary_path_str) {
+        if let Some(expected_arch) = expected_arch_for_uname(&remote_arch) {
+            if elf_arch != expected_arch {
+                return Err(TerminalError::RemoteError(format!(
+                    "Architecture mismatch: binary is {elf_arch:?}, remote expects {expected_arch:?}"
+                )));
+            }
+        }
+    }
+
+    // 5. Upload to the temp path WITHOUT installing — the agent's self-apply
+    //    swaps the running binary from this path (never run the install command
+    //    or shut the agent down; that is the agent's job for coordinated).
+    let plan = posix_install_plan(remote_path);
+    bail_if_cancelled(cancel)?;
+    emit_progress(
+        app_handle,
+        agent_id,
+        "staging",
+        "Staging agent binary…",
+        0.4,
+    );
+    let binary_bytes = std::fs::read(&binary_path)
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
+    upload_bytes_via_sftp(&session, &binary_bytes, &plan.upload_path)?;
+    if let Err(e) = bail_if_cancelled(cancel) {
+        rollback_partial_upload(&session, &plan.upload_path);
+        return Err(e);
+    }
+    info!(
+        "Staged {} bytes to {} for coordinated update",
+        binary_bytes.len(),
+        plan.upload_path
+    );
+    emit_progress(
+        app_handle,
+        agent_id,
+        "staged",
+        "Binary staged; coordinating with connected hosts…",
+        0.7,
+    );
+
+    Ok(StagedBinary {
+        remote_os,
+        is_windows: false,
+        upload_path: Some(plan.upload_path),
+    })
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
@@ -572,6 +781,46 @@ mod tests {
         assert!(!json.contains("installedPath"));
         let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, result);
+    }
+
+    #[test]
+    fn coordinated_result_serializes_for_the_dialog() {
+        // The desktop-push coordinated deploy (#1616) surfaces the same
+        // coordination outcome as the self-update path: notified hosts, ack
+        // state, and any hosts still attached when the window closed.
+        let result = AgentDeployResult::Coordinated {
+            applied: false,
+            active_sessions: 2,
+            notified_clients: 3,
+            all_acked: false,
+            remaining_clients: vec!["id-9".to_string()],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"kind\":\"coordinated\""));
+        assert!(json.contains("notifiedClients"));
+        assert!(json.contains("activeSessions"));
+        assert!(json.contains("remainingClients"));
+        let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, result);
+    }
+
+    /// The Unix-only self-swap gate (#1616): only Unix hosts may take the
+    /// coordinated `agent.request_update` path; Windows must fall back to an
+    /// immediate deploy because `agent/src/update/apply.rs` is Unix-only.
+    #[test]
+    fn coordinated_self_swap_supported_only_on_unix() {
+        for unix in ["Linux", "Darwin", "FreeBSD", "linux"] {
+            assert!(
+                coordinated_self_swap_supported(unix),
+                "{unix} is Unix and must support the coordinated self-swap"
+            );
+        }
+        for win in ["Windows_NT", "MINGW64_NT-10.0", "MSYS_NT-10.0", "CYGWIN_NT"] {
+            assert!(
+                !coordinated_self_swap_supported(win),
+                "{win} is Windows and must fall back to immediate"
+            );
+        }
     }
 
     fn sample_host(id: &str) -> ConnectedHost {

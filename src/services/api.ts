@@ -1555,10 +1555,15 @@ export interface ConnectedHost {
 /**
  * Result of deploying or updating the agent on a remote host.
  *
- * Discriminated on `kind`: `deployed` is the normal outcome; the update path
- * returns `otherHostsConnected` when the connected-host guard blocks an
- * unforced update because other hosts are attached — the desktop then shows the
- * warning and may retry via {@link updateAgentForce}.
+ * Discriminated on `kind`:
+ * - `deployed` — the normal outcome of a deploy or immediate update.
+ * - `otherHostsConnected` — the connected-host guard blocked an unforced
+ *   immediate update because other hosts are attached; the desktop shows the
+ *   warning and may retry via {@link updateAgentForce}.
+ * - `coordinated` — a coordinated-strategy update (#1616) was dispatched on a
+ *   Unix host: the binary was staged and handed to `agent.request_update`, which
+ *   notified every other connected host and let the agent self-apply. Windows
+ *   coordinated updates fall back to the immediate path and return `deployed`.
  */
 export type AgentDeployResult =
   | {
@@ -1575,6 +1580,23 @@ export type AgentDeployResult =
   | {
       kind: "otherHostsConnected";
       hosts: ConnectedHost[];
+    }
+  | {
+      kind: "coordinated";
+      /**
+       * `true` when the agent was idle and applied immediately (the connection
+       * is expected to drop as the binary swaps); `false` when deferred until the
+       * last of `activeSessions` disconnects.
+       */
+      applied: boolean;
+      /** Sessions the update will wait on when `applied` is false. */
+      activeSessions: number;
+      /** How many *other* connected hosts were sent the `update_pending` notice. */
+      notifiedClients: number;
+      /** `true` when every notified host disconnected inside the window. */
+      allAcked: boolean;
+      /** Hosts still attached when the coordination window closed. */
+      remainingClients: string[];
     };
 
 /** Probe a remote host for an existing agent binary. */
