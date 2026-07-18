@@ -5,6 +5,7 @@ pub mod credential;
 pub mod embedded_servers;
 pub mod files;
 pub mod logs;
+pub mod macros;
 pub mod network;
 pub mod portable;
 pub mod session;

@@ -10,6 +10,7 @@ pub mod files;
 /// Services-menu entry (#1409). macOS-only.
 #[cfg(target_os = "macos")]
 mod macos_services;
+mod macros;
 mod network;
 mod session;
 mod spawn;
@@ -469,6 +470,23 @@ pub fn run() {
                 }
             }
 
+            // Initialize macro manager with recovery loading.
+            // On failure, the app still starts but macros are unavailable.
+            match macros::manager::MacroManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize macro manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "macros.json".to_string(),
+                        message: "Could not initialize macro storage. Macros are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
+
             // Initialize the last-session manager. On failure the app still starts;
             // session restore is simply unavailable until the next launch.
             match workspace::last_session::LastSessionManager::new(app.handle()) {
@@ -789,6 +807,11 @@ pub fn run() {
             commands::workspace::save_last_session,
             commands::workspace::load_last_session,
             commands::workspace::clear_last_session,
+            // Macros
+            commands::macros::list_macros,
+            commands::macros::get_macro,
+            commands::macros::save_macro,
+            commands::macros::delete_macro,
             // Network diagnostics
             commands::network::network_port_scan,
             commands::network::network_port_scan_cancel,
