@@ -66,6 +66,13 @@ windows-sys = { version = "0.59", features = [
     "Win32_Security_Authorization",
     "Win32_System_Threading",
 ] }
+# Read Git for Windows' `InstallPath` from HKLM/HKCU\SOFTWARE\GitForWindows so
+# Git Bash is discoverable regardless of install location — see
+# `session::shell::git_bash_candidates`.
+winreg = "0.55"
+# Locate `git.exe` on PATH (winget/scoop/choco/custom installs) to derive the
+# sibling `bin\bash.exe` — see `session::shell::git_bash_candidates`.
+which = "7"
 
 [dev-dependencies]
 tempfile = "3"
