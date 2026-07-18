@@ -137,6 +137,12 @@ jobs:
     name: Run Tests
     runs-on: ${{ matrix.os }}
     strategy:
+      # Don't cancel sibling legs when one platform fails: a single real
+      # failure (e.g. Windows) otherwise cancels the others, and downstream
+      # `gh pr checks` renders cancellations as `fail` — making one broken
+      # platform look like all three are red. Let every leg run to completion
+      # so each reports its own true pass/fail. (#1669)
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
