@@ -82,6 +82,29 @@ export function UpdateAgentDialog({
       );
     }
 
+    // A coordinated-strategy update (#1616) was staged and dispatched: the agent
+    // notified the other hosts and either applied now (idle) or deferred until
+    // its last session disconnects.
+    if (result.kind === "coordinated") {
+      const n = result.notifiedClients;
+      if (result.applied) {
+        toast.success(
+          n > 0
+            ? `Updating agent on ${agentName} — ${n} other host${n === 1 ? "" : "s"} notified. Reconnecting…`
+            : `Updating agent on ${agentName} — reconnecting…`
+        );
+      } else {
+        const s = result.activeSessions;
+        toast.info(
+          `Update deferred on ${agentName} — it will apply automatically when the last of ` +
+            `${s} active session${s === 1 ? "" : "s"} disconnects.`
+        );
+      }
+      onUpdated?.(result);
+      onOpenChange(false);
+      return;
+    }
+
     toast.success(`Updating agent on ${agentName}…`);
     onUpdated?.(result);
     onOpenChange(false);

@@ -143,4 +143,50 @@ describe("UpdateAgentDialog", () => {
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
     expect(mockedUpdateAgent).not.toHaveBeenCalled();
   });
+
+  it("closes and reports a coordinated (Unix) update result (#1616)", async () => {
+    // A coordinated-strategy agent returns `kind: "coordinated"` rather than
+    // `deployed`; the dialog must treat it as success and close.
+    mockedUpdateAgent.mockResolvedValue({
+      kind: "coordinated",
+      applied: true,
+      activeSessions: 0,
+      notifiedClients: 2,
+      allAcked: true,
+      remainingClients: [],
+    });
+    const props = baseProps();
+    const onUpdated = vi.fn();
+    render(<UpdateAgentDialog {...props} otherHosts={[]} onUpdated={onUpdated} />);
+    await act(async () => {
+      (document.querySelector('[data-testid="update-agent-confirm"]') as HTMLElement).click();
+    });
+    expect(mockedUpdateAgent).toHaveBeenCalledTimes(1);
+    expect(onUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "coordinated", notifiedClients: 2 })
+    );
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the dialog open when a deferred coordinated update reports active sessions", async () => {
+    mockedUpdateAgent.mockResolvedValue({
+      kind: "coordinated",
+      applied: false,
+      activeSessions: 3,
+      notifiedClients: 1,
+      allAcked: false,
+      remainingClients: ["id-2"],
+    });
+    const props = baseProps();
+    const onUpdated = vi.fn();
+    render(<UpdateAgentDialog {...props} otherHosts={[]} onUpdated={onUpdated} />);
+    await act(async () => {
+      (document.querySelector('[data-testid="update-agent-confirm"]') as HTMLElement).click();
+    });
+    // Deferred is still a successful dispatch — the dialog closes and reports it.
+    expect(onUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "coordinated", applied: false, activeSessions: 3 })
+    );
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+  });
 });
