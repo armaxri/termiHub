@@ -239,7 +239,9 @@ mod windows_impl {
 
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 
-    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY};
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY,
+    };
 
     /// A listening Windows named pipe.
     ///
@@ -261,7 +263,8 @@ mod windows_impl {
         ///
         /// `first_pipe_instance(true)` fails if another instance already owns
         /// the pipe — the caller's "not the rendezvous" signal, the exact
-        /// analog of the unix `AddrInUse` case.
+        /// analog of the unix `AddrInUse` case (its native `ERROR_ACCESS_DENIED`
+        /// is remapped to `AddrInUse` by [`as_addr_in_use`]).
         ///
         /// Equivalent to [`Self::bind_with_options`] with the default options
         /// (inherit permissions).
@@ -285,7 +288,7 @@ mod windows_impl {
                 }
                 ListenerSecurity::Inherit => None,
             };
-            let next = create_instance(address, security.as_ref(), true)?;
+            let next = create_instance(address, security.as_ref(), true).map_err(as_addr_in_use)?;
             Ok(Self {
                 name: address.to_string(),
                 security,
@@ -313,6 +316,24 @@ mod windows_impl {
 
         /// No-op on windows: the pipe disappears when its instances are dropped.
         pub fn cleanup(&self) {}
+    }
+
+    /// Translate a lost first-instance bind race into [`io::ErrorKind::AddrInUse`].
+    ///
+    /// `first_pipe_instance(true)` fails with `ERROR_ACCESS_DENIED` (5) when
+    /// another instance already owns the pipe name — that is `CreateNamedPipe`'s
+    /// documented signal for "the rendezvous is already taken". Unix reports the
+    /// same lost race as `AddrInUse`, and singleton binders (e.g. the registry
+    /// daemon in `run_registry_daemon_at`) match on `AddrInUse` to treat losing
+    /// the race as a graceful exit. Without this remap the Windows loser surfaces
+    /// a raw `PermissionDenied`, the `AddrInUse` arm never matches, and the
+    /// process exits with a hard error instead of quietly deferring to the winner.
+    fn as_addr_in_use(e: io::Error) -> io::Error {
+        if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) {
+            io::Error::new(io::ErrorKind::AddrInUse, e)
+        } else {
+            e
+        }
     }
 
     /// Create a named-pipe server instance, optionally with a per-user security
