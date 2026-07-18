@@ -30,10 +30,10 @@ export interface KeyBinding {
   label: string;
   /** Group for display in overlay/settings. */
   category: ShortcutCategory;
-  /** Default key combo for macOS. */
-  macDefault: KeyCombo | KeyCombo[];
-  /** Default key combo for Windows/Linux. */
-  winLinuxDefault: KeyCombo | KeyCombo[];
+  /** Default key combo for macOS. `null` means the action ships unbound. */
+  macDefault: KeyCombo | KeyCombo[] | null;
+  /** Default key combo for Windows/Linux. `null` means the action ships unbound. */
+  winLinuxDefault: KeyCombo | KeyCombo[] | null;
   /** Whether the user can rebind this shortcut. */
   configurable: boolean;
   /**

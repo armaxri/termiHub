@@ -112,6 +112,17 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
     scope: "terminal",
   },
+  {
+    action: "toggle-macro-recording",
+    label: "Record Macro (Start/Stop)",
+    category: "terminal",
+    // Ships unbound to avoid colliding with shell/tmux/vim keys; the user can
+    // assign a binding in Settings. Reachable now via the toolbar button and the
+    // command palette.
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+  },
 
   // Clipboard
   {

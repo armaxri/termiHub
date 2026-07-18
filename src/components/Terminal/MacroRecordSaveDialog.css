@@ -1,0 +1,5 @@
+.macro-save-dialog__summary {
+  margin: 0 0 var(--spacing-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}

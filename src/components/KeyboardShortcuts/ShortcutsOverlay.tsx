@@ -93,8 +93,10 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
                 </td>
               </tr>
               {group.bindings.map((binding) => {
-                const winLinux = serializeBinding(binding.winLinuxDefault);
-                const mac = serializeBinding(binding.macDefault);
+                const winLinux = binding.winLinuxDefault
+                  ? serializeBinding(binding.winLinuxDefault)
+                  : "Unbound";
+                const mac = binding.macDefault ? serializeBinding(binding.macDefault) : "Unbound";
                 const effective = getEffectiveCombo(binding.action);
                 const effectiveStr = effective ? serializeBinding(effective) : "";
 

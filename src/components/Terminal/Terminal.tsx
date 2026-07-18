@@ -695,6 +695,11 @@ export function Terminal({
             // Line-ending translation (Enter / paste) happens in the backend
             // send_input choke point using the session's configured ending.
             sendInput(sessionIdRef.current, data);
+            // Tap the input stream for macro recording (#1674). This is the
+            // single point where user-typed bytes flow to the PTY, so it
+            // captures input only (never terminal output). No-op unless a
+            // recording is active — the store guards on the recording flag.
+            useAppStore.getState().recordMacroInput(data);
           }
         });
 

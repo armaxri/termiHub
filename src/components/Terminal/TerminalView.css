@@ -47,6 +47,30 @@
   color: var(--text-primary);
 }
 
+/* Active-recording indicator: the record button turns the error/red accent and
+   gently pulses so the user always knows input is being captured (#1674). */
+.terminal-view__toolbar-btn--recording,
+.terminal-view__toolbar-btn--recording:hover {
+  color: var(--color-error);
+  animation: terminal-view-record-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes terminal-view-record-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-view__toolbar-btn--recording {
+    animation: none;
+  }
+}
+
 .terminal-view__content {
   flex: 1;
   overflow: hidden;

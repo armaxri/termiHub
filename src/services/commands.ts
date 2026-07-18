@@ -49,6 +49,7 @@ const STORE_RUNNERS: Record<string, () => void> = {
   "new-tab-group": () => {
     useAppStore.getState().addTabGroup();
   },
+  "toggle-macro-recording": () => useAppStore.getState().toggleMacroRecording(),
 };
 
 /**
