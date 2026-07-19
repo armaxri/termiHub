@@ -293,6 +293,11 @@ pub fn port_telnet() -> u16 {
 pub fn port_vnc() -> u16 {
     resolve_port("TERMIHUB_TEST_VNC_PORT", 2501)
 }
+/// vnc-vencrypt-server container (TigerVNC Xvnc, static test pattern, VeNCrypt
+/// X509Vnc over TLS).
+pub fn port_vnc_vencrypt() -> u16 {
+    resolve_port("TERMIHUB_TEST_VNC_VENCRYPT_PORT", 2502)
+}
 /// ftp-server container control port (plain FTP + explicit FTPS on :21).
 pub fn port_ftp() -> u16 {
     resolve_port("TERMIHUB_TEST_FTP_PORT", 2401)

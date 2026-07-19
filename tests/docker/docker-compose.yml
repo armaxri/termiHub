@@ -307,6 +307,28 @@ services:
       timeout: 3s
       retries: 5
 
+  # VeNCrypt X509 VNC server (TigerVNC Xvnc). Serves the same static
+  # four-quadrant pattern, but over VeNCrypt (RFB security type 19, X509Vnc
+  # sub-type) — a TLS handshake against a self-signed leaf then a VNC-password
+  # stage (`testpass`). Drives the `vnc` backend's VeNCrypt/TLS path (#1714),
+  # which the plain vnc-server (VncAuth only) cannot exercise. Same `vnc`
+  # profile as vnc-server so both come up together.
+  vnc-vencrypt-server:
+    build: ./vnc-vencrypt-server
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-vnc-vencrypt
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_VNC_VENCRYPT_PORT:-2502}:5900"
+    networks:
+      - test-net
+    profiles:
+      - vnc
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5900"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # ============================================================
   # Network Tools Live Test Target (profile: network)
   # ============================================================
