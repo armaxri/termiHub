@@ -287,13 +287,16 @@ async fn vnc_05_server_clipboard_echo() {
 
     // The fixture owns a known X selection that x11vnc forwards as an RFB
     // ServerCutText; the backend routes it (VncEvent::Text) into get_clipboard.
-    // Delivery is asynchronous — the fixture re-asserts the selection on a loop,
-    // so poll until the known value arrives rather than reading once.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    // Delivery is asynchronous and the fixture alternates the selection with a
+    // priming value to force genuine changes, so get_clipboard may transiently
+    // report the priming value — poll until the known value surfaces. The
+    // timeout is generous because x11vnc's selection forwarding takes a little
+    // while to warm up after the fixture starts (see tests/docker/vnc-server).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
     let mut received = None;
     while tokio::time::Instant::now() < deadline {
-        if let Some(text) = graphical.get_clipboard().await {
-            received = Some(text);
+        received = graphical.get_clipboard().await;
+        if received.as_deref() == Some(VNC_SERVER_CLIPBOARD) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
