@@ -62,6 +62,11 @@ vnc-rs = { version = "0.5", optional = true }
 # RGBA to fold into the shared shadow framebuffer. Chosen for a tiny, pure-Rust
 # dep tree (only `zune-core`) that cannot collide with the SSH RustCrypto pins.
 zune-jpeg = { version = "0.4", optional = true }
+# MessagePack codec for the RDP sidecar IPC (#1747). Compact self-describing
+# binary: keeps frame `Vec<u8>` packed (unlike JSON) while still round-tripping
+# the internally-tagged `InputEvent` enum (which `bincode` cannot). Pulls no
+# crypto, so it cannot collide with the SSH RustCrypto pins.
+rmp-serde = { version = "1", optional = true }
 ringbuf = "0.5.0"
 shellexpand = "3.1"
 vte = "0.13"
@@ -141,3 +146,13 @@ mock-remote-desktop = []
 # optional SSH-tunnel group reaches the VNC server through the existing SSH
 # tunnel infrastructure (as the VNC concept specifies).
 vnc = ["dep:vnc-rs", "dep:zune-jpeg", "dep:tracing", "ssh"]
+# RDP graphical remote-desktop backend via a separately-built IronRDP sidecar
+# (#1747). This crate holds only the thin `SidecarRdp` adapter — it spawns the
+# `termihub-rdp-helper` binary and bridges its IPC into the shared #1680 layer —
+# and links NO RDP crate, so unlike a same-crate IronRDP backend it does not
+# conflict with `ssh`/russh (the #1725 blocker). The IronRDP code lives in the
+# workspace-excluded `rdp-sidecar/` crate (own Cargo.lock); this feature only
+# compiles the adapter + IPC protocol + config. `tokio/process` is needed to
+# spawn/supervise the child. The sidecar binary is built separately
+# (scripts/build-rdp-sidecar.sh) and bundled next to the app binary.
+rdp-sidecar = ["dep:rmp-serde", "dep:tracing", "tokio/process"]
