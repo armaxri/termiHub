@@ -67,6 +67,16 @@ use protocol::{read_message, write_message, HostMessage, SidecarMessage};
 /// Bounded channel depth for frames / cursor updates / input (backpressure).
 const CHANNEL_DEPTH: usize = 32;
 
+/// Windows `CREATE_NO_WINDOW` process-creation flag (#1758).
+///
+/// The desktop is a GUI-subsystem process; spawning the console-subsystem
+/// sidecar from it makes Windows allocate a fresh console, which flashes a
+/// window on every RDP connect. This flag gives the child no console at all.
+/// stdout/stdin are piped and stderr is inherited, so those handles (and the
+/// sidecar's stderr logging) are unaffected — only the phantom console goes away.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Environment variable that overrides the sidecar binary path (dev + tests).
 pub const HELPER_PATH_ENV: &str = "TERMIHUB_RDP_HELPER";
 
@@ -313,19 +323,22 @@ impl ConnectionType for SidecarRdp {
         let view_only = cfg.view_only;
 
         let helper = resolve_helper_binary();
-        let mut child = tokio::process::Command::new(&helper)
+        let mut command = tokio::process::Command::new(&helper);
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| {
-                SessionError::SpawnFailed(format!(
-                    "failed to launch RDP helper '{}': {e}. Build it with \
-                     scripts/build-rdp-sidecar.sh (or set {HELPER_PATH_ENV}).",
-                    helper.display()
-                ))
-            })?;
+            .kill_on_drop(true);
+        // Suppress the console-window flash on Windows (#1758). No-op elsewhere.
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let mut child = command.spawn().map_err(|e| {
+            SessionError::SpawnFailed(format!(
+                "failed to launch RDP helper '{}': {e}. Build it with \
+                 scripts/build-rdp-sidecar.sh (or set {HELPER_PATH_ENV}).",
+                helper.display()
+            ))
+        })?;
 
         let mut stdin = child
             .stdin

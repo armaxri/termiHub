@@ -3383,9 +3383,11 @@ name = "termihub-rdp-sidecar"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "ironrdp",
  "ironrdp-tls",
  "ironrdp-tokio",
+ "sha2",
  "tempfile",
  "termihub-core",
  "tokio",

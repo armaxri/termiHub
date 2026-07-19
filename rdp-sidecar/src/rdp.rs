@@ -205,9 +205,9 @@ async fn connect_session(
         .await
         .context("RDP X.224 negotiation failed")?;
 
-    // 2) TLS upgrade. IronRDP's TLS layer accepts the server certificate and
-    //    binds trust to the server public key during CredSSP; the interactive
-    //    accept-once / accept-for-host prompt is a follow-up.
+    // 2) TLS upgrade. IronRDP's TLS layer accepts the server certificate at the
+    //    handshake so CredSSP can bind trust to the server public key; we then
+    //    gate on that key ourselves (#1758) rather than accepting blindly.
     let (initial_stream, leftover) = framed.into_inner();
     let (tls_stream, server_cert) = ironrdp_tls::upgrade(initial_stream, host.as_str())
         .await
@@ -215,6 +215,24 @@ async fn connect_session(
     let server_public_key = ironrdp_tls::extract_tls_server_public_key(&server_cert)
         .ok_or_else(|| anyhow!("could not extract RDP server public key"))?
         .to_vec();
+
+    // Trust gate (#1758): fingerprint the server public key and either accept
+    // (only when the user set `ignoreCertErrors`) or refuse with an actionable
+    // message naming the fingerprint — never a silent blind accept. An
+    // interactive accept-once / accept-for-host prompt + persisted trust store
+    // is the sequenced follow-up.
+    let fingerprint = crate::cert::public_key_fingerprint(&server_public_key);
+    match crate::cert::evaluate(cfg.ignore_cert_errors, &fingerprint) {
+        crate::cert::CertVerdict::Accept => {
+            if cfg.ignore_cert_errors {
+                warn!(
+                    %fingerprint,
+                    "accepting RDP server certificate without verification (ignoreCertErrors is enabled)"
+                );
+            }
+        }
+        crate::cert::CertVerdict::Reject(message) => anyhow::bail!(message),
+    }
 
     let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
     let mut framed = TokioFramed::new_with_leftover(tls_stream, leftover);
