@@ -87,4 +87,13 @@ export interface Capabilities {
    * never `!terminal` (#1335).
    */
   terminal?: boolean;
+  /**
+   * Whether this connection type is a graphical remote-desktop session
+   * (VNC/RDP). Optional to match the wire reality (`#[serde(default)]` → absent
+   * means non-graphical). When `true` the type also reports `terminal === false`
+   * and the desktop opens it into a `"remote-desktop"` canvas tab routed through
+   * the GraphicalSessionManager, the way `terminal === false` opens FTP into a
+   * browser-only tab. Decide with `graphical === true` (#1680).
+   */
+  graphical?: boolean;
 }

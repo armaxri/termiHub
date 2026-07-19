@@ -58,10 +58,21 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         config.type === "remote-session"
           ? ((cfg.sessionType as string | undefined) ?? config.type)
           : config.type;
-      const isTerminalLess =
-        useAppStore.getState().connectionTypes.find((ct) => ct.typeId === effectiveTypeId)
-          ?.capabilities.terminal === false;
-      const contentType = isTerminalLess ? ("file-browser" as const) : undefined;
+      const caps = useAppStore
+        .getState()
+        .connectionTypes.find((ct) => ct.typeId === effectiveTypeId)?.capabilities;
+      // A graphical remote-desktop type (Capabilities.graphical === true, e.g.
+      // VNC/RDP) opens into a canvas tab routed through the
+      // GraphicalSessionManager. A terminal-less type (terminal === false, e.g.
+      // FTP) opens into a browser-only tab. Both are decided from the registry
+      // capabilities, never a per-type hardcode (#1680 / #1335).
+      const isGraphical = caps?.graphical === true;
+      const isTerminalLess = caps?.terminal === false;
+      const contentType = isGraphical
+        ? ("remote-desktop" as const)
+        : isTerminalLess
+          ? ("file-browser" as const)
+          : undefined;
 
       // Connections with authMethod and password support credential store resolution
       if (cfg.authMethod && cfg.host) {
@@ -121,6 +132,17 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
             ...config,
             config: { ...cfg, password: resolution.password },
           } as typeof config;
+          // A graphical connection is not a terminal session — `createTerminal`
+          // would mint one on the terminal SessionManager. Open the canvas tab
+          // directly with the resolved credential in its config; the
+          // RemoteDesktopTab drives `remote_desktop_connect` itself (#1680).
+          if (isGraphical) {
+            addTab(connection.name, connection.config.type, preConfig, {
+              terminalOptions: connection.terminalOptions,
+              contentType,
+            });
+            return;
+          }
           try {
             const sessionId = await createTerminal(preConfig);
             // Stored credential worked — open tab with existing session
