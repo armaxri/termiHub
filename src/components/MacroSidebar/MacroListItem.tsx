@@ -1,5 +1,5 @@
 import type React from "react";
-import { Play, Pencil, Copy, Trash2 } from "lucide-react";
+import { Play, Pencil, Copy, Download, Trash2 } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Macro } from "@/types/macro";
@@ -10,6 +10,7 @@ interface MacroListItemProps {
   onPlay: (macroId: string) => void;
   onEdit: (macroId: string) => void;
   onDuplicate: (macroId: string) => void;
+  onExport: (macroId: string) => void;
   onDelete: (macroId: string) => void;
   /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
   rowRef?: (el: HTMLDivElement | null) => void;
@@ -28,6 +29,7 @@ export function MacroListItem({
   onPlay,
   onEdit,
   onDuplicate,
+  onExport,
   onDelete,
   rowRef,
   rowProps,
@@ -86,6 +88,20 @@ export function MacroListItem({
               onClick={(e) => {
                 e.stopPropagation();
                 onDuplicate(macro.id);
+              }}
+            />
+          </Tooltip>
+          <Tooltip content="Export" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Export"
+              data-testid={`macro-export-${macro.id}`}
+              icon={<Download size={12} />}
+              onClick={(e) => {
+                e.stopPropagation();
+                onExport(macro.id);
               }}
             />
           </Tooltip>

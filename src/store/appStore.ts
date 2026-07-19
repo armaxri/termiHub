@@ -160,6 +160,7 @@ import {
   saveMacro as apiSaveMacro,
   deleteMacro as apiDeleteMacro,
 } from "@/services/macroApi";
+import { parseMacroEnvelope, resolveImportCollisions } from "@/services/macroIo";
 import {
   runMacroPlayback,
   getTerminalInputInjector,
@@ -1138,6 +1139,13 @@ interface AppState {
   saveMacroToBackend: (macro: Macro) => Promise<Macro>;
   /** Delete a macro by ID; only mutates local state after the backend delete resolves. */
   deleteMacroFromBackend: (macroId: string) => Promise<void>;
+  /**
+   * Import macros from an exported-macro file's JSON, merging them into the
+   * library. Malformed/incompatible files reject with a clear error and leave
+   * the library untouched; imported macros get fresh ids and de-duplicated
+   * names (see {@link resolveImportCollisions}). Returns the number imported.
+   */
+  importMacros: (json: string) => Promise<number>;
 
   // Macro recording (#1674)
   /** Whether terminal input is currently being captured into a macro. */
@@ -5507,6 +5515,19 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         macros: state.macros.filter((m) => m.id !== macroId),
       }));
+    },
+
+    importMacros: async (json) => {
+      // Parse+validate first: a malformed file throws here, before any backend
+      // write, so a bad import can never corrupt the existing library (#1677).
+      const parsed = parseMacroEnvelope(json);
+      const prepared = resolveImportCollisions(parsed, get().macros, generateMacroId);
+      for (const macro of prepared) {
+        await apiSaveMacro(macro);
+      }
+      // Refresh once, after all saves, rather than per-macro.
+      await get().loadMacros();
+      return prepared.length;
     },
 
     // Macro recording (#1674)
