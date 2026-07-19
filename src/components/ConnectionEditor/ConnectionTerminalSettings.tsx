@@ -96,8 +96,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
     setEditor(null);
   };
 
-  const editingRule =
-    editor?.mode === "edit" ? rules.find((r) => r.id === editor.id) : undefined;
+  const editingRule = editor?.mode === "edit" ? rules.find((r) => r.id === editor.id) : undefined;
 
   return (
     <div className="settings-form__field">
