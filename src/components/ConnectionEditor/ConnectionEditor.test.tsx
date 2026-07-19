@@ -1277,6 +1277,64 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     ]);
   });
 
+  it("renders the SSH Agent Forwarding toggle, off by default (#1699)", () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    expect(query("ssh-agent-forwarding-section")).toBeTruthy();
+    expect(query("connection-editor-forward-agent")?.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("persists forwardAgent through save, surviving a later schema-field edit (#1699)", async () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    await flush();
+
+    // Turn on agent forwarding.
+    act(() => {
+      (query("connection-editor-forward-agent") as HTMLElement).click();
+    });
+    await flush();
+
+    // Toggle a schema field afterwards — fires the schema form's onChange, which
+    // must NOT drop the sibling forwardAgent key.
+    act(() => {
+      (query("field-savePassword") as HTMLInputElement).click();
+    });
+    await flush();
+
+    act(() => {
+      (query("connection-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
+    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const cfg = persisted.config.config as Record<string, unknown>;
+    // The schema edit landed, and the forwardAgent flag set before it survived.
+    expect(cfg.savePassword).toBe(false);
+    expect(cfg.forwardAgent).toBe(true);
+  });
+
+  it("omits forwardAgent from saved settings when left off (#1699)", async () => {
+    renderFor(SSH_CONN_PASSWORD.id);
+    await flush();
+
+    // Make a change so save is enabled, without touching agent forwarding.
+    act(() => {
+      (query("field-savePassword") as HTMLInputElement).click();
+    });
+    await flush();
+
+    act(() => {
+      (query("connection-editor-save") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const saveCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === "save_connection");
+    const persisted = (saveCall?.[1] as { connection: SavedConnection }).connection;
+    const cfg = persisted.config.config as Record<string, unknown>;
+    // Off means the key is absent, keeping saved JSON stable for existing connections.
+    expect(cfg.forwardAgent).toBeUndefined();
+  });
+
   it("blocks save while a jump host is missing required fields", async () => {
     renderFor(SSH_CONN_PASSWORD.id);
     await flush();

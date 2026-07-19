@@ -110,6 +110,25 @@ export interface JumpHostConfig {
   connectTimeoutSecs?: number;
 }
 
+/**
+ * SSH-connection settings the connection editor manages directly (as opposed to
+ * the schema-driven fields rendered by `ConnectionSettingsForm`). They live as
+ * sibling keys on the connection's unstructured `settings` record and mirror the
+ * Rust `SshConfig` (`core/src/config/mod.rs`).
+ */
+export interface SshEditorSettings {
+  /**
+   * Forward the local `ssh-agent` to the target (OpenSSH `ForwardAgent`, #1699),
+   * so the agent's keys are usable on the final host — and, because the
+   * forwarded-agent channel rides the jump-host tunnel, through the whole
+   * `proxyJump` chain. Mirrors `SshConfig.forward_agent`; omitted/`false` by
+   * default, keeping existing saved connections unchanged.
+   */
+  forwardAgent?: boolean;
+  /** Jump-host (`ProxyJump`) chain; empty/omitted means a direct connection. */
+  proxyJump?: JumpHostConfig[];
+}
+
 export type ConnectionTreeItem =
   | { type: "folder"; folder: ConnectionFolder }
   | { type: "connection"; connection: SavedConnection };

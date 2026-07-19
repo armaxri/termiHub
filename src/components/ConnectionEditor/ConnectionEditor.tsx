@@ -26,6 +26,7 @@ import {
   AgentSettings,
   DEFAULT_AGENT_SETTINGS,
   JumpHostConfig,
+  SshEditorSettings,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
 import { Button, Input, Select, Toggle, toast } from "@/components/ui";
@@ -312,22 +313,38 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   /** Whether the SSH "Jump Host" section applies to the current edit. */
   const showJumpHostSection = selectedType === "ssh" && !isAnyAgentMode;
 
+  /** Whether the SSH "Agent Forwarding" toggle applies (same gate as jump hosts). */
+  const showAgentForwarding = selectedType === "ssh" && !isAnyAgentMode;
+
   /** Whether the SSH "Setup SSH Agent" helper applies (SSH + agent auth). */
   const showSshAgentSetup =
     selectedType === "ssh" && !isAnyAgentMode && connSettings.authMethod === "agent";
 
   // The schema-driven form only tracks its own fields, so its onChange would drop
-  // sibling keys like `proxyJump` (managed by JumpHostSection). Re-merge it.
+  // sibling keys the editor manages directly (`proxyJump` from JumpHostSection,
+  // `forwardAgent` from the agent-forwarding toggle). Re-merge them.
   const handleSchemaSettingsChange = useCallback((values: Record<string, unknown>) => {
-    setConnSettings((prev) =>
-      prev.proxyJump !== undefined ? { ...values, proxyJump: prev.proxyJump } : values
-    );
+    setConnSettings((prev) => {
+      const merged: Record<string, unknown> = { ...values };
+      if (prev.proxyJump !== undefined) merged.proxyJump = prev.proxyJump;
+      if (prev.forwardAgent !== undefined) merged.forwardAgent = prev.forwardAgent;
+      return merged;
+    });
   }, []);
 
   const handleJumpHostChange = useCallback((hops: JumpHostConfig[] | undefined) => {
     setConnSettings((prev) => {
       if (hops && hops.length > 0) return { ...prev, proxyJump: hops };
       const { proxyJump: _omit, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+
+  /** Toggle SSH agent forwarding; omit the key when off so saved JSON stays stable. */
+  const handleForwardAgentChange = useCallback((checked: boolean) => {
+    setConnSettings((prev) => {
+      if (checked) return { ...prev, forwardAgent: true };
+      const { forwardAgent: _omit, ...rest } = prev;
       return rest;
     });
   }, []);
@@ -1141,6 +1158,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           errors={jumpHostValidation.errors}
           warnings={jumpHostValidation.warnings}
         />
+      )}
+
+      {showAgentForwarding && (
+        <div className="settings-panel__category" data-testid="ssh-agent-forwarding-section">
+          <h3 className="settings-panel__category-title">SSH Agent Forwarding</h3>
+          <div className="settings-form__field">
+            <span className="settings-form__label">Forward SSH agent</span>
+            <Toggle
+              checked={(connSettings as SshEditorSettings).forwardAgent === true}
+              onCheckedChange={handleForwardAgentChange}
+              aria-label="Forward SSH agent"
+              data-testid="connection-editor-forward-agent"
+            />
+            <span className="settings-form__hint">
+              Make your local <code>ssh-agent</code> keys available on the target — and through the
+              jump-host chain — so onward SSH from the host works without copying private keys.
+            </span>
+          </div>
+        </div>
       )}
 
       {showSshAgentSetup && (
