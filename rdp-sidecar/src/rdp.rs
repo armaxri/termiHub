@@ -14,9 +14,12 @@
 //! active stage, `select!`-ing between server PDUs and host input events.
 
 use anyhow::{anyhow, Context, Result};
+use ironrdp::connector::connection_activation::{
+    ConnectionActivationSequence, ConnectionActivationState,
+};
 use ironrdp::connector::{
-    BitmapConfig, ClientConnector, ConnectionActivationSequence, ConnectionActivationState,
-    Config as ConnectorConfig, ConnectionResult, Credentials, DesktopSize, ServerName,
+    BitmapConfig, ClientConnector, Config as ConnectorConfig, ConnectionResult, Credentials,
+    DesktopSize, ServerName,
 };
 use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
@@ -133,7 +136,9 @@ pub fn is_auth_error(msg: &str) -> bool {
 /// transport for the driver to take over, and the connector [`Config`] (needed
 /// verbatim to drive the Deactivation-Reactivation Sequence on dynamic resize,
 /// #1755).
-async fn connect_session(cfg: &RdpConfig) -> Result<(ConnectionResult, RdpFramed, ConnectorConfig)> {
+async fn connect_session(
+    cfg: &RdpConfig,
+) -> Result<(ConnectionResult, RdpFramed, ConnectorConfig)> {
     let host = cfg.host.clone();
     let port = cfg.effective_port();
 
@@ -626,7 +631,8 @@ async fn reactivate(
             pointer_software_rendering,
         } = activation.connection_activation_state()
         {
-            *image = DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
+            *image =
+                DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
             // The server may reassign the share id and pointer settings; rebuild
             // the fast-path processor and re-sync the x224 processor to match.
             // Bulk stream compression is never negotiated (connector config sets
