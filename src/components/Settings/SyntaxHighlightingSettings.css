@@ -1,0 +1,64 @@
+/* === Syntax highlighting rule list === */
+.syntax-rules {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+  transition: opacity var(--transition-normal);
+}
+
+/* Dim the rule list when the master switch is off — the rules still configure,
+   but they have no effect until highlighting is enabled. */
+.syntax-rules--dimmed {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .syntax-rules {
+    transition: none;
+  }
+}
+
+.syntax-rules__heading {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.syntax-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+}
+
+.syntax-rule:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.syntax-rule__swatch {
+  flex-shrink: 0;
+  width: var(--spacing-md);
+  height: var(--spacing-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-secondary);
+}
+
+.syntax-rule__name {
+  flex-shrink: 0;
+  min-width: 10rem;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.syntax-rule__example {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
