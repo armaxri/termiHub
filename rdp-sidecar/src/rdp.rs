@@ -14,6 +14,7 @@
 //! active stage, `select!`-ing between server PDUs and host input events.
 
 use anyhow::{anyhow, Context, Result};
+use ironrdp::cliprdr::{Client as CliprdrRole, CliprdrClient, CliprdrSvcMessages};
 use ironrdp::connector::connection_activation::{
     ConnectionActivationSequence, ConnectionActivationState,
 };
@@ -21,7 +22,6 @@ use ironrdp::connector::{
     BitmapConfig, ClientConnector, Config as ConnectorConfig, ConnectionResult, Credentials,
     DesktopSize, ServerName,
 };
-use ironrdp::cliprdr::{Client as CliprdrRole, CliprdrClient, CliprdrSvcMessages};
 use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
 use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;

@@ -26,6 +26,7 @@ use ironrdp::cliprdr::pdu::{
     ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags, FileContentsRequest,
     FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId,
 };
+use ironrdp::core::AsAny;
 use tracing::{debug, trace, warn};
 
 /// An action the CLIPRDR backend needs the driver loop to perform on the
@@ -51,7 +52,10 @@ pub enum ClipboardEvent {
 /// ANSI. Returns `None` when the remote offered no text format (e.g. a bitmap or
 /// file copy), which this text-only bridge ignores.
 pub fn preferred_text_format(formats: &[ClipboardFormat]) -> Option<ClipboardFormatId> {
-    if formats.iter().any(|f| f.id() == ClipboardFormatId::CF_UNICODETEXT) {
+    if formats
+        .iter()
+        .any(|f| f.id() == ClipboardFormatId::CF_UNICODETEXT)
+    {
         Some(ClipboardFormatId::CF_UNICODETEXT)
     } else if formats.iter().any(|f| f.id() == ClipboardFormatId::CF_TEXT) {
         Some(ClipboardFormatId::CF_TEXT)
@@ -142,6 +146,16 @@ impl SidecarClipboardBackend {
         if self.tx.send(event).is_err() {
             debug!("clipboard event receiver dropped; sidecar shutting down");
         }
+    }
+}
+
+impl AsAny for SidecarClipboardBackend {
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any {
+        self
     }
 }
 
@@ -277,28 +291,23 @@ mod tests {
         // remote→local path would — the two text codecs must agree. Non-ASCII
         // exercises the UTF-16 path.
         let original = "héllo wörld ☺";
-        let response = build_format_data_response(
-            ClipboardFormatId::CF_UNICODETEXT,
-            Some(original),
-        );
-        let decoded =
-            decode_clipboard_text(ClipboardFormatId::CF_UNICODETEXT, &response).unwrap();
+        let response =
+            build_format_data_response(ClipboardFormatId::CF_UNICODETEXT, Some(original));
+        let decoded = decode_clipboard_text(ClipboardFormatId::CF_UNICODETEXT, &response).unwrap();
         assert_eq!(decoded, original);
     }
 
     #[test]
     fn ansi_text_round_trips_through_response() {
         let original = "plain ascii";
-        let response =
-            build_format_data_response(ClipboardFormatId::CF_TEXT, Some(original));
+        let response = build_format_data_response(ClipboardFormatId::CF_TEXT, Some(original));
         let decoded = decode_clipboard_text(ClipboardFormatId::CF_TEXT, &response).unwrap();
         assert_eq!(decoded, original);
     }
 
     #[test]
     fn missing_local_text_yields_error_response() {
-        let response =
-            build_format_data_response(ClipboardFormatId::CF_UNICODETEXT, None);
+        let response = build_format_data_response(ClipboardFormatId::CF_UNICODETEXT, None);
         assert!(response.is_error());
         assert_eq!(
             decode_clipboard_text(ClipboardFormatId::CF_UNICODETEXT, &response),
@@ -321,7 +330,9 @@ mod tests {
         backend.on_remote_copy(&[text(ClipboardFormatId::CF_UNICODETEXT)]);
         assert_eq!(
             rx.try_recv(),
-            Ok(ClipboardEvent::InitiatePaste(ClipboardFormatId::CF_UNICODETEXT))
+            Ok(ClipboardEvent::InitiatePaste(
+                ClipboardFormatId::CF_UNICODETEXT
+            ))
         );
     }
 
@@ -355,7 +366,9 @@ mod tests {
         });
         assert_eq!(
             rx.try_recv(),
-            Ok(ClipboardEvent::ProvideData(ClipboardFormatId::CF_UNICODETEXT))
+            Ok(ClipboardEvent::ProvideData(
+                ClipboardFormatId::CF_UNICODETEXT
+            ))
         );
     }
 }
