@@ -5,7 +5,9 @@
     feature = "ssh",
     feature = "docker",
     feature = "ftp",
-    feature = "mock-remote-desktop"
+    feature = "mock-remote-desktop",
+    feature = "vnc",
+    feature = "rdp-sidecar"
 ))]
 pub mod backends;
 pub mod buffer;
