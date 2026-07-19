@@ -86,6 +86,17 @@ pub struct RdpConfig {
     pub height: Option<u16>,
     /// Shared field-base color depth select (`"32" | "24" | "16" | "8"`).
     pub color_depth: String,
+    /// Opt in to drive redirection (RDPDR): expose [`Self::shared_folder_path`]
+    /// to the remote session as a mapped drive. Off by default; enabling it with
+    /// no valid path is a no-op (#1757).
+    pub drive_redirection: bool,
+    /// The single local folder shared with the remote when
+    /// [`Self::drive_redirection`] is on. Only this folder is exposed — never the
+    /// whole filesystem (#1757).
+    pub shared_folder_path: String,
+    /// User-visible name for the redirected drive; the remote shows it as
+    /// "`<drive_name>` on termiHub". Defaults to `termiHub` when empty (#1757).
+    pub drive_name: String,
 }
 
 impl Default for RdpConfig {
@@ -102,6 +113,9 @@ impl Default for RdpConfig {
             width: None,
             height: None,
             color_depth: "32".to_string(),
+            drive_redirection: false,
+            shared_folder_path: String::new(),
+            drive_name: String::new(),
         }
     }
 }
@@ -141,6 +155,36 @@ impl RdpConfig {
             _ => 32,
         }
     }
+
+    /// The canonicalised root folder to redirect as a drive, or `None` when
+    /// redirection is off, unconfigured, or the path is not an existing
+    /// directory (#1757).
+    ///
+    /// Resolving here — in the sidecar's own process, on the same machine as the
+    /// files — means an invalid or disabled path simply announces no device,
+    /// exposing nothing. Only this exact folder is ever shared.
+    pub fn shared_drive_root(&self) -> Option<std::path::PathBuf> {
+        if !self.drive_redirection {
+            return None;
+        }
+        let path = self.shared_folder_path.trim();
+        if path.is_empty() {
+            return None;
+        }
+        let canonical = std::fs::canonicalize(path).ok()?;
+        canonical.is_dir().then_some(canonical)
+    }
+
+    /// The user-visible label for the redirected drive, defaulting to `termiHub`
+    /// when unset (#1757).
+    pub fn drive_label(&self) -> String {
+        let name = self.drive_name.trim();
+        if name.is_empty() {
+            "termiHub".to_string()
+        } else {
+            name.to_string()
+        }
+    }
 }
 
 fn field(key: &str, label: &str, field_type: FieldType) -> SettingsField {
@@ -166,6 +210,15 @@ fn when_security_is(mode: &str) -> Option<Condition> {
     Some(Condition {
         field: "securityMode".to_string(),
         equals: serde_json::json!(mode),
+    })
+}
+
+/// Show a field only when the boolean field `field` is enabled — used to hide
+/// the drive-redirection path/name rows until redirection is turned on (#1757).
+fn when_field_is_true(field: &str) -> Option<Condition> {
+    Some(Condition {
+        field: field.to_string(),
+        equals: serde_json::json!(true),
     })
 }
 
@@ -233,11 +286,47 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                     FieldType::Boolean,
                 )
             },
+            SettingsField {
+                default: Some(serde_json::json!(false)),
+                description: Some(
+                    "Share a local folder with the remote session as a mapped drive. The remote \
+                     can read and write the files in that folder — enable only for hosts you \
+                     trust."
+                        .to_string(),
+                ),
+                ..field(
+                    "driveRedirection",
+                    "Redirect a Local Drive",
+                    FieldType::Boolean,
+                )
+            },
+            SettingsField {
+                supports_env_expansion: true,
+                supports_tilde_expansion: true,
+                visible_when: when_field_is_true("driveRedirection"),
+                description: Some(
+                    "The single local folder exposed to the remote when drive redirection is on. \
+                     Only this folder is shared, never the whole filesystem."
+                        .to_string(),
+                ),
+                placeholder: Some("/path/to/shared/folder".to_string()),
+                ..field("sharedFolderPath", "Shared Folder", FieldType::Text)
+            },
+            SettingsField {
+                visible_when: when_field_is_true("driveRedirection"),
+                description: Some(
+                    "Name the redirected drive appears under in the remote session (shown as \
+                     \"<name> on termiHub\"). Defaults to \"termiHub\"."
+                        .to_string(),
+                ),
+                placeholder: Some("termiHub".to_string()),
+                ..field("driveName", "Drive Name", FieldType::Text)
+            },
         ],
     });
 
-    // Silence the unused helper if no field currently uses a condition; keeping
-    // it available documents the conditional-visibility seam for future rows.
+    // Silence the unused helper if no field currently uses a security condition;
+    // keeping it available documents the conditional-visibility seam.
     let _ = when_security_is;
 
     SettingsSchema { groups }
@@ -343,6 +432,9 @@ mod tests {
             width: Some(1600),
             height: Some(900),
             color_depth: "16".to_string(),
+            drive_redirection: true,
+            shared_folder_path: "/tmp/share".to_string(),
+            drive_name: "Docs".to_string(),
         };
         let json = serde_json::to_value(&cfg).unwrap();
         let back: RdpConfig = serde_json::from_value(json).unwrap();
@@ -355,6 +447,88 @@ mod tests {
         assert!(back.view_only);
         assert_eq!(back.desktop_width(), 1600);
         assert_eq!(back.color_depth_bpp(), 16);
+        assert!(back.drive_redirection);
+        assert_eq!(back.shared_folder_path, "/tmp/share");
+        assert_eq!(back.drive_label(), "Docs");
+    }
+
+    #[test]
+    fn drive_redirection_disabled_or_unset_shares_nothing() {
+        // Off by default: no root, nothing exposed.
+        assert!(RdpConfig::default().shared_drive_root().is_none());
+        // Enabled but no path → still nothing.
+        let no_path = RdpConfig {
+            drive_redirection: true,
+            ..Default::default()
+        };
+        assert!(no_path.shared_drive_root().is_none());
+        // Enabled with a non-existent path → nothing (announces no device).
+        let bad_path = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: "/no/such/termihub/dir".to_string(),
+            ..Default::default()
+        };
+        assert!(bad_path.shared_drive_root().is_none());
+        // Path set but the flag off → still nothing.
+        let flag_off = RdpConfig {
+            drive_redirection: false,
+            shared_folder_path: "/tmp".to_string(),
+            ..Default::default()
+        };
+        assert!(flag_off.shared_drive_root().is_none());
+    }
+
+    #[test]
+    fn drive_redirection_resolves_an_existing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: dir.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let root = cfg.shared_drive_root().expect("existing dir must resolve");
+        assert_eq!(root, std::fs::canonicalize(dir.path()).unwrap());
+        // A file (not a directory) is rejected.
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let file_cfg = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: file.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        assert!(file_cfg.shared_drive_root().is_none());
+    }
+
+    #[test]
+    fn drive_label_defaults_to_termihub_when_empty() {
+        assert_eq!(RdpConfig::default().drive_label(), "termiHub");
+        let named = RdpConfig {
+            drive_name: "  Projects  ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(named.drive_label(), "Projects");
+    }
+
+    #[test]
+    fn schema_exposes_drive_redirection_rows() {
+        let schema = rdp_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "rdp").unwrap();
+        for key in ["driveRedirection", "sharedFolderPath", "driveName"] {
+            assert!(
+                group.fields.iter().any(|f| f.key == key),
+                "RDP schema must expose {key}"
+            );
+        }
+        // The path/name rows are hidden until redirection is enabled.
+        let path = group
+            .fields
+            .iter()
+            .find(|f| f.key == "sharedFolderPath")
+            .unwrap();
+        assert_eq!(
+            path.visible_when.as_ref().map(|c| c.field.as_str()),
+            Some("driveRedirection")
+        );
     }
 
     #[test]

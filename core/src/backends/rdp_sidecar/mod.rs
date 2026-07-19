@@ -31,8 +31,12 @@
 //!
 //! Connect (TLS/NLA) → decode frames → keyboard/pointer/wheel input → server
 //! cursor → Display-Control dynamic resize (#1755) → CLIPRDR text clipboard both
-//! ways (#1756). Drive redirection and audio are sequenced follow-ups (see #1747
-//! / the PR).
+//! ways (#1756) → RDPDR drive redirection of one opted-in folder (#1757). Audio
+//! playback (rdpsnd) and CLIPRDR file transfer are sequenced follow-ups of
+//! #1757. Drive redirection is configured purely through [`config::RdpConfig`]
+//! (`driveRedirection` / `sharedFolderPath` / `driveName`), which flows to the
+//! sidecar in `HostMessage::Connect`, so this adapter needs no per-feature
+//! wiring.
 
 pub mod config;
 pub mod protocol;

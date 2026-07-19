@@ -45,16 +45,19 @@ use ironrdp::pdu::PduResult;
 use ironrdp::rdpdr::backend::RdpdrBackend;
 use ironrdp::rdpdr::pdu::efs::{
     AnyIoCtlCode, Boolean, Characteristics, ClientDriveQueryDirectoryResponse,
-    ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse, ClientDriveSetInformationResponse,
-    CreateDisposition, CreateOptions, DesiredAccess, DeviceCloseRequest, DeviceCloseResponse, DeviceControlRequest,
-    DeviceControlResponse, DeviceCreateRequest, DeviceCreateResponse, DeviceIoRequest, DeviceIoResponse,
-    DeviceReadRequest, DeviceReadResponse, DeviceWriteRequest, DeviceWriteResponse, FileAttributeTagInformation,
-    FileAttributes, FileBasicInformation, FileBothDirectoryInformation, FileDirectoryInformation,
-    FileFsAttributeInformation, FileFsDeviceInformation, FileFsFullSizeInformation, FileFsSizeInformation,
-    FileFsVolumeInformation, FileFullDirectoryInformation, FileInformationClass, FileInformationClassLevel,
-    FileNamesInformation, FileStandardInformation, FileSystemAttributes, FileSystemInformationClass,
-    FileSystemInformationClassLevel, Information, NtStatus, ServerDeviceAnnounceResponse, ServerDriveIoRequest,
-    ServerDriveQueryDirectoryRequest, ServerDriveQueryInformationRequest, ServerDriveQueryVolumeInformationRequest,
+    ClientDriveQueryInformationResponse, ClientDriveQueryVolumeInformationResponse,
+    ClientDriveSetInformationResponse, CreateDisposition, CreateOptions, DesiredAccess,
+    DeviceCloseRequest, DeviceCloseResponse, DeviceControlRequest, DeviceControlResponse,
+    DeviceCreateRequest, DeviceCreateResponse, DeviceIoRequest, DeviceIoResponse,
+    DeviceReadRequest, DeviceReadResponse, DeviceWriteRequest, DeviceWriteResponse,
+    FileAttributeTagInformation, FileAttributes, FileBasicInformation,
+    FileBothDirectoryInformation, FileDirectoryInformation, FileFsAttributeInformation,
+    FileFsDeviceInformation, FileFsFullSizeInformation, FileFsSizeInformation,
+    FileFsVolumeInformation, FileFullDirectoryInformation, FileInformationClass,
+    FileInformationClassLevel, FileNamesInformation, FileStandardInformation, FileSystemAttributes,
+    FileSystemInformationClass, FileSystemInformationClassLevel, Information, NtStatus,
+    ServerDeviceAnnounceResponse, ServerDriveIoRequest, ServerDriveQueryDirectoryRequest,
+    ServerDriveQueryInformationRequest, ServerDriveQueryVolumeInformationRequest,
     ServerDriveSetInformationRequest,
 };
 use ironrdp::rdpdr::pdu::esc::{ScardCall, ScardIoCtlCode};
@@ -191,12 +194,18 @@ impl DriveRedirectBackend {
             ServerDriveIoRequest::DeviceCloseRequest(req) => self.handle_close(req),
             ServerDriveIoRequest::DeviceReadRequest(req) => self.handle_read(req),
             ServerDriveIoRequest::DeviceWriteRequest(req) => self.handle_write(req),
-            ServerDriveIoRequest::ServerDriveQueryInformationRequest(req) => self.handle_query_information(req),
-            ServerDriveIoRequest::ServerDriveQueryDirectoryRequest(req) => self.handle_query_directory(req),
+            ServerDriveIoRequest::ServerDriveQueryInformationRequest(req) => {
+                self.handle_query_information(req)
+            }
+            ServerDriveIoRequest::ServerDriveQueryDirectoryRequest(req) => {
+                self.handle_query_directory(req)
+            }
             ServerDriveIoRequest::ServerDriveQueryVolumeInformationRequest(req) => {
                 self.handle_query_volume_information(req)
             }
-            ServerDriveIoRequest::ServerDriveSetInformationRequest(req) => self.handle_set_information(req),
+            ServerDriveIoRequest::ServerDriveSetInformationRequest(req) => {
+                self.handle_set_information(req)
+            }
             ServerDriveIoRequest::DeviceControlRequest(req) => Self::handle_device_control(req),
             // We never register for directory-change notifications, so the
             // server's watch simply never fires — no response is owed.
@@ -217,7 +226,10 @@ impl DriveRedirectBackend {
 
         let exists = path.exists();
         let existing_is_dir = exists && path.is_dir();
-        let wants_directory = req.create_options.contains(CreateOptions::FILE_DIRECTORY_FILE) || existing_is_dir;
+        let wants_directory = req
+            .create_options
+            .contains(CreateOptions::FILE_DIRECTORY_FILE)
+            || existing_is_dir;
 
         if wants_directory {
             self.create_directory(io, path, exists, req.create_disposition)
@@ -274,7 +286,13 @@ impl DriveRedirectBackend {
         create_ok(io, file_id, information)
     }
 
-    fn create_file(&mut self, io: DeviceIoRequest, path: PathBuf, exists: bool, req: &DeviceCreateRequest) -> RdpdrPdu {
+    fn create_file(
+        &mut self,
+        io: DeviceIoRequest,
+        path: PathBuf,
+        exists: bool,
+        req: &DeviceCreateRequest,
+    ) -> RdpdrPdu {
         use CreateDisposition as Cd;
         let disposition = req.create_disposition;
 
@@ -339,7 +357,9 @@ impl DriveRedirectBackend {
             OpenFile {
                 path,
                 is_dir: false,
-                delete_on_close: req.create_options.contains(CreateOptions::FILE_DELETE_ON_CLOSE),
+                delete_on_close: req
+                    .create_options
+                    .contains(CreateOptions::FILE_DELETE_ON_CLOSE),
                 listing: None,
             },
         );
@@ -409,9 +429,9 @@ impl DriveRedirectBackend {
             FileInformationClassLevel::FILE_BASIC_INFORMATION => {
                 FileInformationClass::Basic(basic_information(&metadata))
             }
-            FileInformationClassLevel::FILE_STANDARD_INFORMATION => {
-                FileInformationClass::Standard(standard_information(&metadata, open.delete_on_close))
-            }
+            FileInformationClassLevel::FILE_STANDARD_INFORMATION => FileInformationClass::Standard(
+                standard_information(&metadata, open.delete_on_close),
+            ),
             FileInformationClassLevel::FILE_ATTRIBUTE_TAG_INFORMATION => {
                 FileInformationClass::AttributeTag(FileAttributeTagInformation {
                     file_attributes: file_attributes(&metadata),
@@ -445,10 +465,12 @@ impl DriveRedirectBackend {
 
         let listing = open.listing.as_mut().expect("listing set above");
         let Some(entry) = listing.entries.get(listing.cursor).cloned() else {
-            return RdpdrPdu::ClientDriveQueryDirectoryResponse(ClientDriveQueryDirectoryResponse {
-                device_io_reply: DeviceIoResponse::new(io, NtStatus::NO_MORE_FILES),
-                buffer: None,
-            });
+            return RdpdrPdu::ClientDriveQueryDirectoryResponse(
+                ClientDriveQueryDirectoryResponse {
+                    device_io_reply: DeviceIoResponse::new(io, NtStatus::NO_MORE_FILES),
+                    buffer: None,
+                },
+            );
         };
         listing.cursor += 1;
 
@@ -459,7 +481,10 @@ impl DriveRedirectBackend {
         })
     }
 
-    fn handle_query_volume_information(&self, req: ServerDriveQueryVolumeInformationRequest) -> RdpdrPdu {
+    fn handle_query_volume_information(
+        &self,
+        req: ServerDriveQueryVolumeInformationRequest,
+    ) -> RdpdrPdu {
         let io = req.device_io_request.clone();
         let buffer = match req.fs_info_class_lvl {
             FileSystemInformationClassLevel::FILE_FS_VOLUME_INFORMATION => {
@@ -504,16 +529,18 @@ impl DriveRedirectBackend {
             other => {
                 debug!(?other, "rdpdr unsupported volume-information class");
                 return RdpdrPdu::ClientDriveQueryVolumeInformationResponse(
-                    ClientDriveQueryVolumeInformationResponse::new(io, NtStatus::NOT_SUPPORTED, None),
+                    ClientDriveQueryVolumeInformationResponse::new(
+                        io,
+                        NtStatus::NOT_SUPPORTED,
+                        None,
+                    ),
                 );
             }
         };
 
-        RdpdrPdu::ClientDriveQueryVolumeInformationResponse(ClientDriveQueryVolumeInformationResponse::new(
-            io,
-            NtStatus::SUCCESS,
-            Some(buffer),
-        ))
+        RdpdrPdu::ClientDriveQueryVolumeInformationResponse(
+            ClientDriveQueryVolumeInformationResponse::new(io, NtStatus::SUCCESS, Some(buffer)),
+        )
     }
 
     fn handle_set_information(&mut self, req: ServerDriveSetInformationRequest) -> RdpdrPdu {
@@ -552,10 +579,12 @@ impl DriveRedirectBackend {
                 Ok(()) => NtStatus::SUCCESS,
                 Err(e) => io_error_to_nt_status(&e),
             },
-            FileInformationClass::Allocation(info) => match set_file_len(path, info.allocation_size) {
-                Ok(()) => NtStatus::SUCCESS,
-                Err(e) => io_error_to_nt_status(&e),
-            },
+            FileInformationClass::Allocation(info) => {
+                match set_file_len(path, info.allocation_size) {
+                    Ok(()) => NtStatus::SUCCESS,
+                    Err(e) => io_error_to_nt_status(&e),
+                }
+            }
             FileInformationClass::Disposition(info) => {
                 if let Some(open) = self.open_files.get_mut(&file_id) {
                     open.delete_on_close = info.delete_pending != 0;
@@ -590,19 +619,30 @@ impl DriveRedirectBackend {
     /// FSCTL / IOCTL requests: the redirected drive works without device-control
     /// support, so complete them as unsupported rather than pretending success.
     fn handle_device_control(req: DeviceControlRequest<AnyIoCtlCode>) -> RdpdrPdu {
-        RdpdrPdu::DeviceControlResponse(DeviceControlResponse::new(req, NtStatus::NOT_SUPPORTED, None))
+        RdpdrPdu::DeviceControlResponse(DeviceControlResponse::new(
+            req,
+            NtStatus::NOT_SUPPORTED,
+            None,
+        ))
     }
 }
 
 impl_as_any!(DriveRedirectBackend);
 
 impl RdpdrBackend for DriveRedirectBackend {
-    fn handle_server_device_announce_response(&mut self, pdu: ServerDeviceAnnounceResponse) -> PduResult<()> {
+    fn handle_server_device_announce_response(
+        &mut self,
+        pdu: ServerDeviceAnnounceResponse,
+    ) -> PduResult<()> {
         debug!(?pdu, "rdpdr device announce acknowledged");
         Ok(())
     }
 
-    fn handle_scard_call(&mut self, _req: DeviceControlRequest<ScardIoCtlCode>, _call: ScardCall) -> PduResult<()> {
+    fn handle_scard_call(
+        &mut self,
+        _req: DeviceControlRequest<ScardIoCtlCode>,
+        _call: ScardCall,
+    ) -> PduResult<()> {
         // No smartcard device is announced, so a conforming server never calls
         // this; treat it as a no-op rather than an error.
         warn!("rdpdr smartcard call received but no smartcard is redirected");
@@ -620,7 +660,8 @@ fn to_filetime(time: Option<SystemTime>) -> i64 {
     let Some(time) = time else { return 0 };
     match time.duration_since(UNIX_EPOCH) {
         Ok(delta) => {
-            (delta.as_secs() as i64 + FILETIME_UNIX_EPOCH_DIFF_SECS) * 10_000_000 + i64::from(delta.subsec_nanos() / 100)
+            (delta.as_secs() as i64 + FILETIME_UNIX_EPOCH_DIFF_SECS) * 10_000_000
+                + i64::from(delta.subsec_nanos() / 100)
         }
         Err(_) => 0,
     }
@@ -658,13 +699,24 @@ fn standard_information(metadata: &Metadata, delete_pending: bool) -> FileStanda
         allocation_size: size,
         end_of_file: size,
         number_of_links: 1,
-        delete_pending: if delete_pending { Boolean::True } else { Boolean::False },
-        directory: if metadata.is_dir() { Boolean::True } else { Boolean::False },
+        delete_pending: if delete_pending {
+            Boolean::True
+        } else {
+            Boolean::False
+        },
+        directory: if metadata.is_dir() {
+            Boolean::True
+        } else {
+            Boolean::False
+        },
     }
 }
 
 /// Build the requested directory-entry information class for one entry.
-fn directory_information(level: &FileInformationClassLevel, entry: &EnumEntry) -> FileInformationClass {
+fn directory_information(
+    level: &FileInformationClassLevel,
+    entry: &EnumEntry,
+) -> FileInformationClass {
     match *level {
         FileInformationClassLevel::FILE_FULL_DIRECTORY_INFORMATION => {
             FileInformationClass::FullDirectory(FileFullDirectoryInformation::new(
@@ -879,7 +931,9 @@ fn query_directory_error(io: DeviceIoRequest, status: NtStatus) -> RdpdrPdu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ironrdp::rdpdr::pdu::efs::{FileRenameInformation, MajorFunction, MinorFunction, SharedAccess};
+    use ironrdp::rdpdr::pdu::efs::{
+        FileRenameInformation, MajorFunction, MinorFunction, SharedAccess,
+    };
 
     fn backend_with_root() -> (DriveRedirectBackend, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -897,7 +951,11 @@ mod tests {
         }
     }
 
-    fn create_request(path: &str, disposition: CreateDisposition, options: CreateOptions) -> DeviceCreateRequest {
+    fn create_request(
+        path: &str,
+        disposition: CreateDisposition,
+        options: CreateOptions,
+    ) -> DeviceCreateRequest {
         DeviceCreateRequest {
             device_io_request: io_request(0, MajorFunction::Create),
             desired_access: DesiredAccess::GENERIC_ALL,
@@ -926,7 +984,11 @@ mod tests {
         options: CreateOptions,
     ) -> u32 {
         let pdu = backend.handle_create(create_request(path, disposition, options));
-        assert_eq!(create_status(&pdu), NtStatus::SUCCESS, "create should succeed");
+        assert_eq!(
+            create_status(&pdu),
+            NtStatus::SUCCESS,
+            "create should succeed"
+        );
         *backend.open_files.keys().max().unwrap()
     }
 
@@ -1078,7 +1140,8 @@ mod tests {
             });
             initial = 0;
             match pdu {
-                RdpdrPdu::ClientDriveQueryDirectoryResponse(r) => match r.device_io_reply.io_status {
+                RdpdrPdu::ClientDriveQueryDirectoryResponse(r) => match r.device_io_reply.io_status
+                {
                     NtStatus::NO_MORE_FILES => break,
                     NtStatus::SUCCESS => {
                         if let Some(FileInformationClass::BothDirectory(info)) = r.buffer {
