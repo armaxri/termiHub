@@ -56,7 +56,13 @@ webpki-roots = { version = "1", optional = true }
 # plus cursor + clipboard, decoding on the wire into the shared, protocol-agnostic
 # graphical frame stream (#1681). Library-first per the repo rules — the RFB
 # state machine is not hand-rolled.
-vnc-rs = { version = "0.5", optional = true }
+#
+# Vendored fork at `vendor/vnc-rs` (#1714): upstream 0.5.3 hard-errors on any RFB
+# security type other than None/VncAuth and keeps `VncClient::new` `pub(super)`,
+# so a VeNCrypt+TLS handshake cannot be driven. The fork adds VeNCrypt (security
+# type 19) over TLS behind its `vencrypt` feature, reusing the in-tree rustls
+# stack (via russh) — no new/duplicate crypto dependency.
+vnc-rs = { path = "../vendor/vnc-rs", features = ["vencrypt"], optional = true }
 # Pure-Rust JPEG decoder for the VNC Tight encoding's JPEG sub-rects (#1715).
 # `vnc-rs` emits raw JPEG bytes via `VncEvent::JpegImage`; this decodes them to
 # RGBA to fold into the shared shadow framebuffer. Chosen for a tiny, pure-Rust

@@ -1,0 +1,63 @@
+[package]
+name = "vnc-rs"
+version = "0.5.3"
+edition = "2021"
+authors = [
+    "Jovi Hsu <jv.hsu@outlook.com>",
+    "Petr Beneš <petr.benes@gendigital.com>",
+    "Djamel TORCHE <djamel.torche@gmail.com>",
+]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/HsuJv/vnc-rs"
+description = "An async implementation of VNC client side protocol (termiHub vendored fork with VeNCrypt/TLS support)"
+keywords = ["vnc"]
+
+# termiHub vendored fork of vnc-rs 0.5.3.
+#
+# Upstream 0.5.3 hard-errors on any RFB security type other than None/VncAuth and
+# keeps `VncClient::new` `pub(super)`, so a VeNCrypt+TLS handshake cannot be driven
+# and handed back. This fork adds VeNCrypt (RFB security type 19) negotiation over
+# TLS behind the `vencrypt` feature, reusing termiHub's in-tree rustls stack. See
+# `src/client/vencrypt.rs` and https://github.com/armaxri/termiHub/issues/1714.
+#
+# The GUI dev-dependencies (minifb) and the doctest example that used them were
+# dropped so the crate builds as a workspace member without system GUI libraries.
+
+[lib]
+name = "vnc"
+path = "src/lib.rs"
+
+[dependencies]
+#error
+thiserror = "^1"
+flate2 = "^1"
+
+#log
+tracing = { version = "^0.1", features = ["log"] }
+
+# async
+async_io_stream = "0.3"
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-stream = "0.1"
+
+# VeNCrypt (RFB security type 19) over TLS. Optional so consumers that do not
+# need VeNCrypt keep the crate free of a TLS stack. termiHub enables it; the
+# versions mirror the ones already resolved in termiHub's tree (russh's rustls).
+tokio-rustls = { version = "0.26", optional = true }
+webpki-roots = { version = "1", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "^1", features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+tokio = { version = "^1", features = ["sync", "macros", "io-util", "rt", "time"] }
+
+[features]
+default = []
+# VeNCrypt security type 19 over TLS (X509* and Plain sub-types). Pulls in the
+# rustls-based TLS stack. Not available for wasm targets.
+vencrypt = ["dep:tokio-rustls", "dep:webpki-roots", "dep:rustls-pemfile"]

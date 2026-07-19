@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "src-tauri", "agent"]
+members = ["core", "src-tauri", "agent", "vendor/vnc-rs"]
 # The RDP sidecar (#1747) is a standalone build unit with its OWN Cargo.lock:
 # IronRDP's CredSSP crypto and russh pin incompatible RustCrypto pre-releases,
 # and Cargo allows one version per crate per lockfile (#1725). A workspace
