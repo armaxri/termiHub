@@ -5,6 +5,7 @@ import {
   compileRules,
   findMatches,
   normalizeHexColor,
+  styleDecorationElement,
 } from "./syntaxHighlighting";
 import type { HighlightRule } from "../types/syntaxHighlighting";
 
@@ -108,6 +109,47 @@ describe("findMatches overlap resolution", () => {
     // Should terminate and produce only the non-empty match.
     const matches = findMatches("xaax", compiled);
     expect(matches).toEqual([expect.objectContaining({ start: 1, end: 3 })]);
+  });
+});
+
+describe("styleDecorationElement", () => {
+  it("fills the (otherwise empty) overlay with text and applies bold/italic/underline", () => {
+    const el = document.createElement("div");
+    styleDecorationElement(
+      el,
+      "ERROR",
+      "#f44747",
+      { bold: true, italic: true, underline: true },
+      { fontFamily: "monospace", fontSize: 14, letterSpacing: 1 }
+    );
+    expect(el.textContent).toBe("ERROR");
+    expect(el.style.fontWeight).toBe("bold");
+    expect(el.style.fontStyle).toBe("italic");
+    expect(el.style.textDecoration).toBe("underline");
+    expect(el.style.fontFamily).toBe("monospace");
+    expect(el.style.fontSize).toBe("14px");
+    expect(el.style.letterSpacing).toBe("1px");
+    // Never intercept selection / clicks meant for the real text underneath.
+    expect(el.style.pointerEvents).toBe("none");
+    // The color is set so the overlay glyphs are visible on the top layer.
+    expect(el.style.color).not.toBe("");
+  });
+
+  it("applies only the styles the rule requests (underline-only)", () => {
+    const el = document.createElement("div");
+    styleDecorationElement(el, "https://x.io", "#3794ff", { underline: true });
+    expect(el.textContent).toBe("https://x.io");
+    expect(el.style.textDecoration).toBe("underline");
+    expect(el.style.fontWeight).toBe("");
+    expect(el.style.fontStyle).toBe("");
+  });
+
+  it("leaves weight/slant/decoration unset when the rule has no text style", () => {
+    const el = document.createElement("div");
+    styleDecorationElement(el, "x", "#ffffff", {});
+    expect(el.style.fontWeight).toBe("");
+    expect(el.style.fontStyle).toBe("");
+    expect(el.style.textDecoration).toBe("");
   });
 });
 
@@ -269,6 +311,60 @@ describe("SyntaxHighlightingEngine lifecycle", () => {
     await new Promise<void>((r) => term.write("now an ERROR appears\r\n", () => r()));
     expect(decoSpy).toHaveBeenCalledTimes(1);
     expect(decoSpy.mock.calls[0][0].width).toBe(5);
+    engine.dispose();
+  });
+
+  it("renders color-only rules on the bottom layer (selection stays legible)", async () => {
+    term = await makeTerm("plain ERROR here\r\n");
+    const decoSpy = vi.spyOn(term, "registerDecoration");
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([errorRule]);
+
+    expect(decoSpy).toHaveBeenCalledTimes(1);
+    expect(decoSpy.mock.calls[0][0].layer).toBe("bottom");
+    engine.dispose();
+  });
+
+  it("renders a styled (color + underline) rule on the top layer and styles the overlay", async () => {
+    term = await makeTerm("see https://x.io now\r\n");
+    const urlRule = rule({
+      id: "url",
+      pattern: "https?://\\S+",
+      style: { color: "#3794ff", underline: true },
+    });
+
+    const overlays: HTMLElement[] = [];
+    vi.spyOn(term, "registerDecoration").mockImplementation((opts) => {
+      // Styled runs must sit above the text layer to be visible.
+      expect(opts.layer).toBe("top");
+      expect(opts.foregroundColor).toBe("#3794ff");
+      const el = document.createElement("div");
+      overlays.push(el);
+      return {
+        marker: opts.marker,
+        element: el,
+        isDisposed: false,
+        onRender: (cb: (e: HTMLElement) => void) => {
+          cb(el); // simulate xterm rendering the decoration
+          return { dispose: () => {} };
+        },
+        onDispose: () => ({ dispose: () => {} }),
+        dispose: () => {},
+      } as unknown as ReturnType<typeof term.registerDecoration>;
+    });
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([urlRule]);
+
+    expect(overlays.length).toBeGreaterThan(0);
+    const joined = overlays.map((el) => el.textContent ?? "").join("");
+    expect(joined).toContain("https://x.io");
+    expect(overlays.every((el) => el.style.textDecoration === "underline")).toBe(true);
+    expect(overlays.every((el) => el.style.color !== "")).toBe(true);
+    // Underline-only: no weight/slant applied.
+    expect(overlays.every((el) => el.style.fontWeight === "")).toBe(true);
+
     engine.dispose();
   });
 });
