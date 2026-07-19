@@ -15,8 +15,9 @@
 //! 3. Server → 1×U8: `0` = version accepted, non-zero = failure.
 //! 4. Server → 1×U8 sub-type count `n`, then `n`×U32 offered sub-types.
 //! 5. Client → 1×U32: the chosen sub-type (or `0` if none is acceptable).
-//! 6. For a TLS/X509 sub-type the TLS handshake begins immediately (no ack byte);
-//!    for the bare `Plain` sub-type the stream stays plaintext.
+//! 6. For a TLS/X509 sub-type the server sends 1×U8 (`1` = OK, `0` = abort),
+//!    then the TLS handshake begins; for the bare `Plain` sub-type there is no
+//!    ack byte and the stream stays plaintext.
 //! 7. The sub-type's second-stage auth runs (`None` / `VncAuth` / `Plain`),
 //!    followed by the standard RFB `SecurityResult`.
 //!
@@ -193,6 +194,17 @@ where
 
     // 6/7. TLS (if any) then inner auth + SecurityResult + client init.
     if needs_tls(chosen) {
+        // The server acknowledges a TLS/X509 sub-type with a single U8 (1 = OK,
+        // 0 = abort) *before* the TLS handshake begins. Real servers (TigerVNC
+        // and the wider VeNCrypt 0.2 ecosystem) always send it; consuming it is
+        // mandatory, otherwise rustls reads the ack as the first TLS record byte
+        // and fails with "received corrupt message of type InvalidContentType".
+        let ack = stream.read_u8().await?;
+        if ack == 0 {
+            return Err(VncError::Vencrypt(
+                "server rejected the chosen VeNCrypt sub-type".to_string(),
+            ));
+        }
         let tls = tls_handshake(stream, cfg).await?;
         finalize(
             tls,
@@ -580,6 +592,55 @@ mod tests {
         match result {
             Err(VncError::Vencrypt(_)) => {}
             Err(other) => panic!("expected Vencrypt error, got {other:?}"),
+            Ok(_) => panic!("expected an error, connection unexpectedly succeeded"),
+        }
+        server_task.await.unwrap();
+    }
+
+    /// A TLS/X509 sub-type carries a 1×U8 server ack before the TLS handshake.
+    /// The client must read it; when the server signals `0` (abort) the client
+    /// reports a clear error rather than treating the byte as a TLS record.
+    /// This locks in the ack-framing fix (integration test VNC-06/07, #1770).
+    #[tokio::test]
+    async fn tls_subtype_ack_zero_is_rejected() {
+        use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+
+        let (client_io, mut server) = duplex(4096);
+
+        let server_task = tokio::spawn(async move {
+            server.write_all(&[0, 2]).await.unwrap();
+            let mut ver = [0u8; 2];
+            server.read_exact(&mut ver).await.unwrap();
+            server.write_all(&[0]).await.unwrap();
+            // Offer X509Vnc; the client (no username) selects it.
+            server.write_all(&[1]).await.unwrap();
+            server.write_u32(X509_VNC).await.unwrap();
+            assert_eq!(server.read_u32().await.unwrap(), X509_VNC);
+            // Abort the sub-type (ack = 0) instead of starting TLS.
+            server.write_all(&[0]).await.unwrap();
+        });
+
+        let cfg = VencryptConfig {
+            username: String::new(),
+            server_name: "test".to_string(),
+            verify: TlsVerify::Insecure,
+        };
+        let result = connect(
+            client_io,
+            &cfg,
+            "secret".to_string(),
+            VncVersion::RFB38,
+            true,
+            Some(PixelFormat::rgba()),
+            vec![VncEncoding::Raw],
+        )
+        .await;
+        match result {
+            Err(VncError::Vencrypt(msg)) => assert!(
+                msg.contains("rejected"),
+                "expected a sub-type rejection message, got {msg:?}"
+            ),
+            Err(other) => panic!("expected a Vencrypt rejection error, got {other:?}"),
             Ok(_) => panic!("expected an error, connection unexpectedly succeeded"),
         }
         server_task.await.unwrap();
