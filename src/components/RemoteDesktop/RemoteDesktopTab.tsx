@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
@@ -151,9 +153,14 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         <div className="rd-clipboard" data-testid="remote-desktop-clipboard-panel">
           <div className="rd-clipboard__header">
             <span>Clipboard</span>
-            <button className="rd-clipboard__close" onClick={() => setClipboardOpen(false)}>
-              ✕
-            </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              icon={<X size={14} />}
+              title="Close"
+              onClick={() => setClipboardOpen(false)}
+            />
           </div>
           <textarea
             className="rd-clipboard__text"
@@ -161,9 +168,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
             onChange={(e) => setClipboardDraft(e.target.value)}
             placeholder="Text synced with the remote clipboard…"
           />
-          <button className="rd-clipboard__send" onClick={handleSendClipboard}>
+          <Button variant="secondary" size="sm" onClick={handleSendClipboard}>
             Send to remote
-          </button>
+          </Button>
         </div>
       )}
     </div>

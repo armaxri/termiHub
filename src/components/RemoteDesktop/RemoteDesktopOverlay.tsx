@@ -1,4 +1,5 @@
 import { Loader2, RefreshCw, AlertCircle, Power } from "lucide-react";
+import { Button } from "@/components/ui";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import { MAX_RECONNECT_ATTEMPTS } from "@/types/remoteDesktop";
 
@@ -49,9 +50,9 @@ export function RemoteDesktopOverlay({
         <div className="rd-overlay__sub">
           attempt {Math.max(reconnectAttempt, 1)}/{MAX_RECONNECT_ATTEMPTS}
         </div>
-        <button className="rd-overlay__btn" onClick={onCancel}>
+        <Button variant="secondary" size="sm" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
       </div>
     );
   }
@@ -78,13 +79,14 @@ export function RemoteDesktopOverlay({
       {state === "authFailed" && (
         <div className="rd-overlay__sub">Check the credentials and try again.</div>
       )}
-      <button
-        className="rd-overlay__btn"
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={onReconnect}
         data-testid="remote-desktop-reconnect"
       >
         Reconnect
-      </button>
+      </Button>
     </div>
   );
 }

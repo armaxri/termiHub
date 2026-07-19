@@ -10,7 +10,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #05070b;
+  background: var(--bg-primary);
   overflow: hidden;
 }
 
@@ -93,28 +93,6 @@
   white-space: nowrap;
 }
 
-.rd-toolbar__btn {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: none;
-  border: none;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.rd-toolbar__btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
-}
-
-.rd-toolbar__btn--danger:hover {
-  color: var(--color-error);
-}
-
 .rd-toolbar__badge {
   display: inline-flex;
   align-items: center;
@@ -133,7 +111,7 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: rgba(15, 17, 23, 0.82);
+  background: var(--overlay-bg);
   color: var(--text-primary);
   z-index: 4;
   text-align: center;
@@ -163,22 +141,6 @@
   color: var(--color-error);
   font-family: var(--font-mono);
   word-break: break-word;
-}
-
-.rd-overlay__btn {
-  margin-top: 4px;
-  padding: 4px 12px;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.rd-overlay__btn:hover {
-  background: var(--bg-hover);
 }
 
 @keyframes rd-spin {
@@ -228,14 +190,6 @@
   color: var(--text-primary);
 }
 
-.rd-clipboard__close {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-}
-
 .rd-clipboard__text {
   flex: 1 1 auto;
   resize: none;
@@ -246,19 +200,4 @@
   background: var(--bg-tertiary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
-}
-
-.rd-clipboard__send {
-  padding: 5px 10px;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.rd-clipboard__send:hover {
-  background: var(--bg-hover);
 }

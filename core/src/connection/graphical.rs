@@ -140,7 +140,9 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
             fields: vec![
                 SettingsField {
                     default: Some(serde_json::json!(false)),
-                    description: Some("Observe only — suppress all keyboard/mouse input".to_string()),
+                    description: Some(
+                        "Observe only — suppress all keyboard/mouse input".to_string(),
+                    ),
                     ..field("viewOnly", "View Only", FieldType::Boolean)
                 },
                 SettingsField {
@@ -365,10 +367,7 @@ impl GraphicalState {
 
     /// Whether a session in this state is live (painting or about to).
     pub fn is_live(self) -> bool {
-        matches!(
-            self,
-            GraphicalState::Active | GraphicalState::Resizing
-        )
+        matches!(self, GraphicalState::Active | GraphicalState::Resizing)
     }
 }
 
