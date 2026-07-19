@@ -13,14 +13,16 @@ if [ ! -d node_modules ]; then
 fi
 
 # The RDP sidecar (#1747) ships next to the desktop binary via Tauri
-# `externalBin` (#1754), so it must be built and staged BEFORE `tauri build` —
-# the bundle step fails if the declared externalBin is missing. Host-native
-# build; release cross-targets are staged per-target in CI (release.yml).
+# `externalBin` (#1754). `externalBin` is declared in a bundle-only config
+# fragment (tauri.sidecar.conf.json) rather than the base config, so per-PR
+# compile/test/clippy jobs — which never bundle — don't need the helper built.
+# Here we do bundle, so build+stage the host sidecar first (tauri-build rejects
+# a missing externalBin), then merge the fragment via `--config`.
 echo "=== Building RDP sidecar for bundling ==="
 "$(dirname "$0")/build-rdp-sidecar.sh" --release --tauri-externalbin
 
 echo "Building termiHub for production..."
-pnpm tauri build
+pnpm tauri build --config src-tauri/tauri.sidecar.conf.json
 
 # --- Cross-compile agent binaries for Linux (macOS only) ---
 #
