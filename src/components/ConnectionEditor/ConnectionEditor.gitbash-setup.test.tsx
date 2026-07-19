@@ -128,7 +128,11 @@ function renderNewLocal(types: ConnectionTypeInfo[]) {
   });
   act(() => {
     root.render(
-      <ConnectionEditor tabId="tab-gitbash-1" meta={{ connectionId: "new" }} isVisible={true} />
+      <ConnectionEditor
+        tabId="tab-gitbash-1"
+        meta={{ connectionId: "new", folderId: null }}
+        isVisible={true}
+      />
     );
   });
 }
