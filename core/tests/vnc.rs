@@ -153,10 +153,10 @@ async fn vnc_02_decode_frame() {
     let quarter_w = FB_WIDTH / 4;
     let quarter_h = FB_HEIGHT / 4;
     let samples: [(u32, u32, &str); 4] = [
-        (quarter_w, quarter_h, "red"),               // top-left
-        (3 * quarter_w, quarter_h, "green"),         // top-right
-        (quarter_w, 3 * quarter_h, "blue"),          // bottom-left
-        (3 * quarter_w, 3 * quarter_h, "white"),     // bottom-right
+        (quarter_w, quarter_h, "red"),           // top-left
+        (3 * quarter_w, quarter_h, "green"),     // top-right
+        (quarter_w, 3 * quarter_h, "blue"),      // bottom-left
+        (3 * quarter_w, 3 * quarter_h, "white"), // bottom-right
     ];
 
     let mut fb = Framebuffer::new();
@@ -181,7 +181,10 @@ async fn vnc_02_decode_frame() {
         }
     };
 
-    assert!(frame_count > 0, "VNC-02: at least one FrameUpdate must arrive");
+    assert!(
+        frame_count > 0,
+        "VNC-02: at least one FrameUpdate must arrive"
+    );
     assert_eq!(
         (fb.width, fb.height),
         (FB_WIDTH, FB_HEIGHT),
