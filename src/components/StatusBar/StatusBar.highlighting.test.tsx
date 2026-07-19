@@ -93,7 +93,9 @@ describe("StatusBar — syntax-highlighting indicator", () => {
   it("shows 'Highlighting: OFF' when a per-connection override forces it off (global on)", () => {
     setActiveTab({ config: sshConfig });
     setGlobalHighlighting({ enabled: true });
-    setPerConnection("tab-1", { syntaxHighlighting: { override: "always-off", additionalRules: [] } });
+    setPerConnection("tab-1", {
+      syntaxHighlighting: { override: "always-off", additionalRules: [] },
+    });
     render();
     const item = query();
     expect(item).not.toBeNull();
@@ -102,7 +104,9 @@ describe("StatusBar — syntax-highlighting indicator", () => {
 
   it("shows the indicator when a per-connection override forces it on while global is off", () => {
     setActiveTab({ config: sshConfig });
-    setPerConnection("tab-1", { syntaxHighlighting: { override: "always-on", additionalRules: [] } });
+    setPerConnection("tab-1", {
+      syntaxHighlighting: { override: "always-on", additionalRules: [] },
+    });
     render();
     const item = query();
     expect(item).not.toBeNull();

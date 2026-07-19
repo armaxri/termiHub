@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionTerminalSettings, applyHighlightingOverride } from "./ConnectionTerminalSettings";
+import {
+  ConnectionTerminalSettings,
+  applyHighlightingOverride,
+} from "./ConnectionTerminalSettings";
 import type { TerminalOptions } from "@/types/terminal";
 import type { HighlightRule } from "@/types/syntaxHighlighting";
 
@@ -231,12 +234,18 @@ describe("ConnectionTerminalSettings — syntax highlighting override", () => {
   });
 
   it("reflects a stored 'always-off' override", () => {
-    renderWith({ ...emptyOptions, syntaxHighlighting: { override: "always-off", additionalRules: [] } });
+    renderWith({
+      ...emptyOptions,
+      syntaxHighlighting: { override: "always-off", additionalRules: [] },
+    });
     expect(trigger().getAttribute("data-value")).toBe("always-off");
   });
 
   it("reflects a stored 'always-on' override", () => {
-    renderWith({ ...emptyOptions, syntaxHighlighting: { override: "always-on", additionalRules: [] } });
+    renderWith({
+      ...emptyOptions,
+      syntaxHighlighting: { override: "always-on", additionalRules: [] },
+    });
     expect(trigger().getAttribute("data-value")).toBe("always-on");
   });
 
