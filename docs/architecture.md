@@ -462,7 +462,7 @@ graph LR
 | **State**      | `agent/src/state/`      | Session state persistence (`~/.config/termihub-agent/state.json`) for daemon recovery after agent restart                                                                                                                             |
 | **IO**         | `agent/src/io/`         | Transport layer — stdio (production SSH mode) and TCP (development/test mode)                                                                                                                                                         |
 
-The agent was recently refactored into a **thin proxy** over the core `ConnectionType` registry. All session lifecycle methods now use the `connection.*` JSON-RPC namespace (`connection.create`, `connection.attach`, `connection.detach`, `connection.input`, `connection.resize`, `connection.close`, `connection.list`). The agent's dispatcher routes these generically through the registry — no connection-type-specific dispatch code. See [Remote Protocol](remote-protocol.md) for the full specification and [Agent Concept](concepts/handled/agent.md) for the design vision.
+The agent was recently refactored into a **thin proxy** over the core `ConnectionType` registry. All session lifecycle methods now use the `connection.*` JSON-RPC namespace (`connection.create`, `connection.attach`, `connection.detach`, `connection.input`, `connection.resize`, `connection.close`, `connection.list`). The agent's dispatcher routes these generically through the registry — no connection-type-specific dispatch code. See [Remote Protocol](remote-protocol.md) for the full specification and [Agent Concept](concepts/implemented/agent.html) for the design vision.
 
 ### Level 3: ConnectionType Architecture
 
@@ -904,7 +904,7 @@ Linux targets are cross-compiled to static musl binaries via `cross-rs` from any
 
 **Cross-platform daemon:** The session daemon is cross-platform end-to-end. Its frame protocol and IPC transport run over a Unix domain socket on unix and a Windows named pipe (per-user DACL) on windows (`agent/src/daemon/transport.rs`); shell spawning uses `portable-pty` (ConPTY on Windows); and the `SystemDaemonLauncher` spawns a detached daemon process on both platforms (orphaned child on unix, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` on windows). Persistent (reconnectable) agent sessions therefore work on Windows as well as unix; no `nix` fork/setsid/signal is used on the daemon path.
 
-See [Remote Protocol](remote-protocol.md) for the full protocol specification and [Agent Concept](concepts/agent.md) for the complete design vision.
+See [Remote Protocol](remote-protocol.md) for the full protocol specification and [Agent Concept](concepts/implemented/agent.html) for the complete design vision.
 
 ---
 
@@ -1325,7 +1325,7 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
 
 ### ADR-7: ConnectionType Trait and Registry
 
-**Context:** The original `TerminalBackend` trait (ADR-3) lived in the desktop crate, and each connection type was implemented independently in both the desktop and agent, leading to deep duplication. The [Shared Rust Core concept](concepts/shared-rust-core.md) identified that both crates implement the same session lifecycle with the only difference being the transport layer. Additionally, adding a new connection type required frontend changes — adding a variant to the `ConnectionConfig` enum, writing a type-specific settings component, and updating connection type checks throughout the UI.
+**Context:** The original `TerminalBackend` trait (ADR-3) lived in the desktop crate, and each connection type was implemented independently in both the desktop and agent, leading to deep duplication. The [Shared Rust Core concept](concepts/implemented/shared-rust-core.html) identified that both crates implement the same session lifecycle with the only difference being the transport layer. Additionally, adding a new connection type required frontend changes — adding a variant to the `ConnectionConfig` enum, writing a type-specific settings component, and updating connection type checks throughout the UI.
 
 **Decision:** Define a `ConnectionType` async trait in `termihub-core` that all backends implement, paired with a `ConnectionTypeRegistry` for runtime discovery and a `SettingsSchema` system for dynamic UI form generation. Connection types declare their settings, capabilities, and lifecycle in core; both the desktop and agent register the same implementations from core at startup.
 
