@@ -43,6 +43,7 @@ import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { computeVisibleTreeNodes, type VisibleTreeNode } from "@/utils/computeVisibleTreeNodes";
+import { experimentalTypeIds } from "@/utils/experimentalTypes";
 import { filterConnectionTree, type ConnectionTreeFilter } from "@/utils/connectionSearch";
 import {
   getJumpHosts,
@@ -486,9 +487,20 @@ export function ConnectionList() {
     onConfirm: () => void;
   } | null>(null);
   const folders = useAppStore((s) => s.folders);
-  const connections = useAppStore((s) => s.connections);
+  const allConnections = useAppStore((s) => s.connections);
+  const connectionTypes = useAppStore((s) => s.connectionTypes);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const experimental = useExperimentalFeatures();
+
+  // Gate experimental (graphical remote-desktop) connections out of the sidebar
+  // when the flag is off (#1705), so an already-saved VNC/RDP/mock connection is
+  // hidden from normal navigation exactly as the type picker hides its type.
+  const connections = useMemo(() => {
+    if (experimental) return allConnections;
+    const gated = experimentalTypeIds(connectionTypes);
+    if (gated.size === 0) return allConnections;
+    return allConnections.filter((c) => !gated.has(c.config.type));
+  }, [experimental, allConnections, connectionTypes]);
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const updateConnection = useAppStore((s) => s.updateConnection);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);

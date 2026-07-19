@@ -49,6 +49,8 @@ import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { buildGatedTypeOptions } from "@/utils/experimentalTypes";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
 
@@ -97,13 +99,6 @@ const EDITOR_ICONS: Record<EditorCategory, LucideIcon> = {
 /** Check whether any field in TerminalOptions has a non-undefined value. */
 function hasTerminalOptions(opts: TerminalOptions): boolean {
   return Object.values(opts).some((v) => v !== undefined);
-}
-
-/** Build type options from the registry. */
-function buildTypeOptions(
-  connectionTypes: ConnectionTypeInfo[]
-): { value: string; label: string }[] {
-  return connectionTypes.map((ct) => ({ value: ct.typeId, label: ct.displayName }));
 }
 
 /** Find schema for a type ID in the connection types registry. */
@@ -203,6 +198,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
+  const experimental = useExperimentalFeatures();
 
   const editingConnectionId = meta.connectionId;
   const editingConnectionFolderId = meta.folderId;
@@ -491,14 +487,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const [isCompact, setIsCompact] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Build type options from the effective registry
+  // Build type options from the effective registry, gating experimental
+  // (graphical remote-desktop) types behind `experimentalFeaturesEnabled`
+  // (#1705). The currently-selected type is always kept so editing an existing
+  // experimental connection never loses its selection.
   const typeOptions = useMemo(() => {
     if (isAgentDefinitionMode) {
       // Definition mode: show only agent-reported types (no "Remote Agent" entry)
-      return agentConnectionTypes.map((ct) => ({ value: ct.typeId, label: ct.displayName }));
+      return buildGatedTypeOptions(agentConnectionTypes, experimental, selectedType);
     }
-    return buildTypeOptions(connectionTypes);
-  }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes]);
+    return buildGatedTypeOptions(connectionTypes, experimental, selectedType);
+  }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes, experimental, selectedType]);
 
   // Get the current schema from the effective registry
   const currentTypeInfo = useMemo(
