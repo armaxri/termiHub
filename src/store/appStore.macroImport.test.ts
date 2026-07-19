@@ -43,10 +43,7 @@ vi.mock("@/services/macroApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import {
-  listMacros as apiListMacros,
-  saveMacro as apiSaveMacro,
-} from "@/services/macroApi";
+import { listMacros as apiListMacros, saveMacro as apiSaveMacro } from "@/services/macroApi";
 import type { Macro } from "@/types/macro";
 import { MACRO_EXPORT_VERSION } from "@/services/macroIo";
 
