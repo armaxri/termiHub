@@ -322,8 +322,12 @@ Host bastion
     User b
 ",
         );
-        // An absolute Include path is opened as-is by the parser.
-        let path = write_file(&dir, "config", &format!("Include {}\n", included.display()));
+        // ssh_config uses forward slashes on every platform, and the parser's
+        // glob-based Include resolver mangles Windows backslashes — so normalise
+        // the absolute fixture path to forward slashes (a bare backslash path
+        // fails only on Windows, which is exactly what this once regressed).
+        let include_line = included.to_string_lossy().replace('\\', "/");
+        let path = write_file(&dir, "config", &format!("Include {include_line}\n"));
 
         let hosts = parse_ssh_config_hosts(&path).unwrap();
         let target = hosts.iter().find(|h| h.name == "target");
