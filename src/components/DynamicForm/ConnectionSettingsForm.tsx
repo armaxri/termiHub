@@ -5,6 +5,7 @@ import type { SettingsSchema } from "@/types/schema";
 import { isFieldVisible } from "@/utils/schemaDefaults";
 import { parseHostPort } from "@/utils/parseHostPort";
 import { ftpPortForTlsMode } from "@/utils/ftpSecurity";
+import { vncPortForDisplay } from "@/utils/vncDisplayPort";
 import { settingsSchemaToZod } from "./settingsSchemaToZod";
 import { DynamicField } from "./DynamicField";
 
@@ -50,7 +51,7 @@ export function ConnectionSettingsForm({
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
 
-  const { control, watch, reset, setValue } = useForm<Record<string, unknown>>({
+  const { control, watch, reset, setValue, getValues } = useForm<Record<string, unknown>>({
     defaultValues: settings,
     resolver: zodResolver(zodSchema),
     mode: "onChange",
@@ -67,6 +68,45 @@ export function ConnectionSettingsForm({
   const hasTlsAndPort = useMemo(
     () => hasPortField && schema.groups.some((g) => g.fields.some((f) => f.key === "tlsMode")),
     [schema, hasPortField]
+  );
+
+  // Whether this schema is VNC-shaped (has both a `display` field and a `port`
+  // field) — gates the live display↔port interplay special-case below.
+  const hasVncDisplay = useMemo(
+    () => hasPortField && schema.groups.some((g) => g.fields.some((f) => f.key === "display")),
+    [schema, hasPortField]
+  );
+
+  // VNC display↔port interplay (#1716): a VNC server listens on `5900 + display`,
+  // so editing the display number auto-fills the port, and editing the port
+  // directly clears the display (the concept's rule — the explicit port then
+  // wins). Wired into the field `onChange` rather than a `watch` effect so it
+  // fires only on genuine user edits: `setValue` below updates the sibling
+  // field's value without re-invoking its `onChange`, so there is no feedback
+  // loop and no spurious change on mount/reset. Auto-fill never overwrites an
+  // intentional port with an invalid/cleared display (see `vncPortForDisplay`).
+  const syncDisplayPort = useCallback(
+    (fieldKey: string, value: unknown) => {
+      if (!hasVncDisplay) return;
+      if (fieldKey === "display") {
+        const port = vncPortForDisplay(value);
+        if (port !== null && getValues("port") !== port) {
+          setValue("port", port, { shouldValidate: true, shouldDirty: true });
+        }
+      } else if (fieldKey === "port") {
+        const currentDisplay = getValues("display");
+        if (currentDisplay !== undefined && currentDisplay !== null && currentDisplay !== "") {
+          // Clear to `null` rather than `undefined`: react-hook-form's Controller
+          // does not re-render a controlled input when a value is set back to
+          // `undefined`, so the numeric widget would keep showing the stale
+          // display. `null` clears the widget (NumberField treats it as empty)
+          // and, unlike `""`, deserializes cleanly to the backend's
+          // `display: Option<u16>` as "no display" — the explicit port then wins.
+          setValue("display", null, { shouldValidate: true, shouldDirty: true });
+        }
+      }
+    },
+    [hasVncDisplay, getValues, setValue]
   );
 
   // Auto-extract `host:port` typed into the Host field on blur (PR #195 / #895).
@@ -199,7 +239,10 @@ export function ConnectionSettingsForm({
                     <DynamicField
                       field={field}
                       value={rhfField.value}
-                      onChange={rhfField.onChange}
+                      onChange={(value: unknown) => {
+                        rhfField.onChange(value);
+                        syncDisplayPort(field.key, value);
+                      }}
                       onBlur={() => handleFieldBlur(field.key, rhfField.value)}
                       error={fieldState.error?.message}
                       credentialSaved={
