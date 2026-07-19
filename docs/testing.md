@@ -1006,8 +1006,28 @@ filesystem backend is covered by unit tests against a temp directory
 5. Leave **Redirect a Local Drive** off and reconnect. **Expected:** no drive
    appears in the remote session.
 
-Audio (rdpsnd, #1764) and CLIPRDR file transfer (#1765) are follow-ups and are
-expected to be inert in this slice.
+#### Audio output redirection (rdpsnd, #1764)
+
+Audio output is off by default and opt-in per connection. The PCM decode and
+format advertisement are covered by unit tests (`rdp-sidecar` `audio` module),
+but audible playback needs a real server and a host audio device, and is
+**macOS/Windows only** in this slice (the Linux sidecar omits the audio backend
+— see PR #1764's Linux follow-up). Verify on macOS or Windows:
+
+1. Build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above).
+2. In the RDP connection editor, enable **Redirect Audio Output**.
+3. Connect to a Windows RDP host, then play sound in the remote session (e.g. a
+   YouTube clip, a system sound, or `Test-Sound`).
+   **Expected:** the audio is heard through this computer's speakers/output
+   device, reasonably in sync with the remote.
+4. Adjust the remote volume — local playback volume tracks it.
+5. Leave **Redirect Audio Output** off and reconnect. **Expected:** no remote
+   audio plays locally (the client advertises no audio formats).
+6. On a host with no audio device (or headless), confirm the session still
+   connects and runs normally, just without sound.
+
+CLIPRDR file transfer (#1765) is a follow-up and is expected to be inert in this
+slice.
 
 ### Deferred agent update (apply on last disconnect) (#1352)
 
