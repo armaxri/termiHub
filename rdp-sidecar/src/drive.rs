@@ -138,42 +138,12 @@ impl DriveRedirectBackend {
     }
 
     /// Resolve an RDP path (`\`-separated, relative to the share root) to a local
-    /// path, or `None` if it escapes the sandbox. Rejects `..` traversal, drive
-    /// letters / colons, and NUL bytes; for paths that already exist, the result
-    /// is canonicalised and re-checked against the root to defeat symlink
-    /// escapes.
+    /// path, or `None` if it escapes the sandbox. Delegates to the shared
+    /// [`crate::sandbox::resolve_in_root`] choke point (rejects `..` traversal,
+    /// drive letters / colons, and NUL bytes; canonicalises existing paths and
+    /// re-checks them against the root to defeat symlink escapes).
     fn resolve(&self, rdp_path: &str) -> Option<PathBuf> {
-        let mut out = self.root.clone();
-        for component in rdp_path.split(['\\', '/']) {
-            match component {
-                "" | "." => continue,
-                ".." => return None,
-                other => {
-                    if other.contains('\0') || other.contains(':') {
-                        return None;
-                    }
-                    out.push(other);
-                }
-            }
-        }
-        // A path that already exists must canonicalise back inside the root; this
-        // is what stops a symlink inside the share from pointing outward.
-        if let Ok(canon) = fs::canonicalize(&out) {
-            if !canon.starts_with(&self.root) {
-                return None;
-            }
-            return Some(canon);
-        }
-        // Not-yet-existing path (e.g. a create): its parent must be inside the
-        // root. `..` was already rejected lexically, so the join cannot escape.
-        if let Some(parent) = out.parent() {
-            if let Ok(parent_canon) = fs::canonicalize(parent) {
-                if !parent_canon.starts_with(&self.root) {
-                    return None;
-                }
-            }
-        }
-        Some(out)
+        crate::sandbox::resolve_in_root(&self.root, rdp_path)
     }
 
     /// Allocate the next non-zero `file_id`.

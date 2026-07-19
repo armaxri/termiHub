@@ -20,6 +20,7 @@ mod drive;
 mod input;
 mod keymap;
 mod rdp;
+mod sandbox;
 
 use anyhow::{bail, Context, Result};
 use termihub_core::backends::rdp_sidecar::protocol::SidecarMessage;

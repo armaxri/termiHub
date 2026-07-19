@@ -103,6 +103,13 @@ pub struct RdpConfig {
     /// (#1764). Audible playback is currently macOS/Windows only — the Linux
     /// build omits the audio backend (see the #1764 Linux follow-up).
     pub audio_redirection: bool,
+    /// Opt in to CLIPRDR file transfer (#1765): when the remote copies files to
+    /// its clipboard, download them into the shared folder ([`Self::shared_folder_path`]).
+    /// Requires [`Self::drive_redirection`] and a valid shared folder — that
+    /// folder is already remote-writable via drive redirection, so receiving
+    /// clipboard files into it grants the remote no new local access. Off by
+    /// default.
+    pub clipboard_file_transfer: bool,
 }
 
 impl Default for RdpConfig {
@@ -123,6 +130,7 @@ impl Default for RdpConfig {
             shared_folder_path: String::new(),
             drive_name: String::new(),
             audio_redirection: false,
+            clipboard_file_transfer: false,
         }
     }
 }
@@ -185,6 +193,22 @@ impl RdpConfig {
     /// Whether audio output redirection (rdpsnd playback) is opted in (#1764).
     pub fn audio_enabled(&self) -> bool {
         self.audio_redirection
+    }
+
+    /// The canonicalised destination folder for files received over CLIPRDR file
+    /// transfer, or `None` when the feature is off or the shared folder is not a
+    /// valid directory (#1765).
+    ///
+    /// File transfer reuses the drive-redirection share root: that folder is
+    /// already exposed read-write to the remote via #1757, so receiving
+    /// clipboard files into it exposes nothing further. Gating on
+    /// [`Self::shared_drive_root`] keeps the "only this one opted-in folder"
+    /// guarantee in a single place.
+    pub fn clipboard_download_dir(&self) -> Option<std::path::PathBuf> {
+        if !self.clipboard_file_transfer {
+            return None;
+        }
+        self.shared_drive_root()
     }
 
     /// The user-visible label for the redirected drive, defaulting to `termiHub`
@@ -347,6 +371,20 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                     FieldType::Boolean,
                 )
             },
+            SettingsField {
+                default: Some(serde_json::json!(false)),
+                visible_when: when_field_is_true("driveRedirection"),
+                description: Some(
+                    "Save files copied to the clipboard on the remote into the shared folder. \
+                     Requires drive redirection; files land only in that already-shared folder."
+                        .to_string(),
+                ),
+                ..field(
+                    "clipboardFileTransfer",
+                    "Receive Clipboard Files",
+                    FieldType::Boolean,
+                )
+            },
         ],
     });
 
@@ -461,6 +499,7 @@ mod tests {
             shared_folder_path: "/tmp/share".to_string(),
             drive_name: "Docs".to_string(),
             audio_redirection: true,
+            clipboard_file_transfer: true,
         };
         let json = serde_json::to_value(&cfg).unwrap();
         let back: RdpConfig = serde_json::from_value(json).unwrap();
@@ -477,6 +516,57 @@ mod tests {
         assert_eq!(back.shared_folder_path, "/tmp/share");
         assert_eq!(back.drive_label(), "Docs");
         assert!(back.audio_enabled());
+        assert!(back.clipboard_file_transfer);
+    }
+
+    #[test]
+    fn clipboard_download_dir_requires_opt_in_and_shared_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().into_owned();
+        // Feature off → no destination even with a valid shared folder.
+        let off = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: path.clone(),
+            clipboard_file_transfer: false,
+            ..Default::default()
+        };
+        assert!(off.clipboard_download_dir().is_none());
+        // Feature on but drive redirection off → no destination (folder not shared).
+        let no_share = RdpConfig {
+            drive_redirection: false,
+            shared_folder_path: path.clone(),
+            clipboard_file_transfer: true,
+            ..Default::default()
+        };
+        assert!(no_share.clipboard_download_dir().is_none());
+        // Fully opted in with a valid folder → resolves to the canonical folder.
+        let on = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: path,
+            clipboard_file_transfer: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            on.clipboard_download_dir(),
+            Some(std::fs::canonicalize(dir.path()).unwrap())
+        );
+    }
+
+    #[test]
+    fn schema_exposes_clipboard_file_transfer_toggle() {
+        let schema = rdp_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "rdp").unwrap();
+        let field = group
+            .fields
+            .iter()
+            .find(|f| f.key == "clipboardFileTransfer")
+            .expect("RDP schema must expose clipboardFileTransfer");
+        assert_eq!(field.default, Some(serde_json::json!(false)));
+        // Hidden until drive redirection is enabled.
+        assert_eq!(
+            field.visible_when.as_ref().map(|c| c.field.as_str()),
+            Some("driveRedirection")
+        );
     }
 
     #[test]
