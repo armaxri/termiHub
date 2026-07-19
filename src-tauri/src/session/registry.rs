@@ -88,6 +88,19 @@ pub fn build_desktop_registry() -> ConnectionTypeRegistry {
         }),
     );
 
+    // VNC (RFB) graphical remote-desktop backend (gated behind the `vnc`
+    // feature; enabled by default). Reports `graphical: true`, so it routes
+    // through the GraphicalSessionManager into a remote-desktop canvas tab and
+    // is experimental-gated (#1705) with no per-protocol wiring. Additive, like
+    // every other backend — this is the whole desktop-side registration.
+    #[cfg(feature = "vnc")]
+    registry.register(
+        "vnc",
+        "VNC",
+        "monitor",
+        Box::new(|| Box::new(termihub_core::backends::vnc::Vnc::new())),
+    );
+
     registry
 }
 
@@ -119,13 +132,18 @@ mod tests {
         #[cfg(feature = "mock-remote-desktop")]
         assert!(registry.has_type("mock-remote-desktop"));
 
+        #[cfg(feature = "vnc")]
+        assert!(registry.has_type("vnc"));
+
         // 5 always-on backends (local/serial/ssh/telnet/docker), plus WSL on
-        // Windows, FTP when the `ftp` feature is enabled, and the mock
-        // remote-desktop backend when `mock-remote-desktop` is enabled.
+        // Windows, FTP when the `ftp` feature is enabled, the mock
+        // remote-desktop backend when `mock-remote-desktop` is enabled, and the
+        // VNC backend when `vnc` is enabled.
         let expected = 5
             + cfg!(windows) as usize
             + cfg!(feature = "ftp") as usize
-            + cfg!(feature = "mock-remote-desktop") as usize;
+            + cfg!(feature = "mock-remote-desktop") as usize
+            + cfg!(feature = "vnc") as usize;
         assert_eq!(types.len(), expected);
     }
 
