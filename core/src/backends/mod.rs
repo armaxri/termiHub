@@ -27,3 +27,6 @@ pub mod ftp;
 
 #[cfg(feature = "mock-remote-desktop")]
 pub mod mock_remote_desktop;
+
+#[cfg(feature = "vnc")]
+pub mod vnc;
