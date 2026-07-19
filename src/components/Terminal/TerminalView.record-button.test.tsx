@@ -24,6 +24,7 @@ vi.mock("@/components/ui", () => ({
 }));
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
+vi.mock("./MacroPlaybackDialog", () => ({ MacroPlaybackDialog: () => null }));
 vi.mock("@/components/SplitView", () => ({ SplitView: () => null }));
 vi.mock("@/services/events", () => ({ terminalDispatcher: { init: vi.fn() } }));
 vi.mock("@/services/api", () => ({

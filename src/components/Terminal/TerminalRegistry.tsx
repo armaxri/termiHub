@@ -1,4 +1,12 @@
-import { createContext, useContext, useRef, useCallback, useMemo, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useRef,
+  useCallback,
+  useMemo,
+  useEffect,
+  ReactNode,
+} from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
@@ -9,6 +17,7 @@ import {
   writeText as writeClipboard,
 } from "@tauri-apps/plugin-clipboard-manager";
 import { sendInput } from "@/services/api";
+import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
@@ -329,6 +338,14 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     await sendInput(sessionId, data);
     return true;
   }, []);
+
+  // Expose the terminal-input seam to the macro playback service (#1675) so the
+  // store's `playMacro` can inject through the same `send_input` choke point as
+  // interactive typing, without holding a React ref. Cleared on unmount.
+  useEffect(() => {
+    registerTerminalInputInjector(sendInputToTerminal);
+    return () => registerTerminalInputInjector(null);
+  }, [sendInputToTerminal]);
 
   const registerSearchAddon = useCallback((tabId: string, addon: SearchAddon) => {
     searchAddonRegistryRef.current.set(tabId, addon);

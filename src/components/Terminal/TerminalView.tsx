@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft, Circle, Square } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Columns2, Rows2, X, PanelLeft, Circle, Square, Play } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
@@ -13,6 +13,7 @@ import { Terminal } from "./Terminal";
 import { applyAgentReconnecting } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
+import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
 import { listAgentSessions } from "@/services/api";
@@ -252,6 +253,11 @@ export function TerminalView() {
   const macroRecordingStepCount = useAppStore((s) => s.macroRecordingSteps.length);
   const saveRecordedMacro = useAppStore((s) => s.saveRecordedMacro);
   const discardRecordedMacro = useAppStore((s) => s.discardRecordedMacro);
+  const macros = useAppStore((s) => s.macros);
+  const macroPlayback = useAppStore((s) => s.macroPlayback);
+  const playMacro = useAppStore((s) => s.playMacro);
+  const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
+  const [macroPlaybackDialogOpen, setMacroPlaybackDialogOpen] = useState(false);
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
 
@@ -343,6 +349,26 @@ export function TerminalView() {
                 {macroRecording ? <Square size={14} fill="currentColor" /> : <Circle size={16} />}
               </button>
             </Tooltip>
+            <Tooltip
+              content={
+                macroPlayback
+                  ? `Stop Playback (${macroPlayback.played}/${macroPlayback.total})`
+                  : "Play Macro"
+              }
+              side="bottom"
+            >
+              <button
+                className={`terminal-view__toolbar-btn${macroPlayback ? " terminal-view__toolbar-btn--recording" : ""}`}
+                onClick={() =>
+                  macroPlayback ? cancelMacroPlayback() : setMacroPlaybackDialogOpen(true)
+                }
+                aria-label={macroPlayback ? "Stop Macro Playback" : "Play Macro"}
+                aria-pressed={macroPlayback !== null}
+                data-testid="terminal-view-play-macro"
+              >
+                {macroPlayback ? <Square size={14} fill="currentColor" /> : <Play size={15} />}
+              </button>
+            </Tooltip>
             {allLeaves.length > 1 && (
               <Tooltip content="Close Panel" side="bottom">
                 <button
@@ -377,6 +403,12 @@ export function TerminalView() {
         stepCount={macroRecordingStepCount}
         onSave={(meta) => void saveRecordedMacro(meta)}
         onCancel={discardRecordedMacro}
+      />
+      <MacroPlaybackDialog
+        open={macroPlaybackDialogOpen}
+        macros={macros}
+        onOpenChange={setMacroPlaybackDialogOpen}
+        onPlay={(macroId, timingMode) => void playMacro(macroId, { timingMode })}
       />
     </TerminalPortalProvider>
   );
