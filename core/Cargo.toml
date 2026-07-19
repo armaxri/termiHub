@@ -3,6 +3,14 @@ name = "termihub-core"
 version = "0.1.0"
 description = "Shared core library for termiHub desktop and agent"
 edition = "2021"
+build = "build.rs"
+
+# Hashing the staged `termihub-rdp-helper` externalBin to embed its SHA-256 at
+# build time for the adapter's pre-spawn integrity check (#1762). Always compiled
+# (build-deps cannot be feature-gated), but tiny and pure-Rust.
+[build-dependencies]
+sha2 = "0.10"
+hex = "0.4"
 
 [dependencies]
 async-trait = { workspace = true }
@@ -161,4 +169,11 @@ vnc = ["dep:vnc-rs", "dep:zune-jpeg", "dep:tracing", "ssh"]
 # compiles the adapter + IPC protocol + config. `tokio/process` is needed to
 # spawn/supervise the child. The sidecar binary is built separately
 # (scripts/build-rdp-sidecar.sh) and bundled next to the app binary.
-rdp-sidecar = ["dep:rmp-serde", "dep:tracing", "tokio/process"]
+rdp-sidecar = [
+    "dep:rmp-serde",
+    "dep:tracing",
+    "tokio/process",
+    # Pre-spawn SHA-256 integrity verification of the bundled sidecar (#1762).
+    "dep:sha2",
+    "dep:hex",
+]
