@@ -910,6 +910,39 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### RDP via the IronRDP sidecar (#1747)
+
+The RDP backend decodes through the separately-built `termihub-rdp-helper`
+sidecar (workspace-excluded crate; see #1747 / #1725). Live RDP needs a real
+server, and per-PR CI does not run integration/container tests, so the wire path
+is covered by unit tests (`termihub-core` `backends::rdp_sidecar` + the sidecar
+crate) plus these manual steps.
+
+Prerequisites: enable experimental features (#1705); build the helper and point
+the app at it.
+
+1. Build the sidecar: `./scripts/build-rdp-sidecar.sh --release` (emits
+   `rdp-sidecar/target/release/termihub-rdp-helper`).
+2. Make it discoverable: either copy it next to the desktop binary, or
+   `export TERMIHUB_RDP_HELPER=<abs-path-to-helper>` before launching via
+   `./scripts/dev.sh`.
+3. Stand up an RDP server (a Windows host with Remote Desktop enabled, or a Linux
+   `xrdp` container).
+4. In the connection editor create an **RDP** connection: host, port (3389),
+   username, password, and — for a domain account — the **Domain** field; leave
+   Security on **Auto** (NLA/CredSSP).
+5. Connect. **Expected:** the tab shows the remote desktop painting in the shared
+   canvas; the state dot goes connecting → active. Move the mouse and type — the
+   remote cursor and input track. Close the tab — the helper process exits (no
+   orphan `termihub-rdp-helper`).
+6. Failure paths: a wrong password surfaces an authentication error (state
+   `authFailed`); an unreachable host surfaces a connect error; deleting/renaming
+   the helper before connecting surfaces an actionable "failed to launch RDP
+   helper" error that names `scripts/build-rdp-sidecar.sh` / `TERMIHUB_RDP_HELPER`.
+
+Dynamic resize, clipboard (CLIPRDR), drive redirection, and audio are follow-ups
+and are expected to be inert in this slice.
+
 ### Deferred agent update (apply on last disconnect) (#1352)
 
 Verifies that a deferred agent update never interrupts active sessions and
