@@ -129,6 +129,19 @@ export interface SshEditorSettings {
   proxyJump?: JumpHostConfig[];
 }
 
+/**
+ * A host from the user's `~/.ssh/config` that declares a `ProxyJump`, offered
+ * for one-shot import into the first-class jump-host editor (#1702).
+ *
+ * `name` is the OpenSSH `Host` alias; `proxyJump` is the resolved hop chain
+ * (outermost → innermost), reusing the same {@link JumpHostConfig} shape the
+ * editor stores so it drops straight into a connection's `proxyJump` array.
+ */
+export interface SshConfigImportHost {
+  name: string;
+  proxyJump: JumpHostConfig[];
+}
+
 export type ConnectionTreeItem =
   | { type: "folder"; folder: ConnectionFolder }
   | { type: "connection"; connection: SavedConnection };

@@ -1,9 +1,10 @@
-import { useCallback, useMemo } from "react";
-import { ArrowLeftRight, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { ArrowLeftRight, Plus, Trash2, AlertTriangle, FileDown } from "lucide-react";
 import type { JumpHostConfig } from "@/types/connection";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 import { JumpHostEntry } from "./JumpHostEntry";
 import { JumpHostPathDisplay } from "./JumpHostPathDisplay";
+import { SshConfigImportDialog } from "./SshConfigImportDialog";
 
 interface JumpHostSectionProps {
   /** Current `proxyJump` chain from the SSH connection settings. */
@@ -50,6 +51,15 @@ export function JumpHostSection({
 }: JumpHostSectionProps) {
   const hops = useMemo(() => value ?? [], [value]);
   const enabled = hops.length > 0;
+  const [importOpen, setImportOpen] = useState(false);
+
+  /** Replace the chain with an imported one (enables the section if it was off). */
+  const importChain = useCallback(
+    (imported: JumpHostConfig[]) => {
+      onChange(imported.length > 0 ? imported : undefined);
+    },
+    [onChange]
+  );
 
   /** Display host for the connection-path summary: a referenced hop shows its
    * connection's label rather than its (editor-empty) inline host. */
@@ -106,6 +116,22 @@ export function JumpHostSection({
           Connect through a jump host
         </span>
       </label>
+
+      <button
+        type="button"
+        className="jump-host__import"
+        onClick={() => setImportOpen(true)}
+        data-testid="jump-host-import-open"
+      >
+        <FileDown size={13} aria-hidden />
+        Import from ~/.ssh/config
+      </button>
+
+      <SshConfigImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImport={importChain}
+      />
 
       {enabled && (
         <>

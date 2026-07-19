@@ -371,6 +371,23 @@
   text-decoration: underline;
 }
 
+.jump-host__import {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  color: var(--text-accent, var(--focus-border));
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-xs) 0;
+}
+
+.jump-host__import:hover {
+  text-decoration: underline;
+}
+
 .jump-host__errors {
   display: flex;
   align-items: flex-start;

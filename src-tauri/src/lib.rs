@@ -662,6 +662,7 @@ pub fn run() {
             commands::session::cancel_connecting,
             commands::connection_path::probe_connection_path_cmd,
             commands::connection_path::cancel_connection_path_probe,
+            commands::ssh_config_import::import_ssh_config_hosts,
             commands::session::get_connection_types,
             commands::session::send_input,
             commands::session::set_session_line_ending,
