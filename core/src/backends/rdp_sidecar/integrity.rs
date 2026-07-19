@@ -122,7 +122,9 @@ mod tests {
         let (_dir, path) = write_temp(b"anything");
         let digest = sha256_hex_of_file(&path).unwrap();
         assert_eq!(digest.len(), 64);
-        assert!(digest.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]
@@ -146,7 +148,10 @@ mod tests {
         let (_dir, path) = write_temp(b"tampered");
         let err = verify_helper_integrity(&path, false, Some(SHA256_OF_ABC)).unwrap_err();
         assert!(err.contains("integrity check failed"), "got: {err}");
-        assert!(err.contains(SHA256_OF_ABC), "error should name the expected digest: {err}");
+        assert!(
+            err.contains(SHA256_OF_ABC),
+            "error should name the expected digest: {err}"
+        );
     }
 
     #[test]
@@ -164,6 +169,8 @@ mod tests {
         let (_dir, path) = write_temp(b"tampered");
         assert!(verify_helper_integrity(&path, true, Some(SHA256_OF_ABC)).is_ok());
         let dir = tempfile::tempdir().unwrap();
-        assert!(verify_helper_integrity(&dir.path().join("nope"), true, Some(SHA256_OF_ABC)).is_ok());
+        assert!(
+            verify_helper_integrity(&dir.path().join("nope"), true, Some(SHA256_OF_ABC)).is_ok()
+        );
     }
 }
