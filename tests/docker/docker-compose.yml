@@ -284,6 +284,30 @@ services:
       retries: 5
 
   # ============================================================
+  # VNC (RFB) Server (profile: vnc)
+  # ============================================================
+
+  # Headless VNC server (x11vnc + Xvfb) serving a static four-quadrant test
+  # pattern over classic RFB VncAuth (password `testpass`). Drives the `vnc`
+  # backend's live negotiate -> authenticate -> decode path (#1681/#1713),
+  # which per-PR CI cannot cover because it runs `-m "not integration"`.
+  vnc-server:
+    build: ./vnc-server
+    container_name: ${TERMIHUB_TEST_PROJECT:-termihub}-vnc
+    ports:
+      - "127.0.0.1:${TERMIHUB_TEST_VNC_PORT:-2501}:5900"
+    networks:
+      - test-net
+    profiles:
+      - vnc
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5900"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
   # Network Tools Live Test Target (profile: network)
   # ============================================================
 
