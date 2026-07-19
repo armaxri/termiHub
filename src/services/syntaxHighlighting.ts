@@ -68,6 +68,59 @@ export interface SyntaxHighlightingEngineOptions {
   maxLineLength?: number;
 }
 
+/** The subset of {@link HighlightStyle} the native color recolor cannot express. */
+type TextStyle = Pick<HighlightStyle, "bold" | "italic" | "underline">;
+
+/** Font attributes copied onto a styled overlay so its glyphs line up with the cells. */
+export interface DecorationFont {
+  fontFamily?: string;
+  fontSize?: number;
+  letterSpacing?: number;
+}
+
+/** Whether a rule asks for any attribute the native `foregroundColor` recolor cannot render. */
+function hasTextStyle(style: TextStyle): boolean {
+  return !!(style.bold || style.italic || style.underline);
+}
+
+/**
+ * Fills a decoration's overlay element with the matched text and applies
+ * bold/italic/underline.
+ *
+ * xterm's native `IDecorationOptions.foregroundColor` recolors the real buffer
+ * cell, which is how the color path works — but it cannot express weight, slant
+ * or underline. The decoration's `onRender` element is a separate, empty,
+ * exactly-sized (`width` cells × cell height, correct `line-height`) overlay
+ * `div.xterm-decoration`. Styling that *empty* div (the buggy approach shown in
+ * the concept doc) has no glyph to act on, so nothing renders.
+ *
+ * Giving the overlay the matched text — in the rule color, with the terminal's
+ * own font metrics so the monospace glyphs land exactly over the recolored
+ * cells — is what makes the styles visible. Registered on the top layer, the
+ * styled copy over-paints the (identically colored) real glyph, adding the
+ * weight/slant/underline that the recolor alone cannot.
+ */
+export function styleDecorationElement(
+  el: HTMLElement,
+  text: string,
+  color: string,
+  style: TextStyle,
+  font: DecorationFont = {}
+): void {
+  el.textContent = text;
+  el.style.color = color;
+  el.style.whiteSpace = "pre";
+  el.style.overflow = "hidden";
+  // The real text underneath owns selection and clicks; never intercept them.
+  el.style.pointerEvents = "none";
+  if (font.fontFamily) el.style.fontFamily = font.fontFamily;
+  if (font.fontSize) el.style.fontSize = `${font.fontSize}px`;
+  if (font.letterSpacing) el.style.letterSpacing = `${font.letterSpacing}px`;
+  el.style.fontWeight = style.bold ? "bold" : "";
+  el.style.fontStyle = style.italic ? "italic" : "";
+  el.style.textDecoration = style.underline ? "underline" : "";
+}
+
 const HEX_FULL = /^#[0-9a-fA-F]{6}$/;
 const HEX_SHORT = /^#[0-9a-fA-F]{3}$/;
 
@@ -469,11 +522,13 @@ export class SyntaxHighlightingEngine {
     let runRow = -1;
     let runStartX = -1;
     let runWidth = 0;
+    let runText = "";
 
     const flush = (): void => {
       if (runWidth <= 0) return;
-      this.decorate(runRow, runStartX, runWidth, cursorAbs, match.color, out);
+      this.decorate(runRow, runStartX, runWidth, cursorAbs, match, runText, out);
       runWidth = 0;
+      runText = "";
     };
 
     for (let col = match.start; col < match.end; col++) {
@@ -484,43 +539,61 @@ export class SyntaxHighlightingEngine {
       const line = physRow === undefined ? undefined : getRowLine(physRow);
       const cell = line?.getCell(x, cellRef);
       const decorable = !!cell && cell.isFgDefault();
+      // One char per decorable cell keeps the styled overlay's text aligned with
+      // the cells it covers. Blank/trailing cells fall back to a space.
+      const char = decorable && cell ? cell.getChars() || " " : "";
 
       const contiguous = decorable && physRow === runRow && x === runStartX + runWidth;
       if (contiguous) {
         runWidth++;
+        runText += char;
       } else {
         flush();
         if (decorable) {
           runRow = physRow as number;
           runStartX = x;
           runWidth = 1;
+          runText = char;
         } else {
           runWidth = 0;
+          runText = "";
         }
       }
     }
     flush();
   }
 
-  /** Registers a marker + foreground-color decoration for one run of cells. */
+  /**
+   * Registers a marker + decoration for one run of cells. The native
+   * `foregroundColor` recolors the real glyph (the color path). When the rule
+   * also asks for bold/italic/underline — which the recolor cannot express —
+   * the decoration renders on the top layer and its overlay element is filled
+   * with the run's styled text on render (see {@link styleDecorationElement}).
+   */
   private decorate(
     physRow: number,
     x: number,
     width: number,
     cursorAbs: number,
-    color: string,
+    match: RuleMatch,
+    text: string,
     out: IDisposable[]
   ): void {
     const marker = this.xterm.registerMarker(physRow - cursorAbs);
     if (!marker) return;
 
+    const style = match.rule.style;
+    const styled = hasTextStyle(style);
+
     const decoration = this.xterm.registerDecoration({
       marker,
       x,
       width,
-      foregroundColor: color,
-      // Render under the selection so selected text stays legible.
-      layer: "bottom",
+      foregroundColor: match.color,
+      // Color-only runs render under the selection so selected text stays
+      // legible. Styled runs put their glyphs in the overlay, which must sit
+      // above the text layer to be seen, so they render on top.
+      layer: styled ? "top" : "bottom",
     });
 
     // If the decoration could not be created (e.g. alt buffer raced in), drop
@@ -531,6 +604,22 @@ export class SyntaxHighlightingEngine {
     }
 
     out.push(decoration, marker);
+
+    if (!styled) return;
+
+    const font: DecorationFont = {
+      fontFamily: this.xterm.options.fontFamily,
+      fontSize: this.xterm.options.fontSize,
+      letterSpacing: this.xterm.options.letterSpacing,
+    };
+    const sub = decoration.onRender((el) => {
+      // Idempotent per element: xterm fires onRender every frame, so style each
+      // (re)created overlay only once to avoid needless layout churn on scroll.
+      if (el.dataset.thHighlightStyled === "1") return;
+      styleDecorationElement(el, text, match.color, style, font);
+      el.dataset.thHighlightStyled = "1";
+    });
+    out.push(sub);
   }
 
   /** Disposes and forgets a single logical line's decorations. */
