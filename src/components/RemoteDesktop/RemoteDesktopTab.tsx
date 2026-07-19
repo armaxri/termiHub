@@ -40,6 +40,17 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const session = useRemoteDesktopSession(tabId);
   const scaleMode = scaleModeOverride ?? session.scaleMode;
 
+  const setRemoteDesktopResolution = useAppStore((s) => s.setRemoteDesktopResolution);
+  const clearRemoteDesktopResolution = useAppStore((s) => s.clearRemoteDesktopResolution);
+
+  // Surface the live framebuffer resolution to the store (keyed by session id)
+  // for the shared status-bar segment (#1709); drop it when the session ends.
+  useEffect(() => {
+    const id = session.sessionId;
+    if (!id) return;
+    return () => clearRemoteDesktopResolution(id);
+  }, [session.sessionId, clearRemoteDesktopResolution]);
+
   const title = useAppStore(
     (s) =>
       getAllLeaves(s.rootPanel)
@@ -122,7 +133,12 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           viewOnly={session.viewOnly}
           onInput={session.sendInput}
           onResize={session.resize}
-          onDimensions={(width, height) => setResolution({ width, height })}
+          onDimensions={(width, height) => {
+            setResolution({ width, height });
+            if (session.sessionId) {
+              setRemoteDesktopResolution(session.sessionId, width, height);
+            }
+          }}
         />
       )}
 

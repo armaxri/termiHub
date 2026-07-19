@@ -1106,6 +1106,16 @@ interface AppState {
     caps: { monitoring: boolean; fileBrowser: boolean }
   ) => void;
 
+  /**
+   * Live framebuffer resolution of each active graphical remote-desktop session,
+   * keyed by session id (#1709). Fed from the `remote-desktop-frame` /
+   * `onDimensions` path so the shared status-bar segment can show `WxH` for the
+   * active tab. Cleared when the session ends.
+   */
+  remoteDesktopResolutions: Record<string, { width: number; height: number }>;
+  setRemoteDesktopResolution: (sessionId: string, width: number, height: number) => void;
+  clearRemoteDesktopResolution: (sessionId: string) => void;
+
   // SSH Tunnels
   tunnels: TunnelConfig[];
   tunnelStates: Record<string, TunnelState>;
@@ -5040,6 +5050,7 @@ export const useAppStore = create<AppState>((set, get) => {
     monitors: {},
     monitoringStatsCache: {},
     sessionCapabilities: {},
+    remoteDesktopResolutions: {},
 
     clearMonitoringError: (key) =>
       set((state) => {
@@ -5052,6 +5063,26 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         sessionCapabilities: { ...state.sessionCapabilities, [sessionId]: caps },
       })),
+
+    setRemoteDesktopResolution: (sessionId, width, height) =>
+      set((state) => {
+        const prev = state.remoteDesktopResolutions[sessionId];
+        if (prev && prev.width === width && prev.height === height) return {};
+        return {
+          remoteDesktopResolutions: {
+            ...state.remoteDesktopResolutions,
+            [sessionId]: { width, height },
+          },
+        };
+      }),
+
+    clearRemoteDesktopResolution: (sessionId) =>
+      set((state) => {
+        if (!(sessionId in state.remoteDesktopResolutions)) return {};
+        return {
+          remoteDesktopResolutions: omitKey(state.remoteDesktopResolutions, sessionId),
+        };
+      }),
 
     connectMonitoring: async (sessionId: string, host: string | null = null) => {
       const { monitoringStatsCache, monitors } = useAppStore.getState();
