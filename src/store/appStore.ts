@@ -161,6 +161,13 @@ import {
   deleteMacro as apiDeleteMacro,
 } from "@/services/macroApi";
 import {
+  runMacroPlayback,
+  getTerminalInputInjector,
+  type MacroTimingMode,
+  type MacroInjector,
+  type MacroPlaybackHandle,
+} from "@/services/macroPlayback";
+import {
   saveLastSession as apiSaveLastSession,
   loadLastSession as apiLoadLastSession,
   clearLastSession as apiClearLastSession,
@@ -1169,6 +1176,22 @@ interface AppState {
   /** Close the save dialog and drop the captured buffer without persisting. */
   discardRecordedMacro: () => void;
 
+  // Macro playback (#1675)
+  /** Metadata for the in-flight playback, or `null` when nothing is playing. */
+  macroPlayback: MacroPlaybackState | null;
+  /**
+   * Play a stored macro's recorded input into a target terminal, injecting each
+   * step through the existing `send_input` seam and honouring the timing mode.
+   * Defaults the target to the active terminal tab. Resolves when playback
+   * finishes (completed, cancelled, or errored). Only one playback runs at a
+   * time — a fresh call cancels any in-flight playback first. Surfaces a
+   * recoverable toast when the macro is missing/empty or the target terminal is
+   * not connected.
+   */
+  playMacro: (macroId: string, opts?: PlayMacroOptions) => Promise<void>;
+  /** Cancel the in-flight macro playback, if any. Idempotent. */
+  cancelMacroPlayback: () => void;
+
   // Workspaces
   workspaces: WorkspaceSummary[];
   activeWorkspaceName: string | null;
@@ -1247,6 +1270,39 @@ interface AppState {
 }
 
 let tabCounter = 0;
+
+/** UI-facing metadata describing an in-flight macro playback (#1675). */
+export interface MacroPlaybackState {
+  /** The macro being played. */
+  macroId: string;
+  /** The macro's name, for the progress indicator. */
+  macroName: string;
+  /** The terminal tab receiving the injected input. */
+  tabId: string;
+  /** The timing mode this run is using. */
+  timingMode: MacroTimingMode;
+  /** Total number of steps in the macro. */
+  total: number;
+  /** Steps injected so far. */
+  played: number;
+}
+
+/** Options for {@link AppState.playMacro}. */
+export interface PlayMacroOptions {
+  /** Tab to inject into; defaults to the active terminal tab. */
+  targetTabId?: string;
+  /** Timing mode; defaults to `"real-time"`. */
+  timingMode?: MacroTimingMode;
+  /** Per-step delay (ms) for the `"fixed"` timing mode. */
+  fixedDelayMs?: number;
+}
+
+/**
+ * Handle for the currently-running macro playback, held at module scope so
+ * {@link AppState.cancelMacroPlayback} can stop it without threading the handle
+ * through store state (it is not serializable). `null` when nothing is playing.
+ */
+let activeMacroPlayback: MacroPlaybackHandle | null = null;
 
 /** Generate a unique macro id, falling back when `crypto.randomUUID` is absent. */
 function generateMacroId(): string {
@@ -5551,6 +5607,112 @@ export const useAppStore = create<AppState>((set, get) => {
         macroRecordingLastTime: null,
         macroSaveDialogOpen: false,
       });
+    },
+
+    // Macro playback (#1675)
+    macroPlayback: null,
+
+    playMacro: async (macroId, opts) => {
+      const state = get();
+      const macro = state.macros.find((m) => m.id === macroId);
+      if (!macro) {
+        toast.error("Macro not found");
+        return;
+      }
+
+      const targetTabId = opts?.targetTabId ?? getActiveTab(state)?.id ?? null;
+      if (!targetTabId) {
+        toast.error("No active terminal to play the macro into");
+        return;
+      }
+
+      // Guard: only inject into a connected, non-exited terminal session.
+      const tab = collectLiveTabs(state).find((t) => t.id === targetTabId);
+      if (
+        !tab ||
+        tab.contentType !== "terminal" ||
+        !tab.sessionId ||
+        state.terminalExitedTabs[targetTabId]
+      ) {
+        toast.error("The target terminal is not connected");
+        return;
+      }
+
+      if (macro.steps.length === 0) {
+        toast.info(`Macro "${macro.name}" has no steps to play`);
+        return;
+      }
+
+      // Only one playback at a time — cancel any in-flight run first.
+      if (activeMacroPlayback) {
+        activeMacroPlayback.cancel();
+        activeMacroPlayback = null;
+      }
+
+      const timingMode = opts?.timingMode ?? "real-time";
+      const injector = getTerminalInputInjector();
+      const inject: MacroInjector = (data) => {
+        if (!injector) return false;
+        return injector(targetTabId, data);
+      };
+
+      const toastId = `macro-playback-${macroId}-${targetTabId}`;
+      const total = macro.steps.length;
+      toast.loading(`Playing macro "${macro.name}"…`, {
+        id: toastId,
+        description: `0 / ${total} steps`,
+      });
+      set({
+        macroPlayback: { macroId, macroName: macro.name, tabId: targetTabId, timingMode, total, played: 0 },
+      });
+
+      const handle = runMacroPlayback(
+        macro.steps,
+        inject,
+        { timingMode, fixedDelayMs: opts?.fixedDelayMs },
+        {
+          onProgress: (played, stepTotal) => {
+            set((s) =>
+              s.macroPlayback && s.macroPlayback.macroId === macroId && s.macroPlayback.tabId === targetTabId
+                ? { macroPlayback: { ...s.macroPlayback, played } }
+                : {}
+            );
+            toast.loading(`Playing macro "${macro.name}"…`, {
+              id: toastId,
+              description: `${played} / ${stepTotal} steps`,
+            });
+          },
+        }
+      );
+      activeMacroPlayback = handle;
+
+      const result = await handle.done;
+
+      // Only clear shared state when this run is still the current one — a newer
+      // playMacro may have replaced it while this one was cancelled.
+      if (activeMacroPlayback === handle) {
+        activeMacroPlayback = null;
+        set({ macroPlayback: null });
+      }
+
+      if (result.status === "completed") {
+        toast.success(`Played macro "${macro.name}"`, { id: toastId });
+      } else if (result.status === "cancelled") {
+        toast.info(`Playback of "${macro.name}" cancelled`, {
+          id: toastId,
+          description: `Stopped after ${result.stepsPlayed} of ${total} steps`,
+        });
+      } else {
+        toast.error(`Could not play "${macro.name}" — the terminal is no longer connected`, {
+          id: toastId,
+        });
+      }
+    },
+
+    cancelMacroPlayback: () => {
+      if (activeMacroPlayback) {
+        activeMacroPlayback.cancel();
+      }
     },
 
     // Workspaces
