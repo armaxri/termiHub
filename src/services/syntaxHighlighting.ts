@@ -66,6 +66,15 @@ export interface SyntaxHighlightingEngineOptions {
   lineBudget?: number;
   /** Max logical line length before skipping (default {@link MAX_LINE_LENGTH}). */
   maxLineLength?: number;
+  /**
+   * Per-logical-line wall-clock budget in ms (default
+   * {@link DEFAULT_LINE_SCAN_BUDGET_MS}). A rule that overruns it is disabled and
+   * a recoverable error is logged, so a slow custom pattern cannot keep freezing
+   * the render loop line after line.
+   */
+  lineScanBudgetMs?: number;
+  /** Injectable clock (for tests). Defaults to the module monotonic clock. */
+  now?: () => number;
 }
 
 /** The subset of {@link HighlightStyle} the native color recolor cannot express. */
@@ -186,41 +195,26 @@ interface Candidate extends RuleMatch {
   order: number;
 }
 
-/**
- * Runs all compiled rules against `text` and resolves overlaps into a
- * non-overlapping, left-to-right ordered set of matches.
- *
- * Resolution order when two matches overlap:
- *   1. longest match wins,
- *   2. then lower priority number wins,
- *   3. then the earlier rule in the list wins,
- *   4. then the earlier start position wins.
- */
-export function findMatches(text: string, compiled: readonly CompiledRule[]): RuleMatch[] {
-  const candidates: Candidate[] = [];
+/** Default per-logical-line wall-clock budget (ms) for the guarded scan. */
+export const DEFAULT_LINE_SCAN_BUDGET_MS = 50;
 
-  for (const c of compiled) {
-    c.regex.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = c.regex.exec(text)) !== null) {
-      const start = m.index;
-      const end = start + m[0].length;
-      // Guard against zero-width matches (would loop forever / decorate nothing).
-      if (end <= start) {
-        c.regex.lastIndex = start + 1;
-        continue;
-      }
-      candidates.push({
-        start,
-        end,
-        rule: c.rule,
-        color: c.color,
-        priority: c.priority,
-        order: c.order,
-      });
-    }
-  }
+/** How often (in matches) the guarded scan re-checks the wall-clock deadline. */
+const DEADLINE_CHECK_INTERVAL = 256;
 
+/** Result of a time-guarded line scan. */
+export interface GuardedMatchResult {
+  /** Non-overlapping, left-to-right matches (same shape as {@link findMatches}). */
+  matches: RuleMatch[];
+  /**
+   * Ids of rules whose scan was aborted because the per-line time budget was
+   * exceeded. The caller should disable these rules so a slow pattern cannot
+   * keep costing time on every subsequent line.
+   */
+  timedOutRuleIds: string[];
+}
+
+/** Resolves overlapping candidates into a non-overlapping, ordered match set. */
+function resolveOverlaps(candidates: Candidate[]): RuleMatch[] {
   // Strongest candidates first: longer, then higher priority, then earlier rule,
   // then earlier position.
   candidates.sort((a, b) => {
@@ -241,6 +235,84 @@ export function findMatches(text: string, compiled: readonly CompiledRule[]): Ru
 
   accepted.sort((a, b) => a.start - b.start);
   return accepted;
+}
+
+/**
+ * Runs all compiled rules against `text` under a wall-clock budget, resolving
+ * overlaps into a non-overlapping, left-to-right ordered set of matches.
+ *
+ * This is the ReDoS-resilient scan path. A single `RegExp.exec` cannot be
+ * interrupted, so the guard cannot pre-empt one catastrophic call — the
+ * save-time validator (`regexSafety.ts`) and the engine's line-length cap are
+ * what prevent that. What this *does* bound is the realistic runtime cost of a
+ * slow rule across a line: it checks the deadline between rules and periodically
+ * inside a rule's match loop, and reports any rule it had to abort so the engine
+ * can self-disable it rather than pay the cost on every future line.
+ *
+ * Resolution order when two matches overlap:
+ *   1. longest match wins,
+ *   2. then lower priority number wins,
+ *   3. then the earlier rule in the list wins,
+ *   4. then the earlier start position wins.
+ */
+export function findMatchesGuarded(
+  text: string,
+  compiled: readonly CompiledRule[],
+  budgetMs: number = DEFAULT_LINE_SCAN_BUDGET_MS,
+  nowFn: () => number = now
+): GuardedMatchResult {
+  const candidates: Candidate[] = [];
+  const timedOutRuleIds: string[] = [];
+  const deadline = nowFn() + budgetMs;
+
+  for (const c of compiled) {
+    if (nowFn() > deadline) {
+      // No time left even to start this rule — report it (and every remaining
+      // rule) as timed out so they are all disabled.
+      timedOutRuleIds.push(c.rule.id);
+      continue;
+    }
+
+    c.regex.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    let sinceCheck = 0;
+    while ((m = c.regex.exec(text)) !== null) {
+      const start = m.index;
+      const end = start + m[0].length;
+      // Guard against zero-width matches (would loop forever / decorate nothing).
+      if (end <= start) {
+        c.regex.lastIndex = start + 1;
+        continue;
+      }
+      candidates.push({
+        start,
+        end,
+        rule: c.rule,
+        color: c.color,
+        priority: c.priority,
+        order: c.order,
+      });
+
+      if (++sinceCheck >= DEADLINE_CHECK_INTERVAL) {
+        sinceCheck = 0;
+        if (nowFn() > deadline) {
+          timedOutRuleIds.push(c.rule.id);
+          break;
+        }
+      }
+    }
+  }
+
+  return { matches: resolveOverlaps(candidates), timedOutRuleIds };
+}
+
+/**
+ * Runs all compiled rules against `text` and resolves overlaps into a
+ * non-overlapping, left-to-right ordered set of matches. Unbudgeted convenience
+ * wrapper over {@link findMatchesGuarded}.
+ */
+export function findMatches(text: string, compiled: readonly CompiledRule[]): RuleMatch[] {
+  return findMatchesGuarded(text, compiled, Infinity).matches;
 }
 
 /**
@@ -287,6 +359,8 @@ export class SyntaxHighlightingEngine {
   private readonly xterm: Terminal;
   private readonly lineBudget: number;
   private readonly maxLineLength: number;
+  private readonly lineScanBudgetMs: number;
+  private readonly nowFn: () => number;
 
   private compiled: CompiledRule[] = [];
   private enabled = false;
@@ -312,6 +386,8 @@ export class SyntaxHighlightingEngine {
     this.xterm = xterm;
     this.lineBudget = options.lineBudget ?? DEFAULT_LINE_BUDGET;
     this.maxLineLength = options.maxLineLength ?? MAX_LINE_LENGTH;
+    this.lineScanBudgetMs = options.lineScanBudgetMs ?? DEFAULT_LINE_SCAN_BUDGET_MS;
+    this.nowFn = options.now ?? now;
   }
 
   /** Whether highlighting is currently active. */
@@ -484,7 +560,13 @@ export class SyntaxHighlightingEngine {
     if (logical.text.length > this.maxLineLength) return;
     if (this.compiled.length === 0) return;
 
-    const matches = findMatches(logical.text, this.compiled);
+    const { matches, timedOutRuleIds } = findMatchesGuarded(
+      logical.text,
+      this.compiled,
+      this.lineScanBudgetMs,
+      this.nowFn
+    );
+    if (timedOutRuleIds.length > 0) this.disableSlowRules(timedOutRuleIds);
     if (matches.length === 0) return;
 
     const cols = this.xterm.cols;
@@ -620,6 +702,21 @@ export class SyntaxHighlightingEngine {
       el.dataset.thHighlightStyled = "1";
     });
     out.push(sub);
+  }
+
+  /**
+   * Drops rules that overran the per-line scan budget so they cannot keep
+   * costing time on every subsequent line, and surfaces a recoverable error via
+   * the LogViewer. The rest of the engine keeps running with the safe rules.
+   */
+  private disableSlowRules(ruleIds: readonly string[]): void {
+    const slow = new Set(ruleIds);
+    this.compiled = this.compiled.filter((c) => !slow.has(c.rule.id));
+    frontendLog(
+      "syntaxHighlighting",
+      `disabled slow highlight rule(s) [${[...slow].join(", ")}] that exceeded the ` +
+        `${this.lineScanBudgetMs}ms per-line budget; highlighting continues without them.`
+    );
   }
 
   /** Disposes and forgets a single logical line's decorations. */
