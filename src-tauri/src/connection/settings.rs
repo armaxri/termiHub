@@ -130,6 +130,11 @@ pub struct AppSettings {
     pub font_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size: Option<u32>,
+    /// Terminal line-height multiplier (e.g. `1.0`–`2.0`). `None` → the
+    /// frontend default (`1.0`). Owned by the frontend `AppSettings.lineHeight`;
+    /// the backend only persists it so it survives a restart (#1735).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_horizontal_scrolling: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -146,6 +151,14 @@ pub struct AppSettings {
     /// close-tab-group keyboard shortcut. The X-button on a tab is not affected.
     #[serde(default = "default_true")]
     pub confirm_close_tab_on_shortcut: bool,
+    /// Show a confirmation dialog before closing a tab or split panel that holds
+    /// a live session (via the tab X, middle-click, or panel close button). The
+    /// dialog's "Don't ask again" opt-out flips this to `false`. `None` → the
+    /// frontend default (treated as `true`). Owned by the frontend
+    /// `AppSettings.confirmCloseLiveSession`; the backend only persists it so the
+    /// opt-out survives a restart (#1735).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirm_close_live_session: Option<bool>,
     /// When true (default), saving terminal content to a file shows a dialog
     /// offering to open the saved file in a Monaco editor tab. When false, the
     /// file is saved silently and no dialog or editor tab is opened.
@@ -245,6 +258,7 @@ impl Default for AppSettings {
             theme: None,
             font_family: None,
             font_size: None,
+            line_height: None,
             default_horizontal_scrolling: None,
             scrollback_buffer: None,
             cursor_style: None,
@@ -252,6 +266,7 @@ impl Default for AppSettings {
             power_monitoring_enabled: true,
             file_browser_enabled: true,
             confirm_close_tab_on_shortcut: true,
+            confirm_close_live_session: None,
             ask_open_saved_file_in_tab: true,
             default_shell_integration: true,
             default_x11_forwarding: true,
