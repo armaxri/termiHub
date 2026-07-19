@@ -79,7 +79,9 @@ describe("MacroPlaybackDialog", () => {
 
   it("disables Play for a macro with no steps", () => {
     const onPlay = vi.fn();
-    render(<MacroPlaybackDialog {...baseProps} macros={[macro("empty", "Empty", 0)]} onPlay={onPlay} />);
+    render(
+      <MacroPlaybackDialog {...baseProps} macros={[macro("empty", "Empty", 0)]} onPlay={onPlay} />
+    );
 
     const play = document.querySelector(
       '[data-testid="macro-playback-confirm"]'

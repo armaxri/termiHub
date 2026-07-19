@@ -36,9 +36,9 @@ describe("computeStepDelay", () => {
 
   it("real-time clamps oversized recorded delays to maxDelayMs", () => {
     expect(computeStepDelay(step(600_000), 1, { timingMode: "real-time" })).toBe(MAX_STEP_DELAY_MS);
-    expect(
-      computeStepDelay(step(600_000), 1, { timingMode: "real-time", maxDelayMs: 100 })
-    ).toBe(100);
+    expect(computeStepDelay(step(600_000), 1, { timingMode: "real-time", maxDelayMs: 100 })).toBe(
+      100
+    );
   });
 
   it("real-time floors negative delays at zero", () => {
@@ -64,7 +64,7 @@ describe("runMacroPlayback", () => {
   });
 
   it("injects every step in order for instant mode", async () => {
-    const inject = vi.fn(async () => true);
+    const inject = vi.fn(async (_data: string) => true);
     const handle = runMacroPlayback(steps([0, 100, 200]), inject, { timingMode: "instant" });
     const result = await handle.done;
 
@@ -93,9 +93,14 @@ describe("runMacroPlayback", () => {
   it("reports progress after each injected step", async () => {
     const inject = vi.fn(async () => true);
     const onProgress = vi.fn();
-    const handle = runMacroPlayback(steps([0, 0, 0]), inject, { timingMode: "instant" }, {
-      onProgress,
-    });
+    const handle = runMacroPlayback(
+      steps([0, 0, 0]),
+      inject,
+      { timingMode: "instant" },
+      {
+        onProgress,
+      }
+    );
     await handle.done;
 
     expect(onProgress.mock.calls).toEqual([

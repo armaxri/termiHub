@@ -99,7 +99,15 @@ describe("appStore — macro playback slice (#1675)", () => {
 
   it("injects every step in order into the active terminal (instant)", async () => {
     seedConnectedTerminal();
-    useAppStore.setState({ macros: [macro("m1", [{ data: "l", delayMs: 0 }, { data: "s", delayMs: 300 }, { data: "\r", delayMs: 50 }])] });
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "l", delayMs: 0 },
+          { data: "s", delayMs: 300 },
+          { data: "\r", delayMs: 50 },
+        ]),
+      ],
+    });
 
     await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
 
@@ -127,7 +135,14 @@ describe("appStore — macro playback slice (#1675)", () => {
   it("honours real-time delays between steps", async () => {
     vi.useFakeTimers();
     seedConnectedTerminal();
-    useAppStore.setState({ macros: [macro("m1", [{ data: "a", delayMs: 0 }, { data: "b", delayMs: 500 }])] });
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "a", delayMs: 0 },
+          { data: "b", delayMs: 500 },
+        ]),
+      ],
+    });
 
     const done = useAppStore.getState().playMacro("m1", { timingMode: "real-time" });
 
@@ -146,7 +161,14 @@ describe("appStore — macro playback slice (#1675)", () => {
   it("can be cancelled mid-run and stops promptly", async () => {
     vi.useFakeTimers();
     seedConnectedTerminal();
-    useAppStore.setState({ macros: [macro("m1", [{ data: "a", delayMs: 0 }, { data: "b", delayMs: 10_000 }])] });
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "a", delayMs: 0 },
+          { data: "b", delayMs: 10_000 },
+        ]),
+      ],
+    });
 
     const done = useAppStore.getState().playMacro("m1", { timingMode: "real-time" });
     await vi.advanceTimersByTimeAsync(0);

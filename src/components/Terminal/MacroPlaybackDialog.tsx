@@ -46,10 +46,7 @@ export function MacroPlaybackDialog({
     }
   }, [open, macros]);
 
-  const macroOptions = useMemo(
-    () => macros.map((m) => ({ value: m.id, label: m.name })),
-    [macros]
-  );
+  const macroOptions = useMemo(() => macros.map((m) => ({ value: m.id, label: m.name })), [macros]);
 
   const selected = macros.find((m) => m.id === macroId) ?? null;
   const canPlay = selected !== null && selected.steps.length > 0;

@@ -5663,7 +5663,14 @@ export const useAppStore = create<AppState>((set, get) => {
         description: `0 / ${total} steps`,
       });
       set({
-        macroPlayback: { macroId, macroName: macro.name, tabId: targetTabId, timingMode, total, played: 0 },
+        macroPlayback: {
+          macroId,
+          macroName: macro.name,
+          tabId: targetTabId,
+          timingMode,
+          total,
+          played: 0,
+        },
       });
 
       const handle = runMacroPlayback(
@@ -5673,7 +5680,9 @@ export const useAppStore = create<AppState>((set, get) => {
         {
           onProgress: (played, stepTotal) => {
             set((s) =>
-              s.macroPlayback && s.macroPlayback.macroId === macroId && s.macroPlayback.tabId === targetTabId
+              s.macroPlayback &&
+              s.macroPlayback.macroId === macroId &&
+              s.macroPlayback.tabId === targetTabId
                 ? { macroPlayback: { ...s.macroPlayback, played } }
                 : {}
             );
