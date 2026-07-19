@@ -21,6 +21,7 @@ import {
   ConnectionFolder,
   ConnectionTypeInfo,
   SshConfigImportHost,
+  SshConfigImportConnection,
   FileEntry,
   Writability,
   ExternalFileError,
@@ -113,6 +114,16 @@ export async function cancelConnectionPathProbe(probeId: string): Promise<boolea
  */
 export async function importSshConfigHosts(): Promise<SshConfigImportHost[]> {
   return await invoke<SshConfigImportHost[]>("import_ssh_config_hosts");
+}
+
+/**
+ * Read the user's `~/.ssh/config` (plus any `Include`d files) and return every
+ * concrete `Host` alias as a whole, editor-shaped {@link SshConfigImportConnection}
+ * — direct hosts and hosts behind a `ProxyJump` alike (#1722). Missing / empty /
+ * unparseable config degrades to an empty list on the backend — never an error.
+ */
+export async function importSshConfigConnections(): Promise<SshConfigImportConnection[]> {
+  return await invoke<SshConfigImportConnection[]>("import_ssh_config_connections");
 }
 
 /**

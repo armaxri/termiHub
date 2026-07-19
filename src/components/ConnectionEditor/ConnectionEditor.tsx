@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { PlugZap, TerminalSquare, Palette, Settings, KeyRound } from "lucide-react";
+import { PlugZap, TerminalSquare, Palette, Settings, KeyRound, FileDown } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -27,6 +27,7 @@ import {
   DEFAULT_AGENT_SETTINGS,
   JumpHostConfig,
   SshEditorSettings,
+  SshConfigImportConnection,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
 import { Button, Input, Select, Toggle, toast } from "@/components/ui";
@@ -43,6 +44,7 @@ import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { JumpHostSection } from "./JumpHostSection";
+import { SshConnectionImportDialog } from "./SshConnectionImportDialog";
 import { validateProxyJump } from "@/utils/validateProxyJump";
 import { sshJumpHostOptions } from "@/utils/jumpHost";
 import { AgentSettingsForm } from "./AgentSettingsForm";
@@ -313,6 +315,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   /** Whether the SSH "Jump Host" section applies to the current edit. */
   const showJumpHostSection = selectedType === "ssh" && !isAnyAgentMode;
 
+  /** Whether the whole-connection `~/.ssh/config` import applies (#1722). */
+  const showSshConfigImport = selectedType === "ssh" && !isAnyAgentMode;
+
   /** Whether the SSH "Agent Forwarding" toggle applies (same gate as jump hosts). */
   const showAgentForwarding = selectedType === "ssh" && !isAnyAgentMode;
 
@@ -346,6 +351,31 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       if (checked) return { ...prev, forwardAgent: true };
       const { forwardAgent: _omit, ...rest } = prev;
       return rest;
+    });
+  }, []);
+
+  /** Whole-connection import from `~/.ssh/config` (#1722). */
+  const [importOpen, setImportOpen] = useState(false);
+
+  /**
+   * Populate the editor from an imported `~/.ssh/config` host: name, target
+   * host/user/port, auth (`IdentityFile` → key, else agent), and any resolved
+   * jump-host chain. The user reviews and edits before saving.
+   */
+  const handleImportConnection = useCallback((conn: SshConfigImportConnection) => {
+    if (conn.name) setName(conn.name);
+    setConnSettings((prev) => {
+      const { keyPath: _prevKey, proxyJump: _prevChain, ...rest } = prev;
+      const next: Record<string, unknown> = {
+        ...rest,
+        host: conn.host,
+        port: conn.port,
+        username: conn.username,
+        authMethod: conn.authMethod,
+      };
+      if (conn.authMethod === "key" && conn.keyPath) next.keyPath = conn.keyPath;
+      if (conn.proxyJump.length > 0) next.proxyJump = conn.proxyJump;
+      return next;
     });
   }, []);
 
@@ -1133,6 +1163,29 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           </label>
         )}
       </div>
+
+      {showSshConfigImport && (
+        <div className="settings-panel__category" data-testid="ssh-config-import-section">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<FileDown size={13} aria-hidden />}
+            onClick={() => setImportOpen(true)}
+            data-testid="ssh-config-import-connection-open"
+          >
+            Import from ~/.ssh/config
+          </Button>
+          <p className="settings-form__hint">
+            Fill in the host, user, port, key, and any jump-host chain from a host in your OpenSSH
+            client config. You can review and edit everything before saving.
+          </p>
+          <SshConnectionImportDialog
+            open={importOpen}
+            onOpenChange={setImportOpen}
+            onImport={handleImportConnection}
+          />
+        </div>
+      )}
 
       {currentSchema && (
         <ConnectionSettingsForm
