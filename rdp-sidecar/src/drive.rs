@@ -459,7 +459,14 @@ impl DriveRedirectBackend {
         };
 
         if req.initial_query != 0 || open.listing.is_none() {
-            let entries = build_listing(&open.path, &req.path);
+            // The request path is the search path relative to the share root;
+            // the actual wildcard is its final component (e.g. `\*` → `*`,
+            // `\sub\*.txt` → `*.txt`). Matching against the whole path — as the
+            // leading backslash a real server sends would require — would list
+            // nothing, so extract the trailing component (defaulting to `*`).
+            let pattern = req.path.rsplit(['\\', '/']).next().unwrap_or("*");
+            let pattern = if pattern.is_empty() { "*" } else { pattern };
+            let entries = build_listing(&open.path, pattern);
             open.listing = Some(DirListing { entries, cursor: 0 });
         }
 
@@ -1136,7 +1143,10 @@ mod tests {
                 device_io_request: io_request(file_id, MajorFunction::DirectoryControl),
                 file_info_class_lvl: FileInformationClassLevel::FILE_BOTH_DIRECTORY_INFORMATION,
                 initial_query: initial,
-                path: "*".to_string(),
+                // A real server sends the search pattern as a path with a
+                // leading backslash — the handler must extract the trailing
+                // `*`, not match against the whole `\*`.
+                path: "\\*".to_string(),
             });
             initial = 0;
             match pdu {
@@ -1157,6 +1167,47 @@ mod tests {
         assert!(names.contains(&"..".to_string()));
         assert!(names.contains(&"one.txt".to_string()));
         assert!(names.contains(&"subdir".to_string()));
+    }
+
+    #[test]
+    fn query_directory_honors_a_specific_name_pattern() {
+        let (mut backend, dir) = backend_with_root();
+        fs::write(dir.path().join("keep.txt"), b"1").unwrap();
+        fs::write(dir.path().join("skip.txt"), b"2").unwrap();
+
+        let file_id = create_ok_id(
+            &mut backend,
+            "\\",
+            CreateDisposition::FILE_OPEN,
+            CreateOptions::FILE_DIRECTORY_FILE,
+        );
+
+        // The server queries for one specific file: `\keep.txt`.
+        let mut names = Vec::new();
+        let mut initial = 1u8;
+        loop {
+            let pdu = backend.handle_query_directory(ServerDriveQueryDirectoryRequest {
+                device_io_request: io_request(file_id, MajorFunction::DirectoryControl),
+                file_info_class_lvl: FileInformationClassLevel::FILE_DIRECTORY_INFORMATION,
+                initial_query: initial,
+                path: "\\keep.txt".to_string(),
+            });
+            initial = 0;
+            match pdu {
+                RdpdrPdu::ClientDriveQueryDirectoryResponse(r) => match r.device_io_reply.io_status
+                {
+                    NtStatus::NO_MORE_FILES => break,
+                    NtStatus::SUCCESS => {
+                        if let Some(FileInformationClass::Directory(info)) = r.buffer {
+                            names.push(info.file_name);
+                        }
+                    }
+                    other => panic!("unexpected status {other:?}"),
+                },
+                other => panic!("expected query-directory response, got {other:?}"),
+            }
+        }
+        assert_eq!(names, vec!["keep.txt".to_string()]);
     }
 
     #[test]
