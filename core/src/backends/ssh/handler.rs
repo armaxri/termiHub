@@ -80,17 +80,35 @@ pub struct TermiHubHandler {
     /// background task — so `disconnected` signals explicitly, and the sender
     /// dropping with the handler (task end) closes the channel as a backstop.
     liveness_tx: watch::Sender<bool>,
+    /// Whether this connection opted into SSH agent forwarding (#1699). Only when
+    /// `true` does [`server_channel_open_agent_forward`](Self::server_channel_open_agent_forward)
+    /// bridge an incoming `auth-agent@openssh.com` channel to the local agent; a
+    /// forwarding channel that arrives without our opt-in is rejected, so a server
+    /// cannot reach the local agent unsolicited.
+    forward_agent: bool,
 }
 
 impl TermiHubHandler {
     /// Create a new handler together with the shared channel registry and the
     /// session-liveness watch (#1297) the tunnel supervisor observes.
+    ///
+    /// Agent forwarding is off; use [`new_with_forwarding`](Self::new_with_forwarding)
+    /// to enable it for a connection that opted in.
     pub fn new() -> (Self, ForwardedChannelRegistry, LivenessWatch) {
+        Self::new_with_forwarding(false)
+    }
+
+    /// Like [`new`](Self::new), but sets whether the session should bridge a
+    /// server-opened agent-forwarding channel to the local `ssh-agent` (#1699).
+    pub fn new_with_forwarding(
+        forward_agent: bool,
+    ) -> (Self, ForwardedChannelRegistry, LivenessWatch) {
         let registry: ForwardedChannelRegistry = Arc::new(Mutex::new(HashMap::new()));
         let (liveness_tx, liveness_rx) = watch::channel(false);
         let handler = Self {
             forwarded_channel_registry: registry.clone(),
             liveness_tx,
+            forward_agent,
         };
         (handler, registry, LivenessWatch { rx: liveness_rx })
     }
@@ -165,6 +183,30 @@ impl russh::client::Handler for TermiHubHandler {
         }
         Ok(())
     }
+
+    /// Bridge a server-opened SSH agent-forwarding channel to the local agent
+    /// (#1699), but only when this connection opted into forwarding.
+    ///
+    /// The server opens an `auth-agent@openssh.com` channel when a program on the
+    /// target contacts its `$SSH_AUTH_SOCK`. We hand it to
+    /// [`spawn_forwarded_agent_bridge`](super::agent_forward::spawn_forwarded_agent_bridge),
+    /// which pumps bytes between it and the local `ssh-agent`. When forwarding was
+    /// not requested the channel is dropped (closed), so a server can never reach
+    /// the local agent unsolicited.
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        if self.forward_agent {
+            debug!("bridging forwarded SSH agent channel to the local agent");
+            super::agent_forward::spawn_forwarded_agent_bridge(channel);
+        } else {
+            debug!("rejecting agent-forward channel: forwarding was not requested");
+            // Dropping `channel` closes it, refusing the unsolicited forward.
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -225,6 +267,23 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(50), clone.dead())
             .await
             .expect("a cloned watch must also see the session die");
+    }
+
+    /// Agent forwarding (#1699) is off by default: a handler built with `new`
+    /// must not bridge a server-opened agent channel, so a server cannot reach the
+    /// local agent unless the connection opted in.
+    #[test]
+    fn forwarding_disabled_by_default() {
+        let (handler, _registry, _watch) = TermiHubHandler::new();
+        assert!(!handler.forward_agent);
+    }
+
+    /// A connection that opted into forwarding builds a handler that will bridge
+    /// the server's agent channel to the local agent.
+    #[test]
+    fn forwarding_enabled_when_requested() {
+        let (handler, _registry, _watch) = TermiHubHandler::new_with_forwarding(true);
+        assert!(handler.forward_agent);
     }
 
     /// `disconnected` must preserve russh's default result so we don't change how
