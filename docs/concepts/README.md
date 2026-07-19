@@ -101,16 +101,17 @@ These features have something built, but there are meaningful gaps. See the
 
 Not started yet — realistic and planned for the near to medium term.
 
-| Document                                                                                               | Summary                                                                                       |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones  |
-| [broadcast-input.html](backlog/broadcast-input.html)                                                   | Synchronised input across multiple terminals simultaneously                                   |
-| [git-bash-provisioning.html](backlog/git-bash-provisioning.html)                                       | Detect Git for Windows and guide its install; use Git Bash as the Windows Unix-tools provider |
-| [macos-code-signing-notarization.md](backlog/macos-code-signing-notarization.md)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)           |
-| [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                    |
-| [rdp-sessions.html](backlog/rdp-sessions.html)                                                         | Embedded RDP (Remote Desktop Protocol) client sessions                                        |
-| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                      |
-| [vnc-sessions.html](backlog/vnc-sessions.html)                                                         | Embedded noVNC client with WebSocket-to-TCP proxy                                             |
+| Document                                                                                               | Summary                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones                                                           |
+| [broadcast-input.html](backlog/broadcast-input.html)                                                   | Synchronised input across multiple terminals simultaneously                                                                                            |
+| [git-bash-provisioning.html](backlog/git-bash-provisioning.html)                                       | Detect Git for Windows and guide its install; use Git Bash as the Windows Unix-tools provider                                                          |
+| [macos-code-signing-notarization.md](backlog/macos-code-signing-notarization.md)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)                                                                    |
+| [macro-recording.html](backlog/macro-recording.html)                                                   | Record and replay terminal input sequences                                                                                                             |
+| [remote-desktop-sessions.html](backlog/remote-desktop-sessions.html)                                   | **Unified** graphical remote-desktop concept — VNC + RDP behind one shared user-facing layer (Rust-side decode); supersedes the two below (epic #1678) |
+| [rdp-sessions.html](backlog/rdp-sessions.html)                                                         | RDP client sessions — **superseded** by `remote-desktop-sessions.html`; kept for #513 history                                                          |
+| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                                                                               |
+| [vnc-sessions.html](backlog/vnc-sessions.html)                                                         | VNC client sessions — **superseded** by `remote-desktop-sessions.html`; kept for #514 history                                                          |
 
 ---
 
