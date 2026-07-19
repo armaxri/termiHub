@@ -72,6 +72,22 @@ pub fn build_desktop_registry() -> ConnectionTypeRegistry {
         Box::new(|| Box::new(termihub_core::backends::ftp::Ftp::new())),
     );
 
+    // Mock remote desktop — a protocol-less graphical backend so the shared
+    // remote-desktop layer works with no real VNC/RDP server (gated behind the
+    // `mock-remote-desktop` feature; enabled by default). It reports
+    // `graphical: true`, so it routes through the GraphicalSessionManager into a
+    // remote-desktop canvas tab. Real backends (VNC #1681, RDP #1682) register
+    // here identically — this is the additive, data-driven seam.
+    #[cfg(feature = "mock-remote-desktop")]
+    registry.register(
+        "mock-remote-desktop",
+        "Mock Remote Desktop",
+        "monitor",
+        Box::new(|| {
+            Box::new(termihub_core::backends::mock_remote_desktop::MockRemoteDesktop::new())
+        }),
+    );
+
     registry
 }
 
@@ -100,9 +116,16 @@ mod tests {
         #[cfg(not(feature = "ftp"))]
         assert!(!registry.has_type("ftp"));
 
+        #[cfg(feature = "mock-remote-desktop")]
+        assert!(registry.has_type("mock-remote-desktop"));
+
         // 5 always-on backends (local/serial/ssh/telnet/docker), plus WSL on
-        // Windows and FTP when the `ftp` feature is enabled.
-        let expected = 5 + cfg!(windows) as usize + cfg!(feature = "ftp") as usize;
+        // Windows, FTP when the `ftp` feature is enabled, and the mock
+        // remote-desktop backend when `mock-remote-desktop` is enabled.
+        let expected = 5
+            + cfg!(windows) as usize
+            + cfg!(feature = "ftp") as usize
+            + cfg!(feature = "mock-remote-desktop") as usize;
         assert_eq!(types.len(), expected);
     }
 

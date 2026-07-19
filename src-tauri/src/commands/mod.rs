@@ -8,6 +8,7 @@ pub mod logs;
 pub mod macros;
 pub mod network;
 pub mod portable;
+pub mod remote_desktop;
 pub mod session;
 pub mod shell_integration;
 pub mod spawn;

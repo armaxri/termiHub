@@ -11,8 +11,12 @@ edition = "2021"
 # FTP / FTPS connection type. Enabled by default so the desktop ships it, but
 # kept as a toggle so the registry registration is gated (`#[cfg(feature = "ftp")]`)
 # and a build without it still compiles.
-default = ["ftp"]
+default = ["ftp", "mock-remote-desktop"]
 ftp = ["termihub-core/ftp"]
+# Mock graphical remote-desktop backend so the shared remote-desktop layer
+# (#1680) ships and is E2E-testable with no real VNC/RDP server. Gated so the
+# registration is `#[cfg(feature = "mock-remote-desktop")]`.
+mock-remote-desktop = ["termihub-core/mock-remote-desktop"]
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
