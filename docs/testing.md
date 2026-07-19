@@ -1970,6 +1970,52 @@ on a hop — it is reachable on the **final target** through the chain. Genuine
 per-bastion shell agent access would require opening a session on the hop and is
 tracked separately if ever needed.
 
+### SSH agent forwarding through the remote agent (#1719)
+
+Issue #1699 delivered `forwardAgent` for the desktop russh path. When an SSH session is
+routed through a **deployed termiHub agent** instead, the agent reuses the same
+core SSH backend (`agent/src/registry.rs` registers
+`termihub_core::backends::ssh::Ssh`) and runs it in the per-session daemon
+(`agent/src/daemon/process.rs`), so `forwardAgent` is honored on the agent→target
+leg by the very same connector request and handler bridge — no separate agent-side
+implementation.
+
+**Chosen model — agent-host-local agent.** The forwarded-agent channel is bridged
+to the ssh-agent **local to the agent host** (`$SSH_AUTH_SOCK` on Unix, the
+`\\.\pipe\openssh-ssh-agent` OpenSSH pipe on Windows). The session daemon inherits
+the agent's environment (`SystemDaemonLauncher` never clears it), so no bespoke
+transport is added. The important consequence: when the **desktop→agent leg is
+itself SSH with agent forwarding enabled**, the agent host's `$SSH_AUTH_SOCK`
+already points at a socket that forwards to the operator's own agent, so the
+operator's keys reach the final target **end to end** transparently — this is
+standard OpenSSH agent chaining, not a termiHub relay. The no-agent-available case
+(agent host has no live ssh-agent) is the same graceful no-op as the desktop path.
+
+The agent-side seam (the `forwardAgent` flag surviving the `TERMIHUB_SETTINGS`
+daemon transport and mapping to `SshConfig.forward_agent`) is covered by **Rust
+unit tests** (`agent/src/daemon/process.rs`); the connector request, handler
+bridge and no-op are covered by the core tests from #1699. End-to-end forwarding
+needs a live agent + real SSH server (integration lane only, not per-PR CI), so
+verify manually:
+
+1. Reach a target through a deployed agent (deploy the agent to an intermediate
+   host and add an agent-routed SSH connection to the final target).
+2. Ensure an ssh-agent with a key is reachable on the agent host — either run
+   `ssh-add` there, or reach the agent host over SSH **with agent forwarding on**
+   so its `$SSH_AUTH_SOCK` chains to your local agent.
+3. Enable **Forward SSH agent** on the target connection and connect. On the
+   target run `ssh-add -l` — it must list the forwarded identities, and an onward
+   `ssh` from the target using an agent key must succeed.
+4. **No agent:** with no ssh-agent reachable on the agent host, connect with the
+   toggle still on — the connection must **succeed** with forwarding silently
+   skipped (a debug log notes it).
+
+Limitation / future work: when the desktop reaches the agent over the **TCP
+transport** (`--listen`) rather than SSH, there is no SSH leg to piggyback, so the
+operator's agent is only reachable if the agent host runs its own agent. Relaying
+the desktop's agent to the agent host over the desktop↔agent JSON-RPC transport
+would close that gap and is tracked as a follow-up.
+
 ### X11 / GUI forwarding
 
 SSH **X11 forwarding** lets a remote GUI app (`xeyes`, `xclock`, a graphical IDE)

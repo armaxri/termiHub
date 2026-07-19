@@ -436,6 +436,82 @@ mod tests {
         std::env::remove_var("TERMIHUB_TYPE_ID");
     }
 
+    // ── SSH agent forwarding through the remote-agent backend (#1719) ─────
+    //
+    // The remote-agent SSH backend is the reused `termihub_core` SSH
+    // `ConnectionType` (see `crate::registry`), so `forwardAgent` is honored on
+    // the agent's SSH leg by the same connector/handler that #1699 added: the
+    // session channel requests `auth-agent-req@openssh.com` and the forwarded
+    // agent channel is bridged to the ssh-agent local to the **agent host**
+    // (`$SSH_AUTH_SOCK` / the Windows OpenSSH pipe). The daemon inherits the
+    // agent's environment (`SystemDaemonLauncher` never clears it), so when the
+    // desktop→agent SSH leg itself forwards the agent, that host-local socket
+    // transparently chains back to the operator's own agent — end to end,
+    // without a bespoke JSON-RPC relay. The chosen model is documented in
+    // `docs/testing.md` → "SSH agent forwarding through the remote agent".
+    //
+    // These tests pin the agent-side seam: the `forwardAgent` flag survives the
+    // `TERMIHUB_SETTINGS` transport untouched and, fed to the core parser
+    // exactly as the daemon feeds it at connect time, yields an SshConfig with
+    // forwarding enabled. The connector request, the handler bridge, and the
+    // no-agent-available no-op themselves are covered by core unit tests.
+
+    /// `forwardAgent: true` in the connection settings survives the env-var
+    /// transport into the daemon and maps to `SshConfig.forward_agent`, so the
+    /// reused core SSH backend requests forwarding on the agent's SSH leg.
+    #[test]
+    fn daemon_ssh_settings_carry_forward_agent() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
+        std::env::set_var(
+            "TERMIHUB_SETTINGS",
+            r#"{"host":"target.example","username":"me","authMethod":"agent","forwardAgent":true}"#,
+        );
+        std::env::remove_var("TERMIHUB_SOCKET_PATH");
+        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
+
+        let config = DaemonConfig::from_env("fwd-agent-1").unwrap();
+        // The flag reaches the daemon verbatim …
+        assert_eq!(config.settings["forwardAgent"], serde_json::json!(true));
+        // … and the daemon feeds exactly these settings to the core SSH backend,
+        // whose parser turns it into an enabled `forward_agent`.
+        let ssh = termihub_core::backends::ssh::parse_ssh_settings(&config.settings);
+        assert!(
+            ssh.forward_agent,
+            "forwardAgent must reach the core SSH backend through the agent"
+        );
+
+        std::env::remove_var("TERMIHUB_TYPE_ID");
+        std::env::remove_var("TERMIHUB_SETTINGS");
+    }
+
+    /// With `forwardAgent` absent (every pre-#1699 saved connection), the
+    /// agent's SSH leg leaves forwarding off — a graceful default, so those
+    /// connections behave exactly as before.
+    #[test]
+    fn daemon_ssh_settings_default_forward_agent_off() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
+        std::env::set_var(
+            "TERMIHUB_SETTINGS",
+            r#"{"host":"target.example","username":"me"}"#,
+        );
+        std::env::remove_var("TERMIHUB_SOCKET_PATH");
+        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
+
+        let config = DaemonConfig::from_env("fwd-agent-2").unwrap();
+        let ssh = termihub_core::backends::ssh::parse_ssh_settings(&config.settings);
+        assert!(
+            !ssh.forward_agent,
+            "an absent forwardAgent must leave the agent's SSH leg unforwarded"
+        );
+
+        std::env::remove_var("TERMIHUB_TYPE_ID");
+        std::env::remove_var("TERMIHUB_SETTINGS");
+    }
+
     // ── Generation-counter regression tests ──────────────────────────────
     //
     // These tests verify that a stale Disconnected from an old connection
