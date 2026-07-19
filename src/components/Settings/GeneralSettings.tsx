@@ -1,16 +1,21 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { AppSettings } from "@/types/connection";
 import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
 import { isWindows } from "@/utils/platform";
+import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
 import { Select, SelectItem, Toggle } from "@/components/ui";
+import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { KeyPathInput } from "./KeyPathInput";
 import { SettingsField } from "./SettingsField";
 
 /** Sentinel value for the "platform default" shell option (Radix Select forbids empty-string item values). */
 const PLATFORM_DEFAULT_SHELL = "__platform_default__";
+
+/** Sentinel value for the "Git Bash — set up…" row that launches the guided install (#1672). */
+const GIT_BASH_SETUP = "__git_bash_setup__";
 
 const SHELL_LABELS: Record<string, string> = {
   bash: "Bash",
@@ -42,13 +47,22 @@ interface GeneralSettingsProps {
 
 export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSettingsProps) {
   const [availableShells, setAvailableShells] = useState<ShellType[]>([]);
+  const [gitBashSetupOpen, setGitBashSetupOpen] = useState(false);
   const platformDefaultShell = useAppStore((s) => s.defaultShell);
 
-  useEffect(() => {
+  const refreshShells = useCallback(() => {
     detectAvailableShells().then(setAvailableShells);
   }, []);
 
+  useEffect(() => {
+    refreshShells();
+  }, [refreshShells]);
+
   const show = (field: string) => !visibleFields || visibleFields.has(field);
+
+  // Windows-only: when no Unix shell is detected, offer a guided Git-for-Windows
+  // install instead of silently leaving bash unavailable (#1672).
+  const offerGitBashSetup = shouldOfferGitBashSetup(isWindows(), availableShells);
 
   return (
     <>
@@ -92,12 +106,18 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <Select
               data-testid="settings-default-shell"
               value={settings.defaultShell ?? PLATFORM_DEFAULT_SHELL}
-              onChange={(value) =>
+              onChange={(value) => {
+                // The "set up…" row launches the guided install rather than
+                // selecting a shell — leave the current default untouched.
+                if (value === GIT_BASH_SETUP) {
+                  setGitBashSetupOpen(true);
+                  return;
+                }
                 onChange({
                   ...settings,
                   defaultShell: value === PLATFORM_DEFAULT_SHELL ? undefined : value,
-                })
-              }
+                });
+              }}
             >
               <SelectItem value={PLATFORM_DEFAULT_SHELL}>
                 Platform default (
@@ -112,6 +132,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
                   {getShellLabel(shell, platformDefaultShell)}
                 </SelectItem>
               ))}
+              {offerGitBashSetup && (
+                <SelectItem value={GIT_BASH_SETUP}>Git Bash — set up…</SelectItem>
+              )}
             </Select>
           </SettingsField>
         )}
@@ -249,6 +272,17 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           )}
         </div>
       )}
+
+      <GitBashSetupDialog
+        open={gitBashSetupOpen}
+        onOpenChange={(open) => {
+          setGitBashSetupOpen(open);
+          // Re-detect on close so a just-installed Git Bash appears without an
+          // app restart (#1672).
+          if (!open) refreshShells();
+        }}
+        onInstallGuided={refreshShells}
+      />
     </>
   );
 }
