@@ -24,6 +24,9 @@ const CONTEXT_BY_CONTENT_TYPE: Record<TabContentType, ActiveContext> = {
   "log-viewer": "other",
   "agent-error": "other",
   "file-browser": "other",
+  // A remote-desktop tab captures keyboard/mouse for the remote, so its own
+  // canvas handles input; it is not a termiHub text surface.
+  "remote-desktop": "other",
 };
 
 /**

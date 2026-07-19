@@ -474,6 +474,7 @@ impl ConnectionType for Ftp {
         Capabilities {
             monitoring: false,
             file_browser: true,
+            graphical: false,
             resize: false,
             persistent: false,
             // FTP has no interactive shell: the desktop opens it straight into a

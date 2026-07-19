@@ -412,6 +412,14 @@ pub fn run() {
             app.manage(session_manager);
             app.manage(agent_manager);
 
+            // Graphical (remote-desktop) session manager. Uses its own copy of
+            // the same registry so it can create graphical connections by
+            // type_id, independently of the terminal SessionManager.
+            let graphical_manager = crate::session::graphical_manager::GraphicalSessionManager::new(
+                std::sync::Arc::new(build_desktop_registry()),
+            );
+            app.manage(graphical_manager);
+
             // X server provisioning (#1052): register the provisioner so the SSH
             // connect path can ensure a local X server before X11 forwarding
             // starts. The manager itself (#1049) is created and managed above.
@@ -642,6 +650,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Remote-desktop (graphical) commands — protocol-blind (#1680)
+            commands::remote_desktop::remote_desktop_connect,
+            commands::remote_desktop::remote_desktop_resize,
+            commands::remote_desktop::remote_desktop_send_input,
+            commands::remote_desktop::remote_desktop_send_clipboard,
+            commands::remote_desktop::remote_desktop_get_clipboard,
+            commands::remote_desktop::remote_desktop_disconnect,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::cancel_connecting,

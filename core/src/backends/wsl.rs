@@ -638,6 +638,7 @@ impl ConnectionType for Wsl {
         Capabilities {
             monitoring: false,
             file_browser: true,
+            graphical: false,
             resize: true,
             persistent: true,
             terminal: true,

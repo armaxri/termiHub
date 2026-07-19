@@ -9,6 +9,12 @@ import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
 import type { TransferProgress } from "@/services/api";
+import type {
+  RemoteDesktopFramePayload,
+  RemoteDesktopCursorPayload,
+  RemoteDesktopClipboardPayload,
+  RemoteDesktopStatePayload,
+} from "@/types/remoteDesktop";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -37,6 +43,45 @@ export async function onTerminalOutput(
   return await listen<TerminalOutputPayload>("terminal-output", (event) => {
     const { session_id, data } = event.payload;
     callback(session_id, new Uint8Array(data));
+  });
+}
+
+/**
+ * Subscribe to remote-desktop frame events (#1680). Fires for every session;
+ * the caller filters by `payload.session_id`.
+ */
+export async function onRemoteDesktopFrame(
+  callback: (payload: RemoteDesktopFramePayload) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteDesktopFramePayload>("remote-desktop-frame", (event) => {
+    callback(event.payload);
+  });
+}
+
+/** Subscribe to remote-desktop cursor events. */
+export async function onRemoteDesktopCursor(
+  callback: (payload: RemoteDesktopCursorPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteDesktopCursorPayload>("remote-desktop-cursor", (event) => {
+    callback(event.payload);
+  });
+}
+
+/** Subscribe to remote-desktop clipboard events (remote → local text). */
+export async function onRemoteDesktopClipboard(
+  callback: (payload: RemoteDesktopClipboardPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteDesktopClipboardPayload>("remote-desktop-clipboard", (event) => {
+    callback(event.payload);
+  });
+}
+
+/** Subscribe to remote-desktop lifecycle state events. */
+export async function onRemoteDesktopState(
+  callback: (payload: RemoteDesktopStatePayload) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteDesktopStatePayload>("remote-desktop-state", (event) => {
+    callback(event.payload);
   });
 }
 

@@ -13,10 +13,16 @@
 //! and agent (`agent/`) crates, which register their backends with a
 //! [`ConnectionTypeRegistry`] at startup.
 
+pub mod graphical;
 pub mod registry;
 pub mod schema;
 pub mod validation;
 
+pub use graphical::{
+    shared_field_base, AuthKind, CursorReceiver, CursorShape, CursorUpdate, DirtyRect,
+    FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, GraphicalState,
+    InputEvent, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
+};
 pub use registry::{ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry};
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
@@ -56,6 +62,17 @@ pub struct Capabilities {
     pub monitoring: bool,
     /// Whether this connection supports file browsing (SFTP, local fs, etc.).
     pub file_browser: bool,
+    /// Whether this connection is a graphical remote-desktop session.
+    ///
+    /// Defaults to `false` (via `#[serde(default)]`) so capabilities serialized
+    /// before this field existed deserialize as non-graphical. A graphical type
+    /// (VNC, RDP) sets `graphical: true` **and** `terminal: false`; the desktop
+    /// routes it through the [`GraphicalSessionManager`] and opens it straight
+    /// into a `remote-desktop` canvas tab, the same way `terminal: false` opens
+    /// FTP into a browser-only tab. Access the framebuffer surface via
+    /// [`ConnectionType::graphical()`].
+    #[serde(default)]
+    pub graphical: bool,
     /// Whether terminal resize is supported (false for serial/telnet).
     pub resize: bool,
     /// Whether sessions of this type can persist across agent reconnections.
@@ -172,6 +189,17 @@ pub trait ConnectionType: Send {
     ///
     /// Returns `None` when [`Capabilities::file_browser`] is `false`.
     fn file_browser(&self) -> Option<&dyn FileBrowser>;
+
+    /// Access the graphical (framebuffer) surface, if this is a remote-desktop
+    /// connection type.
+    ///
+    /// Returns `None` for every terminal / file-browser type; graphical
+    /// backends (VNC, RDP, the mock) override this to return
+    /// `Some(&dyn GraphicalBackend)` once connected. Default `None` so existing
+    /// backends need no change. Mirrors [`file_browser()`](Self::file_browser).
+    fn graphical(&self) -> Option<&dyn GraphicalBackend> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +220,7 @@ mod tests {
         let caps = Capabilities {
             monitoring: true,
             file_browser: true,
+            graphical: false,
             resize: true,
             persistent: false,
             terminal: true,
@@ -199,6 +228,7 @@ mod tests {
         let json = serde_json::to_value(&caps).unwrap();
         assert_eq!(json["monitoring"], true);
         assert_eq!(json["fileBrowser"], true);
+        assert_eq!(json["graphical"], false);
         assert_eq!(json["resize"], true);
         assert_eq!(json["persistent"], false);
         assert_eq!(json["terminal"], true);
@@ -206,6 +236,7 @@ mod tests {
         let deserialized: Capabilities = serde_json::from_value(json).unwrap();
         assert!(deserialized.monitoring);
         assert!(deserialized.file_browser);
+        assert!(!deserialized.graphical);
         assert!(deserialized.resize);
         assert!(!deserialized.persistent);
         assert!(deserialized.terminal);
@@ -237,6 +268,7 @@ mod tests {
         let caps = Capabilities {
             monitoring: false,
             file_browser: true,
+            graphical: false,
             resize: false,
             persistent: false,
             terminal: false,
@@ -252,12 +284,14 @@ mod tests {
         let caps = Capabilities {
             monitoring: false,
             file_browser: false,
+            graphical: false,
             resize: false,
             persistent: false,
             terminal: true,
         };
         let json = serde_json::to_value(&caps).unwrap();
         let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("graphical"));
         assert!(obj.contains_key("monitoring"));
         assert!(obj.contains_key("fileBrowser"));
         assert!(obj.contains_key("resize"));

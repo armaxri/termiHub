@@ -254,6 +254,7 @@ impl ConnectionType for Serial {
         Capabilities {
             monitoring: false,
             file_browser: false,
+            graphical: false,
             resize: false,
             persistent: true,
             terminal: true,

@@ -607,6 +607,7 @@ impl ConnectionType for Docker {
         Capabilities {
             monitoring: false,
             file_browser: true,
+            graphical: false,
             resize: true,
             persistent: true,
             terminal: true,

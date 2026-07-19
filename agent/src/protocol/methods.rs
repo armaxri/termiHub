@@ -841,6 +841,7 @@ mod tests {
                     capabilities: CoreCapabilities {
                         monitoring: false,
                         file_browser: false,
+                        graphical: false,
                         resize: true,
                         persistent: false,
                         terminal: true,

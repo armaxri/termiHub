@@ -332,6 +332,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         Capabilities {
             monitoring: false,
             file_browser: true,
+            graphical: false,
             resize: true,
             // Persistent so the agent spawns this backend inside the daemon
             // subprocess, giving each local-shell session a ring buffer that

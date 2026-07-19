@@ -177,6 +177,7 @@ impl ConnectionType for Telnet {
         Capabilities {
             monitoring: false,
             file_browser: false,
+            graphical: false,
             resize: false,
             persistent: false,
             terminal: true,

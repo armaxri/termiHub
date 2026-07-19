@@ -37,7 +37,15 @@ export type TabContentType =
    * but renders a non-terminal placeholder body instead of an xterm terminal
    * (#1335).
    */
-  | "file-browser";
+  | "file-browser"
+  /**
+   * A graphical remote-desktop connection (`Capabilities.graphical === true`,
+   * e.g. VNC/RDP). Renders a protocol-agnostic `<canvas>` surface with a hover
+   * toolbar and connection overlays, driven by the `remote-desktop-*` events.
+   * The tab owns its own graphical session (via `remote_desktop_connect`),
+   * separate from the terminal SessionManager (#1680).
+   */
+  | "remote-desktop";
 
 /**
  * Reference to a session-layer file browser backing a remote editor tab (#1557).

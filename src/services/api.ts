@@ -12,6 +12,7 @@ import {
   LineEnding,
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
+import type { RemoteDesktopInput } from "@/types/remoteDesktop";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
@@ -312,6 +313,55 @@ export async function resizeTerminal(
 /** Close a terminal session */
 export async function closeTerminal(sessionId: SessionId): Promise<void> {
   await invoke("close_terminal", { sessionId });
+}
+
+// --- Remote-desktop (graphical) commands (#1680) ---
+
+/**
+ * Open a graphical remote-desktop session for a connection type (`mock-remote-desktop`,
+ * `vnc`, `rdp`, …). Returns the new graphical session id. Frames/cursor/state
+ * arrive via the `remote-desktop-*` events.
+ */
+export async function remoteDesktopConnect(
+  typeId: string,
+  settings: Record<string, unknown>
+): Promise<SessionId> {
+  return await invoke<string>("remote_desktop_connect", { typeId, settings });
+}
+
+/** Request a new session resolution in pixels (Match Window / dynamic resize). */
+export async function remoteDesktopResize(
+  sessionId: SessionId,
+  width: number,
+  height: number
+): Promise<void> {
+  await invoke("remote_desktop_resize", { sessionId, width, height });
+}
+
+/** Forward a protocol-agnostic input event (key / pointer / wheel). */
+export async function remoteDesktopSendInput(
+  sessionId: SessionId,
+  event: RemoteDesktopInput
+): Promise<void> {
+  await invoke("remote_desktop_send_input", { sessionId, event });
+}
+
+/** Push local clipboard text to the remote. */
+export async function remoteDesktopSendClipboard(
+  sessionId: SessionId,
+  text: string
+): Promise<void> {
+  await invoke("remote_desktop_send_clipboard", { sessionId, text });
+}
+
+/** Read the remote clipboard text, if any. */
+export async function remoteDesktopGetClipboard(sessionId: SessionId): Promise<string | null> {
+  return await invoke<string | null>("remote_desktop_get_clipboard", { sessionId });
+}
+
+/** Disconnect a graphical remote-desktop session. */
+export async function remoteDesktopDisconnect(sessionId: SessionId): Promise<void> {
+  await invoke("remote_desktop_disconnect", { sessionId });
 }
 
 // --- Persistent session commands ---

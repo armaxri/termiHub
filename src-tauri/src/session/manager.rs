@@ -1491,6 +1491,7 @@ mod tests {
             Capabilities {
                 monitoring: false,
                 file_browser: false,
+                graphical: false,
                 resize: true,
                 persistent: false,
                 terminal: true,
@@ -1906,6 +1907,7 @@ mod tests {
             Capabilities {
                 monitoring: false,
                 file_browser: false,
+                graphical: false,
                 resize: false,
                 persistent: false,
                 terminal: true,
@@ -2171,6 +2173,7 @@ mod tests {
             Capabilities {
                 monitoring: false,
                 file_browser: false,
+                graphical: false,
                 resize: true,
                 persistent: false,
                 terminal: true,

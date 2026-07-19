@@ -69,6 +69,7 @@ impl RemoteProxy {
             remote_capabilities: Mutex::new(Capabilities {
                 monitoring: false,
                 file_browser: false,
+                graphical: false,
                 resize: true,
                 persistent: false,
                 terminal: true,
@@ -123,6 +124,7 @@ impl RemoteProxy {
             remote_capabilities: Mutex::new(Capabilities {
                 monitoring: false,
                 file_browser: false,
+                graphical: false,
                 resize: true,
                 persistent: true,
                 terminal: true,
@@ -159,6 +161,7 @@ impl ConnectionType for RemoteProxy {
             .unwrap_or(Capabilities {
                 monitoring: false,
                 file_browser: false,
+                graphical: false,
                 resize: true,
                 persistent: false,
                 terminal: true,

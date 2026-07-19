@@ -53,6 +53,7 @@ import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnos
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
 import { FileBrowserTab } from "@/components/Terminal/FileBrowserTab";
+import { RemoteDesktopTab } from "@/components/RemoteDesktop/RemoteDesktopTab";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
@@ -451,6 +452,12 @@ export function SplitView() {
                 />
               ) : zoomedTab.contentType === "file-browser" ? (
                 <FileBrowserTab key={`zoom-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
+              ) : zoomedTab.contentType === "remote-desktop" ? (
+                <RemoteDesktopTab
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  isVisible={true}
+                />
               ) : null}
             </div>
           </div>
@@ -680,6 +687,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             />
           ) : tab.contentType === "file-browser" ? (
             <FileBrowserTab
+              key={tab.id}
+              tabId={tab.id}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "remote-desktop" ? (
+            <RemoteDesktopTab
               key={tab.id}
               tabId={tab.id}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
