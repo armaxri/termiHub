@@ -681,6 +681,14 @@ interface AppState {
   setRecoveryDialogOpen: (open: boolean) => void;
 
   loadFromBackend: () => Promise<void>;
+  /**
+   * Re-fetch the connection-type registry from the backend and replace
+   * {@link connectionTypes}. The registry embeds backend-detected data such as
+   * the local shell field's option list, so refreshing it lets a just-installed
+   * shell (e.g. guided Git Bash, #1692) become selectable without an app
+   * restart. A backend failure leaves the current registry untouched.
+   */
+  refreshConnectionTypes: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
   /**
    * Persist edited shell-integration settings through the dedicated
@@ -5289,6 +5297,15 @@ export const useAppStore = create<AppState>((set, get) => {
     // SSH Tunnels
     tunnels: [],
     tunnelStates: {},
+
+    refreshConnectionTypes: async () => {
+      try {
+        const connectionTypes = await getConnectionTypes();
+        set({ connectionTypes });
+      } catch (err) {
+        console.error("Failed to refresh connection types:", err);
+      }
+    },
 
     loadTunnels: async () => {
       try {
