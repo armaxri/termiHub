@@ -3213,7 +3213,7 @@ export const useAppStore = create<AppState>((set, get) => {
       set((s) =>
         enabled === undefined
           ? { sessionHighlighting: omitKey(s.sessionHighlighting, sessionId) }
-          : { sessionHighlighting: { ...s.sessionHighlighting, [sessionId]: enabled } },
+          : { sessionHighlighting: { ...s.sessionHighlighting, [sessionId]: enabled } }
       ),
 
     // Large paste confirmation

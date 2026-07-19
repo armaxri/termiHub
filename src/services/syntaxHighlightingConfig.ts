@@ -88,7 +88,7 @@ export interface ResolvedHighlightingConfig {
  */
 export function resolveHighlightingConfig(
   global: SyntaxHighlightingConfig | undefined,
-  perConnection?: ConnectionHighlightingConfig,
+  perConnection?: ConnectionHighlightingConfig
 ): ResolvedHighlightingConfig {
   const g = global ?? defaultHighlightingConfig();
   const override = perConnection?.override ?? "global";
