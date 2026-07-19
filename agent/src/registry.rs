@@ -30,7 +30,18 @@ pub fn build_registry() -> ConnectionTypeRegistry {
         Box::new(|| Box::new(termihub_core::backends::serial::Serial::new())),
     );
 
-    // SSH
+    // SSH.
+    //
+    // The agent reuses the core SSH backend verbatim, so SSH **agent
+    // forwarding** (`forwardAgent`, #1699) is honored on the agent's SSH leg by
+    // the same connector/handler as the desktop path (#1719). The forwarded
+    // agent channel is bridged to the ssh-agent **local to the agent host**
+    // (`$SSH_AUTH_SOCK` / the Windows OpenSSH pipe); the session daemon inherits
+    // the agent's environment, so when the desktop→agent SSH leg itself forwards
+    // the agent, that host-local socket transparently chains back to the
+    // operator's own agent end to end — no bespoke JSON-RPC relay. Absence of a
+    // host-local agent is a graceful no-op. See `docs/testing.md` → "SSH agent
+    // forwarding through the remote agent".
     registry.register(
         "ssh",
         "SSH",
