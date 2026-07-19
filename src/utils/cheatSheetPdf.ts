@@ -43,7 +43,7 @@ export function buildCheatSheetHtml(): string {
       const rows = group.bindings
         .map((b) => {
           const combo = getEffectiveCombo(b.action) ?? b.winLinuxDefault;
-          const keyStr = serializeBinding(combo);
+          const keyStr = combo ? serializeBinding(combo) : "Unbound";
           const isOverride = overriddenActions.has(b.action);
           const overrideMark = isOverride
             ? '<span class="override-mark" title="Custom binding">&dagger;</span>'

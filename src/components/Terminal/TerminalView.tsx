@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
+import { Plus, Columns2, Rows2, X, PanelLeft, Circle, Square } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
@@ -12,6 +12,7 @@ import { TestBridge } from "@/testbridge/TestBridge";
 import { Terminal } from "./Terminal";
 import { applyAgentReconnecting } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
+import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
 import { listAgentSessions } from "@/services/api";
@@ -245,6 +246,12 @@ export function TerminalView() {
   const confirmCloseLiveSession = useAppStore((s) => s.settings.confirmCloseLiveSession);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const macroRecording = useAppStore((s) => s.macroRecording);
+  const toggleMacroRecording = useAppStore((s) => s.toggleMacroRecording);
+  const macroSaveDialogOpen = useAppStore((s) => s.macroSaveDialogOpen);
+  const macroRecordingStepCount = useAppStore((s) => s.macroRecordingSteps.length);
+  const saveRecordedMacro = useAppStore((s) => s.saveRecordedMacro);
+  const discardRecordedMacro = useAppStore((s) => s.discardRecordedMacro);
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
 
@@ -322,6 +329,20 @@ export function TerminalView() {
                 <Rows2 size={16} />
               </button>
             </Tooltip>
+            <Tooltip
+              content={macroRecording ? "Stop Recording Macro" : "Record Macro"}
+              side="bottom"
+            >
+              <button
+                className={`terminal-view__toolbar-btn${macroRecording ? " terminal-view__toolbar-btn--recording" : ""}`}
+                onClick={toggleMacroRecording}
+                aria-label={macroRecording ? "Stop Recording Macro" : "Record Macro"}
+                aria-pressed={macroRecording}
+                data-testid="terminal-view-record-macro"
+              >
+                {macroRecording ? <Square size={14} fill="currentColor" /> : <Circle size={16} />}
+              </button>
+            </Tooltip>
             {allLeaves.length > 1 && (
               <Tooltip content="Close Panel" side="bottom">
                 <button
@@ -351,6 +372,12 @@ export function TerminalView() {
           <SplitView />
         </div>
       </div>
+      <MacroRecordSaveDialog
+        open={macroSaveDialogOpen}
+        stepCount={macroRecordingStepCount}
+        onSave={(meta) => void saveRecordedMacro(meta)}
+        onCancel={discardRecordedMacro}
+      />
     </TerminalPortalProvider>
   );
 }

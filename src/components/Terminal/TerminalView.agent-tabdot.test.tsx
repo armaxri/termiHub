@@ -43,6 +43,7 @@ vi.mock("@/components/ui", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
+vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
 vi.mock("@/components/SplitView", () => ({ SplitView: () => null }));
 vi.mock("@/services/events", () => ({ terminalDispatcher: { init: vi.fn() } }));
 vi.mock("@/services/api", () => ({

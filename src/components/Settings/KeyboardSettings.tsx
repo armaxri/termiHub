@@ -119,13 +119,13 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const filteredBindings = searchQuery.trim()
     ? bindings.filter((b) => {
         const q = searchQuery.toLowerCase();
+        const combo = getEffectiveCombo(b.action) ?? b.winLinuxDefault;
+        const comboStr = combo ? serializeBinding(combo) : "";
         return (
           b.label.toLowerCase().includes(q) ||
           b.action.toLowerCase().includes(q) ||
           b.category.toLowerCase().includes(q) ||
-          serializeBinding(getEffectiveCombo(b.action) ?? b.winLinuxDefault)
-            .toLowerCase()
-            .includes(q)
+          comboStr.toLowerCase().includes(q)
         );
       })
     : bindings;

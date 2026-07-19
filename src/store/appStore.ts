@@ -154,7 +154,7 @@ import {
   captureAllTabGroups,
   getWorkspaceLeaves,
 } from "@/utils/workspaceLayout";
-import { Macro } from "@/types/macro";
+import { Macro, MacroStep } from "@/types/macro";
 import {
   listMacros as apiListMacros,
   saveMacro as apiSaveMacro,
@@ -1131,6 +1131,44 @@ interface AppState {
   /** Delete a macro by ID; only mutates local state after the backend delete resolves. */
   deleteMacroFromBackend: (macroId: string) => Promise<void>;
 
+  // Macro recording (#1674)
+  /** Whether terminal input is currently being captured into a macro. */
+  macroRecording: boolean;
+  /** The steps captured so far in the in-progress (or just-stopped) recording. */
+  macroRecordingSteps: MacroStep[];
+  /**
+   * Timestamp (ms) of the last captured chunk, used to derive the next step's
+   * `delayMs`. Internal to the recorder; `null` before the first chunk.
+   */
+  macroRecordingLastTime: number | null;
+  /** Whether the post-recording "name & save" dialog is open. */
+  macroSaveDialogOpen: boolean;
+  /** Begin a fresh recording, discarding any prior buffer. */
+  startMacroRecording: () => void;
+  /**
+   * Append one chunk of user input to the in-progress recording. No-op unless a
+   * recording is active. `delayMs` is the elapsed time since the previous chunk
+   * (0 for the first).
+   */
+  recordMacroInput: (data: string) => void;
+  /**
+   * Stop capturing. If anything was recorded, opens the save dialog; otherwise
+   * discards the empty recording and notifies the user.
+   */
+  stopMacroRecording: () => void;
+  /** Toggle recording: start if idle, stop (and prompt to save) if active. */
+  toggleMacroRecording: () => void;
+  /** Abort recording and discard the captured buffer without saving. */
+  cancelMacroRecording: () => void;
+  /** Persist the just-recorded steps as a named macro, then reset the recorder. */
+  saveRecordedMacro: (meta: {
+    name: string;
+    description?: string;
+    tags: string[];
+  }) => Promise<void>;
+  /** Close the save dialog and drop the captured buffer without persisting. */
+  discardRecordedMacro: () => void;
+
   // Workspaces
   workspaces: WorkspaceSummary[];
   activeWorkspaceName: string | null;
@@ -1209,6 +1247,16 @@ interface AppState {
 }
 
 let tabCounter = 0;
+
+/** Generate a unique macro id, falling back when `crypto.randomUUID` is absent. */
+function generateMacroId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") {
+    return `macro-${c.randomUUID()}`;
+  }
+  return `macro-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 /** Debounce timer for auto-saving the last session on layout changes. */
 let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -5402,6 +5450,107 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         macros: state.macros.filter((m) => m.id !== macroId),
       }));
+    },
+
+    // Macro recording (#1674)
+    macroRecording: false,
+    macroRecordingSteps: [],
+    macroRecordingLastTime: null,
+    macroSaveDialogOpen: false,
+
+    startMacroRecording: () => {
+      set({
+        macroRecording: true,
+        macroRecordingSteps: [],
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: false,
+      });
+      toast.info("Recording macro — type in the terminal, then stop to save");
+    },
+
+    recordMacroInput: (data) => {
+      const state = get();
+      if (!state.macroRecording) return;
+      const now = Date.now();
+      const last = state.macroRecordingLastTime;
+      const delayMs = last === null ? 0 : Math.max(0, now - last);
+      set({
+        macroRecordingSteps: [...state.macroRecordingSteps, { data, delayMs }],
+        macroRecordingLastTime: now,
+      });
+    },
+
+    stopMacroRecording: () => {
+      const state = get();
+      if (!state.macroRecording) return;
+      if (state.macroRecordingSteps.length === 0) {
+        // Nothing was typed — discard the empty recording rather than prompting.
+        set({
+          macroRecording: false,
+          macroRecordingLastTime: null,
+          macroSaveDialogOpen: false,
+        });
+        toast.info("No input was recorded");
+        return;
+      }
+      set({
+        macroRecording: false,
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: true,
+      });
+    },
+
+    toggleMacroRecording: () => {
+      if (get().macroRecording) {
+        get().stopMacroRecording();
+      } else {
+        get().startMacroRecording();
+      }
+    },
+
+    cancelMacroRecording: () => {
+      set({
+        macroRecording: false,
+        macroRecordingSteps: [],
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: false,
+      });
+      toast.info("Recording discarded");
+    },
+
+    saveRecordedMacro: async ({ name, description, tags }) => {
+      const steps = get().macroRecordingSteps;
+      const macro: Macro = {
+        id: generateMacroId(),
+        name,
+        description,
+        tags,
+        steps,
+        // The backend stamps authoritative created/updated timestamps.
+        createdAt: "",
+        updatedAt: "",
+      };
+      try {
+        await get().saveMacroToBackend(macro);
+        set({
+          macroRecordingSteps: [],
+          macroRecordingLastTime: null,
+          macroSaveDialogOpen: false,
+        });
+        toast.success(`Saved macro "${name}"`);
+      } catch (err) {
+        // Keep the dialog open so the user can retry without losing the capture.
+        toast.error(`Failed to save macro: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
+    },
+
+    discardRecordedMacro: () => {
+      set({
+        macroRecordingSteps: [],
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: false,
+      });
     },
 
     // Workspaces

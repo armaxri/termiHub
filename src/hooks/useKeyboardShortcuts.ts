@@ -148,6 +148,11 @@ export function useKeyboardShortcuts() {
           useAppStore.getState().addTabGroup();
           break;
 
+        case "toggle-macro-recording":
+          e.preventDefault();
+          useAppStore.getState().toggleMacroRecording();
+          break;
+
         case "close-tab-group": {
           e.preventDefault();
           const { tabGroups, activeTabGroupId, settings } = useAppStore.getState();

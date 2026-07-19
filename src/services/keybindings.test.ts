@@ -344,6 +344,8 @@ describe("getDefaultBindings", () => {
     // (Custom user overrides are protected separately by pass-through.)
     for (const binding of DEFAULT_BINDINGS) {
       const combo = binding.winLinuxDefault;
+      // Actions that ship unbound (null default) cannot collide with anything.
+      if (!combo) continue;
       const single = Array.isArray(combo) ? combo[0] : combo;
       // Simulate the modifier state that a key event would carry for this combo.
       const fakeEvent = {
