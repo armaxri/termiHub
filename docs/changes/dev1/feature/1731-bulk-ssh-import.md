@@ -6,5 +6,5 @@
   hosts (with a select-all), and creates a saved SSH connection per selection in
   a folder you pick — each with the resolved host/user/port/identity and any
   jump-host chain, and each editable afterwards. Names collision-resolve within
-  the chosen folder (` (2)`, ` (3)`, …). A missing or empty config shows a
-  friendly empty state (#1731).
+  the chosen folder by appending `(2)`, `(3)`, and so on. A missing or empty
+  config shows a friendly empty state (#1731).
