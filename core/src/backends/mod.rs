@@ -30,3 +30,6 @@ pub mod mock_remote_desktop;
 
 #[cfg(feature = "vnc")]
 pub mod vnc;
+
+#[cfg(feature = "rdp")]
+pub mod rdp;

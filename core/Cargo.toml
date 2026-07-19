@@ -31,9 +31,9 @@ md5 = { version = "0.7", optional = true }
 sec1 = { version = "0.8", features = ["der"], optional = true }
 hex = { version = "0.4", optional = true }
 data-encoding = { version = "2", optional = true }
-p256 = { version = "=0.14.0-rc.9", optional = true }
-p384 = { version = "=0.14.0-rc.9", optional = true }
-p521 = { version = "=0.14.0-rc.9", optional = true }
+p256 = { version = "=0.14.0-rc.14", optional = true }
+p384 = { version = "=0.14.0-rc.14", optional = true }
+p521 = { version = "=0.14.0-rc.14", optional = true }
 bollard = { workspace = true, optional = true }
 futures-util = { version = "0.3", optional = true }
 # Hashing the Docker CLI context name to locate its `contexts/meta/<id>` entry
@@ -57,6 +57,21 @@ webpki-roots = { version = "1", optional = true }
 # graphical frame stream (#1681). Library-first per the repo rules — the RFB
 # state machine is not hand-rolled.
 vnc-rs = { version = "0.5", optional = true }
+# RDP client: pure-Rust IronRDP (Microsoft-maintained). The meta crate re-exports
+# the sub-crates behind features; the tokio framed-I/O adapter and the TLS helper
+# are separate crates. Library-first per the repo rules — the RDP protocol state
+# machine is IronRDP's, decoded on the wire into the shared graphical frame stream
+# (#1682).
+ironrdp = { version = "0.17", default-features = false, features = [
+    "connector",
+    "session",
+    "graphics",
+    "pdu",
+], optional = true }
+ironrdp-tokio = { version = "0.10", features = ["reqwest"], optional = true }
+ironrdp-tls = { version = "0.2", default-features = false, features = [
+    "rustls-ring",
+], optional = true }
 ringbuf = "0.5.0"
 shellexpand = "3.1"
 vte = "0.13"
@@ -136,3 +151,13 @@ mock-remote-desktop = []
 # optional SSH-tunnel group reaches the VNC server through the existing SSH
 # tunnel infrastructure (as the VNC concept specifies).
 vnc = ["dep:vnc-rs", "dep:tracing", "ssh"]
+# RDP (IronRDP) graphical remote-desktop backend (#1682). Decodes the RDP
+# graphics pipeline in Rust into the shared frame stream and translates the
+# shared input / clipboard events to RDP input / CLIPRDR PDUs. Library-first per
+# the repo rules — the RDP protocol state machine is IronRDP's, not hand-rolled.
+rdp = [
+    "dep:ironrdp",
+    "dep:ironrdp-tokio",
+    "dep:ironrdp-tls",
+    "dep:tracing",
+]

@@ -101,6 +101,19 @@ pub fn build_desktop_registry() -> ConnectionTypeRegistry {
         Box::new(|| Box::new(termihub_core::backends::vnc::Vnc::new())),
     );
 
+    // RDP (IronRDP) graphical remote-desktop backend (gated behind the `rdp`
+    // feature; enabled by default). Reports `graphical: true`, so it routes
+    // through the GraphicalSessionManager into a remote-desktop canvas tab and
+    // is experimental-gated (#1705) with no per-protocol wiring. Additive, like
+    // the VNC backend beside it — this is the whole desktop-side registration.
+    #[cfg(feature = "rdp")]
+    registry.register(
+        "rdp",
+        "RDP",
+        "monitor",
+        Box::new(|| Box::new(termihub_core::backends::rdp::Rdp::new())),
+    );
+
     registry
 }
 
@@ -135,15 +148,20 @@ mod tests {
         #[cfg(feature = "vnc")]
         assert!(registry.has_type("vnc"));
 
+        #[cfg(feature = "rdp")]
+        assert!(registry.has_type("rdp"));
+
         // 5 always-on backends (local/serial/ssh/telnet/docker), plus WSL on
         // Windows, FTP when the `ftp` feature is enabled, the mock
-        // remote-desktop backend when `mock-remote-desktop` is enabled, and the
-        // VNC backend when `vnc` is enabled.
+        // remote-desktop backend when `mock-remote-desktop` is enabled, the VNC
+        // backend when `vnc` is enabled, and the RDP backend when `rdp` is
+        // enabled.
         let expected = 5
             + cfg!(windows) as usize
             + cfg!(feature = "ftp") as usize
             + cfg!(feature = "mock-remote-desktop") as usize
-            + cfg!(feature = "vnc") as usize;
+            + cfg!(feature = "vnc") as usize
+            + cfg!(feature = "rdp") as usize;
         assert_eq!(types.len(), expected);
     }
 
