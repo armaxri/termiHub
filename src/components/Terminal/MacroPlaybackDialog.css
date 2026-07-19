@@ -1,0 +1,10 @@
+.macro-playback-dialog__empty,
+.macro-playback-dialog__hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.macro-playback-dialog__hint {
+  margin-top: var(--spacing-sm);
+}

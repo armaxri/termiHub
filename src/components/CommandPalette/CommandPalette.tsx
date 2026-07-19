@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchSorter } from "match-sorter";
-import { TerminalSquare } from "lucide-react";
+import { TerminalSquare, Play } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { buildCommands } from "@/services/commands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
@@ -35,6 +35,13 @@ type PaletteEntry =
       /** Host used as a secondary match key, if any. */
       host: string;
       connection: SavedConnection;
+    }
+  | {
+      kind: "macro";
+      key: string;
+      label: string;
+      /** The macro to replay into the active terminal. */
+      macroId: string;
     };
 
 /**
@@ -51,6 +58,8 @@ export function CommandPalette(): React.ReactElement {
   const open = useAppStore((s) => s.commandPaletteOpen);
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const connections = useAppStore((s) => s.connections);
+  const macros = useAppStore((s) => s.macros);
+  const playMacro = useAppStore((s) => s.playMacro);
   // Context-bound command availability depends on live panel/terminal state;
   // subscribe so the entry list (and its disabled affordances) recompute when
   // the focused panel, its tabs, or the active panel change.
@@ -80,13 +89,19 @@ export function CommandPalette(): React.ReactElement {
       host: String((conn.config.config as Record<string, unknown>).host ?? ""),
       connection: conn,
     }));
-    return [...commandEntries, ...connectionEntries];
+    const macroEntries: PaletteEntry[] = macros.map((m) => ({
+      kind: "macro",
+      key: `macro:${m.id}`,
+      label: `Run Macro: ${m.name}`,
+      macroId: m.id,
+    }));
+    return [...commandEntries, ...macroEntries, ...connectionEntries];
     // buildCommands() reads live panel/terminal state via the store to compute
     // each context command's availability; rootPanel and activePanelId are listed
     // so the entries (and their disabled affordances) recompute when focus moves,
     // even though they are not referenced directly in this closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connections, rootPanel, activePanelId]);
+  }, [connections, macros, rootPanel, activePanelId]);
 
   // Ranked results. An empty query returns every entry in declaration order.
   const results = useMemo<PaletteEntry[]>(() => {
@@ -129,11 +144,13 @@ export function CommandPalette(): React.ReactElement {
       setOpen(false);
       if (entry.kind === "command") {
         entry.run();
+      } else if (entry.kind === "macro") {
+        void playMacro(entry.macroId, { timingMode: "real-time" });
       } else {
         void connect(entry.connection);
       }
     },
-    [connect, setOpen]
+    [connect, playMacro, setOpen]
   );
 
   const handleKeyDown = useCallback(
@@ -215,6 +232,8 @@ export function CommandPalette(): React.ReactElement {
                   <span className="command-palette__icon" aria-hidden="true">
                     {entry.kind === "command" ? (
                       <TerminalSquare size={16} />
+                    ) : entry.kind === "macro" ? (
+                      <Play size={16} />
                     ) : (
                       <ConnectionIcon
                         config={entry.connection.config}
@@ -228,6 +247,8 @@ export function CommandPalette(): React.ReactElement {
                     entry.accelerator ? (
                       <span className="command-palette__accelerator">{entry.accelerator}</span>
                     ) : null
+                  ) : entry.kind === "macro" ? (
+                    <span className="command-palette__type">macro</span>
                   ) : (
                     <span className="command-palette__type">{entry.connection.config.type}</span>
                   )}
