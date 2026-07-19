@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Light Color Theme &amp; User Themes (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Light Color Theme &amp; User Themes</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Partial</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/193">#193</a></span>
+          <span><code>docs/concepts/partial/light-color-theme.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub currently ships a single hardcoded dark color theme (VS Code Dark-inspired). All colors are defined as CSS custom properties in <code>src/styles/variables.css</code>, and the xterm.js terminal uses its own hardcoded ANSI color palette in <code>Terminal.tsx</code>. There is no mechanism to switch themes, detect the OS preference, or allow users to define custom palettes.</p>
+<p>This concept introduces a <strong>theme system</strong> that:</p>
+<ol>
+<li>Ships two built-in themes: <strong>Dark</strong> (current) and <strong>Light</strong></li>
+<li>Supports <strong>System</strong> preference — auto-switching based on the OS <code>prefers-color-scheme</code> media query</li>
+<li>Provides a foundation for <strong>user-defined custom themes</strong> — users can create, edit, import, and export theme files</li>
+<li>Applies themes consistently across the entire UI — CSS variables, xterm.js terminal, status indicators, and inline-styled elements</li>
+</ol>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Let users switch between Dark, Light, and System themes from the Appearance settings (see <a href="nicer-settings.html">Nicer Settings concept</a>)</li>
+<li>Provide a polished, accessible Light theme that matches the existing VS Code Light aesthetic</li>
+<li>Ensure all color definitions flow through a single theme system — no scattered hardcoded values</li>
+<li>Allow power users to create fully custom themes via JSON theme files</li>
+<li>Keep the theme switch instant with no page reload</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="theme-selector-appearance-settings">Theme Selector (Appearance Settings)</h3>
+<p>The theme setting lives in the <strong>Appearance</strong> category of the Settings panel (as described in the <a href="nicer-settings.html">Nicer Settings concept</a>):</p>
+<pre><code>┌─ Appearance ──────────────────────────────────────────┐
+│                                                       │
+│  THEME                                                │
+│  [Dark ▾]                                             │
+│   ┌──────────────┐                                    │
+│   │ ● Dark       │                                    │
+│   │ ○ Light      │                                    │
+│   │ ○ System     │                                    │
+│   │ ─────────────│                                    │
+│   │ ○ My Custom  │  ← user-defined themes             │
+│   │ + New Theme  │  ← opens theme editor              │
+│   └──────────────┘                                    │
+│                                                       │
+│  FONT FAMILY                                          │
+│  [MesloLGS Nerd Font Mono, ...]                       │
+│                                                       │
+│  FONT SIZE                                            │
+│  [14]                                                 │
+│                                                       │
+└───────────────────────────────────────────────────────┘
+</code></pre>
+<p>The dropdown shows:</p>
+<ol>
+<li><strong>Built-in themes</strong>: Dark, Light, System — always present</li>
+<li><strong>Separator line</strong></li>
+<li><strong>User-defined themes</strong>: listed by name, if any exist</li>
+<li><strong>"+ New Theme"</strong> action — opens the theme editor with the current theme as a starting template</li>
+</ol>
+<h3 id="theme-preview">Theme Preview</h3>
+<p>When hovering over a theme in the dropdown, a brief preview tooltip shows the theme's primary colors:</p>
+<pre><code>┌──────────────────────────┐
+│ ■ Background   #ffffff   │
+│ ■ Foreground   #383a42   │
+│ ■ Accent       #0366d6   │
+│ ■ Terminal BG  #ffffff   │
+└──────────────────────────┘
+</code></pre>
+<p>This gives users a quick sense of the theme without committing to it.</p>
+<h3 id="theme-editor">Theme Editor</h3>
+<p>The theme editor opens as a new tab (similar to the connection editor pattern). It presents all editable theme colors grouped by section:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│  Theme Editor: My Custom Theme                              │
+│  Based on: Dark                                       [×]   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  NAME                                                       │
+│  [My Custom Theme_____________]                             │
+│                                                             │
+│  BASE THEME                                                 │
+│  [Dark ▾]    ← inherits all values, user overrides specific │
+│                                                             │
+│  ─── Backgrounds ───────────────────────────────────────    │
+│  Primary BG        [■ #1e1e1e]  [Reset]                     │
+│  Secondary BG      [■ #252526]  [Reset]                     │
+│  Tertiary BG       [■ #2d2d2d]  [Reset]                     │
+│  ...                                                        │
+│                                                             │
+│  ─── Text ──────────────────────────────────────────────    │
+│  Primary Text      [■ #cccccc]  [Reset]                     │
+│  Secondary Text    [■ #969696]  [Reset]                     │
+│  ...                                                        │
+│                                                             │
+│  ─── Terminal ANSI ─────────────────────────────────────    │
+│  Black             [■ #1e1e1e]  [Reset]                     │
+│  Red               [■ #cd3131]  [Reset]                     │
+│  ...all 16 ANSI colors...                                   │
+│                                                             │
+│  ─── Status ────────────────────────────────────────────    │
+│  Success           [■ #89d185]  [Reset]                     │
+│  Warning           [■ #cca700]  [Reset]                     │
+│  Error             [■ #f48771]  [Reset]                     │
+│                                                             │
+│  ──────────────────────────────────────────────────────     │
+│  [Save Theme]  [Export JSON]  [Delete Theme]                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Each color swatch is clickable and opens a color picker (reusing the existing <code>ColorPickerDialog</code> pattern from tab coloring). The <strong>Reset</strong> button next to each color reverts it to the base theme's default.</p>
+<h3 id="live-preview">Live Preview</h3>
+<p>While editing a theme, changes are applied <strong>live</strong> to the application. A small banner at the top reminds the user they are in theme preview mode:</p>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│ ⓘ Previewing theme &quot;My Custom Theme&quot; — unsaved changes │
+│                                         [Revert] [Save] │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<p>If the user navigates away without saving, the previous theme is restored.</p>
+<h3 id="import-export">Import / Export</h3>
+<ul>
+<li><strong>Export</strong>: Saves the theme as a <code>.json</code> file via a system save dialog</li>
+<li><strong>Import</strong>: An "Import Theme" button in the Appearance settings opens a system file dialog. The imported theme appears in the user themes list. Duplicate names get a <code>(2)</code> suffix.</li>
+</ul>
+<h3 id="light-theme-appearance">Light Theme Appearance</h3>
+<p>The built-in Light theme follows VS Code's Light+ aesthetic:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐                    │
+│  │ Activity │ │  Sidebar │ │ Terminal panel                 │
+│  │   Bar    │ │          │ │                                │
+│  │ #2c2c2c │ │ #f3f3f3 │ │  $ ls -la                     │
+│  │ (stays  │ │          │ │  drwxr-xr-x  user group       │
+│  │  dark)  │ │ Connec-  │ │  -rw-r--r--  user group       │
+│  │          │ │ tions    │ │                                │
+│  │          │ │          │ │  bg: #ffffff                   │
+│  │          │ │          │ │  fg: #383a42                   │
+│  └──────────┘ └──────────┘ └────────────────────────────────┘
+│  ┌──────────────────────────────────────────────────────────┐
+│  │ Status Bar                                   bg: #007acc │
+│  └──────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Key design decisions for the Light theme:</p>
+<ul>
+<li>The <strong>activity bar stays dark</strong> (like VS Code) — it provides a strong visual anchor regardless of theme</li>
+<li>The <strong>sidebar</strong> uses a light gray background (<code>#f3f3f3</code>) with dark text</li>
+<li>The <strong>terminal area</strong> uses white background with dark foreground text</li>
+<li>The <strong>accent color</strong> remains blue (<code>#0366d6</code>) but adjusted for light-on-light contrast</li>
+<li><strong>Status colors</strong> are slightly adjusted for readability on light backgrounds (darker saturation)</li>
+<li><strong>Borders</strong> become lighter gray lines rather than dark separators</li>
+</ul>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="theme-application-flow">Theme Application Flow</h3>
+<p>When the user selects a theme, the following happens:</p>
+<ol>
+<li>The theme selection is stored in <code>AppSettings.theme</code> (persisted to the config file)</li>
+<li>CSS custom properties on <code>:root</code> are updated to the new theme's values</li>
+<li>xterm.js instances are re-themed via <code>xterm.options.theme = { ... }</code></li>
+<li>The Zustand store emits the change so all subscribed components can re-render if needed</li>
+</ol>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[User selects theme] --&gt; B[Update AppSettings.theme]
+    B --&gt; C[Persist to backend config]
+    B --&gt; D[Apply CSS variables to :root]
+    B --&gt; E[Update xterm.js theme on all terminals]
+    D --&gt; F[UI re-renders with new colors]
+    E --&gt; G[Terminal re-renders with new colors]
+    F --&gt; H[Theme applied]
+    G --&gt; H
+</pre>
+</div>
+<h3 id="system-theme-detection">System Theme Detection</h3>
+<p>When the user selects "System":</p>
+<ol>
+<li>The app reads <code>window.matchMedia('(prefers-color-scheme: dark)')</code></li>
+<li>It registers a listener for changes (user changes OS dark/light mode while app is running)</li>
+<li>On change, the resolved theme (dark or light) is applied automatically</li>
+<li>The stored value remains <code>"system"</code> — only the applied theme changes</li>
+</ol>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Settings as Settings UI
+    participant Store as Zustand Store
+    participant Media as matchMedia API
+    participant CSS as CSS Variables
+
+    User-&gt;&gt;Settings: Select "System"
+    Settings-&gt;&gt;Store: updateSettings({ theme: "system" })
+    Store-&gt;&gt;Media: Check prefers-color-scheme
+    Media--&gt;&gt;Store: "dark" or "light"
+    Store-&gt;&gt;CSS: Apply resolved theme variables
+
+    Note over Media,CSS: OS theme changes later...
+    Media-&gt;&gt;Store: Change event: "light"
+    Store-&gt;&gt;CSS: Apply light theme variables
+</pre>
+</div>
+<h3 id="custom-theme-lifecycle">Custom Theme Lifecycle</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[User clicks '+ New Theme'] --&gt; B[Theme editor opens]
+    B --&gt; C[User picks base theme]
+    C --&gt; D[User customizes colors]
+    D --&gt; E{Live preview active}
+    E --&gt; F[User saves theme]
+    F --&gt; G[Theme stored in config]
+    G --&gt; H[Theme appears in dropdown]
+
+    I[User clicks 'Export JSON'] --&gt; J[File save dialog]
+    J --&gt; K[Theme saved as .json file]
+
+    L[User clicks 'Import Theme'] --&gt; M[File open dialog]
+    M --&gt; N[Parse &amp; validate JSON]
+    N --&gt;|Valid| O[Theme added to user list]
+    N --&gt;|Invalid| P[Error toast: invalid theme file]
+</pre>
+</div>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>Deleted active theme</strong>: If the user deletes the theme they're currently using, the app falls back to Dark</li>
+<li><strong>Imported theme name conflict</strong>: Appends <code>(2)</code>, <code>(3)</code>, etc. to avoid collisions</li>
+<li><strong>Corrupt custom theme file</strong>: Invalid or missing color values fall back to the base theme's defaults for those values. A warning toast notifies the user about the fallback.</li>
+<li><strong>Multiple terminals open</strong>: All open xterm.js instances are re-themed simultaneously when the theme changes</li>
+<li><strong>Theme during connection</strong>: Theme changes are purely cosmetic — they never interrupt active terminal sessions</li>
+<li><strong>High contrast</strong>: Custom themes are unconstrained — users may create themes with poor contrast. A future enhancement could add WCAG contrast warnings, but this is out of scope for the initial implementation.</li>
+<li><strong>Tab colors</strong>: Per-tab colors (from the tab coloring feature) are user-chosen and remain independent of the theme. They are not affected by theme switching.</li>
+<li><strong>Inline-styled elements</strong>: Components like the error boundary (<code>App.tsx</code>) and agent state dots (<code>AgentNode.tsx</code>) currently use hardcoded colors. These must be refactored to use CSS variables before the theme system can work correctly.</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="theme-system-state-machine">Theme System State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Loading: App starts
+
+    Loading --&gt; DarkTheme: Default / no setting
+    Loading --&gt; LightTheme: Setting = "light"
+    Loading --&gt; SystemResolving: Setting = "system"
+    Loading --&gt; CustomTheme: Setting = "custom:&lt;id&gt;"
+
+    SystemResolving --&gt; DarkTheme: OS prefers dark
+    SystemResolving --&gt; LightTheme: OS prefers light
+
+    DarkTheme --&gt; LightTheme: User selects Light
+    DarkTheme --&gt; SystemResolving: User selects System
+    DarkTheme --&gt; CustomTheme: User selects custom
+
+    LightTheme --&gt; DarkTheme: User selects Dark
+    LightTheme --&gt; SystemResolving: User selects System
+    LightTheme --&gt; CustomTheme: User selects custom
+
+    SystemResolving --&gt; DarkTheme: User selects Dark
+    SystemResolving --&gt; LightTheme: User selects Light
+    SystemResolving --&gt; CustomTheme: User selects custom
+
+    CustomTheme --&gt; DarkTheme: User selects Dark
+    CustomTheme --&gt; LightTheme: User selects Light
+    CustomTheme --&gt; SystemResolving: User selects System
+    CustomTheme --&gt; CustomTheme: User selects different custom
+
+    note right of SystemResolving: Listens to OS prefers-color-scheme
+    note right of CustomTheme: Falls back to Dark if theme deleted
+</pre>
+</div>
+<h3 id="theme-application-sequence">Theme Application Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant App as App.tsx
+    participant Store as Zustand Store
+    participant Engine as ThemeEngine
+    participant CSS as document.documentElement
+    participant XTerms as All xterm.js instances
+
+    App-&gt;&gt;Store: loadFromBackend()
+    Store-&gt;&gt;Store: Read settings.theme
+    Store-&gt;&gt;Engine: resolveTheme(settings.theme)
+
+    alt theme = "system"
+        Engine-&gt;&gt;Engine: matchMedia('prefers-color-scheme')
+        Engine-&gt;&gt;Engine: Register change listener
+    end
+
+    Engine-&gt;&gt;Engine: Merge base + custom overrides
+    Engine--&gt;&gt;CSS: setProperty() for each CSS variable
+    Engine--&gt;&gt;Store: Emit "theme-changed" with terminal palette
+    Store--&gt;&gt;XTerms: Update xterm.options.theme
+</pre>
+</div>
+<h3 id="theme-editor-state-machine">Theme Editor State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle: No editor open
+
+    Idle --&gt; Editing: Open theme editor
+
+    Editing --&gt; Previewing: User modifies a color
+    Previewing --&gt; Previewing: User modifies another color
+    Previewing --&gt; Editing: User clicks Reset All
+
+    Previewing --&gt; Saving: User clicks Save
+    Editing --&gt; Saving: User clicks Save (no changes)
+
+    Saving --&gt; Idle: Save success → close editor
+    Saving --&gt; Previewing: Save failed → stay in editor
+
+    Previewing --&gt; Reverting: User navigates away / closes tab
+    Reverting --&gt; Idle: Restore previous theme
+
+    Editing --&gt; Idle: User closes editor (no changes)
+</pre>
+</div>
+<h3 id="custom-theme-import-sequence">Custom Theme Import Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Settings as Appearance Settings
+    participant Dialog as File Dialog (Tauri)
+    participant Validator as Theme Validator
+    participant Store as Zustand Store
+    participant Disk as Config File
+
+    User-&gt;&gt;Settings: Click "Import Theme"
+    Settings-&gt;&gt;Dialog: Open file picker (.json)
+    Dialog--&gt;&gt;Settings: Selected file path
+    Settings-&gt;&gt;Dialog: Read file contents
+    Dialog--&gt;&gt;Validator: JSON string
+
+    Validator-&gt;&gt;Validator: Parse JSON
+
+    alt Valid theme
+        Validator-&gt;&gt;Validator: Check for name conflicts
+        Validator--&gt;&gt;Store: Add custom theme
+        Store-&gt;&gt;Disk: Persist updated themes
+        Store--&gt;&gt;Settings: Theme added to dropdown
+        Settings--&gt;&gt;User: Success toast
+    else Invalid theme
+        Validator--&gt;&gt;Settings: Validation errors
+        Settings--&gt;&gt;User: Error toast with details
+    end
+</pre>
+</div>
+<h3 id="os-theme-change-system-mode-sequence">OS Theme Change (System Mode) Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant OS as Operating System
+    participant Media as matchMedia listener
+    participant Engine as ThemeEngine
+    participant CSS as CSS Variables
+    participant XTerms as Terminal Instances
+
+    Note over OS: User toggles OS dark mode
+    OS-&gt;&gt;Media: prefers-color-scheme changes
+    Media-&gt;&gt;Engine: Callback: new scheme = "light"
+    Engine-&gt;&gt;Engine: Check: settings.theme === "system"?
+
+    alt theme is "system"
+        Engine-&gt;&gt;Engine: Resolve to Light theme
+        Engine-&gt;&gt;CSS: Apply Light CSS variables
+        Engine-&gt;&gt;XTerms: Apply Light xterm theme
+    else theme is explicit
+        Engine-&gt;&gt;Engine: Ignore OS change
+    end
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation.</p>
+<h3 id="architecture-overview">Architecture Overview</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph "Theme Definition Layer"
+        TD[themes/dark.ts]
+        TL[themes/light.ts]
+        TC[Custom theme JSON files]
+    end
+
+    subgraph "Theme Engine"
+        TE[ThemeEngine]
+        TR[Theme Resolver]
+        TM[Media Query Listener]
+    end
+
+    subgraph "Application Layer"
+        CSS[:root CSS variables]
+        XT[xterm.js theme objects]
+        ZS[Zustand Store]
+    end
+
+    subgraph "UI"
+        SET[Appearance Settings]
+        TED[Theme Editor]
+        COMP[All components via CSS vars]
+        TERM[Terminal components]
+    end
+
+    TD --&gt; TR
+    TL --&gt; TR
+    TC --&gt; TR
+    TM --&gt; TR
+    TR --&gt; TE
+    TE --&gt; CSS
+    TE --&gt; XT
+    TE --&gt; ZS
+
+    ZS --&gt; SET
+    ZS --&gt; TED
+    CSS --&gt; COMP
+    XT --&gt; TERM
+</pre>
+</div>
+<h3 id="1-theme-definition-format">1. Theme Definition Format</h3>
+<p>Each theme is a TypeScript object (for built-in) or JSON file (for custom):</p>
+<pre><code class="language-typescript">interface ThemeDefinition {
+  id: string; // unique identifier
+  name: string; // display name
+  type: &quot;builtin&quot; | &quot;custom&quot;; // cannot delete built-in themes
+  baseTheme?: string; // custom themes inherit from a base
+  colors: {
+    // Backgrounds
+    bgPrimary: string;
+    bgSecondary: string;
+    bgTertiary: string;
+    bgHover: string;
+    bgActive: string;
+    bgInput: string;
+    bgDropdown: string;
+
+    // Activity bar
+    activityBarBg: string;
+    activityBarActive: string;
+    activityBarInactive: string;
+    activityBarIndicator: string;
+
+    // Sidebar
+    sidebarBg: string;
+    sidebarHeaderBg: string;
+
+    // Tab bar
+    tabBg: string;
+    tabActiveBg: string;
+    tabBorder: string;
+
+    // Text
+    textPrimary: string;
+    textSecondary: string;
+    textDisabled: string;
+    textAccent: string;
+    textLink: string;
+
+    // Borders
+    borderPrimary: string;
+    borderSecondary: string;
+
+    // Accent
+    accentColor: string;
+    accentHover: string;
+    focusBorder: string;
+
+    // Status
+    colorSuccess: string;
+    colorWarning: string;
+    colorError: string;
+    colorInfo: string;
+
+    // Terminal
+    terminalBg: string;
+    terminalFg: string;
+    terminalCursor: string;
+    terminalSelection: string;
+
+    // Terminal ANSI (16 colors)
+    ansiBlack: string;
+    ansiRed: string;
+    ansiGreen: string;
+    ansiYellow: string;
+    ansiBlue: string;
+    ansiMagenta: string;
+    ansiCyan: string;
+    ansiWhite: string;
+    ansiBrightBlack: string;
+    ansiBrightRed: string;
+    ansiBrightGreen: string;
+    ansiBrightYellow: string;
+    ansiBrightBlue: string;
+    ansiBrightMagenta: string;
+    ansiBrightCyan: string;
+    ansiBrightWhite: string;
+
+    // Scrollbar
+    scrollbarThumb: string;
+    scrollbarThumbHover: string;
+  };
+}
+</code></pre>
+<h3 id="2-built-in-theme-values">2. Built-In Theme Values</h3>
+<p><strong>Dark theme</strong> (current values extracted from <code>variables.css</code> and <code>Terminal.tsx</code>):</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bgPrimary</code></td>
+<td><code>#1e1e1e</code></td>
+</tr>
+<tr>
+<td><code>bgSecondary</code></td>
+<td><code>#252526</code></td>
+</tr>
+<tr>
+<td><code>bgTertiary</code></td>
+<td><code>#2d2d2d</code></td>
+</tr>
+<tr>
+<td><code>textPrimary</code></td>
+<td><code>#cccccc</code></td>
+</tr>
+<tr>
+<td><code>accentColor</code></td>
+<td><code>#007acc</code></td>
+</tr>
+<tr>
+<td><code>terminalBg</code></td>
+<td><code>#1e1e1e</code></td>
+</tr>
+<tr>
+<td><code>terminalFg</code></td>
+<td><code>#cccccc</code></td>
+</tr>
+<tr>
+<td><em>...all current values</em></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Light theme</strong> (VS Code Light+ inspired):</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Token</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bgPrimary</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>bgSecondary</code></td>
+<td><code>#f3f3f3</code></td>
+</tr>
+<tr>
+<td><code>bgTertiary</code></td>
+<td><code>#e8e8e8</code></td>
+</tr>
+<tr>
+<td><code>bgHover</code></td>
+<td><code>#e8e8e8</code></td>
+</tr>
+<tr>
+<td><code>bgActive</code></td>
+<td><code>#d6d6d6</code></td>
+</tr>
+<tr>
+<td><code>bgInput</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>bgDropdown</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>activityBarBg</code></td>
+<td><code>#2c2c2c</code></td>
+</tr>
+<tr>
+<td><code>activityBarActive</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>activityBarInactive</code></td>
+<td><code>#858585</code></td>
+</tr>
+<tr>
+<td><code>activityBarIndicator</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>sidebarBg</code></td>
+<td><code>#f3f3f3</code></td>
+</tr>
+<tr>
+<td><code>sidebarHeaderBg</code></td>
+<td><code>#f3f3f3</code></td>
+</tr>
+<tr>
+<td><code>tabBg</code></td>
+<td><code>#ececec</code></td>
+</tr>
+<tr>
+<td><code>tabActiveBg</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>tabBorder</code></td>
+<td><code>#f3f3f3</code></td>
+</tr>
+<tr>
+<td><code>textPrimary</code></td>
+<td><code>#383a42</code></td>
+</tr>
+<tr>
+<td><code>textSecondary</code></td>
+<td><code>#6a737d</code></td>
+</tr>
+<tr>
+<td><code>textDisabled</code></td>
+<td><code>#a0a0a0</code></td>
+</tr>
+<tr>
+<td><code>textAccent</code></td>
+<td><code>#0366d6</code></td>
+</tr>
+<tr>
+<td><code>textLink</code></td>
+<td><code>#0366d6</code></td>
+</tr>
+<tr>
+<td><code>borderPrimary</code></td>
+<td><code>#d1d5da</code></td>
+</tr>
+<tr>
+<td><code>borderSecondary</code></td>
+<td><code>#e1e4e8</code></td>
+</tr>
+<tr>
+<td><code>accentColor</code></td>
+<td><code>#0366d6</code></td>
+</tr>
+<tr>
+<td><code>accentHover</code></td>
+<td><code>#0350a0</code></td>
+</tr>
+<tr>
+<td><code>focusBorder</code></td>
+<td><code>#0366d6</code></td>
+</tr>
+<tr>
+<td><code>colorSuccess</code></td>
+<td><code>#22863a</code></td>
+</tr>
+<tr>
+<td><code>colorWarning</code></td>
+<td><code>#b08800</code></td>
+</tr>
+<tr>
+<td><code>colorError</code></td>
+<td><code>#cb2431</code></td>
+</tr>
+<tr>
+<td><code>colorInfo</code></td>
+<td><code>#0366d6</code></td>
+</tr>
+<tr>
+<td><code>terminalBg</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>terminalFg</code></td>
+<td><code>#383a42</code></td>
+</tr>
+<tr>
+<td><code>terminalCursor</code></td>
+<td><code>#526eff</code></td>
+</tr>
+<tr>
+<td><code>terminalSelection</code></td>
+<td><code>rgba(3, 102, 214, 0.2)</code></td>
+</tr>
+<tr>
+<td><code>ansiBlack</code></td>
+<td><code>#383a42</code></td>
+</tr>
+<tr>
+<td><code>ansiRed</code></td>
+<td><code>#e45649</code></td>
+</tr>
+<tr>
+<td><code>ansiGreen</code></td>
+<td><code>#50a14f</code></td>
+</tr>
+<tr>
+<td><code>ansiYellow</code></td>
+<td><code>#c18401</code></td>
+</tr>
+<tr>
+<td><code>ansiBlue</code></td>
+<td><code>#4078f2</code></td>
+</tr>
+<tr>
+<td><code>ansiMagenta</code></td>
+<td><code>#a626a4</code></td>
+</tr>
+<tr>
+<td><code>ansiCyan</code></td>
+<td><code>#0184bc</code></td>
+</tr>
+<tr>
+<td><code>ansiWhite</code></td>
+<td><code>#fafafa</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightBlack</code></td>
+<td><code>#4f525e</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightRed</code></td>
+<td><code>#e06c75</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightGreen</code></td>
+<td><code>#98c379</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightYellow</code></td>
+<td><code>#e5c07b</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightBlue</code></td>
+<td><code>#61afef</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightMagenta</code></td>
+<td><code>#c678dd</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightCyan</code></td>
+<td><code>#56b6c2</code></td>
+</tr>
+<tr>
+<td><code>ansiBrightWhite</code></td>
+<td><code>#ffffff</code></td>
+</tr>
+<tr>
+<td><code>scrollbarThumb</code></td>
+<td><code>rgba(100, 100, 100, 0.3)</code></td>
+</tr>
+<tr>
+<td><code>scrollbarThumbHover</code></td>
+<td><code>rgba(100, 100, 100, 0.5)</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="3-file-structure">3. File Structure</h3>
+<pre><code>src/
+  themes/
+    types.ts              # ThemeDefinition interface
+    dark.ts               # Built-in dark theme definition
+    light.ts              # Built-in light theme definition
+    engine.ts             # ThemeEngine: applies themes, manages listeners
+    index.ts              # Re-exports
+  components/
+    Settings/
+      AppearanceSettings.tsx   # Theme dropdown + import button
+    ThemeEditor/
+      ThemeEditor.tsx          # Theme editor tab component
+      ThemeEditor.css
+      ColorGroup.tsx           # Grouped color swatches
+      ThemePreviewTooltip.tsx  # Hover preview for theme dropdown
+  types/
+    connection.ts              # AppSettings gets theme field
+  store/
+    appStore.ts                # Theme state + resolvedTheme
+</code></pre>
+<h3 id="4-appsettings-changes">4. AppSettings Changes</h3>
+<p>Extend the <code>AppSettings</code> interface in <code>src/types/connection.ts</code>:</p>
+<pre><code class="language-typescript">export interface AppSettings {
+  version: string;
+  externalConnectionFiles: ExternalFileConfig[];
+  powerMonitoringEnabled: boolean;
+  fileBrowserEnabled: boolean;
+  // New: theme selection
+  theme?: &quot;dark&quot; | &quot;light&quot; | &quot;system&quot; | `custom:${string}`;
+  // New: user-defined custom themes
+  customThemes?: ThemeDefinition[];
+}
+</code></pre>
+<p>The <code>theme</code> field defaults to <code>"dark"</code> when absent (backward compatible). Custom theme references use the <code>custom:&lt;id&gt;</code> prefix pattern.</p>
+<h3 id="5-themeengine-implementation">5. ThemeEngine Implementation</h3>
+<p>The <code>ThemeEngine</code> is a singleton module (not a React component) that:</p>
+<ol>
+<li><strong>Resolves</strong> the active theme from settings (handling <code>"system"</code> via <code>matchMedia</code>)</li>
+<li><strong>Applies</strong> CSS variables to <code>document.documentElement.style</code></li>
+<li><strong>Exposes</strong> the resolved xterm.js theme object for terminal components to consume</li>
+<li><strong>Listens</strong> for OS theme changes when in <code>"system"</code> mode</li>
+</ol>
+<pre><code class="language-typescript">// src/themes/engine.ts (pseudocode)
+class ThemeEngine {
+  private mediaQuery: MediaQueryList | null = null;
+  private currentThemeId: string = &quot;dark&quot;;
+
+  applyTheme(themeSetting: string, customThemes: ThemeDefinition[]): void {
+    const resolved = this.resolve(themeSetting, customThemes);
+    this.setCssVariables(resolved.colors);
+    this.currentThemeId = resolved.id;
+  }
+
+  getXtermTheme(): ITheme {
+    // Returns current theme's terminal colors as xterm ITheme
+  }
+
+  private resolve(setting: string, customs: ThemeDefinition[]): ThemeDefinition {
+    if (setting === &quot;system&quot;) {
+      return this.mediaQuery?.matches ? darkTheme : lightTheme;
+    }
+    if (setting === &quot;light&quot;) return lightTheme;
+    if (setting.startsWith(&quot;custom:&quot;)) {
+      const id = setting.slice(7);
+      const custom = customs.find((t) =&gt; t.id === id);
+      return custom ? this.mergeWithBase(custom) : darkTheme;
+    }
+    return darkTheme;
+  }
+
+  private setCssVariables(colors: ThemeDefinition[&quot;colors&quot;]): void {
+    const root = document.documentElement;
+    root.style.setProperty(&quot;--bg-primary&quot;, colors.bgPrimary);
+    root.style.setProperty(&quot;--bg-secondary&quot;, colors.bgSecondary);
+    // ... all CSS variable mappings
+  }
+}
+</code></pre>
+<h3 id="6-refactoring-hardcoded-colors">6. Refactoring Hardcoded Colors</h3>
+<p>Before the theme system can work end-to-end, these hardcoded color locations must be refactored:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Current</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Terminal.tsx:240-262</code></td>
+<td>Hardcoded xterm theme object</td>
+<td>Read from <code>ThemeEngine.getXtermTheme()</code></td>
+</tr>
+<tr>
+<td><code>AgentNode.tsx:39-44</code></td>
+<td>Hardcoded state dot colors (<code>#0dbc79</code>, <code>#e5e510</code>, <code>#cd3131</code>)</td>
+<td>Use CSS variables <code>var(--color-success)</code>, <code>var(--color-warning)</code>, <code>var(--color-error)</code></td>
+</tr>
+<tr>
+<td><code>TabBar.css:111-122</code></td>
+<td>Hardcoded state dot colors in CSS</td>
+<td>Use CSS variables</td>
+</tr>
+<tr>
+<td><code>App.tsx:35-60</code></td>
+<td>Inline error boundary styles</td>
+<td>Use CSS class with CSS variables</td>
+</tr>
+<tr>
+<td><code>ColorPickerDialog.tsx:6-15</code></td>
+<td>Hardcoded preset color swatches</td>
+<td>These are independent of the theme (user-chosen tab colors) — no change needed</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="7-css-variable-application-strategy">7. CSS Variable Application Strategy</h3>
+<p>Rather than maintaining separate CSS files per theme, the theme engine writes CSS variables directly to <code>:root</code> via JavaScript. This approach:</p>
+<ul>
+<li>Avoids CSS file duplication</li>
+<li>Works with dynamic custom themes (no build step needed)</li>
+<li>Keeps a single <code>variables.css</code> as the default/fallback (dark theme)</li>
+<li>Is the same approach VS Code uses internally</li>
+</ul>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    subgraph "Startup"
+        A[variables.css loads] --&gt; B[Dark defaults applied via :root]
+    end
+
+    subgraph "Theme Change"
+        C[ThemeEngine.applyTheme] --&gt; D[document.documentElement.style.setProperty]
+        D --&gt; E[Overrides :root CSS variables]
+        E --&gt; F[All components re-render with new colors]
+    end
+
+    B --&gt; C
+</pre>
+</div>
+<h3 id="8-terminal-theme-integration">8. Terminal Theme Integration</h3>
+<p>The xterm.js terminal needs special handling since it doesn't use CSS variables directly. The approach:</p>
+<ol>
+<li><code>ThemeEngine</code> exposes a <code>getXtermTheme()</code> method returning an xterm <code>ITheme</code> object</li>
+<li>When the theme changes, the store emits an event (or the <code>useTerminal</code> hook subscribes to theme state)</li>
+<li>Each <code>Terminal.tsx</code> instance calls <code>xterm.options.theme = ThemeEngine.getXtermTheme()</code> to update live</li>
+</ol>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Engine as ThemeEngine
+    participant Store as Zustand Store
+    participant Hook as useTerminal hook
+    participant XTerm as xterm.js instance
+
+    Engine-&gt;&gt;Store: Theme changed
+    Store-&gt;&gt;Hook: Zustand subscription triggers
+    Hook-&gt;&gt;Engine: getXtermTheme()
+    Engine--&gt;&gt;Hook: ITheme object
+    Hook-&gt;&gt;XTerm: xterm.options.theme = newTheme
+    XTerm-&gt;&gt;XTerm: Re-render with new colors
+</pre>
+</div>
+<h3 id="9-custom-theme-file-format-json">9. Custom Theme File Format (JSON)</h3>
+<p>Exported/imported theme files use this JSON structure:</p>
+<pre><code class="language-json">{
+  &quot;$schema&quot;: &quot;termihub-theme-v1&quot;,
+  &quot;name&quot;: &quot;My Custom Theme&quot;,
+  &quot;baseTheme&quot;: &quot;dark&quot;,
+  &quot;colors&quot;: {
+    &quot;bgPrimary&quot;: &quot;#1a1b26&quot;,
+    &quot;textPrimary&quot;: &quot;#a9b1d6&quot;,
+    &quot;accentColor&quot;: &quot;#7aa2f7&quot;
+  }
+}
+</code></pre>
+<p>Only overridden colors need to be specified — missing values inherit from <code>baseTheme</code>. The <code>$schema</code> field enables future format versioning.</p>
+<h3 id="10-migration-backward-compatibility">10. Migration &amp; Backward Compatibility</h3>
+<ul>
+<li>The <code>theme</code> field in <code>AppSettings</code> is optional with a default of <code>"dark"</code></li>
+<li>Existing config files without a <code>theme</code> field continue to work — the app behaves exactly as before</li>
+<li>The <code>customThemes</code> array is optional and defaults to empty</li>
+<li>No backend migration is needed — the Rust <code>AppSettings</code> struct just gains optional fields</li>
+</ul>
+<h3 id="11-implementation-order">11. Implementation Order</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    P1["PR 1: Refactor hardcoded colors
+    (move to CSS variables)"]
+
+    P2["PR 2: Theme definition types
+    + built-in Dark &amp; Light themes"]
+
+    P3["PR 3: ThemeEngine
+    + CSS variable application
+    + System mode detection"]
+
+    P4["PR 4: Theme setting in AppSettings
+    + Appearance Settings UI
+    (depends on Nicer Settings #191)"]
+
+    P5["PR 5: xterm.js theme integration
+    + live terminal re-theming"]
+
+    P6["PR 6: Custom theme editor
+    + import/export"]
+
+    P1 --&gt; P2
+    P2 --&gt; P3
+    P3 --&gt; P4
+    P3 --&gt; P5
+    P4 --&gt; P6
+    P5 --&gt; P6
+</pre>
+</div>
+<ol>
+<li><strong>PR 1 — Hardcoded color refactoring</strong>: Move all hardcoded colors to CSS variables. This PR has zero visual change but unblocks theming.</li>
+<li><strong>PR 2 — Theme definitions</strong>: Create the <code>ThemeDefinition</code> type and the two built-in theme objects (Dark + Light).</li>
+<li><strong>PR 3 — ThemeEngine</strong>: Implement the engine that applies themes via CSS variables and handles <code>"system"</code> mode.</li>
+<li><strong>PR 4 — Settings UI</strong>: Add the theme dropdown to Appearance settings (requires Nicer Settings #191).</li>
+<li><strong>PR 5 — Terminal integration</strong>: Wire xterm.js instances to the ThemeEngine for live re-theming.</li>
+<li><strong>PR 6 — Custom themes</strong>: Theme editor tab, import/export, custom theme persistence.</li>
+</ol>
+<p>PRs 4 and 5 can be developed in parallel after PR 3 is merged.</p>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

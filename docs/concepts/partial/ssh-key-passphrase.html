@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SSH Key Passphrase Handling (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>SSH Key Passphrase Handling</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Partial</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/121">#121</a></span>
+          <span><code>docs/concepts/partial/ssh-key-passphrase.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub supports SSH key-based authentication, including passphrase-protected keys. The basic plumbing already exists: the UI has a "Key Passphrase" field, and the backend decrypts encrypted OpenSSH keys via the <code>ssh_key</code> crate before passing them to libssh2. However, the current implementation has several gaps that affect usability and security:</p>
+<ol>
+<li><strong>Passphrase stored in plaintext</strong> — The passphrase is saved alongside the connection config in <code>connections.json</code> as unencrypted text. Anyone with file system access can read it, defeating the purpose of protecting the key with a passphrase.</li>
+<li><strong>No encryption detection during validation</strong> — The key validation endpoint (<code>validate_ssh_key</code>) detects key format but not whether a key is encrypted. Users only discover a missing passphrase when the connection attempt fails.</li>
+<li><strong>No runtime prompting</strong> — There is no mechanism to prompt the user for a passphrase at connection time. The passphrase must be pre-configured and saved, or the connection fails.</li>
+<li><strong>Overloaded <code>password</code> field</strong> — The same <code>password</code> field in <code>SshConfig</code> is used for password authentication and key passphrases, creating semantic confusion.</li>
+<li><strong>No session caching</strong> — Each reconnect re-reads the passphrase from config. There is no in-memory cache to avoid repeated prompts within a session.</li>
+</ol>
+<p>This concept addresses these gaps by designing a passphrase handling system that is secure, user-friendly, and consistent with how tools like OpenSSH and VS Code handle key passphrases.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li><strong>Prompt on connect</strong> — Ask for the passphrase at connection time when it is not saved, similar to OpenSSH's interactive prompt</li>
+<li><strong>Detect encryption early</strong> — Enhance key validation to indicate whether a key is encrypted, so the UI can guide the user before they attempt to connect</li>
+<li><strong>Separate storage from secrets</strong> — Introduce a clear distinction between connection configuration (saved to disk) and secrets like passphrases (optionally saved, with a "remember" toggle)</li>
+<li><strong>Session-level caching</strong> — Cache successfully-used passphrases in memory for the lifetime of the application, so reconnects and multiple sessions using the same key do not re-prompt</li>
+<li><strong>Semantic clarity</strong> — Separate the <code>password</code> field into distinct <code>password</code> (for password auth) and <code>keyPassphrase</code> (for key auth) fields</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>OS keychain integration (e.g., Windows Credential Manager, macOS Keychain, libsecret) — this is a valuable future enhancement but out of scope for this concept. It would be a natural follow-up.</li>
+<li>SSH agent passphrase management — when using SSH agent auth, the agent handles passphrases. This concept only covers key-based auth where termiHub manages the key directly.</li>
+<li>Certificate-based SSH authentication — a separate feature entirely.</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="key-passphrase-field-with-encryption-indicator">Key Passphrase Field with Encryption Indicator</h3>
+<p>When the user selects an SSH key file, the validation hint now indicates whether the key is encrypted. The passphrase field adapts accordingly.</p>
+<p><strong>Encrypted key selected:</strong></p>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│  Auth Method:  [SSH Key           ▾]                    │
+│                                                         │
+│  Key Path:     [~/.ssh/id_ed25519         ] [Browse]    │
+│  🔒 OpenSSH private key (encrypted). A passphrase is   │
+│     required to use this key.                           │
+│                                                         │
+│  Key Passphrase:  [••••••••••••            ]            │
+│  ☑ Save passphrase                                      │
+│     ⚠ Passphrase will be stored in plaintext in the     │
+│       connection file.                                  │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>Unencrypted key selected:</strong></p>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│  Auth Method:  [SSH Key           ▾]                    │
+│                                                         │
+│  Key Path:     [~/.ssh/id_ed25519         ] [Browse]    │
+│  ✓ OpenSSH private key detected.                        │
+│                                                         │
+│  (No passphrase field shown — key is not encrypted)     │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>Key encryption status unknown (validation pending or file unreadable):</strong></p>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│  Auth Method:  [SSH Key           ▾]                    │
+│                                                         │
+│  Key Path:     [~/.ssh/id_ed25519         ] [Browse]    │
+│                                                         │
+│  Key Passphrase (optional):  [                 ]        │
+│  ☐ Save passphrase                                      │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="passphrase-prompt-dialog">Passphrase Prompt Dialog</h3>
+<p>When connecting with an encrypted key that has no saved passphrase, a modal dialog prompts the user:</p>
+<pre><code>┌──────────────────────────────────────────────┐
+│  Passphrase Required                         │
+│──────────────────────────────────────────────│
+│                                              │
+│  The SSH key for this connection is          │
+│  encrypted and requires a passphrase.        │
+│                                              │
+│  Key: ~/.ssh/id_ed25519                      │
+│  Host: user@192.168.1.100:22                 │
+│                                              │
+│  Passphrase:  [                         ]    │
+│                                              │
+│  ☐ Remember for this session                 │
+│  ☐ Save to connection                        │
+│    ⚠ Stored in plaintext                     │
+│                                              │
+│  [Cancel]                      [Connect]     │
+└──────────────────────────────────────────────┘
+</code></pre>
+<p>The dialog offers two storage options:</p>
+<ul>
+<li><strong>Remember for this session</strong> — Cache the passphrase in memory until the app is closed. Default: checked.</li>
+<li><strong>Save to connection</strong> — Persist the passphrase to <code>connections.json</code>. Default: unchecked. Includes a plaintext warning.</li>
+</ul>
+<h3 id="connection-failure-with-wrong-passphrase">Connection Failure with Wrong Passphrase</h3>
+<p>When a passphrase is incorrect, the prompt re-appears with an error message:</p>
+<pre><code>┌──────────────────────────────────────────────┐
+│  Passphrase Required                         │
+│──────────────────────────────────────────────│
+│                                              │
+│  ✗ Incorrect passphrase. Please try again.   │
+│                                              │
+│  Key: ~/.ssh/id_ed25519                      │
+│  Host: user@192.168.1.100:22                 │
+│                                              │
+│  Passphrase:  [                         ]    │
+│                                              │
+│  ☐ Remember for this session                 │
+│  ☐ Save to connection                        │
+│    ⚠ Stored in plaintext                     │
+│                                              │
+│  [Cancel]                      [Connect]     │
+└──────────────────────────────────────────────┘
+</code></pre>
+<h3 id="settings-form-behavior-summary">Settings Form Behavior Summary</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Key State</th>
+<th>Passphrase Field</th>
+<th>Save Checkbox</th>
+<th>Validation Hint</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Encrypted, passphrase saved</td>
+<td>Shown, pre-filled</td>
+<td>Checked</td>
+<td>"🔒 Encrypted key. Passphrase saved."</td>
+</tr>
+<tr>
+<td>Encrypted, passphrase not saved</td>
+<td>Shown, empty</td>
+<td>Unchecked</td>
+<td>"🔒 Encrypted key. You will be prompted on connect."</td>
+</tr>
+<tr>
+<td>Unencrypted</td>
+<td>Hidden</td>
+<td>Hidden</td>
+<td>"✓ Key detected."</td>
+</tr>
+<tr>
+<td>Unknown encryption status</td>
+<td>Shown, optional</td>
+<td>Unchecked</td>
+<td>(standard format validation only)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="passphrase-resolution-flow">Passphrase Resolution Flow</h3>
+<p>When a connection is initiated, the backend resolves the passphrase through a priority chain:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Connection requested] --&gt; B{Auth method = key?}
+    B --&gt;|No| C[Proceed with password/agent auth]
+    B --&gt;|Yes| D{Key encrypted?}
+    D --&gt;|No| E[Connect without passphrase]
+    D --&gt;|Yes| F{Passphrase in config?}
+    F --&gt;|Yes| G[Use saved passphrase]
+    F --&gt;|No| H{Passphrase in session cache?}
+    H --&gt;|Yes| I[Use cached passphrase]
+    H --&gt;|No| J[Emit passphrase-needed event]
+    J --&gt; K[Frontend shows prompt dialog]
+    K --&gt; L{User provides passphrase?}
+    L --&gt;|Cancel| M[Connection aborted]
+    L --&gt;|Submit| N[Attempt authentication]
+    G --&gt; N
+    I --&gt; N
+    E --&gt; N
+    N --&gt; O{Auth successful?}
+    O --&gt;|Yes| P{User chose 'remember'?}
+    P --&gt;|Yes| Q[Cache passphrase in memory]
+    P --&gt;|No| R[Continue without caching]
+    Q --&gt; S[Connection established]
+    R --&gt; S
+    O --&gt;|No| T{Passphrase was from cache/config?}
+    T --&gt;|Yes| U[Clear cached passphrase]
+    U --&gt; J
+    T --&gt;|No| V[Show 'incorrect passphrase' error]
+    V --&gt; K
+
+    style M fill:#2d2d2d,stroke:#f44747,color:#fff
+    style S fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<h3 id="session-passphrase-cache">Session Passphrase Cache</h3>
+<p>The session cache is an in-memory store keyed by the absolute path of the SSH key file. It holds passphrases for the lifetime of the application process:</p>
+<ul>
+<li><strong>Populated</strong> when a user enters a correct passphrase and checks "Remember for this session"</li>
+<li><strong>Invalidated</strong> when authentication fails with a cached passphrase (the cache entry is removed to force a re-prompt)</li>
+<li><strong>Cleared</strong> when the application exits (never persisted to disk)</li>
+<li><strong>Shared</strong> across all connections using the same key file — if the user has three connections using <code>~/.ssh/id_ed25519</code>, entering the passphrase once covers all three</li>
+</ul>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    subgraph Cache["Session Passphrase Cache (in-memory)"]
+        direction TB
+        E1["~/.ssh/id_ed25519 → ••••••"]
+        E2["~/.ssh/work_key → ••••••"]
+    end
+
+    C1[Connection A&lt;br/&gt;id_ed25519] --&gt;|lookup| Cache
+    C2[Connection B&lt;br/&gt;id_ed25519] --&gt;|lookup| Cache
+    C3[Connection C&lt;br/&gt;work_key] --&gt;|lookup| Cache
+</pre>
+</div>
+<h3 id="encryption-detection-in-validation">Encryption Detection in Validation</h3>
+<p>The existing <code>validate_ssh_key</code> endpoint is enhanced to detect whether a key is encrypted. This enables the UI to adapt before the user attempts to connect.</p>
+<p><strong>Detection strategies by key format:</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Encryption Detection Method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenSSH (<code>BEGIN OPENSSH PRIVATE KEY</code>)</td>
+<td>Parse with <code>ssh_key</code> crate, call <code>is_encrypted()</code></td>
+</tr>
+<tr>
+<td>PKCS#8 (<code>BEGIN ENCRYPTED PRIVATE KEY</code>)</td>
+<td>Header alone indicates encryption</td>
+</tr>
+<tr>
+<td>PKCS#8 (<code>BEGIN PRIVATE KEY</code>)</td>
+<td>Header alone indicates no encryption</td>
+</tr>
+<tr>
+<td>RSA PEM (<code>BEGIN RSA PRIVATE KEY</code>)</td>
+<td>Check for <code>Proc-Type: 4,ENCRYPTED</code> and <code>DEK-Info</code> headers</td>
+</tr>
+<tr>
+<td>EC PEM (<code>BEGIN EC PRIVATE KEY</code>)</td>
+<td>Check for <code>Proc-Type: 4,ENCRYPTED</code> and <code>DEK-Info</code> headers</td>
+</tr>
+<tr>
+<td>DSA PEM (<code>BEGIN DSA PRIVATE KEY</code>)</td>
+<td>Check for <code>Proc-Type: 4,ENCRYPTED</code> and <code>DEK-Info</code> headers</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="separating-password-from-passphrase">Separating Password from Passphrase</h3>
+<p>The <code>password</code> field is currently overloaded. The concept introduces a dedicated <code>keyPassphrase</code> field:</p>
+<p><strong>Current state:</strong></p>
+<pre><code>SshConfig.password → used for password auth AND key passphrase
+</code></pre>
+<p><strong>Proposed state:</strong></p>
+<pre><code>SshConfig.password      → used only for password auth
+SshConfig.keyPassphrase → used only for key passphrase (new field)
+</code></pre>
+<p>This is a <strong>breaking change</strong> to the config format. A migration is needed for existing <code>connections.json</code> files: when loading a config with <code>authMethod: "key"</code> and <code>password</code> set but <code>keyPassphrase</code> absent, the <code>password</code> value is moved to <code>keyPassphrase</code> and <code>password</code> is cleared.</p>
+<h3 id="save-passphrase-toggle">"Save Passphrase" Toggle</h3>
+<p>The "Save passphrase" checkbox controls whether the passphrase is persisted in the connection config file. This is an explicit opt-in with a plaintext warning.</p>
+<ul>
+<li><strong>Checked</strong>: passphrase is stored in <code>SshConfig.keyPassphrase</code> and written to <code>connections.json</code></li>
+<li><strong>Unchecked</strong>: <code>SshConfig.keyPassphrase</code> is <code>None</code>. The user will be prompted at connection time (or the session cache is used).</li>
+</ul>
+<p>A new boolean field <code>saveKeyPassphrase</code> in the config tracks this preference. When <code>saveKeyPassphrase</code> is <code>false</code> (or absent), the <code>keyPassphrase</code> field is excluded from serialization even if it's populated in memory.</p>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>Key file changes after validation</strong>: If the user replaces the key file between validation and connection, the encryption status may differ. The backend handles this gracefully — if decryption fails, the prompt dialog is shown regardless of what validation reported.</li>
+<li><strong>Passphrase for unencrypted key</strong>: If the user provides a passphrase for a key that turns out to be unencrypted, the passphrase is silently ignored (current behavior, no change needed).</li>
+<li><strong>Empty passphrase</strong>: Some tools allow empty passphrases (distinct from no passphrase). The prompt dialog treats an empty submission as a cancellation. Users who need empty passphrases must save them in the config field.</li>
+<li><strong>Multiple keys with same path, different passphrases</strong>: Not possible — the cache is keyed by absolute path. One passphrase per key file.</li>
+<li><strong>Remote agent connections</strong>: <code>RemoteAgentConfig</code> has the same <code>password</code> overloading issue and should receive the same treatment (<code>keyPassphrase</code> field, same prompt flow).</li>
+<li><strong>Concurrent connection attempts to same key</strong>: If two connections request the same encrypted key simultaneously, only one prompt is shown. The second connection waits for the first prompt to complete, then uses the cached result.</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="passphrase-state-machine">Passphrase State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; NeedPassphrase: Key is encrypted
+
+    NeedPassphrase --&gt; CheckConfig: Resolve passphrase
+    CheckConfig --&gt; HavePassphrase: Found in config
+    CheckConfig --&gt; CheckCache: Not in config
+
+    CheckCache --&gt; HavePassphrase: Found in session cache
+    CheckCache --&gt; PromptUser: Not in cache
+
+    PromptUser --&gt; HavePassphrase: User enters passphrase
+    PromptUser --&gt; Cancelled: User cancels
+
+    HavePassphrase --&gt; Authenticating: Attempt auth with passphrase
+
+    Authenticating --&gt; Connected: Auth succeeds
+    Authenticating --&gt; WrongPassphrase: Auth fails (bad passphrase)
+
+    WrongPassphrase --&gt; InvalidateCache: Clear cached/saved value
+    InvalidateCache --&gt; PromptUser: Re-prompt user
+
+    Connected --&gt; CachePassphrase: "Remember" was checked
+    Connected --&gt; Done: "Remember" was not checked
+    CachePassphrase --&gt; Done: Passphrase stored in memory
+
+    Cancelled --&gt; [*]
+    Done --&gt; [*]
+
+    note right of HavePassphrase
+        Passphrase sourced from:
+        1. Saved config (highest priority)
+        2. Session cache
+        3. User prompt
+    end note
+</pre>
+</div>
+<h3 id="connection-with-passphrase-prompt-sequence">Connection with Passphrase Prompt Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant UI as React Frontend
+    participant Store as App Store
+    participant API as api.ts
+    participant BE as Rust Backend
+    participant Cache as Passphrase Cache
+    participant SSH as SSH Session
+
+    User-&gt;&gt;UI: Click "Connect"
+    UI-&gt;&gt;API: createTerminal(sshConfig)
+    API-&gt;&gt;BE: create_terminal command
+
+    BE-&gt;&gt;BE: Check if key is encrypted
+    BE-&gt;&gt;BE: Check config for saved passphrase
+
+    alt Passphrase in config
+        BE-&gt;&gt;SSH: Authenticate with saved passphrase
+    else Passphrase not in config
+        BE-&gt;&gt;Cache: Lookup by key path
+        alt Passphrase in cache
+            BE-&gt;&gt;SSH: Authenticate with cached passphrase
+        else Passphrase not in cache
+            BE--&gt;&gt;UI: Emit "passphrase-needed" event
+            UI-&gt;&gt;UI: Show passphrase dialog
+            User-&gt;&gt;UI: Enter passphrase + options
+            UI-&gt;&gt;API: submitPassphrase(sessionId, passphrase, options)
+            API-&gt;&gt;BE: submit_passphrase command
+            BE-&gt;&gt;SSH: Authenticate with provided passphrase
+        end
+    end
+
+    alt Authentication succeeds
+        SSH--&gt;&gt;BE: Authenticated session
+        BE-&gt;&gt;Cache: Store passphrase (if "remember" checked)
+        BE--&gt;&gt;UI: terminal-ready event
+        UI-&gt;&gt;UI: Open terminal tab
+    else Authentication fails
+        SSH--&gt;&gt;BE: Auth error
+        BE-&gt;&gt;Cache: Remove stale entry (if any)
+        BE--&gt;&gt;UI: Emit "passphrase-needed" event with error
+        UI-&gt;&gt;UI: Show dialog with error message
+        User-&gt;&gt;UI: Retry or cancel
+    end
+</pre>
+</div>
+<h3 id="key-validation-with-encryption-detection-sequence">Key Validation with Encryption Detection Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant UI as SshSettings Component
+    participant API as api.ts
+    participant BE as Rust Backend (validate_ssh_key)
+    participant FS as File System
+
+    UI-&gt;&gt;API: validateSshKey(keyPath)
+    API-&gt;&gt;BE: validate_ssh_key command
+
+    BE-&gt;&gt;FS: Read file header (first 1KB)
+
+    alt File not found or unreadable
+        BE--&gt;&gt;UI: Error status
+    else Public key or PPK detected
+        BE--&gt;&gt;UI: Warning status
+    else OpenSSH format detected
+        BE-&gt;&gt;BE: Parse with ssh_key crate
+        BE-&gt;&gt;BE: Call is_encrypted()
+        alt Key is encrypted
+            BE--&gt;&gt;UI: Valid + "OpenSSH (encrypted)"
+        else Key is not encrypted
+            BE--&gt;&gt;UI: Valid + "OpenSSH"
+        end
+    else PEM format detected
+        BE-&gt;&gt;BE: Check for Proc-Type/DEK-Info headers
+        alt Key is encrypted
+            BE--&gt;&gt;UI: Valid + "RSA (PEM, encrypted)"
+        else Key is not encrypted
+            BE--&gt;&gt;UI: Valid + "RSA (PEM)"
+        end
+    else PKCS#8 encrypted header
+        BE--&gt;&gt;UI: Valid + "PKCS#8 (encrypted)"
+    else PKCS#8 unencrypted header
+        BE--&gt;&gt;UI: Valid + "PKCS#8"
+    end
+
+    UI-&gt;&gt;UI: Update hint text and show/hide passphrase field
+</pre>
+</div>
+<h3 id="config-migration-flow">Config Migration Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Load connections.json] --&gt; B{For each SSH connection}
+    B --&gt; C{authMethod == 'key'?}
+    C --&gt;|No| D[No migration needed]
+    C --&gt;|Yes| E{Has 'password' but no 'keyPassphrase'?}
+    E --&gt;|No| D
+    E --&gt;|Yes| F[Move password → keyPassphrase]
+    F --&gt; G[Set saveKeyPassphrase = true]
+    G --&gt; H[Clear password field]
+    H --&gt; I[Mark store as dirty]
+    I --&gt; J[Save updated connections.json]
+
+    style F fill:#2d2d2d,stroke:#cca700,color:#fff
+    style J fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<h3 id="concurrent-connection-passphrase-deduplication">Concurrent Connection Passphrase Deduplication</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant C1 as Connection A
+    participant C2 as Connection B
+    participant PM as Passphrase Manager
+    participant UI as Prompt Dialog
+    actor User
+
+    Note over C1,C2: Both use ~/.ssh/id_ed25519
+
+    C1-&gt;&gt;PM: Need passphrase for id_ed25519
+    PM-&gt;&gt;PM: No cache entry, no pending prompt
+    PM-&gt;&gt;UI: Show prompt for id_ed25519
+    PM-&gt;&gt;PM: Mark id_ed25519 as "prompt pending"
+
+    C2-&gt;&gt;PM: Need passphrase for id_ed25519
+    PM-&gt;&gt;PM: Prompt already pending — wait
+
+    User-&gt;&gt;UI: Enter passphrase
+    UI-&gt;&gt;PM: Passphrase submitted
+
+    PM-&gt;&gt;PM: Cache passphrase
+    PM-&gt;&gt;C1: Resolve with passphrase
+    PM-&gt;&gt;C2: Resolve with passphrase
+
+    C1-&gt;&gt;C1: Authenticate
+    C2-&gt;&gt;C2: Authenticate
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation.</p>
+<h3 id="1-enhanced-validation-ssh_key_validaters">1. Enhanced Validation: <code>ssh_key_validate.rs</code></h3>
+<p>The <code>SshKeyValidation</code> struct gains a new <code>encrypted</code> field:</p>
+<pre><code class="language-rust">#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct SshKeyValidation {
+    pub status: ValidationStatus,
+    pub message: String,
+    pub key_type: String,
+    /// Whether the key is encrypted (passphrase-protected).
+    /// `None` if encryption status could not be determined.
+    pub encrypted: Option&lt;bool&gt;,
+}
+</code></pre>
+<p>The <code>validate_ssh_key</code> function is extended to detect encryption:</p>
+<pre><code class="language-rust">// For OpenSSH format: parse and check
+(&quot;BEGIN OPENSSH PRIVATE KEY&quot;, &quot;OpenSSH&quot;) =&gt; {
+    // Attempt to parse and check encryption status
+    match ssh_key::PrivateKey::read_openssh_file(file_path) {
+        Ok(key) =&gt; {
+            let encrypted = key.is_encrypted();
+            let label = if encrypted { &quot;OpenSSH (encrypted)&quot; } else { &quot;OpenSSH&quot; };
+            SshKeyValidation {
+                status: ValidationStatus::Valid,
+                message: format!(&quot;{} private key detected.&quot;, label),
+                key_type: label.to_string(),
+                encrypted: Some(encrypted),
+            }
+        }
+        Err(_) =&gt; {
+            // Fall back to header-only detection
+            SshKeyValidation {
+                status: ValidationStatus::Valid,
+                message: &quot;OpenSSH private key detected.&quot;.to_string(),
+                key_type: &quot;OpenSSH&quot;.to_string(),
+                encrypted: None,
+            }
+        }
+    }
+}
+
+// For PEM formats: check for Proc-Type header
+(&quot;BEGIN RSA PRIVATE KEY&quot;, &quot;RSA (PEM)&quot;) |
+(&quot;BEGIN EC PRIVATE KEY&quot;, &quot;EC (PEM)&quot;) |
+(&quot;BEGIN DSA PRIVATE KEY&quot;, &quot;DSA (PEM)&quot;) =&gt; {
+    let encrypted = text.contains(&quot;Proc-Type: 4,ENCRYPTED&quot;);
+    let label = if encrypted {
+        format!(&quot;{} (encrypted)&quot;, key_type)
+    } else {
+        key_type.to_string()
+    };
+    SshKeyValidation {
+        status: ValidationStatus::Valid,
+        message: format!(&quot;{} private key detected.&quot;, label),
+        key_type: label,
+        encrypted: Some(encrypted),
+    }
+}
+
+// PKCS#8 encrypted is already its own header
+(&quot;BEGIN ENCRYPTED PRIVATE KEY&quot;, &quot;PKCS#8 (encrypted)&quot;) =&gt; {
+    SshKeyValidation { encrypted: Some(true), .. }
+}
+(&quot;BEGIN PRIVATE KEY&quot;, &quot;PKCS#8&quot;) =&gt; {
+    SshKeyValidation { encrypted: Some(false), .. }
+}
+</code></pre>
+<p>The frontend <code>SshKeyValidation</code> type in <code>api.ts</code> is updated accordingly:</p>
+<pre><code class="language-typescript">export interface SshKeyValidation {
+  status: &quot;valid&quot; | &quot;warning&quot; | &quot;error&quot;;
+  message: string;
+  keyType: string;
+  encrypted: boolean | null;
+}
+</code></pre>
+<h3 id="2-config-changes-backendrs-and-terminalts">2. Config Changes: <code>backend.rs</code> and <code>terminal.ts</code></h3>
+<p><strong>Rust</strong> — Add <code>key_passphrase</code> and <code>save_key_passphrase</code> to <code>SshConfig</code>:</p>
+<pre><code class="language-rust">#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct SshConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: String,
+    #[serde(skip_serializing_if = &quot;Option::is_none&quot;)]
+    pub password: Option&lt;String&gt;,
+    #[serde(skip_serializing_if = &quot;Option::is_none&quot;)]
+    pub key_path: Option&lt;String&gt;,
+    /// Passphrase for encrypted SSH keys. Only serialized when
+    /// `save_key_passphrase` is true.
+    #[serde(skip_serializing_if = &quot;Option::is_none&quot;)]
+    pub key_passphrase: Option&lt;String&gt;,
+    /// Whether to persist the key passphrase to disk.
+    #[serde(default, skip_serializing_if = &quot;Option::is_none&quot;)]
+    pub save_key_passphrase: Option&lt;bool&gt;,
+    #[serde(default)]
+    pub enable_x11_forwarding: bool,
+    #[serde(default, skip_serializing_if = &quot;Option::is_none&quot;)]
+    pub enable_monitoring: Option&lt;bool&gt;,
+    #[serde(default, skip_serializing_if = &quot;Option::is_none&quot;)]
+    pub enable_file_browser: Option&lt;bool&gt;,
+}
+</code></pre>
+<p><strong>TypeScript</strong> — Mirror in <code>SshConfig</code>:</p>
+<pre><code class="language-typescript">export interface SshConfig {
+  host: string;
+  port: number;
+  username: string;
+  authMethod: &quot;password&quot; | &quot;key&quot; | &quot;agent&quot;;
+  password?: string;
+  keyPath?: string;
+  keyPassphrase?: string;
+  saveKeyPassphrase?: boolean;
+  enableX11Forwarding?: boolean;
+  enableMonitoring?: boolean;
+  enableFileBrowser?: boolean;
+}
+</code></pre>
+<p>The same changes apply to <code>RemoteAgentConfig</code> / the TypeScript <code>RemoteAgentConfig</code> type.</p>
+<h3 id="3-config-migration-connectionstoragers">3. Config Migration: <code>connection/storage.rs</code></h3>
+<p>Add a migration step in <code>ConnectionStorage::load()</code>:</p>
+<pre><code class="language-rust">pub fn load(&amp;self) -&gt; Result&lt;ConnectionStore&gt; {
+    // ... existing load logic ...
+    let mut store: ConnectionStore = serde_json::from_str(&amp;data)?;
+
+    // Migrate: move password → keyPassphrase for key-auth SSH connections
+    let mut dirty = false;
+    for conn in &amp;mut store.connections {
+        if let ConnectionConfig::Ssh(ref mut ssh) = conn.config {
+            if ssh.auth_method == &quot;key&quot;
+                &amp;&amp; ssh.password.is_some()
+                &amp;&amp; ssh.key_passphrase.is_none()
+            {
+                ssh.key_passphrase = ssh.password.take();
+                ssh.save_key_passphrase = Some(true);
+                dirty = true;
+            }
+        }
+        // Same for RemoteSession configs that wrap SSH transport
+    }
+
+    if dirty {
+        self.save(&amp;store)?;
+    }
+
+    Ok(store)
+}
+</code></pre>
+<h3 id="4-passphrase-cache-utilspassphrase_cachers-new-file">4. Passphrase Cache: <code>utils/passphrase_cache.rs</code> (new file)</h3>
+<pre><code class="language-rust">use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// In-memory cache for SSH key passphrases.
+///
+/// Keyed by the canonical (absolute) path of the SSH key file.
+/// Lives for the duration of the application process.
+pub struct PassphraseCache {
+    entries: Mutex&lt;HashMap&lt;PathBuf, String&gt;&gt;,
+}
+
+impl PassphraseCache {
+    pub fn new() -&gt; Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Look up a cached passphrase for the given key path.
+    pub fn get(&amp;self, key_path: &amp;Path) -&gt; Option&lt;String&gt; {
+        let canonical = key_path.canonicalize().ok()?;
+        self.entries.lock().ok()?.get(&amp;canonical).cloned()
+    }
+
+    /// Store a passphrase for the given key path.
+    pub fn insert(&amp;self, key_path: &amp;Path, passphrase: String) {
+        if let Ok(canonical) = key_path.canonicalize() {
+            if let Ok(mut map) = self.entries.lock() {
+                map.insert(canonical, passphrase);
+            }
+        }
+    }
+
+    /// Remove a cached passphrase (e.g., after auth failure).
+    pub fn remove(&amp;self, key_path: &amp;Path) {
+        if let Ok(canonical) = key_path.canonicalize() {
+            if let Ok(mut map) = self.entries.lock() {
+                map.remove(&amp;canonical);
+            }
+        }
+    }
+}
+</code></pre>
+<p>Register as Tauri managed state in <code>main.rs</code>:</p>
+<pre><code class="language-rust">.manage(PassphraseCache::new())
+</code></pre>
+<h3 id="5-passphrase-prompt-flow-backend-events-and-commands">5. Passphrase Prompt Flow: Backend Events and Commands</h3>
+<p>The prompt flow uses Tauri events for the backend-to-frontend notification and a Tauri command for the frontend-to-backend response.</p>
+<p><strong>New event</strong> in <code>events/</code>:</p>
+<pre><code class="language-rust">/// Emitted when the backend needs a passphrase to decrypt an SSH key.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct PassphraseNeededEvent {
+    /// Opaque request ID to correlate the response.
+    pub request_id: String,
+    /// Path to the encrypted key file.
+    pub key_path: String,
+    /// Connection display info (e.g., &quot;user@host:22&quot;).
+    pub connection_label: String,
+    /// Error message from a previous failed attempt, if any.
+    pub error: Option&lt;String&gt;,
+}
+</code></pre>
+<p><strong>New command</strong> in <code>commands/</code>:</p>
+<pre><code class="language-rust">#[tauri::command]
+pub async fn submit_passphrase(
+    request_id: String,
+    passphrase: String,
+    remember: bool,
+    save_to_config: bool,
+    // ... Tauri state handles ...
+) -&gt; Result&lt;(), String&gt;
+</code></pre>
+<p><strong>Frontend event listener</strong> in <code>events.ts</code>:</p>
+<pre><code class="language-typescript">export interface PassphraseNeededEvent {
+  requestId: string;
+  keyPath: string;
+  connectionLabel: string;
+  error: string | null;
+}
+</code></pre>
+<p>The backend uses a <code>tokio::sync::oneshot</code> channel per request: <code>connect_and_authenticate</code> awaits the channel while the frontend shows the dialog. When the user submits, <code>submit_passphrase</code> sends the passphrase through the channel.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    subgraph Backend
+        A[connect_and_authenticate] --&gt;|await| CH[oneshot channel]
+        CMD[submit_passphrase cmd] --&gt;|send| CH
+    end
+
+    subgraph Frontend
+        EVT[passphrase-needed event] --&gt; DLG[Prompt Dialog]
+        DLG --&gt;|invoke| CMD
+    end
+
+    A --&gt;|emit event| EVT
+</pre>
+</div>
+<h3 id="6-updated-authentication-ssh_authrs">6. Updated Authentication: <code>ssh_auth.rs</code></h3>
+<p>The <code>connect_and_authenticate</code> function changes from synchronous to asynchronous to support the prompt flow:</p>
+<pre><code class="language-rust">pub async fn connect_and_authenticate(
+    config: &amp;SshConfig,
+    cache: &amp;PassphraseCache,
+    app_handle: &amp;AppHandle,
+) -&gt; Result&lt;Session, TerminalError&gt; {
+    // ... TCP connect, handshake (unchanged) ...
+
+    match config.auth_method.as_str() {
+        &quot;key&quot; =&gt; {
+            let key_path = resolve_key_path(config);
+
+            // 1. Check if key is encrypted
+            let needs_passphrase = check_key_encrypted(&amp;key_path)?;
+
+            // 2. Resolve passphrase
+            let passphrase = if needs_passphrase {
+                resolve_passphrase(config, &amp;key_path, cache, app_handle).await?
+            } else {
+                None
+            };
+
+            // 3. Authenticate
+            authenticate_with_key(&amp;session, config, &amp;key_path, passphrase.as_deref())?;
+
+            // 4. Cache on success
+            if let Some(ref pp) = passphrase {
+                cache.insert(&amp;key_path, pp.clone());
+            }
+        }
+        // ... other auth methods unchanged ...
+    }
+}
+</code></pre>
+<h3 id="7-frontend-components">7. Frontend Components</h3>
+<p><strong>New component:</strong> <code>PassphraseDialog.tsx</code></p>
+<pre><code class="language-typescript">interface PassphraseDialogProps {
+  keyPath: string;
+  connectionLabel: string;
+  error: string | null;
+  onSubmit: (passphrase: string, remember: boolean, save: boolean) =&gt; void;
+  onCancel: () =&gt; void;
+}
+</code></pre>
+<p>This is a modal dialog rendered at the app root level (alongside other modals). It is triggered by listening to the <code>passphrase-needed</code> Tauri event in a top-level hook or the app store.</p>
+<p><strong>Modified component:</strong> <code>SshSettings.tsx</code></p>
+<ul>
+<li>Conditionally show/hide the passphrase field based on <code>keyValidation.encrypted</code></li>
+<li>Add "Save passphrase" checkbox bound to <code>config.saveKeyPassphrase</code></li>
+<li>Show plaintext storage warning when checkbox is checked</li>
+<li>Rename internal references from <code>password</code> to <code>keyPassphrase</code> for key auth</li>
+</ul>
+<h3 id="8-store-changes-appstorets">8. Store Changes: <code>appStore.ts</code></h3>
+<p>Add passphrase prompt state to the Zustand store:</p>
+<pre><code class="language-typescript">// New state
+passphrasePrompt: PassphraseNeededEvent | null;
+
+// New actions
+showPassphrasePrompt: (event: PassphraseNeededEvent) =&gt; void;
+dismissPassphrasePrompt: () =&gt; void;
+</code></pre>
+<p>The <code>PassphraseDialog</code> component reads <code>passphrasePrompt</code> from the store and renders when it is non-null.</p>
+<h3 id="9-file-changes-summary">9. File Changes Summary</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src-tauri/src/utils/ssh_key_validate.rs</code></td>
+<td>Add <code>encrypted</code> field to <code>SshKeyValidation</code>, detect encryption status</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/terminal/backend.rs</code></td>
+<td>Add <code>key_passphrase</code>, <code>save_key_passphrase</code> to <code>SshConfig</code> and <code>RemoteAgentConfig</code>; update <code>expand()</code></td>
+</tr>
+<tr>
+<td><code>src-tauri/src/utils/ssh_auth.rs</code></td>
+<td>Make <code>connect_and_authenticate</code> async, add passphrase resolution flow</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/utils/passphrase_cache.rs</code></td>
+<td>New: in-memory passphrase cache</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/utils/mod.rs</code></td>
+<td>Register <code>passphrase_cache</code> module</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/events/</code></td>
+<td>New: <code>PassphraseNeededEvent</code></td>
+</tr>
+<tr>
+<td><code>src-tauri/src/commands/terminal.rs</code></td>
+<td>New: <code>submit_passphrase</code> command</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/connection/storage.rs</code></td>
+<td>Config migration logic</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/main.rs</code></td>
+<td>Manage <code>PassphraseCache</code> as Tauri state</td>
+</tr>
+<tr>
+<td><code>src/types/terminal.ts</code></td>
+<td>Add <code>keyPassphrase</code>, <code>saveKeyPassphrase</code> to <code>SshConfig</code>; update <code>SshKeyValidation</code></td>
+</tr>
+<tr>
+<td><code>src/services/api.ts</code></td>
+<td>Add <code>submitPassphrase</code> function; update <code>SshKeyValidation</code> type</td>
+</tr>
+<tr>
+<td><code>src/services/events.ts</code></td>
+<td>Add <code>PassphraseNeededEvent</code> type and listener</td>
+</tr>
+<tr>
+<td><code>src/components/Settings/SshSettings.tsx</code></td>
+<td>Adapt passphrase field to encryption status, add save checkbox</td>
+</tr>
+<tr>
+<td><code>src/components/PassphraseDialog.tsx</code></td>
+<td>New: modal passphrase prompt dialog</td>
+</tr>
+<tr>
+<td><code>src/store/appStore.ts</code></td>
+<td>Add passphrase prompt state and actions</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="10-migration-path">10. Migration Path</h3>
+<ol>
+<li><strong>First PR — Validation enhancement</strong>: Add <code>encrypted</code> field to <code>SshKeyValidation</code>, implement encryption detection for all key formats. Update frontend types and SshSettings to show encryption status.</li>
+<li><strong>Second PR — Config field separation</strong>: Add <code>keyPassphrase</code> and <code>saveKeyPassphrase</code> fields. Implement config migration. Update SshSettings to use new fields. At this stage, passphrase must still be pre-configured (no runtime prompting yet).</li>
+<li><strong>Third PR — Passphrase cache</strong>: Add <code>PassphraseCache</code>, wire into <code>connect_and_authenticate</code>. Connections using the same key share cached passphrases.</li>
+<li><strong>Fourth PR — Runtime prompting</strong>: Add <code>PassphraseNeededEvent</code>, <code>submit_passphrase</code> command, <code>PassphraseDialog</code> component, and the async prompt flow. This is the largest change and completes the feature.</li>
+<li><strong>Fifth PR — Remote agent passphrase</strong>: Apply the same field separation and prompt flow to <code>RemoteAgentConfig</code> / remote session connections.</li>
+</ol>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
