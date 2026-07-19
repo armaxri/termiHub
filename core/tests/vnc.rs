@@ -202,7 +202,10 @@ async fn assert_pattern_decodes(vnc: &Vnc, label: &str) {
         }
     };
 
-    assert!(frame_count > 0, "{label}: at least one FrameUpdate must arrive");
+    assert!(
+        frame_count > 0,
+        "{label}: at least one FrameUpdate must arrive"
+    );
     assert_eq!(
         (fb.width, fb.height),
         (FB_WIDTH, FB_HEIGHT),
