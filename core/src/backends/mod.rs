@@ -31,5 +31,10 @@ pub mod mock_remote_desktop;
 #[cfg(feature = "vnc")]
 pub mod vnc;
 
-#[cfg(feature = "rdp")]
-pub mod rdp;
+// RDP (IronRDP) backend — #1682. The `rdp/` module is implemented but parked
+// (not declared here) and its `rdp` cargo feature is commented out, because
+// IronRDP cannot currently coexist with the `russh`-based SSH backend: both
+// hard-pin mutually-incompatible RustCrypto pre-releases. See the blocker note
+// on the ironrdp deps in `core/Cargo.toml`. Restore `#[cfg(feature = "rdp")] pub
+// mod rdp;` here (plus the deps, feature, and desktop registration) when the
+// upstream conflict clears.

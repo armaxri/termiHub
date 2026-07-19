@@ -1,5 +1,19 @@
 //! RDP (Remote Desktop Protocol) graphical remote-desktop backend.
 //!
+//! ⚠️ **PARKED / BLOCKED (#1682).** This module is a complete implementation but
+//! is **not currently wired into the build**: its `rdp` cargo feature and the
+//! `pub mod rdp;` declaration in `backends/mod.rs` are commented out, and the
+//! IronRDP dependencies in `core/Cargo.toml` are disabled. The reason is a hard
+//! upstream dependency conflict — IronRDP's CredSSP layer (`picky`/`sspi`) and
+//! the `russh`-based SSH backend both hard-pin *exact, mutually-incompatible*
+//! pre-releases of the RustCrypto stack (`p256`, `ecdsa`, `elliptic-curve`, …),
+//! so Cargo cannot select versions that satisfy both, and older IronRDP releases
+//! (whose crypto line would coexist) no longer compile against their own drifted
+//! transitive deps. See the blocker note on the ironrdp deps in `core/Cargo.toml`.
+//! The code below targets IronRDP 0.17 (connector 0.10 / session 0.11 /
+//! ironrdp-tokio 0.10); re-enable everything together once `russh` and IronRDP
+//! share a RustCrypto release.
+//!
 //! Implements the protocol-agnostic [`GraphicalBackend`] trait (#1680) over RDP
 //! using the pure-Rust [IronRDP] library. Decode happens here, in Rust: the
 //! backend drives IronRDP's connect state machine (X.224 negotiation → TLS →
