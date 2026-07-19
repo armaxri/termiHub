@@ -1,0 +1,58 @@
+/* === Per-connection additional highlight rules (#1744) === */
+.connection-additional-rules__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.connection-additional-rules__empty {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.connection-additional-rule {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+}
+
+.connection-additional-rule:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.connection-additional-rule__swatch {
+  flex-shrink: 0;
+  width: var(--spacing-md);
+  height: var(--spacing-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-secondary);
+}
+
+.connection-additional-rule__name {
+  flex-shrink: 0;
+  min-width: 8rem;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.connection-additional-rule__pattern {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.connection-additional-rule__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
