@@ -36,6 +36,16 @@ ironrdp = { version = "0.17", default-features = false, features = [
     # text clipboard bridging (#1756): `cliprdr` provides the CLIPRDR SVC
     # processor plus its `CliprdrBackend` integration seam.
     "cliprdr",
+    # Device redirection static channel (MS-RDPEFS) for drive redirection
+    # (#1757): `rdpdr` provides the RDPDR SVC processor plus its `RdpdrBackend`
+    # filesystem-IRP integration seam. MS-RDPEFS requires the `rdpsnd` channel
+    # to be co-advertised for the server to talk back to rdpdr, so `rdpsnd` is
+    # registered alongside it (audio playback itself is a sequenced follow-up).
+    "rdpdr",
+    "rdpsnd",
+    # `svc` re-exports `ironrdp-svc`, whose `SvcMessage` is the return type of the
+    # `RdpdrBackend` filesystem-IRP handlers (#1757).
+    "svc",
 ] }
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 ironrdp-tls = { version = "0.2", default-features = false, features = [
@@ -54,3 +64,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# Temp directories back the drive-redirection filesystem tests (#1757), which
+# exercise the RDPDR backend against a real folder without a live RDP server.
+tempfile = "3"

@@ -815,6 +815,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastrand"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
 name = "ff"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1451,7 +1457,10 @@ dependencies = [
  "ironrdp-dvc",
  "ironrdp-graphics",
  "ironrdp-pdu",
+ "ironrdp-rdpdr",
+ "ironrdp-rdpsnd",
  "ironrdp-session",
+ "ironrdp-svc",
 ]
 
 [[package]]
@@ -1583,6 +1592,33 @@ dependencies = [
  "sha1 0.10.7",
  "tap",
  "x509-cert",
+]
+
+[[package]]
+name = "ironrdp-rdpdr"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ece9e67ccf992eb8ce5ec0416d3950e2e199d4b1e2523f91af192205279fc970"
+dependencies = [
+ "bitflags 2.13.1",
+ "ironrdp-core",
+ "ironrdp-error",
+ "ironrdp-pdu",
+ "ironrdp-svc",
+ "tracing",
+]
+
+[[package]]
+name = "ironrdp-rdpsnd"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d1a4f7092ae8fdc0a2f61be8e100277dc6f4ad51b85455dc9e8157979993ea2"
+dependencies = [
+ "bitflags 2.13.1",
+ "ironrdp-core",
+ "ironrdp-pdu",
+ "ironrdp-svc",
+ "tracing",
 ]
 
 [[package]]
@@ -3304,6 +3340,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "termihub-core"
 version = "0.1.0"
 dependencies = [
@@ -3337,6 +3386,7 @@ dependencies = [
  "ironrdp",
  "ironrdp-tls",
  "ironrdp-tokio",
+ "tempfile",
  "termihub-core",
  "tokio",
  "tracing",

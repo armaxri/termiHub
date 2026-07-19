@@ -14,6 +14,7 @@
 //! stderr so it never corrupts the binary IPC stream on stdout.
 
 mod clipboard;
+mod drive;
 mod input;
 mod keymap;
 mod rdp;
