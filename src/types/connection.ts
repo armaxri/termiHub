@@ -2,6 +2,7 @@ import { ConnectionConfig, RemoteAgentConfig, TerminalOptions, LineEnding } from
 import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
+import type { SyntaxHighlightingConfig } from "./syntaxHighlighting";
 
 /**
  * Explicit lifecycle status of the single desktop SFTP session (audit gap A1).
@@ -548,6 +549,13 @@ export interface AppSettings {
   serialPortScanPrefixes?: SerialPortScanPrefix[];
   /** Shell context-menu / CLI-spawn integration configuration (epic #1363). */
   shellIntegration?: ShellIntegrationSettings;
+  /**
+   * Terminal output syntax-highlighting configuration (epic #1696). Absent
+   * config resolves to the built-in defaults (see
+   * `services/syntaxHighlightingConfig.ts` → `defaultHighlightingConfig`),
+   * which keeps older settings files forward-compatible.
+   */
+  syntaxHighlighting?: SyntaxHighlightingConfig;
 }
 
 /**

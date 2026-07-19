@@ -1,3 +1,5 @@
+import type { ConnectionHighlightingConfig } from "./syntaxHighlighting";
+
 export type SessionId = string;
 
 export type ShellType =
@@ -205,6 +207,12 @@ export interface TerminalOptions {
   cursorBlink?: boolean;
   /** Per-connection line-ending override. Falls back to the global default. */
   lineEnding?: LineEnding;
+  /**
+   * Per-connection syntax-highlighting override (epic #1696). Absent → the
+   * connection follows the global setting (`override: "global"`). See
+   * `services/syntaxHighlightingConfig.ts` → `resolveHighlightingConfig`.
+   */
+  syntaxHighlighting?: ConnectionHighlightingConfig;
 }
 
 /** An external connection file configured for a remote agent. */
