@@ -49,10 +49,10 @@ use termihub_core::connection::{
     CursorShape, CursorUpdate, DirtyRect, FrameUpdate, GraphicalState, InputEvent,
 };
 
+use crate::audio::RdpAudioBackend;
 use crate::clipboard::{
     build_format_data_response, local_text_formats, ClipboardEvent, SidecarClipboardBackend,
 };
-use crate::audio::RdpAudioBackend;
 use crate::drive::DriveRedirectBackend;
 use crate::input;
 
