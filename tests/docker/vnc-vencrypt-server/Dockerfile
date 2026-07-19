@@ -25,6 +25,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server \
+    x11vnc \
     feh \
     imagemagick \
     x11-utils \
@@ -39,10 +40,11 @@ RUN convert -size 1024x768 xc:black \
     -fill white -draw "rectangle 512,384 1023,767" \
     /root/pattern.png
 
-# Store the RFB password (VncAuth format) for Xvnc's -rfbauth. TigerVNC ships
-# `vncpasswd`; -f reads the plaintext from stdin and writes the obfuscated file.
+# Store the RFB password (standard DES-obfuscated VNC format) for Xvnc's
+# -rfbauth. TigerVNC on Debian ships no `vncpasswd`, so use x11vnc's
+# `-storepasswd` — it writes the same format Xvnc's -rfbauth reads.
 RUN mkdir -p /root/.vnc \
-    && printf 'testpass\n' | vncpasswd -f > /root/.vnc/passwd \
+    && x11vnc -storepasswd testpass /root/.vnc/passwd \
     && chmod 600 /root/.vnc/passwd
 
 # The committed test TLS material (leaf + key the server presents).
