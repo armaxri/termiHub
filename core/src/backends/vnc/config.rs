@@ -31,7 +31,18 @@ pub struct VncConfig {
     /// Optional VNC display number; when set, the port is `5900 + display`.
     pub display: Option<u16>,
     /// VNC password (classic RFB auth). Empty means "no auth" is attempted.
+    /// Also the password for the VeNCrypt `VncAuth`/`Plain` second stages.
     pub password: String,
+    /// VNC username (the shared "Username" field). Used only for the VeNCrypt
+    /// `Plain` sub-authentication; classic VNC-password auth ignores it.
+    pub username: String,
+    /// TLS certificate verification for VeNCrypt X509 sub-types: `"system"`
+    /// (webpki roots — the default, rejects self-signed), `"insecure"` (accept
+    /// any certificate, for self-signed servers), or `"ca"` (verify against
+    /// [`tls_ca_path`](Self::tls_ca_path)).
+    pub tls_verify: String,
+    /// PEM CA bundle path used when [`tls_verify`](Self::tls_verify) is `"ca"`.
+    pub tls_ca_path: Option<String>,
     /// Suppress all keyboard/mouse input when `true`.
     pub view_only: bool,
     /// Render server-pushed cursor shapes when `true`.
@@ -65,6 +76,9 @@ impl Default for VncConfig {
             port: VNC_BASE_PORT,
             display: None,
             password: String::new(),
+            username: String::new(),
+            tls_verify: "system".to_string(),
+            tls_ca_path: None,
             view_only: false,
             show_remote_cursor: true,
             preferred_encoding: "zrle".to_string(),
@@ -95,6 +109,16 @@ impl VncConfig {
     /// Whether the raw (uncompressed) encoding was requested in preference to ZRLE.
     pub fn prefers_raw(&self) -> bool {
         self.preferred_encoding.eq_ignore_ascii_case("raw")
+    }
+
+    /// The effective VeNCrypt TLS verification mode, normalized and defaulted to
+    /// `"system"` for empty/unknown values.
+    pub fn tls_verify_mode(&self) -> &str {
+        match self.tls_verify.trim() {
+            "insecure" => "insecure",
+            "ca" => "ca",
+            _ => "system",
+        }
     }
 
     /// The effective SSH-tunnel auth method, defaulting to `"password"` when unset
@@ -158,6 +182,14 @@ fn when_tunnel_enabled() -> Option<Condition> {
     })
 }
 
+/// Only shown when TLS verification is set to a custom CA bundle.
+fn when_tls_ca() -> Option<Condition> {
+    Some(Condition {
+        field: "tlsVerify".to_string(),
+        equals: serde_json::json!("ca"),
+    })
+}
+
 /// Only shown when the SSH-tunnel auth method equals `method`. The auth-method
 /// select is itself gated on the tunnel being enabled, so these fields stay
 /// hidden until the user opts into a tunnel and picks the matching method.
@@ -217,6 +249,53 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                     "Render the remote cursor shape pushed by the server.".to_string(),
                 ),
                 ..field("showRemoteCursor", "Show Remote Cursor", FieldType::Boolean)
+            },
+            SettingsField {
+                default: Some(serde_json::json!("system")),
+                description: Some(
+                    "How to verify the server's TLS certificate when the server \
+                     negotiates VeNCrypt (X509). \"System\" trusts public CAs; \
+                     \"Accept self-signed\" skips verification (insecure); \"Custom \
+                     CA\" verifies against a PEM bundle."
+                        .to_string(),
+                ),
+                ..field(
+                    "tlsVerify",
+                    "TLS Certificate Verification",
+                    FieldType::Select {
+                        options: vec![
+                            SelectOption {
+                                value: "system".to_string(),
+                                label: "System trust store".to_string(),
+                            },
+                            SelectOption {
+                                value: "insecure".to_string(),
+                                label: "Accept self-signed (insecure)".to_string(),
+                            },
+                            SelectOption {
+                                value: "ca".to_string(),
+                                label: "Custom CA bundle".to_string(),
+                            },
+                        ],
+                    },
+                )
+            },
+            SettingsField {
+                supports_tilde_expansion: true,
+                supports_env_expansion: true,
+                placeholder: Some("~/.vnc/ca.pem".to_string()),
+                description: Some(
+                    "PEM CA bundle used to verify the VeNCrypt TLS certificate."
+                        .to_string(),
+                ),
+                visible_when: when_tls_ca(),
+                ..field(
+                    "tlsCaPath",
+                    "TLS CA Bundle",
+                    FieldType::FilePath {
+                        kind: FilePathKind::File,
+                    },
+                )
             },
         ],
     });
@@ -373,6 +452,67 @@ mod tests {
             keys,
             vec!["connection", "display", "features", "vnc", "sshTunnel"]
         );
+    }
+
+    // --- VeNCrypt TLS auth (#1714) ---
+
+    #[test]
+    fn tls_verify_defaults_to_system() {
+        let cfg = VncConfig::default();
+        assert_eq!(cfg.tls_verify_mode(), "system");
+        assert!(cfg.tls_ca_path.is_none());
+        assert_eq!(cfg.username, "");
+    }
+
+    #[test]
+    fn tls_verify_mode_normalizes_values() {
+        let mk = |v: &str| VncConfig {
+            tls_verify: v.to_string(),
+            ..VncConfig::default()
+        };
+        assert_eq!(mk("insecure").tls_verify_mode(), "insecure");
+        assert_eq!(mk("ca").tls_verify_mode(), "ca");
+        assert_eq!(mk("system").tls_verify_mode(), "system");
+        // Empty/unknown fall back to the secure default.
+        assert_eq!(mk("").tls_verify_mode(), "system");
+        assert_eq!(mk("bogus").tls_verify_mode(), "system");
+    }
+
+    #[test]
+    fn username_deserializes_from_shared_field() {
+        // The shared "connection" group already exposes a username field; VeNCrypt
+        // Plain reuses it.
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({
+            "host": "h", "username": "alice", "tlsVerify": "insecure"
+        }))
+        .unwrap();
+        assert_eq!(cfg.username, "alice");
+        assert_eq!(cfg.tls_verify_mode(), "insecure");
+    }
+
+    #[test]
+    fn schema_exposes_tls_verify_and_ca_path() {
+        let schema = vnc_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "vnc").unwrap();
+        let verify = group.fields.iter().find(|f| f.key == "tlsVerify").unwrap();
+        assert_eq!(verify.default, Some(serde_json::json!("system")));
+        if let FieldType::Select { options } = &verify.field_type {
+            let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+            assert_eq!(values, vec!["system", "insecure", "ca"]);
+        } else {
+            panic!("tlsVerify must be a select");
+        }
+        // The CA path picker only appears for the custom-CA mode.
+        let ca = group.fields.iter().find(|f| f.key == "tlsCaPath").unwrap();
+        assert!(matches!(
+            ca.field_type,
+            FieldType::FilePath {
+                kind: FilePathKind::File
+            }
+        ));
+        let cond = ca.visible_when.as_ref().unwrap();
+        assert_eq!(cond.field, "tlsVerify");
+        assert_eq!(cond.equals, serde_json::json!("ca"));
     }
 
     #[test]

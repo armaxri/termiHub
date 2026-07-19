@@ -57,7 +57,7 @@ const X509_VNC: u32 = 261;
 const X509_PLAIN: u32 = 262;
 
 /// How the server's TLS certificate is validated for the X509 VeNCrypt sub-types.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TlsVerify {
     /// Verify against the Mozilla/webpki root store. Rejects self-signed certs.
     Roots,
@@ -72,7 +72,7 @@ pub enum TlsVerify {
 ///
 /// The password is supplied through the connector's existing auth callback (it
 /// doubles as the `VncAuth` password and the `Plain` password).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct VencryptConfig {
     /// Username for the `Plain` sub-auth. Empty steers sub-type selection toward
     /// the `*Vnc` variants.
@@ -465,5 +465,124 @@ mod tests {
         assert!(server_name("vnc.example.com").is_ok());
         assert!(server_name("127.0.0.1").is_ok());
         assert!(server_name("not a valid name").is_err());
+    }
+
+    /// End-to-end wire test of the VeNCrypt `Plain` (256) sub-type over an
+    /// in-memory duplex: version exchange, ack, sub-type list, chosen sub-type,
+    /// `Plain` credential framing, `SecurityResult`, and the RFB client-init
+    /// handoff — everything the non-TLS path drives.
+    #[tokio::test]
+    async fn plain_subtype_end_to_end() {
+        use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+
+        let (client_io, mut server) = duplex(65536);
+
+        let server_task = tokio::spawn(async move {
+            // Server VeNCrypt version, then read the client's chosen version.
+            server.write_all(&[0, 2]).await.unwrap();
+            let mut ver = [0u8; 2];
+            server.read_exact(&mut ver).await.unwrap();
+            assert_eq!(ver, [0, 2]);
+            // Version ack (OK).
+            server.write_all(&[0]).await.unwrap();
+            // Offer a single sub-type: Plain (256).
+            server.write_all(&[1]).await.unwrap();
+            server.write_u32(PLAIN).await.unwrap();
+            // Read the chosen sub-type.
+            assert_eq!(server.read_u32().await.unwrap(), PLAIN);
+            // Plain credentials: u32 user-len, u32 pass-len, then the bytes.
+            let ulen = server.read_u32().await.unwrap();
+            let plen = server.read_u32().await.unwrap();
+            let mut user = vec![0u8; ulen as usize];
+            let mut pass = vec![0u8; plen as usize];
+            server.read_exact(&mut user).await.unwrap();
+            server.read_exact(&mut pass).await.unwrap();
+            assert_eq!(user, b"admin");
+            assert_eq!(pass, b"secret");
+            // SecurityResult OK.
+            server.write_u32(0).await.unwrap();
+            // RFB client-init: read the shared flag, then send server-init.
+            let mut shared = [0u8; 1];
+            server.read_exact(&mut shared).await.unwrap();
+            server.write_u16(4).await.unwrap(); // width
+            server.write_u16(4).await.unwrap(); // height
+            let pf = [32u8, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0];
+            server.write_all(&pf).await.unwrap();
+            server.write_u32(2).await.unwrap(); // name length
+            server.write_all(b"hi").await.unwrap();
+            // Drain subsequent client writes (SetPixelFormat/SetEncodings/…) so
+            // the client's net loop does not error before it hands back.
+            let mut scratch = [0u8; 1024];
+            loop {
+                match server.read(&mut scratch).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        });
+
+        let cfg = VencryptConfig {
+            username: "admin".to_string(),
+            server_name: "test".to_string(),
+            verify: TlsVerify::Roots,
+        };
+        let client = connect(
+            client_io,
+            &cfg,
+            "secret".to_string(),
+            VncVersion::RFB38,
+            true,
+            Some(PixelFormat::rgba()),
+            vec![VncEncoding::Raw],
+        )
+        .await;
+        assert!(client.is_ok(), "connect failed: {:?}", client.err());
+        drop(client);
+        server_task.await.unwrap();
+    }
+
+    /// The client aborts with a clear error when the server offers only the
+    /// anonymous-TLS sub-types rustls cannot negotiate, and signals `0` back.
+    #[tokio::test]
+    async fn unsupported_subtypes_report_error() {
+        use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+
+        let (client_io, mut server) = duplex(4096);
+
+        let server_task = tokio::spawn(async move {
+            server.write_all(&[0, 2]).await.unwrap();
+            let mut ver = [0u8; 2];
+            server.read_exact(&mut ver).await.unwrap();
+            server.write_all(&[0]).await.unwrap();
+            // Offer only anonymous-TLS sub-types (257, 258, 259).
+            server.write_all(&[3]).await.unwrap();
+            server.write_u32(TLS_NONE).await.unwrap();
+            server.write_u32(TLS_VNC).await.unwrap();
+            server.write_u32(TLS_PLAIN).await.unwrap();
+            // Client should signal it cannot choose (0).
+            assert_eq!(server.read_u32().await.unwrap(), 0);
+        });
+
+        let cfg = VencryptConfig {
+            username: String::new(),
+            server_name: "test".to_string(),
+            verify: TlsVerify::Insecure,
+        };
+        let result = connect(
+            client_io,
+            &cfg,
+            String::new(),
+            VncVersion::RFB38,
+            true,
+            Some(PixelFormat::rgba()),
+            vec![VncEncoding::Raw],
+        )
+        .await;
+        match result {
+            Err(VncError::Vencrypt(_)) => {}
+            Err(other) => panic!("expected Vencrypt error, got {other:?}"),
+            Ok(_) => panic!("expected an error, connection unexpectedly succeeded"),
+        }
+        server_task.await.unwrap();
     }
 }
