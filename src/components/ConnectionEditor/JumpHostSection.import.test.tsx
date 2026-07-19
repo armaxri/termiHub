@@ -53,9 +53,7 @@ describe("JumpHostSection — import from ~/.ssh/config", () => {
 
   it("exposes an import action even when jump hosts are disabled", () => {
     act(() => {
-      root.render(
-        <JumpHostSection value={undefined} targetHost="target" onChange={vi.fn()} />
-      );
+      root.render(<JumpHostSection value={undefined} targetHost="target" onChange={vi.fn()} />);
     });
     expect(query("jump-host-import-open")).toBeTruthy();
   });
@@ -64,9 +62,7 @@ describe("JumpHostSection — import from ~/.ssh/config", () => {
     mockedImport.mockResolvedValue(IMPORTABLE);
     const onChange = vi.fn<(hops: JumpHostConfig[] | undefined) => void>();
     act(() => {
-      root.render(
-        <JumpHostSection value={undefined} targetHost="target" onChange={onChange} />
-      );
+      root.render(<JumpHostSection value={undefined} targetHost="target" onChange={onChange} />);
     });
 
     act(() => {
@@ -76,9 +72,7 @@ describe("JumpHostSection — import from ~/.ssh/config", () => {
 
     act(() => {
       (
-        document.querySelector(
-          '[data-testid="ssh-config-import-host-prod-target"]'
-        ) as HTMLElement
+        document.querySelector('[data-testid="ssh-config-import-host-prod-target"]') as HTMLElement
       ).click();
     });
 

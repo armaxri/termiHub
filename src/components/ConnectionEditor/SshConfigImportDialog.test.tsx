@@ -58,9 +58,7 @@ describe("SshConfigImportDialog", () => {
 
   it("renders nothing when closed and does not query the config", () => {
     mockedImport.mockResolvedValue([]);
-    render(
-      <SshConfigImportDialog open={false} onOpenChange={() => {}} onImport={() => {}} />
-    );
+    render(<SshConfigImportDialog open={false} onOpenChange={() => {}} onImport={() => {}} />);
     expect(document.querySelector('[data-testid="ssh-config-import-dialog"]')).toBeNull();
     expect(mockedImport).not.toHaveBeenCalled();
   });
