@@ -289,6 +289,10 @@ pub fn port_ssh_sftp_only() -> u16 {
 pub fn port_telnet() -> u16 {
     resolve_port("TERMIHUB_TEST_TELNET_PORT", 2301)
 }
+/// vnc-server container (x11vnc + Xvfb, static test pattern, VncAuth).
+pub fn port_vnc() -> u16 {
+    resolve_port("TERMIHUB_TEST_VNC_PORT", 2501)
+}
 /// ftp-server container control port (plain FTP + explicit FTPS on :21).
 pub fn port_ftp() -> u16 {
     resolve_port("TERMIHUB_TEST_FTP_PORT", 2401)
