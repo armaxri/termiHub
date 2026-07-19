@@ -439,24 +439,58 @@ Host bastion
         );
     }
 
-    // Unix-only: this fixture points `Include` at an absolute temp-dir path.
-    // ssh2-config's `resolve_include_path` treats a path as absolute only when it
-    // starts with the platform separator (`\` on Windows), so a Windows temp path
-    // (`C:\...` or `C:/...`) is misclassified as *relative* and resolved against
-    // the real `$HOME\.ssh`, never finding the fixture. There is no portable way
-    // to express an absolute temp Include path the crate accepts on Windows, and
-    // `dirs::home_dir()` on Windows ignores env vars (Known Folder API), so the
-    // real home can't be redirected under test either. Include *resolution* is the
-    // crate's own (Windows-tested) code; here we only verify termiHub consumes the
-    // included hosts, which the Unix run covers. Windows include-path behaviour is
-    // tracked as a follow-up.
-    #[cfg(unix)]
+    /// A fixture file written into the real `$HOME/.ssh/` directory, removed on
+    /// drop (even on panic). This is how the Include test stays cross-platform:
+    /// ssh2-config's `resolve_include_path` treats an `Include` path as absolute
+    /// only when it starts with the platform separator (`\` on Windows), so an
+    /// absolute temp path (`C:\...` / `C:/...`) is misclassified as *relative* on
+    /// Windows and resolved against `$HOME\.ssh`. A **relative** `Include` name,
+    /// by contrast, resolves to `$HOME/.ssh/<name>` identically on every platform
+    /// — so the only portable way to exercise Include end-to-end is to drop the
+    /// included fixture there and reference it by its bare name.
+    struct SshDirFixture {
+        path: PathBuf,
+    }
+
+    impl SshDirFixture {
+        /// Write `contents` to a uniquely-named file under `$HOME/.ssh/` (creating
+        /// the directory if absent) and return the guard plus the bare file name
+        /// to use in a relative `Include`. The name is unique per process and call
+        /// so parallel test threads never collide.
+        fn new(contents: &str) -> (Self, String) {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+            let ssh_dir = dirs::home_dir()
+                .expect("home dir must resolve in the test environment")
+                .join(".ssh");
+            std::fs::create_dir_all(&ssh_dir).expect("create ~/.ssh");
+            let name = format!(
+                "termihub_include_test_{}_{}.conf",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            );
+            let path = ssh_dir.join(&name);
+            let mut f = File::create(&path).expect("create include fixture in ~/.ssh");
+            f.write_all(contents.as_bytes())
+                .expect("write include fixture");
+            (Self { path }, name)
+        }
+    }
+
+    impl Drop for SshDirFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    // Cross-platform (#1724): a *relative* `Include` resolves to `$HOME/.ssh/<name>`
+    // on Unix and Windows alike, so this replaces the old `#[cfg(unix)]`-gated
+    // fixture (which pointed `Include` at an absolute temp path ssh2-config could
+    // not resolve on Windows) and now verifies Include consumption on Windows CI.
     #[test]
     fn include_pulls_hosts_from_referenced_file() {
-        let dir = TempDir::new().unwrap();
-        let included = write_file(
-            &dir,
-            "included.conf",
+        let (_fixture, include_name) = SshDirFixture::new(
             "\
 Host target
     ProxyJump bastion
@@ -466,9 +500,10 @@ Host bastion
     User b
 ",
         );
-        // On Unix the absolute temp path starts with `/`, so ssh2-config opens it
-        // directly (see the module-level note above for the Windows limitation).
-        let path = write_file(&dir, "config", &format!("Include {}\n", included.display()));
+        // The main config can live anywhere (a temp dir); ssh2-config resolves the
+        // relative `Include` against `$HOME/.ssh/`, not against this file's dir.
+        let dir = TempDir::new().unwrap();
+        let path = write_file(&dir, "config", &format!("Include {include_name}\n"));
 
         let hosts = parse_ssh_config_hosts(&path).unwrap();
         let target = hosts.iter().find(|h| h.name == "target");
