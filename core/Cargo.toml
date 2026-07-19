@@ -57,6 +57,11 @@ webpki-roots = { version = "1", optional = true }
 # graphical frame stream (#1681). Library-first per the repo rules — the RFB
 # state machine is not hand-rolled.
 vnc-rs = { version = "0.5", optional = true }
+# Pure-Rust JPEG decoder for the VNC Tight encoding's JPEG sub-rects (#1715).
+# `vnc-rs` emits raw JPEG bytes via `VncEvent::JpegImage`; this decodes them to
+# RGBA to fold into the shared shadow framebuffer. Chosen for a tiny, pure-Rust
+# dep tree (only `zune-core`) that cannot collide with the SSH RustCrypto pins.
+zune-jpeg = { version = "0.4", optional = true }
 ringbuf = "0.5.0"
 shellexpand = "3.1"
 vte = "0.13"
@@ -135,4 +140,4 @@ mock-remote-desktop = []
 # clipboard events to RFB. Depends on `ssh` because the connection editor's
 # optional SSH-tunnel group reaches the VNC server through the existing SSH
 # tunnel infrastructure (as the VNC concept specifies).
-vnc = ["dep:vnc-rs", "dep:tracing", "ssh"]
+vnc = ["dep:vnc-rs", "dep:zune-jpeg", "dep:tracing", "ssh"]
