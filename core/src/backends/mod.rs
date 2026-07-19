@@ -24,3 +24,6 @@ pub mod wsl;
 
 #[cfg(feature = "ftp")]
 pub mod ftp;
+
+#[cfg(feature = "mock-remote-desktop")]
+pub mod mock_remote_desktop;

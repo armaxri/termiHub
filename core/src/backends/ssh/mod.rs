@@ -443,6 +443,7 @@ impl ConnectionType for Ssh {
         Capabilities {
             monitoring: true,
             file_browser: true,
+            graphical: false,
             resize: true,
             persistent: true,
             terminal: true,

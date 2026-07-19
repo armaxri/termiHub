@@ -4,7 +4,8 @@
     feature = "telnet",
     feature = "ssh",
     feature = "docker",
-    feature = "ftp"
+    feature = "ftp",
+    feature = "mock-remote-desktop"
 ))]
 pub mod backends;
 pub mod buffer;

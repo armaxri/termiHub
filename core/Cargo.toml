@@ -121,3 +121,7 @@ ftp = [
     # Local-file streaming for FTP transfers (RETR → local, local → STOR).
     "tokio/fs",
 ]
+# Mock graphical remote-desktop backend: a protocol-less moving test pattern so
+# the shared remote-desktop layer (#1680) merges and is E2E-testable with no
+# real VNC/RDP server. Pulls no extra deps (tokio + tokio-util are core deps).
+mock-remote-desktop = []
