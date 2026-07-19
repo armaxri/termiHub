@@ -30,8 +30,9 @@
 //! ## v1 scope
 //!
 //! Connect (TLS/NLA) → decode frames → keyboard/pointer/wheel input → server
-//! cursor → Display-Control dynamic resize (#1755). CLIPRDR clipboard, drive
-//! redirection and audio are sequenced follow-ups (see #1747 / the PR).
+//! cursor → Display-Control dynamic resize (#1755) → CLIPRDR text clipboard both
+//! ways (#1756). Drive redirection and audio are sequenced follow-ups (see #1747
+//! / the PR).
 
 pub mod config;
 pub mod protocol;
@@ -424,8 +425,9 @@ impl GraphicalBackend for SidecarRdp {
             // Dynamic resize renegotiates the remote resolution over the Display
             // Control channel in the sidecar (#1755).
             supports_dynamic_resize: true,
-            // CLIPRDR clipboard bridging is a follow-up.
-            supports_clipboard: false,
+            // Text clipboard bridges bidirectionally over the CLIPRDR channel in
+            // the sidecar (#1756).
+            supports_clipboard: true,
             view_only_capable: true,
         }
     }
@@ -496,8 +498,8 @@ impl GraphicalBackend for SidecarRdp {
         if rt.shared.view_only {
             return Ok(());
         }
-        // CLIPRDR bridging is a follow-up; the message is plumbed so the seam is
-        // in place.
+        // Forwarded to the sidecar, which mirrors the text to the remote over the
+        // CLIPRDR channel (#1756).
         let _ = rt.to_sidecar.send(HostMessage::SetClipboard(text)).await;
         Ok(())
     }
@@ -538,7 +540,7 @@ mod tests {
         assert!(caps.auth_kinds.contains(&AuthKind::Nla));
         assert!(caps.view_only_capable);
         assert!(caps.supports_dynamic_resize);
-        assert!(!caps.supports_clipboard);
+        assert!(caps.supports_clipboard);
     }
 
     #[tokio::test]

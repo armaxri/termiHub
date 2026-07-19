@@ -13,6 +13,7 @@
 //! out on stdout while applying host input read from stdin. All logging goes to
 //! stderr so it never corrupts the binary IPC stream on stdout.
 
+mod clipboard;
 mod input;
 mod keymap;
 mod rdp;
