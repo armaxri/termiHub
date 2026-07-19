@@ -64,3 +64,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# Temp directories back the drive-redirection filesystem tests (#1757), which
+# exercise the RDPDR backend against a real folder without a live RDP server.
+tempfile = "3"

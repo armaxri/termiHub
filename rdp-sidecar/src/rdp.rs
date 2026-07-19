@@ -28,6 +28,8 @@ use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp::dvc::DrdynvcClient;
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::pdu::gcc::KeyboardType;
+use ironrdp::rdpdr::Rdpdr;
+use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
 use ironrdp::pdu::input::fast_path::FastPathInputEvent;
 use ironrdp::pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType};
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
@@ -50,7 +52,13 @@ use termihub_core::connection::{
 use crate::clipboard::{
     build_format_data_response, local_text_formats, ClipboardEvent, SidecarClipboardBackend,
 };
+use crate::drive::DriveRedirectBackend;
 use crate::input;
+
+/// The RDPDR device id used for the single redirected drive (#1757). Any
+/// non-zero id works; IRPs the server sends carry it, and IronRDP routes them to
+/// our backend.
+const DRIVE_DEVICE_ID: u32 = 1;
 
 /// The framed RDP transport after the TLS upgrade.
 type RdpFramed = TokioFramed<ironrdp_tls::TlsStream<TcpStream>>;
@@ -173,6 +181,23 @@ async fn connect_session(
             DrdynvcClient::new()
                 .with_dynamic_channel(DisplayControlClient::new(|_caps| Ok(Vec::new()))),
         );
+
+    // Drive redirection (MS-RDPEFS) is opt-in per connection and serves exactly
+    // the one folder the user selected (#1757). MS-RDPEFS requires the `rdpsnd`
+    // channel to be co-advertised for the server to talk back to `rdpdr`, so we
+    // register a no-op `rdpsnd` handler alongside it (audio playback itself is a
+    // sequenced follow-up). When redirection is off, neither channel is
+    // registered and nothing on the local filesystem is exposed.
+    if let Some(root) = cfg.shared_drive_root() {
+        debug!(root = %root.display(), "registering rdpdr drive redirection");
+        let backend = DriveRedirectBackend::new(root);
+        connector = connector
+            .with_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)))
+            .with_static_channel(
+                Rdpdr::new(Box::new(backend), CLIENT_NAME.to_string())
+                    .with_drives(Some(vec![(DRIVE_DEVICE_ID, cfg.drive_label())])),
+            );
+    }
 
     // 1) X.224 negotiation up to the security-upgrade point.
     let mut framed = TokioFramed::new(tcp);
