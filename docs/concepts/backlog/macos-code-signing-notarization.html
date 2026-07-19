@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>macOS Code Signing and Notarization in CI (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>macOS Code Signing and Notarization in CI</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/688">#688</a></span>
+          <span><code>docs/concepts/backlog/macos-code-signing-notarization.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>macOS builds produced by the current CI pipeline are unsigned. When a user downloads the <code>.dmg</code>
+from a GitHub release and tries to open it, macOS Gatekeeper rejects it with a security warning:</p>
+<blockquote>
+<p>"termiHub.app cannot be opened because Apple cannot check it for malicious software."</p>
+</blockquote>
+<p>(On older macOS versions the wording is <em>"cannot be opened because it is from an unidentified
+developer"</em>; on some systems a corrupted-signature variant reads <em>"is damaged and can't be
+opened"</em> — all are the same underlying Gatekeeper block.)</p>
+<p>This happens because Apple requires all distributed apps to be:</p>
+<ol>
+<li><strong>Code-signed</strong> with a "Developer ID Application" certificate — proves the binary comes from an
+   identified developer and has not been tampered with.</li>
+<li><strong>Notarized</strong> — Apple's cloud service scans the signed binary for malware and staples a ticket
+   to it, which Gatekeeper verifies at launch without contacting Apple.</li>
+</ol>
+<p>Without both steps, Gatekeeper quarantines every download from the internet. The workaround
+(<code>xattr -cr</code>) requires command-line access and is unreasonable to expect from end users.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>All macOS release builds (x64 and ARM64) pass Gatekeeper without any user intervention.</li>
+<li>Signing credentials are stored securely as GitHub Actions secrets and never committed.</li>
+<li>The signing/notarization step is transparent and auditable in CI logs.</li>
+<li>The release workflow fails fast and clearly if credentials are missing or invalid.</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>Windows code signing (separate Authenticode certificate and workflow — a future concept).</li>
+<li>Linux packaging signing (GPG/APT/RPM — a separate topic).</li>
+<li>In-app auto-update (see
+  <a href="../partial/in-field-update-mechanism.html">In-Field Update Mechanism</a>).</li>
+<li>Hardened runtime entitlements beyond what Tauri requires by default.</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<p>This is a CI/DevOps concept with no end-user UI changes. The "interface" is the experience of
+two personas: the <strong>maintainer</strong> who configures signing, and the <strong>end user</strong> who downloads the
+app.</p>
+<h3 id="maintainer-one-time-setup">Maintainer: One-Time Setup</h3>
+<p>The maintainer works entirely in the Apple Developer portal and GitHub repository settings. There
+is no termiHub UI involved.</p>
+<pre><code>Apple Developer Portal                 GitHub Repository
+─────────────────────────────          ──────────────────────────────────
+1. Create &quot;Developer ID Application&quot;   4. Settings → Secrets and variables
+   certificate                            → Actions → New secret:
+2. Export as .p12 (with password)
+                                           APPLE_CERTIFICATE         (base64 .p12)
+3. Generate app-specific password          APPLE_CERTIFICATE_PASSWORD
+   at appleid.apple.com                    APPLE_SIGNING_IDENTITY
+                                           APPLE_ID
+                                           APPLE_PASSWORD
+                                           APPLE_TEAM_ID
+</code></pre>
+<h3 id="end-user-download-experience-after-fix">End User: Download Experience (After Fix)</h3>
+<p>Before this fix, the user sees:</p>
+<pre><code>┌───────────────────────────────────────────────────────────┐
+│  &quot;termiHub.app&quot; cannot be opened because Apple cannot     │
+│   check it for malicious software.                        │
+│                                              [ OK ]       │
+└───────────────────────────────────────────────────────────┘
+</code></pre>
+<p>After this fix, the user simply double-clicks the <code>.dmg</code>, drags termiHub to Applications, and
+opens it — no prompts, no friction.</p>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="certificate-lifecycle">Certificate Lifecycle</h3>
+<p>Apple Developer ID certificates are valid for <strong>5 years</strong>. When a certificate is within 90 days
+of expiry, Apple sends a renewal warning email to the account holder. Renewal requires generating
+a new certificate and updating the GitHub secrets — the workflow itself does not need to change.</p>
+<p>A CI job should ideally surface certificate expiry proactively (this can be done by inspecting
+the <code>.p12</code> with <code>openssl</code>), but this is considered a future enhancement.</p>
+<h3 id="what-gets-signed">What Gets Signed</h3>
+<p>Tauri bundles the following on macOS. All of them must be signed before notarization:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>termiHub.app</code></td>
+<td>The main application bundle</td>
+</tr>
+<tr>
+<td>All <code>.dylib</code> files inside the bundle</td>
+<td>Shared libraries</td>
+</tr>
+<tr>
+<td>The main executable</td>
+<td><code>Contents/MacOS/termiHub</code></td>
+</tr>
+<tr>
+<td>Embedded helper tools</td>
+<td>Any helper binaries Tauri embeds</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code>tauri-apps/tauri-action</code> handles this automatically when the Apple credentials are present as
+environment variables — it calls <code>codesign</code> on each artifact in the correct order and then
+submits the bundle to Apple's notarization API via <code>notarytool</code>.</p>
+<h3 id="notarization-timing">Notarization Timing</h3>
+<p>Notarization typically completes in 30 seconds to 5 minutes. <code>tauri-action</code> uses <code>notarytool
+wait</code> (or <code>xcrun notarytool wait</code>) to block until Apple responds, then staples the ticket before
+packaging the <code>.dmg</code>. If notarization times out or is rejected, the CI step fails and no artifact
+is uploaded.</p>
+<h3 id="devpr-builds">Dev/PR Builds</h3>
+<p>PR builds (in <code>build.yml</code>) do not need to be notarized — they are internal artifacts used to
+validate the build, not distributed to end users. Signing can be skipped entirely for those
+builds by simply not passing the Apple credentials. The unsigned artifacts are fine for CI
+validation and are retained for only 7 days.</p>
+<p>If it becomes useful to smoke-test PR builds on macOS without the Gatekeeper error, an
+alternative is to sign (but not notarize) PR builds using the same certificate — this removes
+the "damaged" message for direct testers while avoiding the slower notarization wait.</p>
+<h3 id="secret-rotation">Secret Rotation</h3>
+<p>If credentials are compromised or expired:</p>
+<ol>
+<li>Revoke the certificate in the Apple Developer portal.</li>
+<li>Generate a new certificate and app-specific password.</li>
+<li>Update the GitHub secrets.</li>
+<li>Re-run the release workflow (no code change needed).</li>
+</ol>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="notarization-flow-in-ci">Notarization Flow in CI</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant GH as GitHub Actions
+    participant TA as tauri-action
+    participant CS as codesign (local)
+    participant AN as Apple Notary API
+
+    GH-&gt;&gt;TA: Run build step (APPLE_* env vars present)
+    TA-&gt;&gt;CS: Sign app bundle, dylibs, executable
+    CS--&gt;&gt;TA: Signed bundle OK
+    TA-&gt;&gt;CS: Package signed bundle into .dmg
+    CS--&gt;&gt;TA: .dmg ready
+    TA-&gt;&gt;AN: Submit .dmg for notarization
+    AN--&gt;&gt;TA: Submission received (request ID)
+    loop Poll until complete (usually &lt;5 min)
+        TA-&gt;&gt;AN: Check status
+        AN--&gt;&gt;TA: In progress / Accepted / Rejected
+    end
+    alt Accepted
+        TA-&gt;&gt;CS: Staple notarization ticket to .dmg
+        CS--&gt;&gt;TA: Stapled
+        TA--&gt;&gt;GH: Signed + notarized .dmg ready for upload
+    else Rejected
+        AN--&gt;&gt;TA: Rejection reason (malware / policy)
+        TA--&gt;&gt;GH: FAIL — log rejection details
+    end
+</pre>
+</div>
+<h3 id="gatekeeper-check-at-user-launch">Gatekeeper Check at User Launch</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant GK as macOS Gatekeeper
+    participant AN as Apple Notary (cached)
+
+    U-&gt;&gt;GK: Double-click termiHub.app
+    GK-&gt;&gt;GK: Check quarantine attribute (from download)
+    GK-&gt;&gt;GK: Verify code signature (Developer ID)
+    GK-&gt;&gt;GK: Check stapled notarization ticket
+    alt Ticket valid (no internet needed)
+        GK--&gt;&gt;U: App opens normally
+    else No stapled ticket
+        GK-&gt;&gt;AN: Online revocation / notarization check
+        AN--&gt;&gt;GK: Valid (if notarized) / Invalid
+        GK--&gt;&gt;U: Open or block
+    end
+</pre>
+</div>
+<h3 id="ci-job-state-machine">CI Job State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Building: Push to version tag
+    Building --&gt; Signing: Build succeeded
+    Building --&gt; Failed: Build error
+
+    Signing --&gt; Notarizing: codesign OK
+    Signing --&gt; Failed: Missing secrets / cert error
+
+    Notarizing --&gt; Stapling: Apple accepted
+    Notarizing --&gt; Failed: Apple rejected / timeout
+
+    Stapling --&gt; Uploading: Ticket stapled
+    Uploading --&gt; Done: Asset on GitHub Release
+    Uploading --&gt; Failed: Upload error
+
+    Failed --&gt; [*]
+    Done --&gt; [*]
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>Note: this section reflects the codebase at the time of concept creation (May 2026). The
+workflows and config may evolve before implementation.</p>
+</blockquote>
+<h3 id="1-github-secrets-required">1. GitHub Secrets Required</h3>
+<p>The following secrets must be added to the GitHub repository (Settings → Secrets and variables →
+Actions):</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Secret name</th>
+<th>Content</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>APPLE_CERTIFICATE</code></td>
+<td>Base64-encoded <code>.p12</code> file: <code>base64 -i cert.p12</code></td>
+</tr>
+<tr>
+<td><code>APPLE_CERTIFICATE_PASSWORD</code></td>
+<td>Password set when exporting the <code>.p12</code></td>
+</tr>
+<tr>
+<td><code>APPLE_SIGNING_IDENTITY</code></td>
+<td>Full identity string, e.g. <code>Developer ID Application: Jane Doe (AB12CD34EF)</code></td>
+</tr>
+<tr>
+<td><code>APPLE_ID</code></td>
+<td>Apple ID email (account holder)</td>
+</tr>
+<tr>
+<td><code>APPLE_PASSWORD</code></td>
+<td>App-specific password from appleid.apple.com</td>
+</tr>
+<tr>
+<td><code>APPLE_TEAM_ID</code></td>
+<td>10-character Team ID from the Developer portal</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="2-release-workflow-changes-releaseyml">2. Release Workflow Changes (<code>release.yml</code>)</h3>
+<p>In the <code>build-and-upload</code> job, the <code>Build Tauri app for release</code> step needs the Apple secrets
+added to the <code>env</code> block. Only macOS matrix entries will use them (Tauri silently skips signing
+on Linux/Windows if the vars are absent):</p>
+<pre><code class="language-yaml">- name: Build Tauri app for release
+  uses: tauri-apps/tauri-action@v0
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+    APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+    APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+    APPLE_ID: ${{ secrets.APPLE_ID }}
+    APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+    APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+  with:
+    tagName: &quot;&quot;
+    releaseName: &quot;&quot;
+    releaseBody: &quot;&quot;
+    releaseDraft: false
+    prerelease: false
+    args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
+</code></pre>
+<h3 id="3-tauriconfjson-macos-bundle-config">3. <code>tauri.conf.json</code> macOS Bundle Config</h3>
+<p>Tauri needs the signing identity declared in <code>src-tauri/tauri.conf.json</code> under the macOS section.
+The identity value can be the environment variable reference or a placeholder that <code>tauri-action</code>
+overrides at build time:</p>
+<pre><code class="language-json">{
+  &quot;bundle&quot;: {
+    &quot;macOS&quot;: {
+      &quot;signingIdentity&quot;: null,
+      &quot;providerShortName&quot;: null,
+      &quot;entitlements&quot;: null
+    }
+  }
+}
+</code></pre>
+<p><code>tauri-apps/tauri-action</code> sets <code>signingIdentity</code> from <code>APPLE_SIGNING_IDENTITY</code> automatically
+when the env var is present. Verify this behaviour against the <code>tauri-action</code> version in use.</p>
+<h3 id="4-hardened-runtime">4. Hardened Runtime</h3>
+<p>Apple requires the hardened runtime for notarization. Tauri enables it by default for release
+builds. If any entitlements are needed (e.g., for serial port access via IOKit), they must be
+declared in an <code>.entitlements</code> plist referenced from <code>tauri.conf.json</code>. Start without a custom
+entitlements file and add only what notarization rejection logs require.</p>
+<h3 id="5-dev-builds-buildyml">5. Dev Builds (<code>build.yml</code>)</h3>
+<p>No changes required for now — PR builds remain unsigned. If testers report friction, consider
+adding signing (without notarization) to the macOS matrix entries by passing only
+<code>APPLE_CERTIFICATE</code>, <code>APPLE_CERTIFICATE_PASSWORD</code>, and <code>APPLE_SIGNING_IDENTITY</code> (omitting the
+notarization credentials <code>APPLE_ID</code>, <code>APPLE_PASSWORD</code>, <code>APPLE_TEAM_ID</code>).</p>
+<h3 id="6-verification-after-implementation">6. Verification After Implementation</h3>
+<p>After merging, verify on a fresh macOS machine:</p>
+<ol>
+<li>Download the <code>.dmg</code> from the GitHub release (do not copy from an existing machine).</li>
+<li>Mount the <code>.dmg</code> and drag the app to Applications.</li>
+<li>Open the app — no Gatekeeper prompt should appear.</li>
+<li>Run <code>codesign --verify --verbose=4 /Applications/termiHub.app</code> — should report "valid on
+   disk" and "satisfies its Designated Requirement".</li>
+<li>Run <code>spctl --assess --verbose /Applications/termiHub.app</code> — should report "accepted".</li>
+</ol>
+<p>These steps should be added to <code>docs/testing.md</code> under a "macOS Release Distribution" section.</p>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
