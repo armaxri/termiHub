@@ -20,6 +20,7 @@ import {
   SavedConnection,
   ConnectionFolder,
   ConnectionTypeInfo,
+  SshConfigImportHost,
   FileEntry,
   Writability,
   ExternalFileError,
@@ -102,6 +103,16 @@ export async function probeConnectionPath(
  */
 export async function cancelConnectionPathProbe(probeId: string): Promise<boolean> {
   return await invoke<boolean>("cancel_connection_path_probe", { probeId });
+}
+
+/**
+ * Read the user's `~/.ssh/config` (plus any `Include`d files) and return the
+ * hosts that declare a `ProxyJump`, with each hop resolved to editor-shaped
+ * {@link SshConfigImportHost}s (#1702). Missing / empty / unparseable config
+ * degrades to an empty list on the backend — never an error.
+ */
+export async function importSshConfigHosts(): Promise<SshConfigImportHost[]> {
+  return await invoke<SshConfigImportHost[]>("import_ssh_config_hosts");
 }
 
 /**

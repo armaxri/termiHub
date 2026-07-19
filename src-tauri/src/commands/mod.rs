@@ -12,6 +12,7 @@ pub mod remote_desktop;
 pub mod session;
 pub mod shell_integration;
 pub mod spawn;
+pub mod ssh_config_import;
 pub mod transfer;
 pub mod tunnel;
 pub mod update;
