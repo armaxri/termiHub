@@ -1,5 +1,12 @@
 [workspace]
 members = ["core", "src-tauri", "agent"]
+# The RDP sidecar (#1747) is a standalone build unit with its OWN Cargo.lock:
+# IronRDP's CredSSP crypto and russh pin incompatible RustCrypto pre-releases,
+# and Cargo allows one version per crate per lockfile (#1725). A workspace
+# *member* would share the root lockfile (and pull russh via other members), so
+# it must be excluded, not added. Built + bundled separately
+# (scripts/build-rdp-sidecar.sh).
+exclude = ["rdp-sidecar"]
 resolver = "2"
 
 # Dev/test builds emit no debug info at all. The workspace declared no

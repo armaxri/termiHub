@@ -69,3 +69,6 @@ __pycache__/
 # open branch whenever any testid changed on develop, breaking unrelated PRs'
 # CI (#1528). CI regenerates and verifies coverage instead of diffing it.
 tests/system/testid-catalog.md
+
+# RDP sidecar (#1747) is an excluded crate with its own target dir
+/rdp-sidecar/target/

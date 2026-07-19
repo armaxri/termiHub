@@ -1,0 +1,46 @@
+[package]
+name = "termihub-rdp-sidecar"
+version = "0.1.0"
+description = "RDP (IronRDP) sidecar for termiHub — decodes RDP and bridges it to the shared remote-desktop layer over IPC (#1747)"
+edition = "2021"
+publish = false
+
+# This crate is EXCLUDED from the root workspace (`[workspace].exclude`) and has
+# its own Cargo.lock on purpose: IronRDP's CredSSP crypto and russh pin
+# incompatible RustCrypto pre-releases, and Cargo allows one version per crate
+# per lockfile (#1725). Resolving IronRDP in its own graph — with no russh —
+# dissolves the conflict.
+
+[[bin]]
+name = "termihub-rdp-helper"
+path = "src/main.rs"
+
+[dependencies]
+# Pure-Rust RDP (Microsoft/Devolutions-maintained). The meta crate re-exports the
+# sub-crates behind features; IronRDP decodes on the wire into the shared
+# protocol-agnostic frame stream. Versions verified to resolve + compile in this
+# excluded graph (#1747 / #1725 spike): IronRDP 0.17, ironrdp-tokio 0.10,
+# ironrdp-tls 0.2.
+ironrdp = { version = "0.17", default-features = false, features = [
+    "connector",
+    "session",
+    "graphics",
+    "pdu",
+] }
+ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
+ironrdp-tls = { version = "0.2", default-features = false, features = [
+    "rustls-ring",
+] }
+
+# The shared serde types (FrameUpdate / CursorUpdate / InputEvent / RdpConfig)
+# and the framed MessagePack IPC helpers live in termihub-core behind the
+# `rdp-sidecar` feature. `default-features = false` keeps russh (the `ssh`
+# feature) out of this graph, which is the whole point.
+termihub-core = { path = "../core", default-features = false, features = [
+    "rdp-sidecar",
+] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "net", "sync", "time"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
