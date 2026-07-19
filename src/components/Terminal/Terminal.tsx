@@ -32,6 +32,11 @@ import { resolveLineEnding } from "@/utils/lineEndings";
 import { getAllLeaves } from "@/utils/panelTree";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
+import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
+import {
+  resolveHighlightingConfig,
+  resolveActiveRules,
+} from "@/services/syntaxHighlightingConfig";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -250,6 +255,11 @@ export function Terminal({
   const scrollbarRef = useRef<TerminalScrollbarController | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // Per-terminal syntax-highlighting engine (epic #1696). Created alongside the
+  // xterm instance and disposed on the same boundary, so a reconnect (retryCount
+  // bump re-runs the creation effect) rebuilds it cleanly. Null while no xterm
+  // exists.
+  const highlightEngineRef = useRef<SyntaxHighlightingEngine | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   // Serialized scrollback of the previous xterm instance, captured just before
   // it is disposed on a reconnect (retryCount bump re-runs the creation effect
@@ -788,6 +798,33 @@ export function Terminal({
     [config, tabId, registerSession, unregisterSession]
   );
 
+  // Resolve the effective highlighting state for this terminal and apply it to
+  // the engine. Folds the global config, the per-connection override, and the
+  // runtime per-session toggle together; when the result is enabled the engine
+  // compiles the active rules, otherwise it drops all decorations. Both
+  // `enable` and `disable` are idempotent, so this is safe to call repeatedly.
+  const applyHighlighting = useCallback(
+    (engine: SyntaxHighlightingEngine) => {
+      const state = useAppStore.getState();
+      const resolved = resolveHighlightingConfig(
+        state.settings.syntaxHighlighting,
+        state.tabTerminalOptions[tabId]?.syntaxHighlighting
+      );
+      const sessionId = sessionIdRef.current;
+      // The per-session toggle (set by the status-bar quick action, #1704)
+      // overrides the resolved on/off state for a single live session; a missing
+      // entry means "follow the resolved config".
+      const sessionOverride = sessionId ? state.sessionHighlighting[sessionId] : undefined;
+      const enabled = sessionOverride ?? resolved.enabled;
+      if (enabled) {
+        engine.enable(resolveActiveRules(resolved));
+      } else {
+        engine.disable();
+      }
+    },
+    [tabId]
+  );
+
   // Create the terminal element, xterm instance, and register
   useEffect(() => {
     // Track whether this effect invocation is still active. In React StrictMode,
@@ -869,6 +906,15 @@ export function Terminal({
     xterm.loadAddon(serializeAddon);
 
     xterm.open(scrollViewport);
+
+    // Instantiate the syntax-highlighting engine for this xterm and apply the
+    // effective config. Created before the scrollback replay below so its
+    // onWriteParsed hook (registered by `enable`) also scans replayed content.
+    // The engine self-disables on the alternate screen and never recolors cells
+    // whose foreground the server already set (see syntaxHighlighting.ts).
+    const highlightEngine = new SyntaxHighlightingEngine(xterm);
+    highlightEngineRef.current = highlightEngine;
+    applyHighlighting(highlightEngine);
 
     // Replay the previous instance's scrollback captured on the last teardown
     // (a reconnect disposes the old xterm — see cleanup below). Writing it here,
@@ -1129,6 +1175,10 @@ export function Terminal({
         frontendLog("terminal", `Failed to snapshot scrollback tab=${tabId}: ${String(err)}`);
         scrollbackSnapshotRef.current = null;
       }
+      // Dispose the highlighting engine on the same boundary as the xterm
+      // instance so no decorations or write hooks leak past teardown.
+      highlightEngine.dispose();
+      highlightEngineRef.current = null;
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;
@@ -1148,6 +1198,7 @@ export function Terminal({
     registerSearchAddon,
     parkingRef,
     retryCount,
+    applyHighlighting,
   ]);
 
   // Re-fit and focus when visibility changes
@@ -1257,6 +1308,27 @@ export function Terminal({
       }
     }
   }, [theme, fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
+
+  // Re-apply highlighting when the global config, the per-connection override, or
+  // the per-session toggle changes on a live terminal. `applyHighlighting`
+  // resolves all three from the store, so re-running it on any of these keeps the
+  // engine in sync — including toggling it off live, which drops all decorations.
+  const globalHighlighting = useAppStore((s) => s.settings.syntaxHighlighting);
+  const sessionHighlightingOverride = useAppStore((s) =>
+    existingSessionId ? s.sessionHighlighting[existingSessionId] : undefined
+  );
+
+  useEffect(() => {
+    const engine = highlightEngineRef.current;
+    if (!engine) return;
+    applyHighlighting(engine);
+  }, [
+    applyHighlighting,
+    globalHighlighting,
+    tabTermOpts,
+    sessionHighlightingOverride,
+    existingSessionId,
+  ]);
 
   // Keep the backend's per-session line ending in sync when the global default
   // or this connection's override changes while the terminal is open.
