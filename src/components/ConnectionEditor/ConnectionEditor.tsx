@@ -1243,8 +1243,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             Git Bash — set up…
           </Button>
           <p className="settings-form__hint">
-            No Unix shell detected. Install Git for Windows to run bash, grep, curl and ssh from this
-            local connection.
+            No Unix shell detected. Install Git for Windows to run bash, grep, curl and ssh from
+            this local connection.
           </p>
         </div>
       )}
