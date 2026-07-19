@@ -3,6 +3,7 @@ import { ConnectionList } from "./ConnectionList";
 import { FileBrowser } from "./FileBrowser";
 import { TunnelSidebar } from "@/components/TunnelSidebar";
 import { WorkspaceSidebar } from "@/components/WorkspaceSidebar";
+import { MacroSidebar } from "@/components/MacroSidebar";
 import { NetworkToolsSidebar } from "@/components/NetworkTools/NetworkToolsSidebar";
 import { EmbeddedServerSidebar } from "@/components/EmbeddedServerSidebar";
 import "./Sidebar.css";
@@ -13,6 +14,7 @@ const VIEW_TITLES: Record<string, string> = {
   tunnels: "SSH Tunnels",
   services: "Services",
   workspaces: "Workspaces",
+  macros: "Macros",
   "network-tools": "Network Tools",
 };
 
@@ -37,6 +39,7 @@ export function Sidebar({ width }: SidebarProps) {
         {sidebarView === "tunnels" && <TunnelSidebar />}
         {sidebarView === "services" && <EmbeddedServerSidebar />}
         {sidebarView === "workspaces" && <WorkspaceSidebar />}
+        {sidebarView === "macros" && <MacroSidebar />}
         {sidebarView === "network-tools" && <NetworkToolsSidebar />}
       </div>
     </div>

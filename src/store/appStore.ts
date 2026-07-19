@@ -212,6 +212,7 @@ export type SidebarView =
   | "tunnels"
   | "services"
   | "workspaces"
+  | "macros"
   | "network-tools";
 
 /** Clipboard state for file browser copy/cut operations. */

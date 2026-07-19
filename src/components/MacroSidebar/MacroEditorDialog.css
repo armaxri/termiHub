@@ -1,0 +1,84 @@
+.macro-editor__steps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.macro-editor__steps-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.macro-editor__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+}
+
+.macro-editor__step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.macro-editor__step:hover {
+  background: var(--bg-hover);
+}
+
+.macro-editor__step-index {
+  flex-shrink: 0;
+  width: 20px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: right;
+}
+
+.macro-editor__step-data {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro-editor__step-delay {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.macro-editor__step-delay .ui-input {
+  width: 72px;
+}
+
+.macro-editor__step-unit {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.macro-editor__step-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.macro-editor__empty {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 12px;
+  text-align: center;
+}
