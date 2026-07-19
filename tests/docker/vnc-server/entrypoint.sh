@@ -49,4 +49,31 @@ for _ in 1 2 3; do
     sleep 0.5
 done
 
+# Own a known X selection so x11vnc forwards it to the client as an RFB
+# ServerCutText — the server->client clipboard path asserted by the VNC
+# integration test (#1737). This string MUST match VNC_SERVER_CLIPBOARD in
+# core/tests/vnc.rs. Kept pure ASCII so it survives the RFB latin-1 cut-text
+# encoding unchanged.
+CLIPBOARD_TEXT="termiHub vnc server clipboard 4711"
+
+# x11vnc only emits a ServerCutText on a genuine selection *change*, and it
+# de-duplicates identical text, so a one-shot set that predates the client
+# connection may never reach it. Re-assert the selection in a loop: `xclip
+# -loops 1` holds ownership until the selection is read exactly once (x11vnc's
+# read counts), then exits, leaving the selection empty; the next iteration
+# re-owns it, which x11vnc sees as an empty->known change and pushes. This keeps
+# the known value flowing to whichever client is connected, so a client that
+# attaches at any time receives it within one iteration. PRIMARY and CLIPBOARD
+# are both covered because x11vnc may forward either.
+own_selection() {
+    sel="$1"
+    while true; do
+        printf '%s' "$CLIPBOARD_TEXT" \
+            | xclip -display :0 -selection "$sel" -loops 1 -quiet >/dev/null 2>&1 || true
+        sleep 1
+    done
+}
+own_selection primary &
+own_selection clipboard &
+
 wait "$x11vnc_pid"
