@@ -15,6 +15,7 @@
 
 mod config;
 mod frame;
+mod jpeg;
 mod keymap;
 mod tunnel;
 
@@ -134,9 +135,16 @@ fn dom_buttons_to_rfb(buttons: u8) -> u8 {
 /// preference and whether the remote cursor is wanted. `Raw` is always included
 /// (RFC requirement); `DesktopSizePseudo` lets the server announce resolution
 /// changes.
+///
+/// `Tight` is advertised ahead of ZRLE when compression is wanted — it is the
+/// most bandwidth-efficient common encoding, and its photographic sub-rects
+/// arrive as JPEG, decoded via [`jpeg::decode_jpeg_rgba`] into the shared frame
+/// stream (#1715). It is omitted under a raw preference so "Raw" stays truly
+/// uncompressed.
 fn encodings_for(cfg: &VncConfig) -> Vec<VncEncoding> {
     let mut encs = Vec::new();
     if !cfg.prefers_raw() {
+        encs.push(VncEncoding::Tight);
         encs.push(VncEncoding::Zrle);
     }
     encs.push(VncEncoding::CopyRect);
@@ -285,6 +293,39 @@ async fn drive(
     }
 }
 
+/// Decode a Tight JPEG sub-rect at `(x, y)`, blit it into the shadow, and return
+/// the [`DirtyRect`] to emit downstream — or `None` when the JPEG is malformed or
+/// lands out of bounds, in which case it is logged and dropped so a bad update
+/// never corrupts the shadow (mirroring how Raw handles a size mismatch).
+///
+/// The decoded pixel dimensions are authoritative for the blit; a full frame
+/// arriving before any resolution event grows the shadow to fit, exactly as the
+/// Raw path does.
+fn jpeg_dirty_rect(shadow: &mut FrameShadow, x: u32, y: u32, jpeg: &[u8]) -> Option<DirtyRect> {
+    let decoded = match jpeg::decode_jpeg_rgba(jpeg) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(error = %e, "vnc tight jpeg decode failed — dropped");
+            return None;
+        }
+    };
+    let (w, h) = (decoded.width, decoded.height);
+    if shadow.width() == 0 || shadow.height() == 0 {
+        shadow.resize(x + w, y + h);
+    }
+    if !shadow.blit(x, y, w, h, &decoded.rgba) {
+        warn!(x, y, w, h, "vnc tight jpeg rect out of bounds — dropped");
+        return None;
+    }
+    Some(DirtyRect {
+        x,
+        y,
+        width: w,
+        height: h,
+        data: decoded.rgba,
+    })
+}
+
 /// Handle one decoded RFB event. Returns `false` if a downstream channel closed
 /// (the session should end).
 async fn handle_event(
@@ -392,6 +433,22 @@ async fn handle_event(
                 .await
                 .is_ok()
         }
+        VncEvent::JpegImage(rect, data) => {
+            // Tight's photographic sub-rect: a self-describing JPEG independent of
+            // the negotiated RFB pixel format. Decode to RGBA, fold into the
+            // shadow, and emit a dirty-rect like any other encoding.
+            let Some(dirty) = jpeg_dirty_rect(shadow, rect.x as u32, rect.y as u32, &data) else {
+                return true; // malformed / out of bounds — already logged, dropped
+            };
+            frame_tx
+                .send(FrameUpdate {
+                    width: shadow.width(),
+                    height: shadow.height(),
+                    rects: vec![dirty],
+                })
+                .await
+                .is_ok()
+        }
         VncEvent::Text(text) => {
             *shared.clipboard.lock().await = text;
             true
@@ -400,8 +457,7 @@ async fn handle_event(
             warn!(%msg, "vnc protocol error");
             false
         }
-        // JpegImage (Tight, not negotiated), Bell, SetPixelFormat — no shared
-        // surface to route to; safely ignored.
+        // Bell, SetPixelFormat — no shared surface to route to; safely ignored.
         _ => true,
     }
 }
@@ -668,14 +724,70 @@ mod tests {
         };
         let encs = encodings_for(&raw_cfg);
         assert!(encs.contains(&VncEncoding::Raw));
-        // Raw preference omits ZRLE.
+        // Raw preference omits the compressed encodings.
         assert!(!encs.contains(&VncEncoding::Zrle));
+        assert!(!encs.contains(&VncEncoding::Tight));
 
         let zrle_cfg = VncConfig::default();
         let encs = encodings_for(&zrle_cfg);
         assert!(encs.contains(&VncEncoding::Zrle));
         assert!(encs.contains(&VncEncoding::Raw));
         assert!(encs.contains(&VncEncoding::CursorPseudo));
+    }
+
+    #[test]
+    fn encodings_offer_tight_when_compressed() {
+        // Tight is advertised under the default (compressed) preference, ahead of
+        // ZRLE, so a Tight-capable server can use the most efficient encoding.
+        let encs = encodings_for(&VncConfig::default());
+        assert!(encs.contains(&VncEncoding::Tight));
+        let tight = encs.iter().position(|e| *e == VncEncoding::Tight);
+        let zrle = encs.iter().position(|e| *e == VncEncoding::Zrle);
+        assert!(tight < zrle, "Tight should be preferred over ZRLE");
+    }
+
+    /// A solid 16×16 red Tight JPEG sub-rect fixture (shared with `jpeg` tests).
+    const RED_JPEG_16X16: &[u8] = include_bytes!("testdata/red_16x16.jpg");
+
+    #[test]
+    fn jpeg_dirty_rect_decodes_and_blits_into_shadow() {
+        let mut shadow = FrameShadow::new();
+        shadow.resize(32, 32);
+        let dirty = jpeg_dirty_rect(&mut shadow, 4, 8, RED_JPEG_16X16).expect("decoded rect");
+        assert_eq!(
+            (dirty.x, dirty.y, dirty.width, dirty.height),
+            (4, 8, 16, 16)
+        );
+        assert_eq!(dirty.data.len(), 16 * 16 * 4);
+        // The shadow now holds the decoded pixels at the target position.
+        let center = shadow.extract(4 + 8, 8 + 8, 1, 1).unwrap();
+        assert!(center[0] > 200 && center[1] < 50 && center[2] < 50); // ~red
+        assert_eq!(center[3], 255); // opaque
+    }
+
+    #[test]
+    fn jpeg_dirty_rect_grows_shadow_from_zero() {
+        // A JPEG arriving before any resolution event grows the shadow to fit.
+        let mut shadow = FrameShadow::new();
+        let dirty = jpeg_dirty_rect(&mut shadow, 0, 0, RED_JPEG_16X16).expect("decoded rect");
+        assert_eq!((dirty.width, dirty.height), (16, 16));
+        assert_eq!(shadow.width(), 16);
+        assert_eq!(shadow.height(), 16);
+    }
+
+    #[test]
+    fn jpeg_dirty_rect_rejects_out_of_bounds() {
+        let mut shadow = FrameShadow::new();
+        shadow.resize(16, 16);
+        // A 16×16 rect at (8,8) exceeds the 16×16 shadow → dropped, no panic.
+        assert!(jpeg_dirty_rect(&mut shadow, 8, 8, RED_JPEG_16X16).is_none());
+    }
+
+    #[test]
+    fn jpeg_dirty_rect_rejects_garbage() {
+        let mut shadow = FrameShadow::new();
+        shadow.resize(16, 16);
+        assert!(jpeg_dirty_rect(&mut shadow, 0, 0, &[0xff, 0x00, 0x13, 0x37]).is_none());
     }
 
     #[test]
