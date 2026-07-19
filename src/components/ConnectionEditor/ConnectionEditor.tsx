@@ -40,6 +40,8 @@ import {
   filterCredentialFields,
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
+import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
+import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
@@ -183,6 +185,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const connections = useAppStore((s) => s.connections);
   const folders = useAppStore((s) => s.folders);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
+  const refreshConnectionTypes = useAppStore((s) => s.refreshConnectionTypes);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
   const moveConnectionToFile = useAppStore((s) => s.moveConnectionToFile);
@@ -1089,6 +1092,32 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     credentialStoreStatus?.mode,
   ]);
 
+  // Guided Git-for-Windows setup for the local-shell picker (#1692), mirroring
+  // the Settings → Default Shell affordance (#1672). The local schema's `shell`
+  // select lists the backend-detected shells, so we read the offer directly off
+  // those options: on Windows with no Unix shell (bash/Git Bash/WSL) detected we
+  // surface a "Git Bash — set up…" entry point beside the picker. Skipped in
+  // agent-definition mode, where the schema reflects a remote machine's shells
+  // rather than this Windows host's.
+  const [gitBashSetupOpen, setGitBashSetupOpen] = useState(false);
+
+  const localShellOptions = useMemo<ShellType[]>(() => {
+    if (selectedType !== "local" || !currentSchema) return [];
+    for (const group of currentSchema.groups) {
+      for (const field of group.fields) {
+        if (field.key === "shell" && field.fieldType.type === "select") {
+          return field.fieldType.options.map((o) => o.value as ShellType);
+        }
+      }
+    }
+    return [];
+  }, [selectedType, currentSchema]);
+
+  const offerGitBashSetup =
+    selectedType === "local" &&
+    !isAgentDefinitionMode &&
+    shouldOfferGitBashSetup(isWindows(), localShellOptions);
+
   // Auto-set the runtime value when only one option remains
   useEffect(() => {
     if (selectedType !== "docker" || runtimesLoading || !currentSchema) return;
@@ -1200,6 +1229,24 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               : undefined
           }
         />
+      )}
+
+      {offerGitBashSetup && (
+        <div className="settings-panel__category" data-testid="git-bash-setup-section">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<TerminalSquare size={13} aria-hidden />}
+            onClick={() => setGitBashSetupOpen(true)}
+            data-testid="connection-editor-git-bash-setup"
+          >
+            Git Bash — set up…
+          </Button>
+          <p className="settings-form__hint">
+            No Unix shell detected. Install Git for Windows to run bash, grep, curl and ssh from this
+            local connection.
+          </p>
+        </div>
       )}
 
       {showJumpHostSection && (
@@ -1378,6 +1425,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         onCancel={handleDialogCancel}
         onJustClose={handleDialogJustClose}
         onSaveAndClose={handleDialogSaveAndClose}
+      />
+
+      <GitBashSetupDialog
+        open={gitBashSetupOpen}
+        onOpenChange={(open) => {
+          setGitBashSetupOpen(open);
+          // Re-detect on close so a just-installed Git Bash appears in the
+          // shell picker without reopening the editor (#1692).
+          if (!open) void refreshConnectionTypes();
+        }}
+        onInstallGuided={() => void refreshConnectionTypes()}
       />
     </div>
   );
