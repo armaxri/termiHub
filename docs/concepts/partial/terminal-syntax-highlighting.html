@@ -1,0 +1,886 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Terminal Output Syntax Highlighting (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Terminal Output Syntax Highlighting</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Partial</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/522">#522</a></span>
+          <span><code>docs/concepts/partial/terminal-syntax-highlighting.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+          <li><a href="#implementation-status">Implementation Status</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>Add client-side syntax highlighting to terminal output, colorizing recognizable patterns — commands, file paths, IP addresses, URLs, numbers, error/success keywords, and quoted strings — directly in the xterm.js terminal view.</p>
+<p><strong>Motivation</strong>: Tools like MobaXterm highlight syntax in terminal output for improved readability. While modern shells provide their own coloring (via <code>LS_COLORS</code>, prompt themes, <code>--color</code> flags), much terminal output arrives as plain uncolored text — log files, <code>cat</code> output, build results, configuration dumps, and commands that don't emit ANSI color. Client-side highlighting fills this gap without requiring server-side configuration.</p>
+<p><strong>Key goals</strong>:</p>
+<ul>
+<li><strong>Improved readability</strong>: Colorize plain-text output so patterns like errors, paths, and URLs stand out visually</li>
+<li><strong>Non-destructive</strong>: Never override colors already set by ANSI escape sequences from the remote server</li>
+<li><strong>Performant</strong>: Regex matching must not introduce visible input lag or rendering delays</li>
+<li><strong>Configurable</strong>: Enable/disable globally and per-connection, with customizable highlight rules</li>
+<li><strong>Extensible</strong>: Built-in rule set plus user-defined custom rules (regex → color mapping)</li>
+</ul>
+<h3 id="built-in-highlight-categories">Built-in Highlight Categories</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Priority</th>
+<th>Category</th>
+<th>Examples</th>
+<th>Default Color</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0</td>
+<td>Error keywords</td>
+<td><code>ERROR</code>, <code>FAIL</code>, <code>FATAL</code>, <code>CRITICAL</code>, <code>DENIED</code></td>
+<td>Red</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Warning keywords</td>
+<td><code>WARN</code>, <code>WARNING</code>, <code>DEPRECATED</code></td>
+<td>Yellow/Orange</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Success keywords</td>
+<td><code>OK</code>, <code>PASS</code>, <code>SUCCESS</code>, <code>DONE</code>, <code>CONNECTED</code></td>
+<td>Green</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>URLs</td>
+<td><code>https://example.com</code>, <code>http://...</code>, <code>ftp://...</code></td>
+<td>Blue (underlined)</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>File paths</td>
+<td><code>/usr/local/bin/foo</code>, <code>./config.json</code>, <code>~/docs</code></td>
+<td>Cyan</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>IP addresses</td>
+<td><code>192.168.1.1</code>, <code>::1</code>, <code>fe80::1%eth0</code></td>
+<td>Magenta</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Numbers</td>
+<td><code>42</code>, <code>3.14</code>, <code>0xFF</code>, <code>1,234,567</code></td>
+<td>Bright cyan</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Quoted strings</td>
+<td><code>"hello world"</code>, <code>'config value'</code></td>
+<td>Yellow</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Email addresses</td>
+<td><code>user@example.com</code></td>
+<td>Blue (underlined)</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>MAC addresses</td>
+<td><code>00:1A:2B:3C:4D:5E</code></td>
+<td>Magenta</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Dates/times</td>
+<td><code>2026-03-21</code>, <code>14:30:05</code>, ISO 8601 timestamps</td>
+<td>Bright green</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>UUIDs</td>
+<td><code>550e8400-e29b-41d4-a716-446655440000</code></td>
+<td>Dim/muted</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Hex values</td>
+<td><code>0xDEADBEEF</code>, <code>#FF5733</code></td>
+<td>Bright cyan</td>
+</tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="settings-panel-syntax-highlighting-category">Settings Panel — Syntax Highlighting Category</h3>
+<p>A new <strong>Syntax Highlighting</strong> section appears in the <strong>Terminal</strong> settings category:</p>
+<pre><code>┌─ Terminal Settings ────────────────────────────────────────┐
+│                                                            │
+│  ... (existing terminal settings: scrollback, cursor, ...) │
+│                                                            │
+│  ─── Syntax Highlighting ───                               │
+│                                                            │
+│  ENABLE SYNTAX HIGHLIGHTING                                │
+│  [✓]                                                       │
+│  Colorize patterns in terminal output (errors, paths,      │
+│  URLs, etc.). Does not override server-sent ANSI colors.   │
+│                                                            │
+│  BUILT-IN RULES                                            │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ [✓] Error keywords    ERROR, FAIL, FATAL    ■ Red │    │
+│  │ [✓] Warning keywords  WARN, WARNING         ■ Yel │    │
+│  │ [✓] Success keywords  OK, PASS, SUCCESS     ■ Grn │    │
+│  │ [✓] URLs              https://...           ■ Blu │    │
+│  │ [✓] File paths        /usr/local/...        ■ Cyn │    │
+│  │ [✓] IP addresses      192.168.1.1           ■ Mag │    │
+│  │ [✓] Numbers           42, 3.14, 0xFF        ■ BCy │    │
+│  │ [ ] Quoted strings    &quot;hello&quot;, 'world'      ■ Yel │    │
+│  │ [ ] Email addresses   user@example.com      ■ Blu │    │
+│  │ [ ] MAC addresses     00:1A:2B:...          ■ Mag │    │
+│  │ [ ] Dates/times       2026-03-21            ■ BGr │    │
+│  │ [ ] UUIDs             550e8400-...          ■ Dim │    │
+│  │ [ ] Hex values        0xDEADBEEF            ■ BCy │    │
+│  └────────────────────────────────────────────────────┘    │
+│  P0 and P1 rules enabled by default; P2/P3 off by default │
+│                                                            │
+│  CUSTOM RULES                                              │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ (no custom rules)                                  │    │
+│  │                                                    │    │
+│  │ [+ Add Rule]                                       │    │
+│  └────────────────────────────────────────────────────┘    │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="custom-rule-editor">Custom Rule Editor</h3>
+<p>Clicking <strong>"+ Add Rule"</strong> opens an inline editor:</p>
+<pre><code>┌─ New Custom Rule ─────────────────────────────────────────┐
+│                                                            │
+│  NAME                                                      │
+│  [                                          ]              │
+│                                                            │
+│  PATTERN (regex)                                           │
+│  [                                          ]              │
+│  Case sensitive [✓]   Whole word [ ]                       │
+│                                                            │
+│  STYLE                                                     │
+│  Color: [■ #FF5733 ▾]                                      │
+│  Bold: [ ]   Italic: [ ]   Underline: [ ]                 │
+│                                                            │
+│  PREVIEW                                                   │
+│  ┌──────────────────────────────────────────────┐          │
+│  │ $ cat server.log                             │          │
+│  │ [INFO] Server started on port 8080           │          │
+│  │ [ERROR] Connection refused to 10.0.0.1       │          │
+│  │ Processing file /tmp/data.csv ...            │          │
+│  │ Result: 42 items found                       │          │
+│  └──────────────────────────────────────────────┘          │
+│  Shows how the rule highlights sample terminal output      │
+│                                                            │
+│  [Cancel]                              [Save Rule]         │
+└────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>The preview box renders a static sample of terminal-like text with the current rule applied, giving users immediate visual feedback. When editing an existing rule, the preview also shows other active rules so users can see interactions.</p>
+<h3 id="per-connection-override">Per-Connection Override</h3>
+<p>In the <strong>Connection Editor → Terminal</strong> tab, a syntax highlighting toggle lets users override the global setting:</p>
+<pre><code>┌─ Connection Terminal Settings ──────────────────────────┐
+│                                                          │
+│  ... (existing per-connection settings) ...              │
+│                                                          │
+│  SYNTAX HIGHLIGHTING                                     │
+│  [Use global default ▾]                                  │
+│   ┌───────────────────┐                                  │
+│   │ Use global default│  ← follows global on/off         │
+│   │ Always on         │  ← force enable for this conn    │
+│   │ Always off        │  ← force disable for this conn   │
+│   └───────────────────┘                                  │
+│                                                          │
+│  ADDITIONAL RULES FOR THIS CONNECTION                    │
+│  ┌──────────────────────────────────────────────┐        │
+│  │ (inherit global rules)                        │        │
+│  │                                               │        │
+│  │ [+ Add Connection Rule]                       │        │
+│  └──────────────────────────────────────────────┘        │
+│  Connection-specific rules are applied after global      │
+│  rules. They can add new patterns but not remove         │
+│  global rules.                                           │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="status-bar-indicator">Status Bar Indicator</h3>
+<p>When syntax highlighting is active for a terminal session, a small indicator appears in the status bar:</p>
+<pre><code>┌──────────────────────────────────────────────────────────┐
+│ ● Connected  |  bash  |  Highlighting: ON  |  UTF-8     │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Clicking the indicator toggles highlighting on/off for the current session (temporary override, not persisted).</p>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="core-workflow">Core Workflow</h3>
+<ol>
+<li><strong>User opens a terminal session</strong> — the terminal component checks whether syntax highlighting is enabled (global setting → per-connection override)</li>
+<li><strong>Output arrives</strong> — data flows through the existing buffered pipeline (<code>TerminalOutputDispatcher</code> → <code>outputBuffer</code> → <code>requestAnimationFrame</code> → <code>xterm.write()</code>)</li>
+<li><strong>After xterm.js parses the output</strong> — the highlighting engine scans newly written lines in the terminal buffer for pattern matches</li>
+<li><strong>Decorations are applied</strong> — matched ranges receive xterm.js buffer decorations (foreground color overlays) on cells that don't already have ANSI-set foreground colors</li>
+<li><strong>User scrolls</strong> — decorations persist in the buffer; no re-scanning needed for already-decorated lines</li>
+<li><strong>User toggles highlighting off</strong> — all decorations are removed; the terminal shows raw output</li>
+</ol>
+<h3 id="ansi-color-conflict-avoidance">ANSI Color Conflict Avoidance</h3>
+<p>The most critical design constraint: <strong>never override colors set by the remote server</strong>.</p>
+<p>Strategy:</p>
+<ol>
+<li>After xterm.js writes and parses output, inspect the terminal buffer cells for the newly written range</li>
+<li>For each cell in a potential match range, check <code>cell.isFgDefault()</code> (or equivalent — whether the foreground was set by an ANSI SGR sequence)</li>
+<li><strong>Only apply highlighting to cells with default (unset) foreground color</strong></li>
+<li>If a match partially overlaps ANSI-colored text, split the decoration — only highlight the uncolored segments</li>
+</ol>
+<pre><code>Server output:        [ERROR] Failed to connect to 192.168.1.1
+ANSI-colored by server: ^^^^^^^^^^^  (red via ANSI SGR)
+Highlighting applied:                                   ^^^^^^^^^^^
+                                                         IP address
+</code></pre>
+<p>This ensures server-intended coloring always takes precedence.</p>
+<h3 id="performance-strategy">Performance Strategy</h3>
+<p>Terminal output can be high-throughput (megabytes/second for <code>cat</code> of large files). The highlighting engine must not introduce lag.</p>
+<ol>
+<li><strong>Post-write scanning only</strong>: Highlight after <code>xterm.write()</code> completes (using <code>xterm.onWriteParsed</code> callback), not by intercepting the data stream</li>
+<li><strong>Line-based processing</strong>: Scan only newly written/changed lines, not the entire buffer</li>
+<li><strong>Compiled regex set</strong>: Pre-compile all active rule regexes into a single combined pattern (or use a multi-pattern matcher) at rule-change time, not per-write</li>
+<li><strong>Debounced batch processing</strong>: During high-throughput output (e.g., <code>cat</code> of a large file), batch decoration updates and apply them in animation frame callbacks</li>
+<li><strong>Line budget</strong>: Process at most N lines per frame (e.g., 100 lines). If output arrives faster, queue remaining lines and process in subsequent frames</li>
+<li><strong>Dirty line tracking</strong>: Track which lines have been scanned. On new writes, only scan newly dirty lines. Avoid re-scanning already-highlighted lines.</li>
+<li><strong>Quick bail-out</strong>: If the terminal is receiving data faster than a threshold (e.g., &gt;50 writes/second), pause highlighting and catch up when output settles</li>
+</ol>
+<h3 id="rule-evaluation-order">Rule Evaluation Order</h3>
+<p>When multiple rules match overlapping text on the same line:</p>
+<ol>
+<li><strong>Longest match wins</strong> — if an IP address <code>192.168.1.1</code> also matches the "numbers" rule on <code>192</code>, the IP rule takes precedence because it's a longer match</li>
+<li><strong>Higher priority wins on equal length</strong> — P0 rules beat P1 rules</li>
+<li><strong>First match wins on equal priority</strong> — left-to-right, first rule in the list</li>
+<li><strong>User custom rules are evaluated after built-in rules</strong> — custom rules can add new highlights but built-in rules match first</li>
+<li><strong>Connection-specific rules</strong> are evaluated after global custom rules</li>
+</ol>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>Wrapped lines</strong>: xterm.js wraps long lines across multiple buffer rows. The highlight engine must check <code>isWrapped</code> on buffer lines and treat consecutive wrapped lines as a single logical line for pattern matching.</li>
+<li><strong>Partial writes</strong>: Terminal output may arrive in chunks mid-line. Highlighting should defer until the line is "complete" (next newline or a debounce timeout).</li>
+<li><strong>Terminal resize</strong>: When the terminal is resized, xterm.js reflows the buffer. Decorations may need to be recomputed for reflowed lines. Listen to <code>xterm.onResize</code> and mark reflowed lines as dirty.</li>
+<li><strong>Screen clear / reset</strong>: On <code>\033[2J</code> (clear screen) or <code>\033c</code> (reset), discard all decoration state. The existing <code>OutputCoalescer</code> screen-clear detection can trigger this.</li>
+<li><strong>Scrollback eviction</strong>: When old lines are evicted from the scrollback buffer, their decorations are automatically cleaned up (xterm.js handles this for buffer decorations).</li>
+<li><strong>Alternating screen buffer</strong>: Applications like <code>vim</code>, <code>less</code>, <code>htop</code> use the alternate screen buffer. Highlighting should be disabled while the alternate buffer is active (detect via <code>xterm.buffer.active !== xterm.buffer.normal</code>).</li>
+<li><strong>Right-to-left text</strong>: Some terminals output RTL text. The regex patterns assume LTR; this is acceptable as a known limitation — RTL terminals are rare and highlighting is purely additive.</li>
+<li><strong>Very long lines</strong>: Lines exceeding a threshold (e.g., 10,000 chars) should be skipped to prevent regex backtracking performance issues.</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="highlighting-engine-state-machine">Highlighting Engine State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Disabled: feature off
+
+    state Enabled {
+        [*] --&gt; Idle
+        Idle --&gt; Scanning: new output written
+        Scanning --&gt; Decorating: matches found
+        Scanning --&gt; Idle: no matches
+        Decorating --&gt; Idle: decorations applied
+        Idle --&gt; Paused: throughput &gt; threshold
+        Paused --&gt; Idle: throughput normalizes
+        Paused --&gt; CatchingUp: output settles
+        CatchingUp --&gt; Idle: backlog cleared
+    }
+
+    Disabled --&gt; Enabled: user enables
+    Enabled --&gt; Disabled: user disables
+    Enabled --&gt; ClearAll: screen clear / reset
+    ClearAll --&gt; Enabled
+</pre>
+</div>
+<h3 id="output-pipeline-with-highlighting">Output Pipeline with Highlighting</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Backend as Rust Backend
+    participant Dispatcher as TerminalOutputDispatcher
+    participant Buffer as Output Buffer
+    participant XTerm as xterm.js
+    participant Engine as Highlight Engine
+    participant Decorations as Buffer Decorations
+
+    Backend-&gt;&gt;Dispatcher: terminal output (bytes)
+    Dispatcher-&gt;&gt;Buffer: push to outputBuffer
+    Note over Buffer: requestAnimationFrame
+    Buffer-&gt;&gt;XTerm: xterm.write(data)
+    XTerm-&gt;&gt;XTerm: parse ANSI, update buffer
+    XTerm-&gt;&gt;Engine: onWriteParsed callback
+    Engine-&gt;&gt;Engine: identify dirty lines
+    Engine-&gt;&gt;XTerm: read buffer cells for dirty lines
+    Engine-&gt;&gt;Engine: run regex matches on text
+    Engine-&gt;&gt;Engine: filter out ANSI-colored cells
+    Engine-&gt;&gt;Decorations: apply foreground color decorations
+</pre>
+</div>
+<h3 id="settings-resolution-flow">Settings Resolution Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Terminal session opens] --&gt; B{Per-connection&lt;br&gt;override set?}
+    B --&gt;|Always on| C[Highlighting enabled]
+    B --&gt;|Always off| D[Highlighting disabled]
+    B --&gt;|Use global default| E{Global setting&lt;br&gt;enabled?}
+    E --&gt;|Yes| C
+    E --&gt;|No| D
+    C --&gt; F[Load global built-in rules&lt;br&gt;filtered by enabled flags]
+    F --&gt; G[Load global custom rules]
+    G --&gt; H[Load connection-specific rules]
+    H --&gt; I[Compile combined regex matcher]
+    I --&gt; J[Register onWriteParsed handler]
+</pre>
+</div>
+<h3 id="rule-matching-flow">Rule Matching Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Dirty line detected] --&gt; B[Extract text from buffer line]
+    B --&gt; C{Line length&lt;br&gt;&gt; 10000 chars?}
+    C --&gt;|Yes| D[Skip line]
+    C --&gt;|No| E[Run combined regex matcher]
+    E --&gt; F[Collect all matches with positions]
+    F --&gt; G[Sort by position, resolve overlaps&lt;br&gt;longest match + priority wins]
+    G --&gt; H{Next match}
+    H --&gt; I[Check buffer cells in match range]
+    I --&gt; J{All cells have&lt;br&gt;default FG?}
+    J --&gt;|Yes| K[Apply decoration with rule color]
+    J --&gt;|No - partial| L[Split: decorate only default-FG cells]
+    J --&gt;|No - all colored| M[Skip match]
+    K --&gt; H
+    L --&gt; H
+    M --&gt; H
+    H --&gt;|No more matches| N[Done]
+</pre>
+</div>
+<h3 id="toggle-and-lifecycle">Toggle and Lifecycle</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant StatusBar as Status Bar
+    participant Store as Zustand Store
+    participant Terminal as Terminal Component
+    participant Engine as Highlight Engine
+
+    User-&gt;&gt;StatusBar: click "Highlighting: ON"
+    StatusBar-&gt;&gt;Store: setSessionHighlighting(sessionId, false)
+    Store-&gt;&gt;Terminal: state change notification
+    Terminal-&gt;&gt;Engine: disable()
+    Engine-&gt;&gt;Engine: remove all decorations
+    Engine-&gt;&gt;Engine: unregister onWriteParsed
+    StatusBar-&gt;&gt;StatusBar: update to "Highlighting: OFF"
+
+    Note over User: Later...
+    User-&gt;&gt;StatusBar: click "Highlighting: OFF"
+    StatusBar-&gt;&gt;Store: setSessionHighlighting(sessionId, true)
+    Store-&gt;&gt;Terminal: state change notification
+    Terminal-&gt;&gt;Engine: enable()
+    Engine-&gt;&gt;Engine: register onWriteParsed
+    Engine-&gt;&gt;Engine: scan visible viewport lines
+    StatusBar-&gt;&gt;StatusBar: update to "Highlighting: ON"
+</pre>
+</div>
+<h3 id="high-throughput-handling">High-Throughput Handling</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Normal
+
+    Normal --&gt; Throttled: writes/sec &gt; 50
+    Throttled --&gt; Normal: writes/sec &lt; 20 for 500ms
+
+    state Normal {
+        [*] --&gt; ProcessAll
+        ProcessAll: Process all dirty lines per frame
+    }
+
+    state Throttled {
+        [*] --&gt; SkipNew
+        SkipNew: Skip highlighting on new output
+        SkipNew --&gt; Backfill: output rate drops
+        Backfill: Scan unhighlighted lines in batches
+        Backfill --&gt; SkipNew: new burst detected
+        Backfill --&gt; [*]: backlog cleared
+    }
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>Based on the current termiHub architecture as of issue creation. The codebase may evolve before implementation.</p>
+</blockquote>
+<h3 id="new-files">New Files</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/services/syntaxHighlighting.ts</code></td>
+<td>Core highlighting engine class</td>
+</tr>
+<tr>
+<td><code>src/services/syntaxHighlightingRules.ts</code></td>
+<td>Built-in rule definitions and regex patterns</td>
+</tr>
+<tr>
+<td><code>src/components/Settings/SyntaxHighlightingSettings.tsx</code></td>
+<td>Global settings UI for highlight rules</td>
+</tr>
+<tr>
+<td><code>src/components/Settings/CustomRuleEditor.tsx</code></td>
+<td>Inline editor for custom rules</td>
+</tr>
+<tr>
+<td><code>src/components/ConnectionEditor/ConnectionHighlightingSettings.tsx</code></td>
+<td>Per-connection override settings</td>
+</tr>
+<tr>
+<td><code>src/types/syntaxHighlighting.ts</code></td>
+<td>Type definitions for rules, config, state</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="modified-files">Modified Files</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/components/Terminal/Terminal.tsx</code></td>
+<td>Instantiate and wire up the highlighting engine</td>
+</tr>
+<tr>
+<td><code>src/components/Settings/TerminalSettings.tsx</code></td>
+<td>Add link/section for syntax highlighting settings</td>
+</tr>
+<tr>
+<td><code>src/components/ConnectionEditor/ConnectionTerminalSettings.tsx</code></td>
+<td>Add syntax highlighting override dropdown</td>
+</tr>
+<tr>
+<td><code>src/components/StatusBar/StatusBar.tsx</code></td>
+<td>Add highlighting indicator</td>
+</tr>
+<tr>
+<td><code>src/store/appStore.ts</code></td>
+<td>Add syntax highlighting state and per-session toggles</td>
+</tr>
+<tr>
+<td><code>src/types/connection.ts</code></td>
+<td>Extend <code>AppSettings</code> and <code>TerminalOptions</code> interfaces</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="type-definitions-srctypessyntaxhighlightingts">Type Definitions (<code>src/types/syntaxHighlighting.ts</code>)</h3>
+<pre><code class="language-typescript">export interface HighlightStyle {
+  color: string; // hex color, e.g. &quot;#FF0000&quot;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+export interface HighlightRule {
+  id: string; // unique identifier
+  name: string; // display name
+  pattern: string; // regex pattern string
+  style: HighlightStyle;
+  caseSensitive?: boolean; // default: true
+  wholeWord?: boolean; // default: false
+  enabled: boolean;
+  priority: number; // lower = higher priority (P0=0, P1=1, etc.)
+  builtin: boolean; // true for built-in rules, false for user-defined
+}
+
+export interface SyntaxHighlightingConfig {
+  enabled: boolean; // global enable/disable
+  builtinRules: Record&lt;string, boolean&gt;; // rule-id → enabled
+  customRules: HighlightRule[]; // user-defined rules
+}
+
+// Per-connection override
+export type ConnectionHighlightingOverride =
+  | &quot;global&quot; // follow global setting
+  | &quot;always-on&quot; // force enable
+  | &quot;always-off&quot;; // force disable
+
+export interface ConnectionHighlightingConfig {
+  override: ConnectionHighlightingOverride;
+  additionalRules: HighlightRule[]; // connection-specific rules
+}
+</code></pre>
+<h3 id="settings-extension-srctypesconnectionts">Settings Extension (<code>src/types/connection.ts</code>)</h3>
+<pre><code class="language-typescript">// Add to AppSettings:
+export interface AppSettings {
+  // ... existing fields ...
+  syntaxHighlighting?: SyntaxHighlightingConfig;
+}
+
+// Add to TerminalOptions (per-connection):
+export interface TerminalOptions {
+  // ... existing fields ...
+  syntaxHighlighting?: ConnectionHighlightingConfig;
+}
+</code></pre>
+<h3 id="highlighting-engine-srcservicessyntaxhighlightingts">Highlighting Engine (<code>src/services/syntaxHighlighting.ts</code>)</h3>
+<p>The engine is a class instantiated per terminal:</p>
+<pre><code class="language-typescript">class SyntaxHighlightingEngine {
+  private xterm: Terminal;
+  private rules: HighlightRule[];
+  private combinedRegex: RegExp | null;
+  private decorations: Map&lt;number, IDecoration[]&gt;; // line → decorations
+  private dirtyLines: Set&lt;number&gt;;
+  private enabled: boolean;
+  private throttled: boolean;
+  private writeCounter: number;
+  private disposables: IDisposable[];
+
+  constructor(xterm: Terminal) {
+    /* ... */
+  }
+
+  enable(rules: HighlightRule[]): void {
+    // Compile regex, register onWriteParsed handler
+  }
+
+  disable(): void {
+    // Remove all decorations, unregister handlers
+  }
+
+  updateRules(rules: HighlightRule[]): void {
+    // Recompile regex, re-scan visible viewport
+  }
+
+  private onWriteParsed(): void {
+    // Identify dirty lines, check throughput, schedule scanning
+  }
+
+  private scanLines(startLine: number, endLine: number): void {
+    // For each line: extract text, run regex, check ANSI colors, apply decorations
+  }
+
+  private applyDecoration(
+    line: number,
+    startCol: number,
+    endCol: number,
+    style: HighlightStyle
+  ): void {
+    // Create xterm.js marker + decoration, skip ANSI-colored cells
+  }
+
+  dispose(): void {
+    // Clean up all decorations and event listeners
+  }
+}
+</code></pre>
+<h3 id="xtermjs-decoration-api-usage">xterm.js Decoration API Usage</h3>
+<p>xterm.js provides a <code>registerDecoration()</code> API for overlaying styles on buffer ranges:</p>
+<pre><code class="language-typescript">// Create a marker at the target line
+const marker = xterm.registerMarker(lineOffset);
+
+// Register a decoration on that marker
+const decoration = xterm.registerDecoration({
+  marker,
+  x: startColumn,
+  width: matchLength,
+});
+
+// Style the decoration element when it renders
+decoration.onRender((element) =&gt; {
+  element.style.color = rule.style.color;
+  if (rule.style.bold) element.style.fontWeight = &quot;bold&quot;;
+  if (rule.style.underline) element.style.textDecoration = &quot;underline&quot;;
+});
+</code></pre>
+<p><strong>Note</strong>: The xterm.js decoration API creates DOM elements overlaid on the terminal canvas. For high volumes of decorations, this may have performance implications. An alternative approach is to use the <code>xterm.buffer</code> API to directly inspect and modify cell attributes, but this is less clean. The implementation should benchmark both approaches and choose the more performant one.</p>
+<h3 id="integration-in-terminaltsx">Integration in Terminal.tsx</h3>
+<pre><code class="language-typescript">// In the terminal setup effect (after xterm is created):
+const highlightEngine = new SyntaxHighlightingEngine(xterm);
+
+// Resolve effective settings
+const effectiveConfig = resolveHighlightingConfig(
+  appSettings.syntaxHighlighting,
+  tabTermOpts?.syntaxHighlighting
+);
+
+if (effectiveConfig.enabled) {
+  const rules = resolveActiveRules(effectiveConfig);
+  highlightEngine.enable(rules);
+}
+
+// React to settings changes
+useEffect(() =&gt; {
+  const config = resolveHighlightingConfig(/* ... */);
+  if (config.enabled) {
+    highlightEngine.updateRules(resolveActiveRules(config));
+  } else {
+    highlightEngine.disable();
+  }
+}, [syntaxHighlightingSettings]);
+
+// Cleanup
+return () =&gt; {
+  highlightEngine.dispose();
+};
+</code></pre>
+<h3 id="built-in-rule-definitions-srcservicessyntaxhighlightingrulests">Built-in Rule Definitions (<code>src/services/syntaxHighlightingRules.ts</code>)</h3>
+<pre><code class="language-typescript">export const BUILTIN_RULES: HighlightRule[] = [
+  {
+    id: &quot;error-keywords&quot;,
+    name: &quot;Error keywords&quot;,
+    pattern: &quot;\\b(ERROR|FAIL(ED)?|FATAL|CRITICAL|DENIED|REFUSED|ABORT(ED)?)\\b&quot;,
+    style: { color: &quot;#F44747&quot; },
+    caseSensitive: false,
+    priority: 0,
+    builtin: true,
+    enabled: true,
+  },
+  {
+    id: &quot;warning-keywords&quot;,
+    name: &quot;Warning keywords&quot;,
+    pattern: &quot;\\b(WARN(ING)?|DEPRECATED|CAUTION)\\b&quot;,
+    style: { color: &quot;#CCA700&quot; },
+    caseSensitive: false,
+    priority: 0,
+    builtin: true,
+    enabled: true,
+  },
+  {
+    id: &quot;success-keywords&quot;,
+    name: &quot;Success keywords&quot;,
+    pattern: &quot;\\b(OK|PASS(ED)?|SUCCESS(FUL)?|DONE|CONNECTED|COMPLETE(D)?)\\b&quot;,
+    style: { color: &quot;#89D185&quot; },
+    caseSensitive: false,
+    priority: 0,
+    builtin: true,
+    enabled: true,
+  },
+  {
+    id: &quot;urls&quot;,
+    name: &quot;URLs&quot;,
+    pattern: &quot;(https?|ftp)://[^\\s\&quot;'&lt;&gt;]+&quot;,
+    style: { color: &quot;#6796E6&quot;, underline: true },
+    priority: 0,
+    builtin: true,
+    enabled: true,
+  },
+  {
+    id: &quot;file-paths&quot;,
+    name: &quot;File paths&quot;,
+    pattern: &quot;(?:~|\\.\\.?)?/[\\w./-]+&quot;,
+    style: { color: &quot;#4EC9B0&quot; },
+    priority: 1,
+    builtin: true,
+    enabled: true,
+  },
+  {
+    id: &quot;ip-addresses&quot;,
+    name: &quot;IP addresses&quot;,
+    pattern:
+      &quot;\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}(:\\d+)?\\b|\\[?[0-9a-fA-F:]{2,39}(%.+?)?\\]?&quot;,
+    style: { color: &quot;#C586C0&quot; },
+    priority: 1,
+    builtin: true,
+    enabled: true,
+  },
+  {
+    id: &quot;numbers&quot;,
+    name: &quot;Numbers&quot;,
+    pattern: &quot;\\b(0x[0-9a-fA-F]+|\\d[\\d,]*\\.?\\d*)\\b&quot;,
+    style: { color: &quot;#B5CEA8&quot; },
+    priority: 1,
+    builtin: true,
+    enabled: true,
+  },
+  // P2 rules (disabled by default)
+  {
+    id: &quot;quoted-strings&quot;,
+    name: &quot;Quoted strings&quot;,
+    pattern: &quot;\&quot;[^\&quot;\\n]{1,200}\&quot;|'[^'\\n]{1,200}'&quot;,
+    style: { color: &quot;#CE9178&quot; },
+    priority: 2,
+    builtin: true,
+    enabled: false,
+  },
+  {
+    id: &quot;email-addresses&quot;,
+    name: &quot;Email addresses&quot;,
+    pattern: &quot;[\\w.+-]+@[\\w.-]+\\.[a-zA-Z]{2,}&quot;,
+    style: { color: &quot;#6796E6&quot;, underline: true },
+    priority: 2,
+    builtin: true,
+    enabled: false,
+  },
+  {
+    id: &quot;mac-addresses&quot;,
+    name: &quot;MAC addresses&quot;,
+    pattern: &quot;\\b([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\\b&quot;,
+    style: { color: &quot;#C586C0&quot; },
+    priority: 2,
+    builtin: true,
+    enabled: false,
+  },
+  // P3 rules (disabled by default)
+  {
+    id: &quot;dates-times&quot;,
+    name: &quot;Dates/times&quot;,
+    pattern:
+      &quot;\\b\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})?)?)?\\b|\\b\\d{2}:\\d{2}(:\\d{2})?\\b&quot;,
+    style: { color: &quot;#89D185&quot; },
+    priority: 3,
+    builtin: true,
+    enabled: false,
+  },
+  {
+    id: &quot;uuids&quot;,
+    name: &quot;UUIDs&quot;,
+    pattern: &quot;\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b&quot;,
+    style: { color: &quot;#808080&quot; },
+    priority: 3,
+    builtin: true,
+    enabled: false,
+  },
+];
+</code></pre>
+<h3 id="theme-aware-colors">Theme-Aware Colors</h3>
+<p>Built-in rule colors should adapt to the active theme. Rather than hardcoding hex values, the rules reference semantic color tokens that resolve through the theme engine:</p>
+<pre><code class="language-typescript">// In syntaxHighlightingRules.ts
+export function getThemedRuleColor(ruleId: string): string {
+  const theme = getCurrentTheme();
+  const colorMap: Record&lt;string, string&gt; = {
+    &quot;error-keywords&quot;: theme.colors.colorError,
+    &quot;warning-keywords&quot;: theme.colors.colorWarning,
+    &quot;success-keywords&quot;: theme.colors.colorSuccess,
+    urls: theme.colors.textLink,
+    // ... etc
+  };
+  return colorMap[ruleId] ?? theme.colors.textPrimary;
+}
+</code></pre>
+<p>Custom user rules use explicit hex colors since they aren't tied to theme semantics.</p>
+<h3 id="regex-safety">Regex Safety</h3>
+<p>User-defined regex patterns pose a risk of catastrophic backtracking (ReDoS). Mitigations:</p>
+<ol>
+<li><strong>Execution timeout</strong>: Run user regex matches with a timeout (e.g., 50ms per line). If a regex exceeds the timeout, disable that rule and notify the user.</li>
+<li><strong>Pattern validation</strong>: On rule save, test the regex against a set of adversarial strings. Reject patterns that show exponential behavior.</li>
+<li><strong>Length limits</strong>: Cap regex pattern length at 500 characters.</li>
+<li><strong>No lookahead/lookbehind for custom rules</strong>: Restrict custom rules to a safe regex subset (optional — may be too limiting).</li>
+</ol>
+<h3 id="implementation-order">Implementation Order</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    A[1. Types &amp;&lt;br&gt;data model] --&gt; B[2. Rule&lt;br&gt;definitions]
+    B --&gt; C[3. Highlight&lt;br&gt;engine core]
+    C --&gt; D[4. Terminal.tsx&lt;br&gt;integration]
+    D --&gt; E[5. Settings UI&lt;br&gt;global]
+    E --&gt; F[6. Per-connection&lt;br&gt;overrides]
+    F --&gt; G[7. Status bar&lt;br&gt;indicator]
+    G --&gt; H[8. Custom rule&lt;br&gt;editor]
+    H --&gt; I[9. Performance&lt;br&gt;tuning]
+    I --&gt; J[10. Theme&lt;br&gt;integration]
+</pre>
+</div>
+<ol>
+<li><strong>Types &amp; data model</strong> — Define <code>HighlightRule</code>, <code>SyntaxHighlightingConfig</code>, extend <code>AppSettings</code>/<code>TerminalOptions</code></li>
+<li><strong>Rule definitions</strong> — Implement built-in rules with tested regex patterns</li>
+<li><strong>Highlight engine core</strong> — <code>SyntaxHighlightingEngine</code> class with enable/disable/scan/decorate</li>
+<li><strong>Terminal integration</strong> — Wire engine into <code>Terminal.tsx</code> lifecycle</li>
+<li><strong>Global settings UI</strong> — Built-in rule toggles in Terminal settings</li>
+<li><strong>Per-connection overrides</strong> — Override dropdown in Connection Editor</li>
+<li><strong>Status bar indicator</strong> — Quick toggle indicator</li>
+<li><strong>Custom rule editor</strong> — Inline editor with preview</li>
+<li><strong>Performance tuning</strong> — Throughput detection, throttling, line budgets</li>
+<li><strong>Theme integration</strong> — Semantic color mapping through theme engine</li>
+</ol>
+<h3 id="testing-strategy">Testing Strategy</h3>
+<ul>
+<li><strong>Unit tests</strong>: Rule regex matching (verify each built-in pattern matches expected strings and rejects others), overlap resolution logic, ANSI-conflict detection</li>
+<li><strong>Integration tests</strong>: Engine lifecycle (enable → write → scan → decorate → disable → verify cleanup)</li>
+<li><strong>Performance tests</strong>: Benchmark scanning throughput with large output volumes (&gt;10,000 lines), verify no frame drops during <code>cat /dev/urandom | hexdump</code> style output</li>
+<li><strong>Manual tests</strong>: Visual verification of highlighting with real terminal sessions, theme switching, per-connection overrides</li>
+</ul>
+<hr>
+<h2 id="implementation-status">Implementation Status</h2>
+<p><strong>Status: Not implemented</strong> (xterm.js terminal output highlighting). The concept issue is closed.</p>
+<h3 id="what-exists-not-this-concept">What exists (not this concept)</h3>
+<ul>
+<li><strong>Monaco file editor</strong> uses Shiki TextMate grammars for syntax highlighting of file content
+  opened in the file editor — this is unrelated to terminal output highlighting.</li>
+<li>Language pack settings (<code>src/components/Settings/LanguagePackagesSettings.tsx</code>) and custom
+  grammar settings (<code>src/components/Settings/CustomGrammarsSettings.tsx</code>) exist for the file
+  editor only.</li>
+</ul>
+<h3 id="what-is-missing">What is missing</h3>
+<ul>
+<li><code>SyntaxHighlightEngine</code> class (regex matching against xterm.js output) — does not exist.</li>
+<li>ANSI decoration injection into the xterm.js buffer — not implemented.</li>
+<li>Highlight rules registry (built-in patterns for errors, paths, IPs, URLs, etc.) — not present.</li>
+<li>Settings panel entry under Terminal → Syntax Highlighting — not present.</li>
+<li>Per-connection override for enable/disable — not present.</li>
+</ul>
+<h3 id="to-consider-before-implementing">To consider before implementing</h3>
+<ul>
+<li>xterm.js's decoration API (introduced in xterm.js v5) is the correct hook; verify the
+  bundled xterm.js version supports <code>IDecoration</code> before starting.</li>
+<li>Performance is the critical risk: scanning every output chunk with 10+ regexes must stay
+  below one frame (16 ms) even for high-throughput sessions.</li>
+<li>ANSI-conflict detection (don't overwrite colors the server already set) requires parsing
+  the raw byte stream before xterm.js processes it — more complex than post-render decoration.</li>
+<li>Implementation issue: none open yet — create one referencing this concept when ready to start.</li>
+</ul>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

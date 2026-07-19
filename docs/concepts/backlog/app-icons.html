@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>App Icons — Modern, Transparency-Aware Design (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>App Icons — Modern, Transparency-Aware Design</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/641">#641</a></span>
+          <span><code>docs/concepts/backlog/app-icons.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub currently ships the default Tauri-generated placeholder icon set: a flat, untextured glyph with no depth, no transparency work, and no visual connection to the application's identity. On macOS the icon stands out poorly in the Dock and Launchpad; on Windows it appears dull in the taskbar and File Explorer; on Linux it lacks the refinement expected of a polished desktop app.</p>
+<p><strong>Motivation</strong>: a cohesive, modern icon set serves two roles simultaneously. First, it communicates brand identity — users should recognise termiHub at a glance in alt-tab, Dock, task switcher, pinned taskbar entries, and system notifications. Second, it anchors the application's visual language: the same shapes, palette, and transparency conventions used in the app icon inform how UI icons (sidebar, tab bar, toolbar, status bar) are drawn and perceived.</p>
+<p><strong>Scope of this concept</strong>:</p>
+<ol>
+<li><strong>Application icon</strong> — the single icon representing the termiHub process on all three platforms, in all required sizes</li>
+<li><strong>UI icon family</strong> — sidebar activity-bar icons, tab-type icons, status-bar glyphs, toolbar buttons</li>
+<li><strong>Style system</strong> — the shared rules that tie the two categories together (grid, line weight, corner radius, palette, transparency)</li>
+<li><strong>Tooling guidance</strong> — recommended AI-assisted and manual workflows for producing transparency-aware, multi-resolution assets</li>
+</ol>
+<div class="diagram">
+  <pre class="mermaid">
+mindmap
+  root((Icon System))
+    App Icon
+      macOS .icns
+      Windows .ico
+      Linux PNG set
+      Windows Store Tiles
+    UI Icons
+      Activity Bar
+      Tab Bar
+      Toolbar
+      Status Bar
+      Connection Tree
+    Style System
+      Grid &amp; Keylines
+      Line Weight
+      Colour Palette
+      Transparency Rules
+    Tooling
+      AI Generation Prompts
+      Vector Source Files
+      Export Pipeline
+</pre>
+</div>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="where-icons-appear">Where Icons Appear</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Icon Type</th>
+<th>Sizes Used</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dock / Launchpad (macOS)</td>
+<td>App icon</td>
+<td>512 px, 1024 px</td>
+<td>Rounded superellipse shape enforced by OS</td>
+</tr>
+<tr>
+<td>Taskbar (Windows)</td>
+<td>App icon</td>
+<td>16, 24, 32, 48 px</td>
+<td>Embedded in <code>.ico</code>; small sizes must be pixel-perfect hand-tweaks</td>
+</tr>
+<tr>
+<td>File Explorer / Finder</td>
+<td>App icon</td>
+<td>16, 32, 48, 128, 256 px</td>
+<td>Also used in "Open With" menus</td>
+</tr>
+<tr>
+<td>Activity Bar</td>
+<td>UI icon</td>
+<td>20 px (SVG)</td>
+<td>Lucide-style stroke icons; currently <code>#525d6e</code> inactive / <code>#e4e8f4</code> active</td>
+</tr>
+<tr>
+<td>Tab bar</td>
+<td>Connection-type badge</td>
+<td>16 px</td>
+<td>Tiny — silhouette-only shapes</td>
+</tr>
+<tr>
+<td>Sidebar tree</td>
+<td>Node glyph</td>
+<td>16 px</td>
+<td>Folder open/closed, session type</td>
+</tr>
+<tr>
+<td>Status bar</td>
+<td>Status glyph</td>
+<td>14–16 px</td>
+<td>Connected, warning, error</td>
+</tr>
+<tr>
+<td>Toolbar / context menus</td>
+<td>Action glyph</td>
+<td>16–18 px</td>
+<td>Matches Lucide stroke weight</td>
+</tr>
+<tr>
+<td>Notifications (macOS, Windows)</td>
+<td>App icon</td>
+<td>48–64 px</td>
+<td>Used by the OS in toast notifications</td>
+</tr>
+<tr>
+<td>About screen</td>
+<td>App icon</td>
+<td>128 px</td>
+<td>Displayed in the in-app About dialog</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="app-icon-visual-design">App Icon Visual Design</h3>
+<p>The app icon concept is built around a single central motif: a <strong>terminal prompt cursor</strong> (<code>▋</code>) inside a stylised <strong>hub node</strong>. The hub is represented as a rounded square (superellipse) divided into four quadrants by two crossing lines — a subtle nod to the "four connection types" (local shell, SSH, serial, telnet) and to the concept of a central switching point.</p>
+<pre><code>  ┌───────────────────────────────────────────────────┐
+  │                 App Icon (512 px)                  │
+  │                                                   │
+  │      ┌─────────────────────────────────┐          │
+  │      │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │          │
+  │      │  ░                           ░  │          │
+  │      │  ░   ╔═══════════════════╗   ░  │          │
+  │      │  ░   ║                   ║   ░  │          │
+  │      │  ░   ║   &gt; _             ║   ░  │          │
+  │      │  ░   ║                   ║   ░  │          │
+  │      │  ░   ╚═══════════════════╝   ░  │          │
+  │      │  ░                           ░  │          │
+  │      │  ░░ · ─────────────── · ░░░░░  │          │
+  │      │  ░    four corner dots        ░  │          │
+  │      │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │          │
+  │      └─────────────────────────────────┘          │
+  │                                                   │
+  │   Background: radial gradient #0f1117 → #1c2130   │
+  │   Terminal glyph: #3d7de8 (accent) with glow     │
+  │   Corner dots: #3d7de8 at 60% opacity            │
+  │   Frame stroke: rgba(61,125,232,0.15) border     │
+  └───────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>Layer breakdown (large sizes, 256 px and above)</strong>:</p>
+<ol>
+<li><strong>Base shape</strong> — macOS-style rounded superellipse (corner radius = 22.5 % of width). Fill: radial gradient from <code>#141923</code> (centre) to <code>#0b0d12</code> (edge).</li>
+<li><strong>Subtle noise texture</strong> — 3–5 % opacity monochrome noise overlay; adds depth without visible grain at normal viewing distance.</li>
+<li><strong>Terminal window</strong> — a rounded-rectangle inner frame, stroke <code>rgba(255,255,255,0.06)</code>, fill <code>rgba(15,17,23,0.7)</code>. Positioned centre-left, occupying ~55 % of the icon width.</li>
+<li><strong>Prompt glyph</strong> — <code>&gt; ▋</code> in the accent blue <code>#3d7de8</code>. At large sizes a soft radial glow (<code>rgba(61,125,232,0.35)</code>, blur radius 24 px) makes it the focal point.</li>
+<li><strong>Hub connector lines</strong> — four thin lines (<code>rgba(61,125,232,0.22)</code>) radiate from the terminal window's corner points toward the four corners of the icon, each ending in a small filled circle (6 px diameter at 512 px scale). These represent hub connections without being literal and remain invisible at small sizes.</li>
+<li><strong>Edge vignette</strong> — subtle darkening at the outer 15 % of the shape to prevent the icon from appearing "cut off" against light backgrounds.</li>
+</ol>
+<p><strong>Transparency usage</strong>:</p>
+<ul>
+<li>The shape itself is opaque; the macOS system clips to the superellipse automatically.</li>
+<li>Internal alpha transparency is used for the noise layer, the inner glow, connector lines, and the terminal window fill — never for structural elements that must be readable.</li>
+<li>On Windows <code>.ico</code>, all sizes ≥ 32 px include a full alpha channel. The 16 px and 24 px sizes are pixel-perfect solid renders (no sub-pixel alpha) to ensure crispness in the taskbar.</li>
+<li>On Linux the PNG set always includes a full alpha channel.</li>
+</ul>
+<h3 id="small-size-simplification-strategy">Small-Size Simplification Strategy</h3>
+<p>Below 64 px the hub connector lines are removed entirely. Below 32 px the terminal window frame is removed and only the prompt glyph (<code>&gt;_</code>) on the gradient background remains. This ensures the icon reads correctly in all contexts.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    A[512 px\nFull detail\nAll layers] --&gt; B[256 px\nFull detail\nGlow slightly reduced]
+    B --&gt; C[128 px\nConnector lines\nremoved]
+    C --&gt; D[64 px\nTerminal frame\nthinner stroke]
+    D --&gt; E[32 px\nTerminal frame\nremoved\nGlyph only]
+    E --&gt; F[16 px\nPixel-perfect\nhand-tweaked\nsolid]
+</pre>
+</div>
+<h3 id="ui-icon-style-activity-bar-sidebar-tab-bar">UI Icon Style (Activity Bar, Sidebar, Tab Bar)</h3>
+<p>UI icons follow the Lucide React convention already used throughout the codebase:</p>
+<ul>
+<li><strong>Grid</strong>: 24 × 24 px viewBox, 1 px inset safe area (effective drawing area 22 × 22 px)</li>
+<li><strong>Stroke width</strong>: 1.5 px (matches Lucide default); 2 px for the largest UI icons (toolbar at 20 px)</li>
+<li><strong>Cap / join</strong>: <code>round</code> stroke linecap and linejoin</li>
+<li><strong>Fill</strong>: <code>none</code> by default; solid fill only for status indicator dots</li>
+<li><strong>Corner radius on rectangles</strong>: 2 px</li>
+<li><strong>No decorative gradients</strong> inside UI icons — colour is applied purely at the CSS level via <code>currentColor</code></li>
+</ul>
+<pre><code>  Activity Bar Icon Grid (24×24, scaled to 20 px render)
+  ┌────────────────────────────┐
+  │  1px safe margin           │
+  │  ┌──────────────────────┐  │
+  │  │                      │  │
+  │  │   1.5px stroke,      │  │
+  │  │   round linecap/join │  │
+  │  │                      │  │
+  │  └──────────────────────┘  │
+  │  1px safe margin           │
+  └────────────────────────────┘
+</code></pre>
+<p>Connection-type icons (used in the tab bar badge and sidebar tree) require a <strong>recognisable silhouette at 16 px</strong>:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Connection Type</th>
+<th>Icon Concept</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local Shell</td>
+<td><code>&gt;_</code> prompt in a terminal rectangle</td>
+</tr>
+<tr>
+<td>SSH</td>
+<td>Padlock with a network dot above it</td>
+</tr>
+<tr>
+<td>Serial</td>
+<td>Two horizontal data lines with diagonal ticks (RS-232 waveform)</td>
+</tr>
+<tr>
+<td>Telnet</td>
+<td>Globe outline with a small <code>&gt;</code> inside</td>
+</tr>
+<tr>
+<td>Docker</td>
+<td>Container stack (simplified whale silhouette)</td>
+</tr>
+<tr>
+<td>WSL</td>
+<td>Penguin head outline</td>
+</tr>
+<tr>
+<td>SFTP</td>
+<td>Folder with an upward arrow</td>
+</tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="colour-palette">Colour Palette</h3>
+<p>All icon colours are drawn from the existing termiHub CSS variable palette to ensure consistency:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Value</th>
+<th>Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Icon background dark</td>
+<td><code>#0b0d12</code> (<code>--activity-bar-bg</code>)</td>
+<td>App icon outer gradient stop</td>
+</tr>
+<tr>
+<td>Icon background mid</td>
+<td><code>#0f1117</code> (<code>--bg-primary</code>)</td>
+<td>App icon centre gradient stop</td>
+</tr>
+<tr>
+<td>Icon background raised</td>
+<td><code>#1c2130</code> (<code>--bg-tertiary</code>)</td>
+<td>Terminal window fill in app icon</td>
+</tr>
+<tr>
+<td>Accent / focus</td>
+<td><code>#3d7de8</code> (<code>--accent-color</code>)</td>
+<td>Prompt glyph, connector lines, glow</td>
+</tr>
+<tr>
+<td>Accent hover</td>
+<td><code>#5a94f0</code> (<code>--accent-hover</code>)</td>
+<td>Hover state tint for UI icons</td>
+</tr>
+<tr>
+<td>Text primary (icon face)</td>
+<td><code>#dde1ec</code> (<code>--text-primary</code>)</td>
+<td>White-label glyphs at small sizes</td>
+</tr>
+<tr>
+<td>Inactive UI icon</td>
+<td><code>#525d6e</code> (<code>--activity-bar-inactive</code>)</td>
+<td>Default state for activity bar icons</td>
+</tr>
+<tr>
+<td>Active UI icon</td>
+<td><code>#e4e8f4</code> (<code>--activity-bar-active</code>)</td>
+<td>Selected state for activity bar icons</td>
+</tr>
+<tr>
+<td>Success</td>
+<td><code>#7dcf88</code> (<code>--color-success</code>)</td>
+<td>Connected status dot</td>
+</tr>
+<tr>
+<td>Warning</td>
+<td><code>#d4a843</code> (<code>--color-warning</code>)</td>
+<td>Reconnecting / partial status dot</td>
+</tr>
+<tr>
+<td>Error</td>
+<td><code>#ef6b5a</code> (<code>--color-error</code>)</td>
+<td>Disconnected / error status dot</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="line-weight-and-geometry-rules">Line Weight and Geometry Rules</h3>
+<ul>
+<li><strong>App icon glyph strokes</strong>: 14 px at the 512 px canvas (≈ 2.7 % of canvas width). Scale proportionally for each size tier; hand-tweak 16 px and 32 px.</li>
+<li><strong>UI icon strokes</strong>: 1.5 px on a 24 × 24 viewBox. Rendered at 20 px effective size.</li>
+<li><strong>No hairline strokes</strong> (&lt; 1 px at render size) — they disappear or alias badly.</li>
+<li><strong>No pure-black fills</strong> — use <code>#0b0d12</code> minimum, never <code>#000000</code>, so icons retain depth on OLED screens.</li>
+</ul>
+<h3 id="transparency-rules">Transparency Rules</h3>
+<ol>
+<li><strong>Alpha is intentional, not incidental</strong> — every semi-transparent element serves a visual purpose (depth, glow, layering). Unintentional partial transparency from anti-aliasing at export must be eliminated at 16 px and 32 px sizes.</li>
+<li><strong>Background independence</strong> — the app icon must look correct on white, black, and mid-grey backgrounds (system uses icon on all three in various contexts). Test with a checkerboard background in every export.</li>
+<li><strong>No pure transparent regions at icon edges</strong> for <code>.ico</code> — Windows renders a magenta or black fringe on icons with edge alpha at some DPI settings. Edge pixels should be opaque or composite against the expected taskbar background colour.</li>
+<li><strong>macOS adaptive icons</strong> — Tauri does not yet support macOS adaptive dark/light icon variants; provide a single icon that works on both light and dark macOS menu bars. The deep navy background satisfies this constraint naturally (dark enough to read on light backgrounds, with internal glow contrast on dark backgrounds).</li>
+</ol>
+<h3 id="contrast-and-accessibility">Contrast and Accessibility</h3>
+<ul>
+<li>The prompt glyph must meet <strong>WCAG AA contrast</strong> (4.5:1) against the terminal window background at all sizes ≥ 32 px.</li>
+<li>Accent blue <code>#3d7de8</code> on <code>#0f1117</code> → contrast ratio ≈ 5.8:1 ✓</li>
+<li>UI icons in active state (<code>#e4e8f4</code> on <code>#0b0d12</code>) → contrast ratio ≈ 14.5:1 ✓</li>
+<li>UI icons in inactive state (<code>#525d6e</code> on <code>#0b0d12</code>) → contrast ratio ≈ 3.1:1 — intentionally below AA (inactive items are not the user's current focus; this matches VS Code's own inactive icon behaviour)</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="application-icon-states">Application Icon States</h3>
+<p>The app icon itself has no interactive states — it is a static asset. State is conveyed by OS-level affordances (badge counts, progress bars in the Dock/taskbar overlay) outside the scope of this concept.</p>
+<h3 id="ui-icon-states">UI Icon States</h3>
+<p>Every UI icon renders in one of five states. The state machine below applies to activity-bar icons; the same states apply to toolbar and context-menu icons.</p>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Inactive : panel not selected
+    Inactive --&gt; Hover : mouse enters
+    Hover --&gt; Inactive : mouse leaves
+    Hover --&gt; Active : mouse click / keyboard navigate
+    Active --&gt; Hover : panel deselected, mouse still over
+    Active --&gt; Inactive : panel deselected, mouse leaves
+    Active --&gt; Focused : keyboard Tab onto icon
+    Focused --&gt; Active : Tab away / Escape
+    Inactive --&gt; Disabled : feature unavailable
+    Disabled --&gt; Inactive : feature becomes available
+</pre>
+</div>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Colour</th>
+<th>Opacity</th>
+<th>Indicator</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Inactive</td>
+<td><code>#525d6e</code></td>
+<td>100 %</td>
+<td>None</td>
+</tr>
+<tr>
+<td>Hover</td>
+<td><code>#8a95a8</code></td>
+<td>100 %</td>
+<td>Tooltip shown</td>
+</tr>
+<tr>
+<td>Active</td>
+<td><code>#e4e8f4</code></td>
+<td>100 %</td>
+<td><code>#3d7de8</code> left-edge bar (3 × 24 px)</td>
+</tr>
+<tr>
+<td>Focused</td>
+<td><code>#e4e8f4</code></td>
+<td>100 %</td>
+<td>Focus ring <code>rgba(61,125,232,0.22)</code></td>
+</tr>
+<tr>
+<td>Disabled</td>
+<td><code>#3d4557</code></td>
+<td>100 %</td>
+<td>Cursor: not-allowed</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="connection-type-badge-states">Connection-Type Badge States</h3>
+<p>Tab bar badges reflect the live session state:</p>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle : tab created, not yet connected
+    Idle --&gt; Connecting : connection attempt starts
+    Connecting --&gt; Connected : handshake succeeds
+    Connecting --&gt; Error : handshake fails
+    Connected --&gt; Disconnected : remote closed / network drop
+    Disconnected --&gt; Connecting : auto-reconnect / user retry
+    Error --&gt; Idle : user dismisses error
+</pre>
+</div>
+<p>Badge colour overlaid on the connection-type icon:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Session State</th>
+<th>Dot Colour</th>
+<th>CSS Variable</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Idle</td>
+<td>(no dot)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Connecting</td>
+<td><code>#d4a843</code></td>
+<td><code>--state-connecting</code></td>
+</tr>
+<tr>
+<td>Connected</td>
+<td><code>#2dd79c</code></td>
+<td><code>--state-connected</code></td>
+</tr>
+<tr>
+<td>Disconnected</td>
+<td><code>#e05555</code></td>
+<td><code>--state-disconnected</code></td>
+</tr>
+<tr>
+<td>Error</td>
+<td><code>#ef6b5a</code></td>
+<td><code>--color-error</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="export-pipeline-sequence">Export Pipeline Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant D as Designer / AI Tool
+    participant V as Vector Source (SVG)
+    participant S as Export Script
+    participant A as Assets Folder
+
+    D-&gt;&gt;V: Create master SVG at 512×512
+    V-&gt;&gt;S: Run export pipeline
+    S-&gt;&gt;A: PNG 512×512 (Linux, macOS source)
+    S-&gt;&gt;A: PNG 256×256 (128×128@2x)
+    S-&gt;&gt;A: PNG 128×128
+    S-&gt;&gt;A: PNG 32×32 (hand-tweaked)
+    S-&gt;&gt;A: PNG 16×16 (hand-tweaked)
+    S-&gt;&gt;A: Assemble icon.icns (macOS)
+    S-&gt;&gt;A: Assemble icon.ico (Windows, multi-size)
+    S-&gt;&gt;A: Windows Store PNGs (Square30–Square310)
+    S-&gt;&gt;A: StoreLogo.png
+    A-&gt;&gt;D: Visual QA on checkerboard + dark/light backgrounds
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<h3 id="current-state">Current State</h3>
+<p>The <code>src-tauri/icons/</code> directory contains the Tauri default placeholder icon in the following files, referenced by <code>tauri.conf.json</code> under <code>bundle.icon</code>:</p>
+<pre><code>icons/
+  32x32.png           ← referenced in bundle config
+  128x128.png         ← referenced in bundle config
+  128x128@2x.png      ← referenced in bundle config (HiDPI)
+  icon.icns           ← referenced in bundle config (macOS)
+  icon.ico            ← referenced in bundle config (Windows)
+  Square30x30Logo.png     ┐
+  Square44x44Logo.png     │
+  Square71x71Logo.png     │ Windows Store tiles
+  Square89x89Logo.png     │ (not yet in bundle config)
+  Square107x107Logo.png   │
+  Square142x142Logo.png   │
+  Square150x150Logo.png   │
+  Square284x284Logo.png   │
+  Square310x310Logo.png   ┘
+  StoreLogo.png
+  icon.png            ← 1024×1024 master source
+</code></pre>
+<h3 id="recommended-ai-assisted-design-workflow">Recommended AI-Assisted Design Workflow</h3>
+<p>The most practical path is a hybrid approach: AI generation for concept exploration and initial raster art, manual vector cleanup in Inkscape or Figma for the production master.</p>
+<h4 id="phase-1-ai-concept-generation">Phase 1 — AI Concept Generation</h4>
+<p>Use an image-generation tool (DALL-E 3, Midjourney v7, or Adobe Firefly) with the following prompt template:</p>
+<pre><code>App icon for a cross-platform terminal hub application called &quot;termiHub&quot;.
+Style: modern macOS app icon, rounded superellipse shape, dark theme.
+Design: a terminal window prompt symbol (&quot;&gt; _&quot; blinking cursor) centred slightly
+left, rendered in electric blue (#3d7de8) with a soft radial glow.
+Four thin accent lines extend from the terminal window corners to the icon corners,
+each ending in a small filled circle, suggesting network hub connections.
+Background: deep radial gradient from near-black navy (#141923) at the edges to
+slightly lighter (#1c2130) at the centre.
+Subtle noise texture overlay at low opacity.
+The overall mood: VS Code–inspired professionalism, technical precision, quiet depth.
+No text or wordmark inside the icon.
+Transparent outer region (the superellipse background is the icon shape).
+Output: 1024×1024 px, PNG with alpha channel.
+</code></pre>
+<p>For UI icons, use a vector-generation prompt in Midjourney or directly in Figma AI:</p>
+<pre><code>Single-colour SVG icon, 24×24 grid, 1.5 px stroke, round linecap and linejoin,
+no fill. Icon: [describe specific icon, e.g. &quot;serial port connector with two
+horizontal lines and diagonal tick marks&quot;].
+Style: Lucide icons family. Output as clean SVG paths.
+</code></pre>
+<h4 id="phase-2-vector-refinement">Phase 2 — Vector Refinement</h4>
+<ol>
+<li>Open the AI-generated raster in Inkscape and <strong>trace to vector</strong> (Path → Trace Bitmap, with manual cleanup).</li>
+<li>Snap all nodes to the <strong>4 px grid</strong> (icon grid = 4 px subdivisions of the 512 px canvas).</li>
+<li>Convert all strokes to paths. Verify stroke widths are proportional (target ~14 px at 512 px).</li>
+<li>Export SVG master as <code>src-tauri/icons/source/termihub-icon.svg</code>.</li>
+</ol>
+<h4 id="phase-3-multi-resolution-export">Phase 3 — Multi-Resolution Export</h4>
+<p>Use the open-source <code>icns-tool</code> (macOS) or <code>png2icns</code> and ImageMagick for automated export. A shell script should:</p>
+<ol>
+<li>Rasterize <code>termihub-icon.svg</code> at 1024, 512, 256, 128, 64, 32, 16 px using Inkscape CLI (<code>inkscape --export-png</code>).</li>
+<li>Manually hand-pixel the 32 px and 16 px PNGs in Aseprite or Pixelmator to ensure crispness.</li>
+<li>Assemble <code>icon.icns</code> using <code>iconutil</code> (macOS) from the size set <code>{16, 32, 64, 128, 256, 512, 1024}</code>.</li>
+<li>Assemble <code>icon.ico</code> using ImageMagick: <code>convert 16.png 24.png 32.png 48.png 64.png 128.png 256.png icon.ico</code>.</li>
+<li>Generate Windows Store tiles by cropping/scaling the 512 px raster with appropriate padding per the Microsoft Store icon guidance (16 px padding on all sides for tiles).</li>
+</ol>
+<h4 id="phase-4-quality-verification">Phase 4 — Quality Verification</h4>
+<p>Before committing updated assets, visually verify each size against:</p>
+<ul>
+<li>Dark background (<code>#0f1117</code>)</li>
+<li>Light background (<code>#f0f0f0</code>)</li>
+<li>Checkerboard (transparency test)</li>
+<li>macOS Dock at normal and 2× zoom</li>
+<li>Windows taskbar at 100 % and 150 % DPI scaling</li>
+<li>Linux Nautilus/Files icon view</li>
+</ul>
+<h3 id="tauri-configuration">Tauri Configuration</h3>
+<p>No Tauri configuration changes are required beyond replacing the files in <code>src-tauri/icons/</code>. The bundle config already lists the correct paths. After replacing assets, <code>pnpm tauri build</code> will package the new icons automatically.</p>
+<h3 id="implementation-ticket-suggestion">Implementation Ticket Suggestion</h3>
+<p>When implementing this concept, consider splitting the work into two tickets:</p>
+<ol>
+<li><strong>App icon replacement</strong> — deliver the new <code>icon.png</code>, <code>icon.icns</code>, <code>icon.ico</code>, and sized PNGs.</li>
+<li><strong>UI icon system</strong> — audit all current Lucide usages, define the connection-type icon set as custom SVGs where Lucide has no suitable match, and document the icon style guide in <code>docs/contributing.md</code>.</li>
+</ol>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

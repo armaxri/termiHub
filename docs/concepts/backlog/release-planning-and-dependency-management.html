@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Release Planning and Dependency Management (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Release Planning and Dependency Management</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog</span>
+          <span><code>docs/concepts/backlog/release-planning-and-dependency-management.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#interface-maintainer-tooling">Interface: Maintainer Tooling</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub is a cross-platform desktop application built on a Rust + npm ecosystem — both of which
+have active security vulnerability databases (RUSTSEC, npm advisories) and frequent dependency
+releases. As the application matures beyond its initial v0.1.0 beta, ad-hoc release timing and
+manual dependency updates become a liability: security patches can be delayed, breaking changes
+can accumulate unnoticed, and there is no shared understanding among contributors of when and why
+a release happens.</p>
+<p>This concept defines a structured approach to release cadence, dependency monitoring, and security
+response for termiHub's ongoing development lifecycle.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Define clear release types with associated triggers and response time targets</li>
+<li>Automate dependency vulnerability detection using GitHub-native tooling</li>
+<li>Establish a security response workflow that can produce a patch release within 72 hours of a
+  confirmed high-severity CVE</li>
+<li>Keep the five version-bearing config files (<code>package.json</code>, <code>tauri.conf.json</code>,
+  <code>src-tauri/Cargo.toml</code>, <code>agent/Cargo.toml</code>, <code>core/Cargo.toml</code>) consistent at all times</li>
+<li>Minimize manual monitoring burden through automation</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>Automated version bumping or changelog generation (always requires human review)</li>
+<li>In-app update delivery to end users (covered in the separate
+  <a href="../partial/in-field-update-mechanism.html">In-Field Update Mechanism</a> concept)</li>
+<li>Commercial SLA guarantees or enterprise support contracts</li>
+<li>Backporting fixes to older release branches (single main release line only)</li>
+</ul>
+<hr>
+<h2 id="interface-maintainer-tooling">Interface: Maintainer Tooling</h2>
+<p>This concept describes developer and maintainer workflows, not end-user UI. The relevant
+interfaces are GitHub-hosted tooling and local scripts.</p>
+<h3 id="github-security-tab">GitHub Security Tab</h3>
+<p>GitHub provides a <strong>Security</strong> tab on every repository with the following features — all free for
+public repositories:</p>
+<pre><code>Repository: armaxri/termiHub
+┌─────────────────────────────────────────────────────────────────────┐
+│  &lt; &gt; Code  Issues  Pull Requests  Actions  Security  Insights       │
+│                                  ─────────                          │
+│  Security Overview                                                  │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │ ✓ Dependabot alerts        3 active (1 critical, 2 medium)  │   │
+│  │ ✓ Code scanning            No alerts                        │   │
+│  │ ✓ Secret scanning          No secrets detected              │   │
+│  │ ✓ Security advisories      Manage private advisories        │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>Dependabot Alerts</strong> (requires <code>dependabot.yml</code> in <code>.github/</code>):</p>
+<ul>
+<li>Monitors <code>package.json</code> (npm) and <code>Cargo.toml</code> (cargo/crates.io) for known CVEs</li>
+<li>Alerts are triggered by the GitHub Advisory Database and RUSTSEC</li>
+<li>Each alert shows severity, affected package, fix version, and a one-click PR option</li>
+<li>Alerts can be dismissed with a reason (tolerated risk, not applicable, etc.)</li>
+</ul>
+<p><strong>Dependabot Version Updates</strong> (also via <code>dependabot.yml</code>):</p>
+<ul>
+<li>Automatically opens PRs to update outdated dependencies on a schedule</li>
+<li>Separate from security alerts — these are regular version bumps</li>
+<li>CI runs against each PR; maintainer reviews and merges</li>
+</ul>
+<p><strong>Security Advisories</strong>:</p>
+<ul>
+<li>Maintainers can draft private security advisories before public disclosure</li>
+<li>Useful for coordinating responsible disclosure of vulnerabilities found in termiHub itself</li>
+</ul>
+<h3 id="github-milestones">GitHub Milestones</h3>
+<p>Each planned release is tracked as a GitHub Milestone:</p>
+<pre><code>Milestones
+├── v0.2.0  (12 open, 3 closed)   Due: 2026-06-30
+├── v0.1.1  ( 2 open, 0 closed)   Due: as needed (security/bugfix)
+└── Backlog (no due date)
+</code></pre>
+<p>Issues and PRs are assigned to milestones. The milestone completion percentage provides a
+at-a-glance view of release readiness. Security patches bypass normal milestones and use a
+dedicated <code>hotfix/*</code> branch.</p>
+<h3 id="release-check-script">Release Check Script</h3>
+<p>The existing <code>scripts/release-check.sh</code> already validates:</p>
+<ul>
+<li>Version consistency across all 5 config files</li>
+<li>CHANGELOG.md has a dated entry for the current version</li>
+<li>No stale <code>[Unreleased]</code> content</li>
+<li>Tests pass, quality checks pass</li>
+<li>Git state is clean on <code>main</code> or a <code>release/*</code> branch</li>
+</ul>
+<p>This script is the final gate before tagging a release.</p>
+<h3 id="changelogmd-workflow">CHANGELOG.md Workflow</h3>
+<p>CHANGELOG follows the <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a> format already in
+use. The <strong>Security</strong> subsection (already supported) must be used for all security-related fixes:</p>
+<pre><code class="language-markdown">## [0.1.1] - 2026-05-12
+
+### Security
+
+- Update `ssh2` crate to 0.9.5 to address RUSTSEC-2026-0042 (key exchange timing oracle)
+</code></pre>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="release-types-and-cadence">Release Types and Cadence</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Release Type</th>
+<th>Version Bump</th>
+<th>Trigger</th>
+<th>Target Turnaround</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Security patch</strong></td>
+<td><code>x.y.Z</code></td>
+<td>Confirmed CVE / Dependabot High or Critical alert</td>
+<td>48–72 hours from confirmation</td>
+</tr>
+<tr>
+<td><strong>Bug-fix patch</strong></td>
+<td><code>x.y.Z</code></td>
+<td>Accumulated bug fixes, typically 3–5 issues</td>
+<td>Monthly</td>
+</tr>
+<tr>
+<td><strong>Minor release</strong></td>
+<td><code>x.Y.0</code></td>
+<td>New features merged to main, milestone complete</td>
+<td>Quarterly</td>
+</tr>
+<tr>
+<td><strong>Major release</strong></td>
+<td><code>X.0.0</code></td>
+<td>Breaking API/config changes, major architecture shift</td>
+<td>As needed</td>
+</tr>
+<tr>
+<td><strong>Pre-release</strong></td>
+<td><code>x.y.z-beta.N</code> / <code>-rc.N</code></td>
+<td>Major releases requiring external testing</td>
+<td>Before every major</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Security patches</strong> bypass the normal milestone and review cycle. A single developer can
+prepare and ship a security patch without waiting for other pending work.</p>
+<p><strong>Bug-fix patches</strong> are batched. A patch is cut when enough fixes accumulate or a regression
+is significant enough to warrant immediate action. Monthly cadence is a guideline, not a hard
+rule.</p>
+<p><strong>Minor releases</strong> align with quarterly milestones. Feature development is gated on the
+current milestone. When a milestone closes (all <code>Ready2Implement</code> issues resolved), the minor
+release is prepared.</p>
+<h3 id="dependency-update-workflow">Dependency Update Workflow</h3>
+<p>Dependabot opens PRs automatically. The review policy by change type:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Dependabot PR Type</th>
+<th>Review Policy</th>
+<th>Merge Condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Security fix (any semver)</td>
+<td>Immediate review, prioritize</td>
+<td>CI must pass; merge same day</td>
+</tr>
+<tr>
+<td>Patch update (<code>x.y.Z</code>)</td>
+<td>Light review</td>
+<td>Auto-merge if CI passes (optional policy)</td>
+</tr>
+<tr>
+<td>Minor update (<code>x.Y.0</code>)</td>
+<td>Standard review</td>
+<td>Maintainer approves; check changelog</td>
+</tr>
+<tr>
+<td>Major update (<code>X.0.0</code>)</td>
+<td>Full review, test</td>
+<td>Manual verification required</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Dependabot PRs that fail CI are not merged until the failure is understood. Breaking changes in
+major dependency updates require a dedicated test pass on all supported platforms.</p>
+<h3 id="security-response-process">Security Response Process</h3>
+<p>When a vulnerability is detected (Dependabot alert, manual discovery, or responsible disclosure
+from an external researcher):</p>
+<ol>
+<li><strong>Triage</strong>: Assess severity and applicability. Is the vulnerable code path reachable in
+   termiHub? Which platforms are affected?</li>
+<li><strong>Classify</strong>: High/Critical → security patch release. Medium/Low → next patch cycle.</li>
+<li><strong>Branch</strong>: Create <code>hotfix/&lt;advisory-id&gt;</code> from the latest release tag (not <code>main</code>).</li>
+<li><strong>Fix and audit</strong>: Apply the fix, run <code>cargo audit</code> and <code>pnpm audit</code> to clean state.</li>
+<li><strong>Test</strong>: Run full test suite on all platforms via CI. Smoke test affected functionality.</li>
+<li><strong>Release</strong>: Bump patch version in all 5 files, update CHANGELOG Security section, tag.</li>
+<li><strong>Communicate</strong>: GitHub Release notes describe the CVE and fix. Dependabot alert is
+   resolved/dismissed.</li>
+<li><strong>Merge back</strong>: Merge <code>hotfix/*</code> back to <code>main</code> to keep history consistent.</li>
+</ol>
+<h3 id="version-consistency-rule">Version Consistency Rule</h3>
+<p>All five files must always carry the same version string. The <code>release-check.sh</code> script
+enforces this before any tag is pushed. A pre-commit hook or CI check should catch drift early.</p>
+<h3 id="hotfix-vs-normal-branch">Hotfix vs. Normal Branch</h3>
+<pre><code>        main ──────────────────────────────────────────────────────►
+               \                          ↑ merge hotfix back
+                feature/...     tag: v0.1.1
+                                    |
+           v0.1.0 ──────── hotfix/RUSTSEC-2026-0042 ──► tag v0.1.1
+</code></pre>
+<p>Hotfixes branch from the <strong>latest release tag</strong>, not from <code>main</code>, to avoid including
+unreleased feature work in the patch.</p>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="release-lifecycle-state-machine">Release Lifecycle State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Planning
+
+    Planning --&gt; Development : Milestone opened,\nissues assigned
+    Development --&gt; CodeFreeze : All milestone issues closed,\nno blocking PRs
+    CodeFreeze --&gt; RCTesting : rc.1 tag pushed,\nCI green on all platforms
+    RCTesting --&gt; Development : Regression found\nduring RC testing
+    RCTesting --&gt; Release : Manual test pass complete,\nrelease-check.sh green
+    Release --&gt; PostRelease : Tag pushed, GitHub Release\ncreated, artifacts uploaded
+    PostRelease --&gt; Planning : Monitoring stable,\nnext milestone opened
+
+    Development --&gt; SecurityPatch : CVE confirmed\n(High or Critical)
+    SecurityPatch --&gt; Release : hotfix/* CI green,\nchangelog updated
+
+    state SecurityPatch {
+        [*] --&gt; Triage
+        Triage --&gt; Hotfix : Applicable to termiHub
+        Triage --&gt; Dismissed : Not applicable / false positive
+        Hotfix --&gt; Verified : cargo audit clean,\npnpm audit clean
+        Verified --&gt; [*]
+    }
+</pre>
+</div>
+<h3 id="dependency-alert-response-flowchart">Dependency Alert Response Flowchart</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Dependabot Alert\nor cargo audit / pnpm audit] --&gt; B{Severity?}
+    B --&gt;|Critical / High| C[Immediate triage]
+    B --&gt;|Medium| D[Schedule for next\npatch release]
+    B --&gt;|Low| E[Add to backlog,\nmonitor]
+
+    C --&gt; F{Applicable to\ntermiHub?}
+    F --&gt;|Yes| G[Create hotfix branch\nfrom latest tag]
+    F --&gt;|No / False positive| H[Dismiss with reason\nin GitHub alert]
+
+    G --&gt; I[Apply fix]
+    I --&gt; J[Run cargo audit\n+ pnpm audit]
+    J --&gt; K{Audit clean?}
+    K --&gt;|No| I
+    K --&gt;|Yes| L[CI full test run\nall platforms]
+    L --&gt; M{Tests pass?}
+    M --&gt;|No| I
+    M --&gt;|Yes| N[Bump patch version\nupdate CHANGELOG Security]
+    N --&gt; O[Tag + release\nGitHub Release]
+    O --&gt; P[Merge hotfix\nback to main]
+    P --&gt; Q[Resolve Dependabot\nalert]
+</pre>
+</div>
+<h3 id="emergency-security-patch-sequence">Emergency Security Patch Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant DA as Dependabot
+    participant GH as GitHub Security
+    participant Dev as Maintainer
+    participant CI as GitHub Actions
+    participant Rel as GitHub Release
+
+    DA-&gt;&gt;GH: New CVE alert (High severity)
+    GH-&gt;&gt;Dev: Email / notification
+
+    Dev-&gt;&gt;Dev: Triage: is termiHub affected?
+    Dev-&gt;&gt;GH: Create draft Security Advisory (private)
+
+    Dev-&gt;&gt;Dev: git checkout -b hotfix/CVE-XXXX latest-tag
+    Dev-&gt;&gt;Dev: Apply dependency update / fix
+    Dev-&gt;&gt;Dev: cargo audit, pnpm audit → clean
+
+    Dev-&gt;&gt;CI: Push hotfix branch → triggers build + tests
+    CI--&gt;&gt;Dev: All platforms green
+
+    Dev-&gt;&gt;Dev: Bump patch version (5 files)\nUpdate CHANGELOG Security section
+    Dev-&gt;&gt;CI: Push version bump commit
+
+    Dev-&gt;&gt;Dev: git tag vX.Y.Z → push tag
+    CI-&gt;&gt;Rel: release.yml triggered:\nbuild artifacts, create GitHub Release
+
+    Dev-&gt;&gt;GH: Publish Security Advisory\nlink to GitHub Release
+    Dev-&gt;&gt;Dev: Merge hotfix back to main
+</pre>
+</div>
+<h3 id="normal-minor-release-sequence">Normal Minor Release Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant MS as GitHub Milestone
+    participant Dev as Maintainer
+    participant Script as release-check.sh
+    participant CI as GitHub Actions
+    participant Rel as GitHub Release
+
+    MS-&gt;&gt;Dev: Milestone 100% closed\n(all issues resolved)
+
+    Dev-&gt;&gt;Dev: git fetch origin\ngit checkout origin/main
+    Dev-&gt;&gt;Dev: Verify CHANGELOG [Unreleased]\ncontains all milestone changes
+
+    Dev-&gt;&gt;Script: ./scripts/release-check.sh
+    Script--&gt;&gt;Dev: ✓ Version consistent\n✓ CHANGELOG dated\n✓ Tests pass\n✓ Quality clean
+
+    Dev-&gt;&gt;Dev: Close [Unreleased] → [X.Y.0] - DATE\nBump version in 5 files
+
+    Dev-&gt;&gt;CI: Push version bump to main
+    CI--&gt;&gt;Dev: Build + quality checks pass
+
+    Dev-&gt;&gt;Dev: git tag vX.Y.0 → push tag
+    CI-&gt;&gt;Rel: release.yml triggered:\nbuild all platforms, upload artifacts
+
+    Dev-&gt;&gt;MS: Close milestone\nOpen next milestone
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<h3 id="1-enable-dependabot">1. Enable Dependabot</h3>
+<p>Create <code>.github/dependabot.yml</code>:</p>
+<pre><code class="language-yaml">version: 2
+updates:
+  - package-ecosystem: &quot;npm&quot;
+    directory: &quot;/&quot;
+    schedule:
+      interval: &quot;weekly&quot;
+      day: &quot;monday&quot;
+    labels:
+      - &quot;dependencies&quot;
+      - &quot;frontend&quot;
+    open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: &quot;*&quot;
+        update-types: [&quot;version-update:semver-major&quot;]
+
+  - package-ecosystem: &quot;cargo&quot;
+    directory: &quot;/&quot;
+    schedule:
+      interval: &quot;weekly&quot;
+      day: &quot;monday&quot;
+    labels:
+      - &quot;dependencies&quot;
+      - &quot;rust&quot;
+    open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: &quot;*&quot;
+        update-types: [&quot;version-update:semver-major&quot;]
+</code></pre>
+<p>Major version updates are excluded from automated PRs — they require deliberate evaluation.</p>
+<h3 id="2-harden-ci-security-checks">2. Harden CI Security Checks</h3>
+<p>In <code>.github/workflows/code-quality.yml</code>, remove <code>continue-on-error: true</code> from the audit steps
+so that a known CVE blocks merging:</p>
+<pre><code class="language-yaml"># Before
+- run: cargo audit
+  continue-on-error: true # ← remove this
+
+# After
+- run: cargo audit # ← now blocking
+</code></pre>
+<p>Similarly harden <code>pnpm audit</code>:</p>
+<pre><code class="language-yaml">- run: pnpm audit --audit-level=high # block on high+, warn on moderate
+</code></pre>
+<h3 id="3-optional-cargo-deny">3. Optional: cargo-deny</h3>
+<p><code>cargo-deny</code> provides finer-grained control beyond <code>cargo audit</code>:</p>
+<ul>
+<li>License compliance checking (prevent GPL deps in a proprietary build)</li>
+<li>Duplicate dependency detection</li>
+<li>Advisory database (RUSTSEC) with allow/deny lists</li>
+</ul>
+<p>Add to <code>code-quality.yml</code> if license compliance becomes a concern:</p>
+<pre><code class="language-yaml">- uses: EmbarkStudios/cargo-deny-action@v1
+  with:
+    command: check advisories licenses
+</code></pre>
+<h3 id="4-github-milestones">4. GitHub Milestones</h3>
+<p>Create milestones in the GitHub UI (or via <code>gh</code> CLI) for each planned release cycle:</p>
+<pre><code class="language-bash">gh api repos/{owner}/{repo}/milestones \
+  --method POST \
+  -f title=&quot;v0.2.0&quot; \
+  -f due_on=&quot;2026-06-30T00:00:00Z&quot; \
+  -f description=&quot;Q2 2026 minor release&quot;
+</code></pre>
+<h3 id="5-branch-protection-enhancements">5. Branch Protection Enhancements</h3>
+<p>In GitHub repository settings → Branch protection rules for <code>main</code>:</p>
+<ul>
+<li>Require status checks to pass: <code>cargo audit</code>, <code>pnpm audit</code>, <code>clippy</code>, <code>tests</code></li>
+<li>Require a pull request before merging (already assumed)</li>
+<li>Restrict who can push to <code>main</code> (maintainers only)</li>
+</ul>
+<h3 id="6-release-label-convention">6. Release Label Convention</h3>
+<p>Add GitHub labels to support release triage:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Label</th>
+<th>Color</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>security</code></td>
+<td>Red</td>
+<td>Fix addresses a CVE or security advisory</td>
+</tr>
+<tr>
+<td><code>breaking-change</code></td>
+<td>Orange</td>
+<td>Requires major version bump</td>
+</tr>
+<tr>
+<td><code>dependencies</code></td>
+<td>Blue-grey</td>
+<td>Automated dependency update</td>
+</tr>
+<tr>
+<td><code>hotfix</code></td>
+<td>Dark red</td>
+<td>Emergency patch, bypasses milestone</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>These labels are applied to PRs and auto-included in GitHub Release notes via the release
+workflow's existing changelog extraction logic.</p>
+<h3 id="7-hotfix-branch-convention">7. Hotfix Branch Convention</h3>
+<p>Hotfix branches follow the pattern:</p>
+<pre><code>hotfix/&lt;advisory-id&gt;          # e.g. hotfix/RUSTSEC-2026-0042
+hotfix/&lt;cve-id&gt;               # e.g. hotfix/CVE-2026-12345
+hotfix/&lt;short-description&gt;    # e.g. hotfix/ssh2-key-exchange
+</code></pre>
+<p>They are branched from the latest release tag, not from <code>main</code>:</p>
+<pre><code class="language-bash">git checkout -b hotfix/RUSTSEC-2026-0042 v0.1.0
+</code></pre>
+<p>The <code>release-check.sh</code> script already allows <code>release/*</code> branches — extend it to also accept
+<code>hotfix/*</code> branches as valid release origins.</p>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

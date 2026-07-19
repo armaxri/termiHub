@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Settings Separation: Transport vs. Runtime Configuration (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Agent Settings Separation: Transport vs. Runtime Configuration</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/608">#608</a></span>
+          <span><code>docs/concepts/implemented/agent-settings-separation.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>A remote agent connection is configured in one place today, but its settings belong to two fundamentally different categories with different lifecycles and concerns:</p>
+<ol>
+<li>
+<p><strong>Transport settings</strong> — the SSH credentials, host, port, and agent binary path needed to <em>reach</em> the agent. These are always editable and must be set before a connection can be established.</p>
+</li>
+<li>
+<p><strong>Agent runtime settings</strong> — preferences that govern <em>what the agent does</em> once connected: feature toggles, default session behavior, update preferences, and diagnostic options. These are only fully meaningful (and in some cases, only validatable) after the agent is reachable.</p>
+</li>
+</ol>
+<p>Mixing both categories in a single editor creates friction: transport fields and runtime preferences compete for the user's attention when they are performing very different tasks (configuring access vs. tuning behavior). Separating them improves discoverability, enables live application of runtime changes without reconnecting, and makes the surface area of each category clearer.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    subgraph "Always Editable"
+        T[Transport Settings\nhost · port · credentials\nagent binary path]
+    end
+    subgraph "Available After Connect"
+        R[Agent Runtime Settings\nfeature toggles · defaults\ndiagnostics · update policy]
+    end
+    T --&gt;|connection established| R
+    style T fill:#1a4f72,stroke:#333,color:#fff
+    style R fill:#2d6a4f,stroke:#333,color:#fff
+</pre>
+</div>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="connection-editor-two-distinct-sections">Connection Editor — Two Distinct Sections</h3>
+<p>The connection editor for a remote agent gains a second tab alongside <strong>Connection</strong> (transport). A new <strong>Agent</strong> tab holds runtime settings:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│ Edit Remote Agent: prod-server                                       │
+│                                                                      │
+│  [Connection]  [Agent]                                               │
+│                                                                      │
+│ ─── Transport ───                                                    │
+│ Host:     [prod.example.com         ]                                │
+│ Port:     [22   ]                                                    │
+│ Username: [deploy]                                                   │
+│                                                                      │
+│ ─── Authentication ───                                               │
+│ Method:   [SSH Key ▾]                                                │
+│ Key:      [~/.ssh/id_ed25519       ] [Browse]                        │
+│ ☐ Save password in credential store                                  │
+│                                                                      │
+│ ─── Agent Binary ───                                                 │
+│ Path:     [~/.local/bin/termihub-agent]                              │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>The <strong>Agent</strong> tab is always reachable in the editor (settings are stored locally with the connection profile) but clearly communicates which fields depend on live agent data:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│ Edit Remote Agent: prod-server                                       │
+│                                                                      │
+│  [Connection]  [Agent]                                               │
+│                                                                      │
+│ ─── Features ───                                                     │
+│ ☑ Enable system monitoring                                           │
+│ ☑ Enable file browser (SFTP)                                         │
+│ ☑ Enable Docker session support                                      │
+│                                                                      │
+│ ─── Session Defaults ───                                             │
+│ Default shell:     [Auto-detect ▾]  ⚠ Connect to query available    │
+│ Starting directory:[~            ]                                   │
+│                                                                      │
+│ ─── Diagnostics ───                                                  │
+│ Log level:   [Info ▾]                                                │
+│ ☐ Enable verbose protocol tracing                                    │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Fields that can be populated from live agent data show a subtle indicator (⚠) when the agent is not connected. When connected, those fields become auto-populated dropdowns (e.g., shell picker lists actual shells found on the host).</p>
+<h3 id="agent-settings-panel-post-connection-access">Agent Settings Panel — Post-Connection Access</h3>
+<p>When a remote agent is connected, the Agent sidebar section header gains a settings icon that opens a floating <strong>Agent Settings</strong> panel without navigating away from the terminal:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│ AGENTS                                              [⚙ Settings]    │
+│                                                                      │
+│ ● prod-server  [connected]                                           │
+│   ├─ shell: /bin/bash                                                │
+│   ├─ monitoring: active                                              │
+│   └─ file browser: active                                            │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>The panel mirrors the <strong>Agent</strong> tab from the editor, but with live agent data populated and an <strong>Apply</strong> button that pushes changes to the running agent session without requiring a reconnect (for settings that support live reload):</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│ prod-server — Agent Settings                                    [×] │
+│                                                                      │
+│ ─── Features ───                                                     │
+│ ☑ System monitoring         Status: active  [Disable]               │
+│ ☑ File browser (SFTP)       Status: active  [Disable]               │
+│ ☑ Docker sessions           Status: active  [Disable]               │
+│                                                                      │
+│ ─── Session Defaults ───                                             │
+│ Default shell:     [/bin/bash ▾]  (detected: bash, zsh, sh)         │
+│ Starting directory:[~           ]                                    │
+│                                                                      │
+│ ─── Diagnostics ───                                                  │
+│ Log level:   [Info ▾]                                                │
+│ ☐ Verbose protocol tracing                                           │
+│                                                                      │
+│ Agent version: 1.4.2  [Check for updates]                           │
+│                                                                      │
+│                               [Cancel]  [Apply]                     │
+└─────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="setting-categories">Setting Categories</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Category</th>
+<th>Editable offline?</th>
+<th>Live apply?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Host / port</td>
+<td>Transport</td>
+<td>Yes</td>
+<td>No (reconnect required)</td>
+</tr>
+<tr>
+<td>SSH credentials</td>
+<td>Transport</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Agent binary path</td>
+<td>Transport</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Enable monitoring</td>
+<td>Runtime</td>
+<td>Yes (stored locally)</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Enable file browser</td>
+<td>Runtime</td>
+<td>Yes (stored locally)</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Enable Docker sessions</td>
+<td>Runtime</td>
+<td>Yes (stored locally)</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Default shell</td>
+<td>Runtime</td>
+<td>Yes (default: auto-detect)</td>
+<td>Yes (new sessions)</td>
+</tr>
+<tr>
+<td>Starting directory</td>
+<td>Runtime</td>
+<td>Yes</td>
+<td>Yes (new sessions)</td>
+</tr>
+<tr>
+<td>Log level</td>
+<td>Runtime</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Verbose tracing</td>
+<td>Runtime</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="storage">Storage</h3>
+<p>Agent runtime settings are stored locally in <code>connections.json</code> as a new <code>agentSettings</code> field on <code>SavedRemoteAgent</code>. They are <strong>not</strong> stored on the agent host — the desktop is the source of truth. This avoids per-user config files on servers and keeps all configuration portable.</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;Work/prod-server&quot;,
+  &quot;name&quot;: &quot;prod-server&quot;,
+  &quot;config&quot;: {
+    /* RemoteAgentConfig: host, port, auth */
+  },
+  &quot;agentSettings&quot;: {
+    &quot;enableMonitoring&quot;: true,
+    &quot;enableFileBrowser&quot;: true,
+    &quot;enableDocker&quot;: true,
+    &quot;defaultShell&quot;: null,
+    &quot;startingDirectory&quot;: &quot;~&quot;,
+    &quot;logLevel&quot;: &quot;info&quot;,
+    &quot;verboseTracing&quot;: false
+  }
+}
+</code></pre>
+<p><code>defaultShell: null</code> means "auto-detect from the remote host". When the agent connects, it reports available shells; the auto-detect value resolves to the first shell in that list.</p>
+<h3 id="defaults-and-auto-detection">Defaults and Auto-Detection</h3>
+<p>The <code>defaultShell</code> field follows a resolution chain:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A{defaultShell\nin agentSettings} --&gt;|null| B[Agent reports\navailable shells]
+    B --&gt; C[Use first shell\nin reported list]
+    A --&gt;|set| D{Shell still\navailable?}
+    D --&gt;|Yes| E[Use configured shell]
+    D --&gt;|No| F[Warn user + fall back\nto first available]
+</pre>
+</div>
+<h3 id="live-application-of-changes">Live Application of Changes</h3>
+<p>When the Agent Settings panel is open and the agent is connected, clicking <strong>Apply</strong> sends a configuration update over the existing JSON-RPC connection. The agent applies the delta without restarting:</p>
+<ul>
+<li><strong>Feature toggles</strong> (monitoring, file browser, Docker): take effect for all new sessions; existing sessions are unaffected</li>
+<li><strong>Default shell / starting directory</strong>: applied only to sessions opened after the change</li>
+<li><strong>Log level / tracing</strong>: applied immediately to the agent process</li>
+</ul>
+<p>Settings that require reconnection (transport fields) do not appear in the post-connection panel.</p>
+<h3 id="validation">Validation</h3>
+<ul>
+<li>The <strong>Agent</strong> tab is always editable offline; no validation against the live agent is required to save</li>
+<li>When connected, the shell dropdown is populated from the agent's reported shell list; the user cannot enter a free-text shell path (prevents typos)</li>
+<li>When not connected, the shell field accepts free-text or remains <code>null</code> (auto-detect)</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="editor-tab-state">Editor Tab State</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; TransportTab: Open agent editor
+    TransportTab --&gt; AgentTab: Click "Agent" tab
+    AgentTab --&gt; TransportTab: Click "Connection" tab
+
+    state AgentTab {
+        [*] --&gt; OfflineMode: Agent not connected
+        OfflineMode --&gt; LiveMode: Agent connects while editor is open
+        LiveMode --&gt; OfflineMode: Agent disconnects
+    }
+</pre>
+</div>
+<h3 id="post-connection-settings-flow">Post-Connection Settings Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Sidebar as Agent Sidebar
+    participant Panel as Agent Settings Panel
+    participant Store as AppStore
+    participant BE as Desktop Backend
+    participant Agent as Remote Agent
+
+    User-&gt;&gt;Sidebar: Click ⚙ Settings
+    Sidebar-&gt;&gt;Panel: Open with current agentSettings
+    Panel-&gt;&gt;BE: query_agent_capabilities(agentId)
+    BE-&gt;&gt;Agent: capabilities request (JSON-RPC)
+    Agent--&gt;&gt;BE: { shells, dockerAvailable, ... }
+    BE--&gt;&gt;Panel: AgentCapabilities
+    Panel-&gt;&gt;Panel: Populate live fields\n(shell dropdown, feature availability)
+
+    User-&gt;&gt;Panel: Toggle "Disable monitoring"
+    User-&gt;&gt;Panel: Click Apply
+
+    Panel-&gt;&gt;Store: update agentSettings(agentId, delta)
+    Store-&gt;&gt;BE: save_remote_agent(updatedAgent)
+    BE-&gt;&gt;BE: Persist to connections.json
+
+    Panel-&gt;&gt;BE: apply_agent_settings(agentId, delta)
+    BE-&gt;&gt;Agent: settings_update (JSON-RPC)
+    Agent--&gt;&gt;BE: { applied: true }
+    BE--&gt;&gt;Panel: Success
+
+    Panel-&gt;&gt;User: Changes applied
+</pre>
+</div>
+<h3 id="agent-connection-startup-with-runtime-settings">Agent Connection Startup with Runtime Settings</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Desktop as Desktop Backend
+    participant Agent as Remote Agent (new session)
+
+    Desktop-&gt;&gt;Agent: Launch via SSH exec
+    Agent--&gt;&gt;Desktop: Ready (JSON-RPC handshake)
+    Desktop-&gt;&gt;Agent: initialize(agentSettings)
+    Note over Desktop,Agent: enableMonitoring, enableFileBrowser,\nenableDocker, logLevel, verboseTracing
+    Agent--&gt;&gt;Desktop: capabilities { shells, dockerAvailable, ... }
+    Desktop-&gt;&gt;Desktop: Resolve defaultShell\n(null → first in shells list)
+    Desktop--&gt;&gt;Desktop: Agent ready
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve before implementation.</p>
+</blockquote>
+<h3 id="backend-rust">Backend (Rust)</h3>
+<h4 id="new-agentsettings-type-src-taurisrcterminalbackendrs">New <code>AgentSettings</code> Type (<code>src-tauri/src/terminal/backend.rs</code>)</h4>
+<pre><code class="language-rust">/// Runtime behaviour preferences for a connected remote agent.
+///
+/// Stored locally with the connection profile; sent to the agent on startup
+/// and on live updates via the `settings_update` JSON-RPC method.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct AgentSettings {
+    /// Start the system monitoring subsystem on agent startup.
+    #[serde(default = &quot;default_true&quot;)]
+    pub enable_monitoring: bool,
+    /// Start the SFTP file-browser subsystem on agent startup.
+    #[serde(default = &quot;default_true&quot;)]
+    pub enable_file_browser: bool,
+    /// Enable Docker/Podman session support on agent startup.
+    #[serde(default = &quot;default_true&quot;)]
+    pub enable_docker: bool,
+    /// Preferred shell for new sessions. `None` means auto-detect.
+    #[serde(skip_serializing_if = &quot;Option::is_none&quot;)]
+    pub default_shell: Option&lt;String&gt;,
+    /// Default working directory for new sessions.
+    #[serde(default)]
+    pub starting_directory: String,
+    /// Agent log level: &quot;error&quot;, &quot;warn&quot;, &quot;info&quot;, &quot;debug&quot;, &quot;trace&quot;.
+    #[serde(default)]
+    pub log_level: String,
+    /// Enable verbose JSON-RPC protocol tracing in agent logs.
+    #[serde(default)]
+    pub verbose_tracing: bool,
+}
+</code></pre>
+<h4 id="extend-savedremoteagent-src-taurisrcconnectionconfigrs">Extend <code>SavedRemoteAgent</code> (<code>src-tauri/src/connection/config.rs</code>)</h4>
+<pre><code class="language-rust">pub struct SavedRemoteAgent {
+    pub id: String,
+    pub name: String,
+    pub config: RemoteAgentConfig,
+    /// Runtime preferences sent to the agent on startup and on live updates.
+    #[serde(default)]
+    pub agent_settings: AgentSettings,
+}
+</code></pre>
+<h4 id="new-tauri-commands-src-taurisrccommandsconnectionrs">New Tauri Commands (<code>src-tauri/src/commands/connection.rs</code>)</h4>
+<pre><code class="language-rust">/// Return the capabilities reported by a currently-connected agent.
+#[tauri::command]
+pub async fn query_agent_capabilities(agent_id: String) -&gt; Result&lt;AgentCapabilities&gt;;
+
+/// Push updated AgentSettings to a running agent session (live reload).
+/// Also persists the new settings to connections.json.
+#[tauri::command]
+pub async fn apply_agent_settings(agent_id: String, settings: AgentSettings) -&gt; Result&lt;()&gt;;
+</code></pre>
+<h4 id="agent-protocol-extension-agentsrcprotocol">Agent Protocol Extension (<code>agent/src/protocol/</code>)</h4>
+<p>Add a new JSON-RPC method and a startup initialization step:</p>
+<pre><code>Method: &quot;agent/initialize&quot;
+Params: { settings: AgentSettings }
+Result: { capabilities: AgentCapabilities }
+
+Method: &quot;agent/settingsUpdate&quot;
+Params: { delta: Partial&lt;AgentSettings&gt; }
+Result: { applied: true }
+</code></pre>
+<p><code>AgentCapabilities</code> includes:</p>
+<ul>
+<li><code>availableShells: Vec&lt;String&gt;</code> — full paths to available shells</li>
+<li><code>dockerAvailable: bool</code> — whether Docker/Podman is on PATH</li>
+<li><code>monitoringSupported: bool</code> — whether <code>/proc</code> or equivalent is readable</li>
+<li><code>agentVersion: String</code></li>
+</ul>
+<h4 id="agent-startup-flow-src-taurisrcterminalagent_managerrs">Agent Startup Flow (<code>src-tauri/src/terminal/agent_manager.rs</code>)</h4>
+<p>After the JSON-RPC handshake succeeds, send <code>agent/initialize</code> with the stored <code>AgentSettings</code> before opening any sessions. Cache the returned <code>AgentCapabilities</code> on the desktop side so the UI can query them without a round-trip.</p>
+<h3 id="frontend-reacttypescript">Frontend (React/TypeScript)</h3>
+<h4 id="new-type-srctypesterminalts">New Type (<code>src/types/terminal.ts</code>)</h4>
+<pre><code class="language-typescript">export interface AgentSettings {
+  enableMonitoring: boolean;
+  enableFileBrowser: boolean;
+  enableDocker: boolean;
+  defaultShell: string | null;
+  startingDirectory: string;
+  logLevel: &quot;error&quot; | &quot;warn&quot; | &quot;info&quot; | &quot;debug&quot; | &quot;trace&quot;;
+  verboseTracing: boolean;
+}
+
+export interface AgentCapabilities {
+  availableShells: string[];
+  dockerAvailable: boolean;
+  monitoringSupported: boolean;
+  agentVersion: string;
+}
+</code></pre>
+<h4 id="connection-editor-changes-srccomponentsconnectioneditor">Connection Editor Changes (<code>src/components/ConnectionEditor/</code>)</h4>
+<ul>
+<li>Add <code>"agent"</code> to the editor category list for agent-transport mode:</li>
+</ul>
+<p><code>typescript
+  const AGENT_TRANSPORT_CATEGORIES = [
+    { id: "connection", label: "Connection" },
+    { id: "agent", label: "Agent" }, // new
+  ];</code></p>
+<ul>
+<li>New component <code>AgentSettingsForm.tsx</code> renders the <code>AgentSettings</code> fields. Uses a static schema (no <code>DynamicForm</code> needed — the fields are fixed and known).</li>
+</ul>
+<h4 id="agent-settings-panel-srccomponentsembeddedserversidebar-or-new-agentsettingpanel">Agent Settings Panel (<code>src/components/EmbeddedServerSidebar/</code> or new <code>AgentSettingPanel/</code>)</h4>
+<p>A floating modal/panel rendered from the Agent sidebar. Props:</p>
+<pre><code class="language-typescript">interface AgentSettingsPanelProps {
+  agentId: string;
+  settings: AgentSettings;
+  capabilities: AgentCapabilities | null; // null when not connected
+  onApply: (delta: Partial&lt;AgentSettings&gt;) =&gt; Promise&lt;void&gt;;
+  onClose: () =&gt; void;
+}
+</code></pre>
+<h4 id="api-layer-srcservicesapits">API Layer (<code>src/services/api.ts</code>)</h4>
+<pre><code class="language-typescript">/** Query capabilities of a currently-connected agent. */
+export function queryAgentCapabilities(agentId: string): Promise&lt;AgentCapabilities&gt;;
+
+/** Push live settings update to a running agent and persist locally. */
+export function applyAgentSettings(agentId: string, settings: AgentSettings): Promise&lt;void&gt;;
+</code></pre>
+<h4 id="store-srcstoreappstorets">Store (<code>src/store/appStore.ts</code>)</h4>
+<p>Cache <code>AgentCapabilities</code> per <code>agentId</code> in the Zustand store so any component can access them without another IPC call. Invalidate the cache when the agent disconnects.</p>
+<h3 id="modified-files">Modified Files</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src-tauri/src/terminal/backend.rs</code></td>
+<td>Add <code>AgentSettings</code> struct</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/connection/config.rs</code></td>
+<td>Add <code>agent_settings</code> field to <code>SavedRemoteAgent</code></td>
+</tr>
+<tr>
+<td><code>src-tauri/src/terminal/agent_manager.rs</code></td>
+<td>Send <code>agent/initialize</code> after handshake, cache capabilities</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/commands/connection.rs</code></td>
+<td>Add <code>query_agent_capabilities</code>, <code>apply_agent_settings</code> commands</td>
+</tr>
+<tr>
+<td><code>agent/src/protocol/</code></td>
+<td>Add <code>agent/initialize</code> and <code>agent/settingsUpdate</code> methods</td>
+</tr>
+<tr>
+<td><code>agent/src/handler/</code></td>
+<td>Handle new protocol methods</td>
+</tr>
+<tr>
+<td><code>agent/src/state/</code></td>
+<td>Store active <code>AgentSettings</code> for the session</td>
+</tr>
+<tr>
+<td><code>core/src/protocol/</code></td>
+<td>Define shared <code>AgentSettings</code> and <code>AgentCapabilities</code> types</td>
+</tr>
+<tr>
+<td><code>src/types/terminal.ts</code></td>
+<td>Add <code>AgentSettings</code>, <code>AgentCapabilities</code> TS types</td>
+</tr>
+<tr>
+<td><code>src/services/api.ts</code></td>
+<td>Add new IPC bindings</td>
+</tr>
+<tr>
+<td><code>src/store/appStore.ts</code></td>
+<td>Cache capabilities per agent</td>
+</tr>
+<tr>
+<td><code>src/components/ConnectionEditor/ConnectionEditor.tsx</code></td>
+<td>Add "Agent" tab for agent-transport mode</td>
+</tr>
+<tr>
+<td><code>src/components/ConnectionEditor/AgentSettingsForm.tsx</code></td>
+<td>New — agent runtime settings form</td>
+</tr>
+<tr>
+<td><code>src/components/AgentSettingsPanel/AgentSettingsPanel.tsx</code></td>
+<td>New — post-connection floating panel</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="implementation-phases">Implementation Phases</h3>
+<ol>
+<li>
+<p><strong>Phase 1 — Data model</strong>: Add <code>AgentSettings</code> + <code>AgentCapabilities</code> types in Rust and TypeScript. Extend <code>SavedRemoteAgent</code> with <code>agent_settings</code>. Update save/load paths. No behavioral change yet.</p>
+</li>
+<li>
+<p><strong>Phase 2 — Startup initialization</strong>: Send <code>agent/initialize</code> after handshake. Agent applies the settings (feature toggles → start/skip subsystems). Desktop caches capabilities.</p>
+</li>
+<li>
+<p><strong>Phase 3 — Editor UI</strong>: Add "Agent" tab to the connection editor for remote agent transport mode. Render <code>AgentSettingsForm</code>. Wire to existing save path.</p>
+</li>
+<li>
+<p><strong>Phase 4 — Post-connection panel</strong>: Build <code>AgentSettingsPanel</code>. Wire ⚙ button in Agent sidebar. Populate from cached capabilities. Implement <code>apply_agent_settings</code> IPC command + <code>agent/settingsUpdate</code> RPC method.</p>
+</li>
+<li>
+<p><strong>Phase 5 — Live shell/feature toggle</strong>: Polish the shell auto-detect flow. Test all live-apply settings. Handle edge cases (agent disconnects while panel is open).</p>
+</li>
+</ol>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

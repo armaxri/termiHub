@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Portable Mode (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Portable Mode</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/524">#524</a></span>
+          <span><code>docs/concepts/implemented/portable-mode.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>Add a portable mode for termiHub that allows it to run from a USB drive or any directory without system-level installation, storing all configuration alongside the executable. This is a key feature for IT consultants, sysadmins, and anyone who works across multiple machines — they carry their configured sessions, credentials, and tools on a USB stick or portable drive.</p>
+<p>Key goals:</p>
+<ul>
+<li><strong>Zero-install operation</strong>: Run termiHub directly from a self-contained directory without requiring admin privileges or system installation</li>
+<li><strong>Self-contained data</strong>: All settings, connections, credentials, and tunnels stored in a <code>data/</code> subfolder next to the executable</li>
+<li><strong>Auto-detection</strong>: Portable mode activates automatically when a <code>portable.marker</code> file or <code>data/</code> directory exists next to the binary</li>
+<li><strong>Credential safety</strong>: Master password mode works portably; the encrypted <code>credentials.enc</code> file is stored in <code>data/</code> alongside everything else</li>
+<li><strong>Coexistence</strong>: Portable and installed versions do not conflict on the same machine</li>
+</ul>
+<h3 id="existing-infrastructure">Existing Infrastructure</h3>
+<p>The codebase already provides a partial foundation for portable mode:</p>
+<ul>
+<li><strong><code>TERMIHUB_CONFIG_DIR</code> environment variable</strong> — all storage modules (<code>ConnectionStorage</code>, <code>SettingsStorage</code>, <code>TunnelStorage</code>, <code>CredentialManager</code>) already check for this env var and use it as the config directory when set. This is the redirect mechanism that portable mode will build on.</li>
+<li><strong>Master password credential mode</strong> — stores credentials in a <code>credentials.enc</code> file inside the config directory, fully portable without OS dependencies.</li>
+<li><strong>JSON-based config files</strong> — <code>connections.json</code>, <code>settings.json</code>, <code>tunnels.json</code> are plain text and can be copied between machines.</li>
+</ul>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="first-launch-in-portable-mode">First Launch in Portable Mode</h3>
+<p>When termiHub starts and detects portable mode (via marker file or <code>data/</code> directory), the splash/welcome screen includes a "Portable Mode" badge in the title bar and status bar.</p>
+<pre><code>┌─────────────────────────────────────────────────────┐
+│ termiHub                        [Portable Mode] ─ □ ✕│
+│─────────────────────────────────────────────────────│
+│                                                     │
+│         Welcome to termiHub (Portable Mode)         │
+│                                                     │
+│  Your settings and connections are stored in:       │
+│  📁 D:\termiHub\data\                               │
+│                                                     │
+│  ┌───────────────────────────────────────────┐      │
+│  │ Credential Storage                        │      │
+│  │                                           │      │
+│  │ ○ Master Password (Recommended)           │      │
+│  │   Encrypted file stored alongside app     │      │
+│  │                                           │      │
+│  │ ○ None                                    │      │
+│  │   Prompt for credentials each time        │      │
+│  └───────────────────────────────────────────┘      │
+│                                                     │
+│                    [Get Started]                     │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<p>In portable mode, the credential storage selector defaults to <strong>Master Password</strong> instead of <strong>None</strong>.</p>
+<h3 id="status-bar-indicator">Status Bar Indicator</h3>
+<p>A persistent "Portable" badge appears in the status bar (left side), next to existing indicators. Clicking it opens a tooltip showing the data directory path.</p>
+<pre><code>┌─────────────────────────────────────────────────────┐
+│ 🔌 Portable │ 🔒 Locked │             │ termiHub v0.x│
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="settings-integration">Settings Integration</h3>
+<p>The Settings panel gains a new <strong>Portable Mode</strong> section (read-only when in portable mode, informational when in installed mode):</p>
+<pre><code>┌──────────────────────────────────────────────────────┐
+│ PORTABLE MODE                                        │
+│                                                      │
+│ Status:    ● Active                                  │
+│ Data path: D:\termiHub\data\                         │
+│                                                      │
+│ ┌──────────────────────────────────────────────────┐ │
+│ │ ⓘ termiHub detected a portable.marker file next  │ │
+│ │   to the executable and is storing all data in   │ │
+│ │   the data/ directory alongside the app.         │ │
+│ └──────────────────────────────────────────────────┘ │
+│                                                      │
+│ Credential mode: Master Password                     │
+│ Config files:                                        │
+│   connections.json  ✓ present                        │
+│   settings.json     ✓ present                        │
+│   tunnels.json      ✓ present                        │
+│   credentials.enc   ✓ present                        │
+│                                                      │
+│ [Export Installed Config to Portable]                 │
+│ [Import Portable Config to Installed]                 │
+└──────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="config-migration-dialog">Config Migration Dialog</h3>
+<p>When a user wants to switch between installed and portable mode, a migration dialog assists with copying configuration:</p>
+<pre><code>┌──────────────────────────────────────────────────────┐
+│ Export Configuration to Portable                     │
+│                                                      │
+│ This will copy your current configuration to the     │
+│ portable data directory.                             │
+│                                                      │
+│ ☑ Connections (connections.json)                     │
+│ ☑ Settings (settings.json)                           │
+│ ☑ Tunnels (tunnels.json)                             │
+│ ☑ Credentials (credentials.enc)                      │
+│ ☐ SSH Keys (copy referenced key files)               │
+│                                                      │
+│ Destination: D:\termiHub\data\                       │
+│                                                      │
+│              [Cancel]  [Export]                       │
+└──────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="portable-mode-detection">Portable Mode Detection</h3>
+<p>On startup, before any configuration is loaded, termiHub checks for portable mode:</p>
+<ol>
+<li>Resolve the directory containing the running executable</li>
+<li>Check if <code>portable.marker</code> exists in that directory</li>
+<li>If not, check if a <code>data/</code> subdirectory exists in that directory</li>
+<li>If either condition is true, activate portable mode and set the config directory to <code>&lt;exe_dir&gt;/data/</code></li>
+</ol>
+<p>The <code>portable.marker</code> file is an empty file (or optionally contains a JSON object with overrides). Its presence is the canonical signal for portable mode. The <code>data/</code> directory is an alternative detection method for users who prefer not to have an extra marker file.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[App Startup] --&gt; B{portable.marker exists&lt;br&gt;next to executable?}
+    B --&gt;|Yes| D[Activate Portable Mode]
+    B --&gt;|No| C{data/ directory exists&lt;br&gt;next to executable?}
+    C --&gt;|Yes| D
+    C --&gt;|No| E[Normal Installed Mode]
+    D --&gt; F[Set config dir = exe_dir/data/]
+    F --&gt; G[Create data/ if missing]
+    G --&gt; H[Continue startup with&lt;br&gt;redirected config path]
+    E --&gt; I[Continue startup with&lt;br&gt;default OS config path]
+</pre>
+</div>
+<h3 id="directory-layout">Directory Layout</h3>
+<p>A portable termiHub distribution looks like this:</p>
+<pre><code>termiHub/                          # Root portable directory
+├── termiHub.exe                   # Main executable (Windows)
+├── portable.marker                # Portable mode trigger file
+├── data/                          # All user data (auto-created)
+│   ├── connections.json           # Connection definitions
+│   ├── settings.json              # App settings
+│   ├── tunnels.json               # SSH tunnel definitions
+│   ├── credentials.enc            # Encrypted credentials (master password mode)
+│   ├── keys/                      # Optional: SSH keys copied by user
+│   │   ├── id_rsa
+│   │   └── id_ed25519
+│   └── logs/                      # Application logs
+│       └── termihub.log
+├── resources/                     # Tauri resources (icons, WebView assets)
+└── WebView2Loader.dll             # Windows: WebView2 runtime (if bundled)
+</code></pre>
+<p>On macOS, the structure lives inside the <code>.app</code> bundle or alongside it:</p>
+<pre><code>termiHub.app/                      # macOS app bundle
+portable.marker                    # Next to the .app bundle
+data/                              # Next to the .app bundle
+├── connections.json
+├── settings.json
+└── ...
+</code></pre>
+<p>On Linux (AppImage):</p>
+<pre><code>termiHub/                          # Extracted AppImage directory
+├── termiHub.AppImage              # AppImage binary
+├── portable.marker
+└── data/
+    ├── connections.json
+    └── ...
+</code></pre>
+<h3 id="credential-store-behavior">Credential Store Behavior</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Portable Mode Active] --&gt; B{Credential mode&lt;br&gt;in settings?}
+    B --&gt;|Master Password| C[Use credentials.enc&lt;br&gt;in data/ directory]
+    B --&gt;|None| D[Prompt for credentials&lt;br&gt;on each connection]
+</pre>
+</div>
+<h3 id="path-handling-for-portability">Path Handling for Portability</h3>
+<p>Several settings store absolute paths that break when the portable directory moves:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Issue</th>
+<th>Solution</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>defaultSshKeyPath</code></td>
+<td>Absolute path to SSH key</td>
+<td>Support <code>{PORTABLE_DIR}</code> placeholder, e.g., <code>{PORTABLE_DIR}/data/keys/id_rsa</code></td>
+</tr>
+<tr>
+<td><code>externalConnectionFiles</code></td>
+<td>Absolute paths to external connection JSON files</td>
+<td>Support <code>{PORTABLE_DIR}</code> placeholder</td>
+</tr>
+<tr>
+<td>SSH key paths in individual connections</td>
+<td>Absolute paths</td>
+<td>Support <code>{PORTABLE_DIR}</code> placeholder</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The <code>{PORTABLE_DIR}</code> placeholder resolves to the directory containing the executable at runtime. This allows paths like <code>{PORTABLE_DIR}/data/keys/my_key</code> that remain valid regardless of the drive letter or mount point.</p>
+<p>In installed mode, the placeholder is not needed — users use normal absolute paths. The placeholder is only resolved when portable mode is active.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    A[Path in config] --&gt; B{Contains PORTABLE_DIR?}
+    B --&gt;|Yes| C[Replace with exe directory]
+    B --&gt;|No| D{Portable mode active?}
+    D --&gt;|Yes| E[Use path as-is&lt;br&gt;may break if moved]
+    D --&gt;|No| F[Use path as-is&lt;br&gt;normal behavior]
+    C --&gt; G[Resolved absolute path]
+</pre>
+</div>
+<h3 id="coexistence-with-installed-version">Coexistence with Installed Version</h3>
+<p>Portable and installed versions use completely separate config directories:</p>
+<ul>
+<li><strong>Installed</strong>: OS-specific app data path (<code>%APPDATA%\com.termihub.app\</code> on Windows, etc.)</li>
+<li><strong>Portable</strong>: <code>&lt;exe_dir&gt;/data/</code></li>
+</ul>
+<p>There is no conflict because:</p>
+<ul>
+<li>The portable binary detects its mode at startup and redirects all storage</li>
+<li>No shared registry keys or system-wide state is used</li>
+<li>The Tauri app identifier is the same, but the config paths diverge based on mode</li>
+</ul>
+<p>If both are running simultaneously, they operate independently with separate configurations. Users can use the <strong>Export/Import</strong> feature in Settings to synchronize configuration between the two.</p>
+<h3 id="update-strategy">Update Strategy</h3>
+<p>Since there is no auto-update mechanism in termiHub currently, portable mode does not need special update handling. The update process for portable mode is manual:</p>
+<ol>
+<li>Download the new portable archive</li>
+<li>Extract it alongside (or replacing) the existing portable directory</li>
+<li>Preserve the <code>data/</code> directory and <code>portable.marker</code> — these contain all user data</li>
+<li>The new version picks up existing config from <code>data/</code></li>
+</ol>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant W as Website/GitHub
+    participant F as File System
+
+    U-&gt;&gt;W: Download new portable .zip
+    U-&gt;&gt;F: Extract to termiHub-new/
+    U-&gt;&gt;F: Copy data/ from termiHub-old/ to termiHub-new/
+    U-&gt;&gt;F: Copy portable.marker to termiHub-new/
+    U-&gt;&gt;F: Launch termiHub-new/termiHub.exe
+    Note over F: App detects portable.marker,&lt;br&gt;loads existing data/ config
+    U-&gt;&gt;F: Delete termiHub-old/ (optional)
+</pre>
+</div>
+<p>If auto-update is added in the future, the portable mode updater should:</p>
+<ul>
+<li>Download the new version to a temporary location</li>
+<li>Replace binaries and resources while preserving <code>data/</code> and <code>portable.marker</code></li>
+<li>Restart the application</li>
+</ul>
+<h3 id="platform-specific-considerations">Platform-Specific Considerations</h3>
+<h4 id="windows-primary-target">Windows (Primary Target)</h4>
+<ul>
+<li><strong>WebView2 dependency</strong>: Windows requires the WebView2 runtime. The portable build should either bundle the fixed-version WebView2 runtime or check for its availability at startup and show a clear error message.</li>
+<li><strong>Drive letters</strong>: USB drives may be assigned different letters on different machines. The <code>{PORTABLE_DIR}</code> placeholder handles this.</li>
+<li><strong>NTFS permissions</strong>: No special permissions needed — the app runs in user context.</li>
+<li><strong>Windows Defender</strong>: Executables on USB drives may trigger SmartScreen. Users may need to "Unblock" the executable.</li>
+</ul>
+<h4 id="macos">macOS</h4>
+<ul>
+<li><strong>Gatekeeper</strong>: Unsigned <code>.app</code> bundles from external drives will be blocked. Users must right-click &gt; Open to bypass, or the portable build should be notarized.</li>
+<li><strong>App Translocation</strong>: macOS may move apps to a random read-only location on first launch if downloaded from the internet. The <code>data/</code> directory must be adjacent to the <code>.app</code> bundle (not inside it), and the bundle must be moved out of the Downloads folder before first launch.</li>
+<li><strong>Quarantine attribute</strong>: <code>xattr -cr termiHub.app</code> may be needed.</li>
+</ul>
+<h4 id="linux">Linux</h4>
+<ul>
+<li><strong>AppImage</strong>: Already semi-portable. The portable enhancement is redirecting config from <code>~/.config/</code> to the adjacent <code>data/</code> directory.</li>
+<li><strong>Permissions</strong>: The AppImage needs execute permission (<code>chmod +x</code>).</li>
+<li><strong>FUSE</strong>: AppImage requires FUSE. On systems without it, users can extract the AppImage.</li>
+</ul>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="application-startup-state-machine">Application Startup State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; ResolvingExePath: App launched
+    ResolvingExePath --&gt; CheckingMarker: Exe path resolved
+    CheckingMarker --&gt; PortableMode: portable.marker found
+    CheckingMarker --&gt; CheckingDataDir: No marker
+    CheckingDataDir --&gt; PortableMode: data/ directory exists
+    CheckingDataDir --&gt; InstalledMode: No data/ directory
+
+    state PortableMode {
+        [*] --&gt; SetConfigDir
+        SetConfigDir --&gt; EnsureDataDir: config_dir = exe_dir/data/
+        EnsureDataDir --&gt; LoadConfig
+        LoadConfig --&gt; Ready
+    }
+
+    state InstalledMode {
+        [*] --&gt; UseDefaultPaths
+        UseDefaultPaths --&gt; LoadConfigInstalled: OS app_config_dir
+        LoadConfigInstalled --&gt; ReadyInstalled
+    }
+
+    PortableMode --&gt; [*]: App ready
+    InstalledMode --&gt; [*]: App ready
+</pre>
+</div>
+<h3 id="config-migration-sequence">Config Migration Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant S as Settings UI
+    participant B as Backend
+    participant FS as File System
+
+    U-&gt;&gt;S: Click "Export to Portable"
+    S-&gt;&gt;B: invoke export_config_to_portable
+    B-&gt;&gt;FS: Read connections.json from installed dir
+    B-&gt;&gt;FS: Read settings.json from installed dir
+    B-&gt;&gt;FS: Read tunnels.json from installed dir
+
+    opt Credential mode is Master Password
+        B-&gt;&gt;FS: Copy credentials.enc
+    end
+
+    alt User selected "Copy SSH Keys"
+        B-&gt;&gt;FS: Copy referenced SSH key files&lt;br&gt;to data/keys/
+        B-&gt;&gt;B: Rewrite paths with&lt;br&gt;PORTABLE_DIR placeholder
+    end
+
+    B-&gt;&gt;FS: Write all files to data/ directory
+    B--&gt;&gt;S: Export complete
+    S--&gt;&gt;U: Show success notification
+</pre>
+</div>
+<h3 id="portable-path-resolution-sequence">Portable Path Resolution Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant App as termiHub
+    participant Cfg as Config Module
+    participant PR as Path Resolver
+    participant FS as File System
+
+    App-&gt;&gt;Cfg: Load settings.json
+    Cfg-&gt;&gt;Cfg: Parse defaultSshKeyPath
+    Cfg-&gt;&gt;PR: Resolve path "{PORTABLE_DIR}/data/keys/id_rsa"
+
+    alt Portable mode active
+        PR-&gt;&gt;PR: Replace {PORTABLE_DIR} with exe directory
+        PR-&gt;&gt;FS: Check D:\termiHub\data\keys\id_rsa
+        PR--&gt;&gt;Cfg: Resolved: D:\termiHub\data\keys\id_rsa
+    else Installed mode
+        PR--&gt;&gt;Cfg: Return path as-is (no placeholder expected)
+    end
+</pre>
+</div>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p><strong>Note</strong>: These details reflect the codebase at the time of concept creation. The implementation may need to adapt if the codebase evolves before this feature is built.</p>
+</blockquote>
+<h3 id="portable-mode-detection-rust-backend">Portable Mode Detection (Rust Backend)</h3>
+<p>Add a new module <code>src-tauri/src/utils/portable.rs</code>:</p>
+<pre><code class="language-rust">use std::path::PathBuf;
+
+/// Represents the application's runtime mode
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppMode {
+    Installed,
+    Portable { data_dir: PathBuf },
+}
+
+/// Detect whether the app is running in portable mode.
+///
+/// Checks for:
+/// 1. `portable.marker` file next to the executable
+/// 2. `data/` directory next to the executable
+///
+/// Returns `AppMode::Portable` with the data directory path if detected,
+/// otherwise `AppMode::Installed`.
+pub fn detect_app_mode() -&gt; anyhow::Result&lt;AppMode&gt; {
+    let exe_path = std::env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .context(&quot;Failed to resolve executable directory&quot;)?;
+
+    // On macOS, if inside a .app bundle, use the directory containing the bundle
+    let base_dir = resolve_base_dir(exe_dir);
+
+    let marker_path = base_dir.join(&quot;portable.marker&quot;);
+    let data_dir = base_dir.join(&quot;data&quot;);
+
+    if marker_path.exists() || data_dir.exists() {
+        Ok(AppMode::Portable { data_dir })
+    } else {
+        Ok(AppMode::Installed)
+    }
+}
+</code></pre>
+<h3 id="integration-with-startup-src-taurisrclibrs">Integration with Startup (<code>src-tauri/src/lib.rs</code>)</h3>
+<p>The existing <code>TERMIHUB_CONFIG_DIR</code> check is the hook point. Portable mode detection should run before any storage initialization and set the config directory accordingly:</p>
+<pre><code class="language-rust">// Early in run() or setup(), before storage initialization:
+let app_mode = portable::detect_app_mode()?;
+
+let config_dir = match &amp;app_mode {
+    AppMode::Portable { data_dir } =&gt; {
+        // Ensure data directory exists
+        std::fs::create_dir_all(data_dir)?;
+        data_dir.clone()
+    }
+    AppMode::Installed =&gt; {
+        app_handle.path().app_config_dir()?
+    }
+};
+
+// Pass config_dir to all storage modules (already supported)
+</code></pre>
+<p>This replaces the current <code>TERMIHUB_CONFIG_DIR</code> env var check with a more robust detection. The env var remains supported as an additional override (highest priority).</p>
+<h3 id="config-directory-priority">Config Directory Priority</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Determine config directory] --&gt; B{TERMIHUB_CONFIG_DIR&lt;br&gt;env var set?}
+    B --&gt;|Yes| C[Use env var path]
+    B --&gt;|No| D{Portable mode&lt;br&gt;detected?}
+    D --&gt;|Yes| E[Use exe_dir/data/]
+    D --&gt;|No| F[Use OS app_config_dir]
+</pre>
+</div>
+<h3 id="path-resolver-src-taurisrcutilsportablers">Path Resolver (<code>src-tauri/src/utils/portable.rs</code>)</h3>
+<p>Add path resolution for the <code>{PORTABLE_DIR}</code> placeholder:</p>
+<pre><code class="language-rust">/// Resolve portable path placeholders in a path string.
+///
+/// Replaces `{PORTABLE_DIR}` with the actual executable directory.
+/// Returns the path unchanged if not in portable mode or no placeholder found.
+pub fn resolve_portable_path(path: &amp;str, app_mode: &amp;AppMode) -&gt; PathBuf {
+    match app_mode {
+        AppMode::Portable { data_dir } =&gt; {
+            if let Some(base_dir) = data_dir.parent() {
+                let resolved = path.replace(&quot;{PORTABLE_DIR}&quot;, &amp;base_dir.to_string_lossy());
+                PathBuf::from(resolved)
+            } else {
+                PathBuf::from(path)
+            }
+        }
+        AppMode::Installed =&gt; PathBuf::from(path),
+    }
+}
+</code></pre>
+<h3 id="macos-base-directory-resolution">macOS Base Directory Resolution</h3>
+<p>On macOS, the executable lives deep inside the <code>.app</code> bundle (<code>termiHub.app/Contents/MacOS/termiHub</code>). The portable marker and data directory should be adjacent to the <code>.app</code> bundle, not inside it:</p>
+<pre><code class="language-rust">#[cfg(target_os = &quot;macos&quot;)]
+fn resolve_base_dir(exe_dir: &amp;Path) -&gt; PathBuf {
+    // exe_dir is typically: /path/to/termiHub.app/Contents/MacOS/
+    // We want: /path/to/ (the directory containing the .app bundle)
+    if let Some(contents_dir) = exe_dir.parent() {
+        if let Some(app_dir) = contents_dir.parent() {
+            if app_dir.extension().map_or(false, |ext| ext == &quot;app&quot;) {
+                if let Some(bundle_parent) = app_dir.parent() {
+                    return bundle_parent.to_path_buf();
+                }
+            }
+        }
+    }
+    exe_dir.to_path_buf()
+}
+
+#[cfg(not(target_os = &quot;macos&quot;))]
+fn resolve_base_dir(exe_dir: &amp;Path) -&gt; PathBuf {
+    exe_dir.to_path_buf()
+}
+</code></pre>
+<h3 id="tauri-state-for-app-mode">Tauri State for App Mode</h3>
+<p>Store the detected <code>AppMode</code> in Tauri's managed state so all commands can access it:</p>
+<pre><code class="language-rust">// In setup:
+app.manage(app_mode.clone());
+
+// In any command:
+#[tauri::command]
+fn get_app_mode(app_mode: tauri::State&lt;'_, AppMode&gt;) -&gt; AppMode {
+    app_mode.inner().clone()
+}
+</code></pre>
+<h3 id="frontend-portable-mode-state">Frontend: Portable Mode State</h3>
+<p>Add to the Zustand store (<code>src/store/appStore.ts</code>):</p>
+<pre><code class="language-typescript">interface AppState {
+  // ... existing fields
+  isPortableMode: boolean;
+  portableDataDir: string | null;
+}
+</code></pre>
+<p>Expose via a new Tauri command <code>get_app_mode</code> called during app initialization, before the first render.</p>
+<h3 id="frontend-status-bar-badge">Frontend: Status Bar Badge</h3>
+<p>Add a <code>PortableBadge</code> component to <code>src/components/StatusBar/</code>:</p>
+<pre><code class="language-typescript">interface PortableBadgeProps {
+  dataDir: string;
+}
+
+export function PortableBadge({ dataDir }: PortableBadgeProps): JSX.Element {
+  // Renders a &quot;Portable&quot; chip in the status bar
+  // Tooltip shows the full data directory path on hover
+}
+</code></pre>
+<h3 id="frontend-settings-section">Frontend: Settings Section</h3>
+<p>Add a <code>PortableModeSettings</code> component to <code>src/components/Settings/</code> displaying the current mode, data path, config file status, and export/import buttons.</p>
+<h3 id="build-targets-for-portable-distribution">Build Targets for Portable Distribution</h3>
+<p>Add new scripts for producing portable archives:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Format</th>
+<th>Script</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows</td>
+<td><code>.zip</code> (no installer)</td>
+<td><code>scripts/build-portable.sh --target windows</code></td>
+</tr>
+<tr>
+<td>macOS</td>
+<td><code>.tar.gz</code> containing <code>.app</code> bundle + marker</td>
+<td><code>scripts/build-portable.sh --target macos</code></td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>.tar.gz</code> containing AppImage + marker</td>
+<td><code>scripts/build-portable.sh --target linux</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The build script should:</p>
+<ol>
+<li>Run the standard <code>tauri build</code> to produce platform artifacts</li>
+<li>Extract/copy the built binary (not the installer)</li>
+<li>Add <code>portable.marker</code> to the output directory</li>
+<li>Create a <code>data/</code> directory (empty, to be populated on first launch)</li>
+<li>Package into a <code>.zip</code> or <code>.tar.gz</code> archive</li>
+</ol>
+<p>For Windows, the Tauri NSIS build produces a standalone <code>.exe</code> in addition to the installer. The portable build extracts this along with required DLLs and resources.</p>
+<h3 id="tauri-configuration-changes">Tauri Configuration Changes</h3>
+<p>No changes to <code>tauri.conf.json</code> are needed. The portable mode detection is purely a runtime behavior in the Rust backend. Build script changes handle the packaging.</p>
+<h3 id="new-tauri-commands">New Tauri Commands</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_app_mode</code></td>
+<td>Returns whether the app is in portable or installed mode, with the data directory path</td>
+</tr>
+<tr>
+<td><code>export_config_to_portable</code></td>
+<td>Copies config from installed location to a portable data directory</td>
+</tr>
+<tr>
+<td><code>import_config_from_portable</code></td>
+<td>Copies config from portable data directory to installed location</td>
+</tr>
+<tr>
+<td><code>resolve_portable_path</code></td>
+<td>Resolves <code>{PORTABLE_DIR}</code> placeholder in a path string</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="files-to-create-or-modify">Files to Create or Modify</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src-tauri/src/utils/portable.rs</code></td>
+<td><strong>New</strong> — portable mode detection, path resolution, base dir resolution</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/utils/mod.rs</code></td>
+<td>Add <code>pub mod portable;</code></td>
+</tr>
+<tr>
+<td><code>src-tauri/src/lib.rs</code></td>
+<td>Integrate portable detection into startup, manage <code>AppMode</code> state</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/commands/</code></td>
+<td>Add portable mode commands (<code>get_app_mode</code>, export/import)</td>
+</tr>
+<tr>
+<td><code>src/services/api.ts</code></td>
+<td>Add <code>getAppMode</code>, <code>exportConfigToPortable</code>, <code>importConfigFromPortable</code></td>
+</tr>
+<tr>
+<td><code>src/store/appStore.ts</code></td>
+<td>Add <code>isPortableMode</code>, <code>portableDataDir</code> fields</td>
+</tr>
+<tr>
+<td><code>src/components/StatusBar/PortableBadge.tsx</code></td>
+<td><strong>New</strong> — status bar portable indicator</td>
+</tr>
+<tr>
+<td><code>src/components/Settings/PortableModeSettings.tsx</code></td>
+<td><strong>New</strong> — settings section for portable mode</td>
+</tr>
+<tr>
+<td><code>src/types/terminal.ts</code> (or new <code>portable.ts</code>)</td>
+<td>Add <code>AppMode</code> TypeScript type</td>
+</tr>
+<tr>
+<td><code>scripts/build-portable.sh</code> / <code>.cmd</code></td>
+<td><strong>New</strong> — portable archive build script</td>
+</tr>
+<tr>
+<td><code>src-tauri/src/connection/settings.rs</code></td>
+<td>No changes required for credential handling</td>
+</tr>
+</tbody>
+</table>
+</div>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

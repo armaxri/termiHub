@@ -1,0 +1,1085 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SSH Tunneling (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>SSH Tunneling</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/107">#107</a></span>
+          <span><code>docs/concepts/implemented/ssh-tunneling.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub currently supports SSH connections for interactive terminal sessions, SFTP file browsing, and remote system monitoring. However, there is no built-in way to create SSH tunnels (port forwarding) — a core SSH capability that users rely on daily for database access, web service proxying, and secure network traversal.</p>
+<p>This concept introduces an <strong>SSH Tunneling</strong> feature that allows users to set up, manage, and monitor SSH port forwards directly from the termiHub UI. The feature is designed around a <strong>visual, diagram-driven configuration</strong> that makes it immediately clear what is being forwarded, through which server, and to where — eliminating the confusion that often comes with SSH tunnel command-line flags.</p>
+<h3 id="tunnel-types">Tunnel Types</h3>
+<p>SSH tunneling supports three forwarding modes:</p>
+<ol>
+<li><strong>Local forwarding</strong> (<code>ssh -L</code>): Binds a port on the user's machine and forwards traffic through the SSH server to a destination host. Use case: accessing a remote database as if it were local.</li>
+<li><strong>Remote forwarding</strong> (<code>ssh -R</code>): Binds a port on the SSH server and forwards traffic back to the user's machine (or a host accessible from it). Use case: exposing a local dev server to a remote network.</li>
+<li><strong>Dynamic forwarding</strong> (<code>ssh -D</code>): Opens a local SOCKS proxy that routes all traffic through the SSH server. Use case: browsing the internet through a remote server.</li>
+</ol>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Provide a dedicated sidebar panel and activity bar entry for tunnel management</li>
+<li>Let users configure tunnels with a <strong>visual diagram</strong> showing all participants (local machine, SSH server, target host) so the data flow is immediately clear</li>
+<li>Reuse existing SSH connections — any saved SSH connection can serve as the tunnel's SSH server</li>
+<li>Support all three forwarding types: local, remote, and dynamic</li>
+<li>Allow multiple simultaneous tunnels through the same or different SSH connections</li>
+<li>Show live tunnel status (active, connecting, failed) with traffic indicators</li>
+<li>Persist tunnel configurations alongside connections for quick reconnection</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="activity-bar-entry">Activity Bar Entry</h3>
+<p>A new "Tunnels" item is added to the activity bar's top section, between "File Browser" and the bottom utilities:</p>
+<pre><code>┌────────────┐
+│  ○ Network │  ← Connections
+│  ○ Folder  │  ← File Browser
+│  ● Tunnel  │  ← SSH Tunnels (NEW)
+│            │
+│            │
+│  ○ Logs    │
+│  ○ Gear    │  ← Settings
+└────────────┘
+</code></pre>
+<p>The icon uses the <code>ArrowLeftRight</code> lucide icon (two arrows pointing in opposite directions), visually suggesting bidirectional port forwarding.</p>
+<h3 id="tunnel-sidebar-panel">Tunnel Sidebar Panel</h3>
+<p>When the "Tunnels" activity bar item is active, the sidebar shows the tunnel management panel:</p>
+<pre><code>┌─ SSH Tunnels ─────────────────────┐
+│  [+ New Tunnel]                   │
+│                                   │
+│  ▼ Production DB Tunnel           │
+│    ● Active  L 3306 → db:3306    │
+│    via: prod-bastion (SSH)        │
+│                                   │
+│  ▼ Dev API Proxy                  │
+│    ● Active  L 8080 → api:80     │
+│    via: staging-server (SSH)      │
+│                                   │
+│  ▶ Redis Tunnel                   │
+│    ○ Stopped  L 6379 → redis:6379│
+│    via: prod-bastion (SSH)        │
+│                                   │
+│  ▼ SOCKS Proxy                    │
+│    ● Active  D :1080              │
+│    via: vpn-server (SSH)          │
+│                                   │
+│  ▼ Webhook Receiver               │
+│    ◐ Connecting  R 9000 → :3000  │
+│    via: edge-server (SSH)         │
+│                                   │
+└───────────────────────────────────┘
+</code></pre>
+<p>Each tunnel entry shows:</p>
+<ul>
+<li><strong>Name</strong>: User-assigned label</li>
+<li><strong>Status indicator</strong>: <code>●</code> active (green), <code>○</code> stopped (gray), <code>◐</code> connecting (yellow), <code>✕</code> failed (red)</li>
+<li><strong>Type abbreviation + port mapping</strong>: <code>L</code> (local), <code>R</code> (remote), <code>D</code> (dynamic), followed by the port summary</li>
+<li><strong>SSH connection</strong>: Which saved connection is used as the SSH server</li>
+</ul>
+<p>Expanding a tunnel entry (click the triangle) reveals quick-action buttons:</p>
+<pre><code>│  ▼ Production DB Tunnel           │
+│    ● Active  L 3306 → db:3306    │
+│    via: prod-bastion (SSH)        │
+│    [Stop] [Edit] [Duplicate] [×]  │
+</code></pre>
+<p>Right-clicking a tunnel opens a context menu: Start / Stop, Edit, Duplicate, Delete.</p>
+<h3 id="tunnel-configuration-tab">Tunnel Configuration Tab</h3>
+<p>Clicking <strong>[+ New Tunnel]</strong> or <strong>[Edit]</strong> opens a tunnel configuration tab in the main content area (following the existing <code>connection-editor</code> tab pattern). The configuration tab is divided into two sections: a <strong>visual diagram</strong> at the top and <strong>configuration fields</strong> below.</p>
+<h4 id="visual-tunnel-diagram-local-forwarding">Visual Tunnel Diagram — Local Forwarding</h4>
+<p>The diagram updates live as the user fills in configuration fields, providing immediate visual feedback:</p>
+<pre><code>┌─ New Tunnel ───────────────────────────────────────────────────┐
+│                                                                │
+│  NAME                                                          │
+│  [Production DB Tunnel___________]                             │
+│                                                                │
+│  TUNNEL TYPE                                                   │
+│  [Local Forwarding ▾]                                          │
+│                                                                │
+│  ─── Visual Diagram ─────────────────────────────────────────  │
+│                                                                │
+│  ┌─────────────┐       ┌──────────────┐       ┌────────────┐  │
+│  │  Your PC    │       │  SSH Server  │       │  Target    │  │
+│  │             │  SSH  │              │  TCP  │            │  │
+│  │ localhost   │──────&gt;│ prod-bastion │──────&gt;│ db-server  │  │
+│  │ :3306       │       │ :22          │       │ :3306      │  │
+│  │             │       │              │       │            │  │
+│  └─────────────┘       └──────────────┘       └────────────┘  │
+│    Listen here           Tunnel via             Forward to     │
+│                                                                │
+│  ─── Configuration ──────────────────────────────────────────  │
+│                                                                │
+│  SSH CONNECTION                                                │
+│  [prod-bastion ▾]         ← dropdown of saved SSH connections  │
+│                                                                │
+│  LOCAL BIND ADDRESS                                            │
+│  [localhost______]  PORT [3306__]                               │
+│                                                                │
+│  REMOTE TARGET HOST                                            │
+│  [db-server______]  PORT [3306__]                              │
+│                                                                │
+│  ☐ Auto-start when termiHub launches                           │
+│  ☐ Reconnect on disconnect                                     │
+│                                                                │
+│  ────────────────────────────────────────────────────────────  │
+│  [Save Tunnel]  [Save &amp; Start]                [Cancel]         │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h4 id="visual-tunnel-diagram-remote-forwarding">Visual Tunnel Diagram — Remote Forwarding</h4>
+<p>When "Remote Forwarding" is selected, the diagram reverses direction to show traffic flowing from the SSH server back to the local machine:</p>
+<pre><code>│  ─── Visual Diagram ─────────────────────────────────────────  │
+│                                                                │
+│  ┌─────────────┐       ┌──────────────┐       ┌────────────┐  │
+│  │  Target     │       │  SSH Server  │       │  Your PC   │  │
+│  │             │  TCP  │              │  SSH  │            │  │
+│  │ localhost   │&lt;──────│ edge-server  │&lt;──────│ localhost  │  │
+│  │ :3000       │       │ :9000        │       │            │  │
+│  │             │       │              │       │            │  │
+│  └─────────────┘       └──────────────┘       └────────────┘  │
+│    Forward to here       Listen here            Tunnel via     │
+</code></pre>
+<p>The labels adjust: the SSH server box now shows "Listen here" and the local machine shows "Tunnel via", making it clear that the remote side is accepting connections.</p>
+<h4 id="visual-tunnel-diagram-dynamic-forwarding-socks">Visual Tunnel Diagram — Dynamic Forwarding (SOCKS)</h4>
+<p>For dynamic forwarding, the diagram is simplified to two participants since there is no fixed target:</p>
+<pre><code>│  ─── Visual Diagram ─────────────────────────────────────────  │
+│                                                                │
+│  ┌─────────────┐       ┌──────────────┐       ┌────────────┐  │
+│  │  Your PC    │       │  SSH Server  │       │  Internet  │  │
+│  │             │  SSH  │              │       │  / Remote  │  │
+│  │ localhost   │──────&gt;│ vpn-server   │──────&gt;│  Network   │  │
+│  │ :1080       │       │ :22          │       │            │  │
+│  │  SOCKS5     │       │              │       │            │  │
+│  └─────────────┘       └──────────────┘       └────────────┘  │
+│    SOCKS proxy           Tunnel via           Dynamic routing  │
+│                                                                │
+│  ─── Configuration ──────────────────────────────────────────  │
+│                                                                │
+│  SSH CONNECTION                                                │
+│  [vpn-server ▾]                                                │
+│                                                                │
+│  LOCAL BIND ADDRESS                                            │
+│  [localhost______]  PORT [1080__]                               │
+│                                                                │
+│  (No remote target — all traffic is dynamically routed         │
+│   through the SSH server via SOCKS5 protocol)                  │
+│                                                                │
+</code></pre>
+<h4 id="ssh-connection-dropdown">SSH Connection Dropdown</h4>
+<p>The "SSH CONNECTION" dropdown lists all saved connections of type <code>ssh</code>. Each entry shows the connection name and host:</p>
+<pre><code>┌──────────────────────────────────┐
+│ prod-bastion (admin@10.0.1.50)   │
+│ staging-server (deploy@staging)  │
+│ vpn-server (user@vpn.example)    │
+│ ─────────────────────────────    │
+│ + Create new SSH connection...   │
+└──────────────────────────────────┘
+</code></pre>
+<p>If no SSH connections exist yet, the dropdown shows a prompt: "No SSH connections saved. Create one first."</p>
+<p>Selecting "+ Create new SSH connection..." opens a new connection editor tab pre-set to SSH type. After saving, the user returns to the tunnel editor with the new connection auto-selected.</p>
+<h3 id="tunnel-status-in-sidebar">Tunnel Status in Sidebar</h3>
+<p>Active tunnels display a live status row with traffic information:</p>
+<pre><code>│  ▼ Production DB Tunnel           │
+│    ● Active  L 3306 → db:3306    │
+│    via: prod-bastion              │
+│    ↑ 1.2 KB  ↓ 45.3 KB  │ 3 conn│
+│    [Stop] [Edit] [Duplicate] [×]  │
+</code></pre>
+<ul>
+<li><code>↑</code> / <code>↓</code>: Bytes transferred upstream / downstream since tunnel started</li>
+<li><code>│ N conn</code>: Number of currently open forwarded connections through this tunnel</li>
+</ul>
+<h3 id="tunnel-status-notification">Tunnel Status Notification</h3>
+<p>When a tunnel fails or disconnects unexpectedly, a toast notification appears:</p>
+<pre><code>┌──────────────────────────────────────┐
+│ ⚠ Tunnel &quot;Production DB&quot; failed     │
+│ SSH connection lost. Reconnecting... │
+│                          [Dismiss]   │
+└──────────────────────────────────────┘
+</code></pre>
+<p>If "Reconnect on disconnect" is enabled, the tunnel automatically attempts to reconnect with exponential backoff (1s, 2s, 4s, 8s, max 30s).</p>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="creating-a-tunnel">Creating a Tunnel</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant AB as Activity Bar
+    participant Store as App Store
+    participant Sidebar as Tunnel Sidebar
+    participant Tab as Tunnel Editor Tab
+
+    User-&gt;&gt;AB: Click Tunnels icon
+    AB-&gt;&gt;Store: setSidebarView("tunnels")
+    Store-&gt;&gt;Sidebar: Render TunnelList
+
+    User-&gt;&gt;Sidebar: Click [+ New Tunnel]
+    Sidebar-&gt;&gt;Store: openTunnelEditorTab(null)
+    Store-&gt;&gt;Tab: Open new tunnel editor tab
+
+    User-&gt;&gt;Tab: Fill in name, type, SSH connection, ports
+    Tab-&gt;&gt;Tab: Visual diagram updates live
+
+    User-&gt;&gt;Tab: Click [Save &amp; Start]
+    Tab-&gt;&gt;Store: saveTunnel(config)
+    Store-&gt;&gt;Store: Persist tunnel to backend
+    Store-&gt;&gt;Store: startTunnel(tunnelId)
+    Store-&gt;&gt;Sidebar: Tunnel appears with ● Active
+</pre>
+</div>
+<h3 id="starting-a-tunnel">Starting a Tunnel</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Store as App Store
+    participant Backend as Tauri Backend
+    participant SSH as SSH Library
+    participant Target as Target Host
+
+    Store-&gt;&gt;Backend: start_tunnel(tunnelId)
+    Backend-&gt;&gt;Backend: Load tunnel config + SSH connection config
+
+    Backend-&gt;&gt;SSH: Connect to SSH server
+    SSH--&gt;&gt;Backend: Session established
+
+    alt Local Forwarding
+        Backend-&gt;&gt;Backend: Bind local port (e.g., 127.0.0.1:3306)
+        Backend-&gt;&gt;Backend: Accept local connections
+        Note over Backend,Target: For each incoming local connection:
+        Backend-&gt;&gt;SSH: Open direct-tcpip channel to target:port
+        SSH-&gt;&gt;Target: TCP connection
+        Backend-&gt;&gt;Backend: Bidirectional relay (local ↔ SSH channel)
+    else Remote Forwarding
+        Backend-&gt;&gt;SSH: Request remote port forwarding (tcpip-forward)
+        SSH--&gt;&gt;Backend: Port bound on server
+        Note over Backend,SSH: For each incoming remote connection:
+        SSH-&gt;&gt;Backend: Forward channel
+        Backend-&gt;&gt;Backend: Connect to local target
+        Backend-&gt;&gt;Backend: Bidirectional relay (SSH channel ↔ local)
+    else Dynamic Forwarding
+        Backend-&gt;&gt;Backend: Bind local SOCKS5 port
+        Note over Backend,SSH: For each SOCKS5 request:
+        Backend-&gt;&gt;Backend: Parse SOCKS5 CONNECT request
+        Backend-&gt;&gt;SSH: Open direct-tcpip channel to requested host:port
+        Backend-&gt;&gt;Backend: Bidirectional relay (local ↔ SSH channel)
+    end
+
+    Backend--&gt;&gt;Store: Tunnel active, emit status event
+</pre>
+</div>
+<h3 id="stopping-a-tunnel">Stopping a Tunnel</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant Sidebar as Tunnel Sidebar
+    participant Store as App Store
+    participant Backend as Tauri Backend
+
+    User-&gt;&gt;Sidebar: Click [Stop] on tunnel
+    Sidebar-&gt;&gt;Store: stopTunnel(tunnelId)
+    Store-&gt;&gt;Backend: stop_tunnel(tunnelId)
+    Backend-&gt;&gt;Backend: Close all forwarded connections
+    Backend-&gt;&gt;Backend: Close SSH session (if no other tunnels use it)
+    Backend-&gt;&gt;Backend: Unbind local port
+    Backend--&gt;&gt;Store: Tunnel stopped
+    Store-&gt;&gt;Sidebar: Status → ○ Stopped
+</pre>
+</div>
+<h3 id="ssh-session-sharing">SSH Session Sharing</h3>
+<p>Multiple tunnels using the same SSH connection should share a single SSH session where possible to avoid redundant connections:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Start tunnel] --&gt; B{SSH session for this&lt;br&gt;connection already open?}
+    B --&gt;|Yes| C[Reuse existing SSH session]
+    B --&gt;|No| D[Create new SSH session]
+    D --&gt; E[Store in session pool]
+    C --&gt; F[Set up port forwarding&lt;br&gt;on shared session]
+    E --&gt; F
+
+    G[Stop tunnel] --&gt; H{Other tunnels using&lt;br&gt;this SSH session?}
+    H --&gt;|Yes| I[Only tear down this forwarding]
+    H --&gt;|No| J[Close SSH session]
+    I --&gt; K[Session remains in pool]
+    J --&gt; L[Remove from pool]
+</pre>
+</div>
+<h3 id="auto-start-on-launch">Auto-Start on Launch</h3>
+<p>Tunnels with "Auto-start when termiHub launches" enabled are started automatically when the application initializes:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[App starts] --&gt; B[Load saved tunnels from backend]
+    B --&gt; C{Any tunnels have&lt;br&gt;auto-start enabled?}
+    C --&gt;|No| D[Done]
+    C --&gt;|Yes| E[For each auto-start tunnel:]
+    E --&gt; F[Start tunnel in background]
+    F --&gt; G{SSH auth requires&lt;br&gt;password prompt?}
+    G --&gt;|No| H[Tunnel connects silently]
+    G --&gt;|Yes| I[Queue password prompt]
+    I --&gt; J[User enters password]
+    J --&gt; H
+    H --&gt; K[Show status in sidebar]
+</pre>
+</div>
+<h3 id="reconnection">Reconnection</h3>
+<p>When "Reconnect on disconnect" is enabled and the SSH connection drops:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[SSH connection lost] --&gt; B[Emit tunnel-disconnected event]
+    B --&gt; C[Show toast notification]
+    C --&gt; D[Wait 1s]
+    D --&gt; E[Attempt reconnect]
+    E --&gt; F{Connected?}
+    F --&gt;|Yes| G[Re-establish port forwarding]
+    F --&gt;|No| H[Double backoff delay]
+    H --&gt; I{Delay &gt; 30s?}
+    I --&gt;|Yes| J[Cap at 30s]
+    I --&gt;|No| K[Wait delay]
+    J --&gt; K
+    K --&gt; E
+
+    G --&gt; L[Resume tunnel ● Active]
+    L --&gt; M[Reset backoff delay to 1s]
+</pre>
+</div>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>Port already in use</strong>: When starting a local or dynamic tunnel, if the bind port is already occupied, the tunnel enters <code>failed</code> state with a clear error message: "Port 3306 is already in use. Choose a different port or stop the conflicting process."</li>
+<li><strong>SSH connection deleted</strong>: If the SSH connection referenced by a tunnel is deleted from the connections list, the tunnel shows a warning indicator and cannot be started until a new SSH connection is assigned.</li>
+<li><strong>Invalid target host</strong>: If the SSH server cannot reach the remote target host, the tunnel opens the local port successfully but individual forwarded connections fail. The tunnel status shows <code>● Active (target unreachable)</code> and a warning indicator.</li>
+<li><strong>SSH auth failure</strong>: If the SSH connection requires authentication and it fails (wrong password, missing key), the tunnel enters <code>failed</code> state with the auth error message.</li>
+<li><strong>Multiple tunnels same port</strong>: The UI prevents saving two tunnels that bind to the same local port. A validation error appears: "Port 3306 is already used by tunnel 'Production DB Tunnel'."</li>
+<li><strong>Connection editor integration</strong>: When editing an SSH connection that is used by one or more tunnels, the connection editor shows a notice: "This connection is used by N tunnel(s)."</li>
+<li><strong>App close with active tunnels</strong>: When closing termiHub with active tunnels, tunnels are stopped gracefully. No confirmation dialog — tunnels are not long-lived services (they restart on next launch if auto-start is enabled).</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="tunnel-lifecycle-state-machine">Tunnel Lifecycle State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Saved: User saves tunnel config
+
+    Saved --&gt; Connecting: Start tunnel
+    Saved --&gt; Saved: Edit config
+
+    Connecting --&gt; Active: SSH connected + port bound
+    Connecting --&gt; Failed: Connection error / auth failure / port in use
+
+    Active --&gt; Disconnected: SSH session lost
+    Active --&gt; Stopping: User clicks Stop
+    Active --&gt; Active: Forwarding connections
+
+    Disconnected --&gt; Reconnecting: Auto-reconnect enabled
+    Disconnected --&gt; Saved: Auto-reconnect disabled
+
+    Reconnecting --&gt; Active: Reconnect succeeded
+    Reconnecting --&gt; Reconnecting: Retry with backoff
+    Reconnecting --&gt; Failed: Max retries exceeded (10)
+    Reconnecting --&gt; Stopping: User clicks Stop
+
+    Failed --&gt; Connecting: User clicks Start (retry)
+    Failed --&gt; Saved: User edits config
+
+    Stopping --&gt; Saved: All connections closed
+
+    note right of Active: Local port is bound and accepting connections
+    note right of Reconnecting: Exponential backoff: 1s, 2s, 4s, ... 30s max
+</pre>
+</div>
+<h3 id="ssh-session-pool-state-machine">SSH Session Pool State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Empty: No tunnels active
+
+    Empty --&gt; Creating: First tunnel requests SSH session
+    Creating --&gt; Pooled: SSH connection established
+    Creating --&gt; Error: SSH connection failed
+
+    Pooled --&gt; Pooled: Additional tunnel shares session
+    Pooled --&gt; Draining: Last tunnel using session stopped
+
+    Draining --&gt; Empty: Session closed
+    Draining --&gt; Pooled: New tunnel claims session before close
+
+    Error --&gt; Creating: Retry
+
+    note right of Pooled: Reference count tracks active tunnels
+</pre>
+</div>
+<h3 id="tunnel-editor-interaction-state-machine">Tunnel Editor Interaction State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle: No editor open
+
+    Idle --&gt; Editing: Open new/edit tunnel
+    Editing --&gt; Editing: Change any field
+    Editing --&gt; Validating: Click Save / Save &amp; Start
+
+    Validating --&gt; Invalid: Validation errors
+    Validating --&gt; Saving: Validation passed
+
+    Invalid --&gt; Editing: User fixes errors
+
+    Saving --&gt; Idle: Save success → close tab
+    Saving --&gt; Starting: Save &amp; Start success
+    Saving --&gt; Editing: Save failed
+
+    Starting --&gt; Idle: Tunnel started → close tab
+    Starting --&gt; Editing: Start failed (show error inline)
+</pre>
+</div>
+<h3 id="tunnel-start-sequence">Tunnel Start Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant UI as Tunnel Sidebar
+    participant Store as Zustand Store
+    participant Cmd as Tauri Command
+    participant Pool as SSH Session Pool
+    participant SSH as ssh2 Session
+    participant Listener as TCP Listener
+
+    UI-&gt;&gt;Store: startTunnel(tunnelId)
+    Store-&gt;&gt;Cmd: start_tunnel(tunnelId)
+    Cmd-&gt;&gt;Cmd: Load TunnelConfig from storage
+    Cmd-&gt;&gt;Pool: get_or_create_session(ssh_connection_id)
+
+    alt Session exists in pool
+        Pool--&gt;&gt;Cmd: Existing session (ref_count++)
+    else No session
+        Pool-&gt;&gt;SSH: connect_and_authenticate(ssh_config)
+        alt Password needed
+            SSH--&gt;&gt;Cmd: Auth requires password
+            Cmd--&gt;&gt;Store: Request password prompt
+            Store--&gt;&gt;UI: Show password dialog
+            UI--&gt;&gt;Store: User enters password
+            Store--&gt;&gt;Cmd: Password provided
+            Cmd-&gt;&gt;SSH: Authenticate with password
+        end
+        SSH--&gt;&gt;Pool: Session established
+        Pool--&gt;&gt;Cmd: New session (ref_count=1)
+    end
+
+    alt Local forwarding
+        Cmd-&gt;&gt;Listener: Bind local_addr:local_port
+        Cmd-&gt;&gt;Cmd: Spawn accept loop
+        Listener--&gt;&gt;Cmd: Listening
+    else Remote forwarding
+        Cmd-&gt;&gt;SSH: tcpip_forward(remote_addr, remote_port)
+        SSH--&gt;&gt;Cmd: Port forwarded on server
+    else Dynamic (SOCKS5)
+        Cmd-&gt;&gt;Listener: Bind local_addr:local_port (SOCKS5)
+        Cmd-&gt;&gt;Cmd: Spawn SOCKS5 accept loop
+        Listener--&gt;&gt;Cmd: Listening
+    end
+
+    Cmd--&gt;&gt;Store: TunnelStatus::Active
+    Store--&gt;&gt;UI: Update sidebar (● Active)
+    Cmd-&gt;&gt;Store: Emit tunnel-status-changed event
+</pre>
+</div>
+<h3 id="forwarded-connection-lifecycle-local-forwarding">Forwarded Connection Lifecycle (Local Forwarding)</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Client as Local Client
+    participant Listener as TCP Listener
+    participant Manager as Tunnel Manager
+    participant SSH as SSH Channel
+    participant Target as Remote Target
+
+    Client-&gt;&gt;Listener: TCP connect to localhost:3306
+    Listener-&gt;&gt;Manager: New incoming connection
+    Manager-&gt;&gt;SSH: channel_direct_tcpip(target_host, target_port)
+    SSH-&gt;&gt;Target: TCP connect to db-server:3306
+    Target--&gt;&gt;SSH: Connected
+
+    loop Bidirectional relay
+        Client-&gt;&gt;Manager: Send data
+        Manager-&gt;&gt;SSH: Write to channel
+        SSH-&gt;&gt;Target: Forward data
+
+        Target-&gt;&gt;SSH: Response data
+        SSH-&gt;&gt;Manager: Read from channel
+        Manager-&gt;&gt;Client: Send response
+    end
+
+    Client-&gt;&gt;Manager: Close connection
+    Manager-&gt;&gt;SSH: Close channel
+    Manager-&gt;&gt;Manager: Update stats (bytes transferred)
+</pre>
+</div>
+<h3 id="tunnel-status-event-flow">Tunnel Status Event Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph Backend
+        TM[Tunnel Manager] --&gt;|status change| EV[Event Emitter]
+    end
+
+    subgraph Frontend
+        EV --&gt;|tunnel-status-changed| DISP[Event Dispatcher]
+        DISP --&gt; STORE[Zustand Store]
+        STORE --&gt; SB[Tunnel Sidebar]
+        STORE --&gt; TOAST[Toast Notifications]
+    end
+
+    EV --&gt;|tunnel-stats-updated| DISP
+
+    style Backend fill:#1e2a3a,stroke:#007acc,color:#fff
+    style Frontend fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation.</p>
+<h3 id="architecture-overview">Architecture Overview</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph "Frontend (React)"
+        AB[ActivityBar&lt;br&gt;+ Tunnels icon]
+        TS[TunnelSidebar&lt;br&gt;panel]
+        TE[TunnelEditor&lt;br&gt;tab component]
+        STORE[Zustand Store&lt;br&gt;tunnel state]
+    end
+
+    subgraph "Backend (Rust)"
+        CMD[Tauri Commands&lt;br&gt;tunnel_commands.rs]
+        TM[TunnelManager&lt;br&gt;tunnel/tunnel_manager.rs]
+        SP[SshSessionPool&lt;br&gt;tunnel/session_pool.rs]
+        LF[LocalForwarder&lt;br&gt;tunnel/local_forward.rs]
+        RF[RemoteForwarder&lt;br&gt;tunnel/remote_forward.rs]
+        DF[DynamicForwarder&lt;br&gt;tunnel/dynamic_forward.rs]
+        TC[TunnelConfig&lt;br&gt;tunnel/config.rs]
+    end
+
+    subgraph "Storage"
+        DISK[tunnels.json]
+    end
+
+    AB --&gt; STORE
+    TS --&gt; STORE
+    TE --&gt; STORE
+    STORE &lt;--&gt;|IPC| CMD
+    CMD --&gt; TM
+    TM --&gt; SP
+    TM --&gt; LF
+    TM --&gt; RF
+    TM --&gt; DF
+    TM --&gt; TC
+    TC &lt;--&gt; DISK
+    SP --&gt;|ssh2::Session| LF
+    SP --&gt;|ssh2::Session| RF
+    SP --&gt;|ssh2::Session| DF
+
+    style Frontend fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Backend fill:#1e2a3a,stroke:#007acc,color:#fff
+    style Storage fill:#3a2e1e,stroke:#cca700,color:#fff
+</pre>
+</div>
+<h3 id="1-data-model">1. Data Model</h3>
+<h4 id="tunnel-configuration-rust">Tunnel Configuration (Rust)</h4>
+<pre><code class="language-rust">// src-tauri/src/tunnel/config.rs
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct TunnelConfig {
+    pub id: String,
+    pub name: String,
+    /// ID of the saved SSH connection to tunnel through.
+    pub ssh_connection_id: String,
+    pub tunnel_type: TunnelType,
+    pub auto_start: bool,
+    pub reconnect_on_disconnect: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = &quot;type&quot;, content = &quot;config&quot;, rename_all = &quot;camelCase&quot;)]
+pub enum TunnelType {
+    #[serde(rename = &quot;local&quot;)]
+    Local(LocalForwardConfig),
+    #[serde(rename = &quot;remote&quot;)]
+    Remote(RemoteForwardConfig),
+    #[serde(rename = &quot;dynamic&quot;)]
+    Dynamic(DynamicForwardConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct LocalForwardConfig {
+    pub local_host: String,     // e.g., &quot;127.0.0.1&quot; or &quot;0.0.0.0&quot;
+    pub local_port: u16,
+    pub remote_host: String,    // e.g., &quot;db-server&quot;
+    pub remote_port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct RemoteForwardConfig {
+    pub remote_host: String,    // Bind address on SSH server (usually &quot;0.0.0.0&quot; or &quot;localhost&quot;)
+    pub remote_port: u16,
+    pub local_host: String,     // Where to forward to locally
+    pub local_port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct DynamicForwardConfig {
+    pub local_host: String,     // e.g., &quot;127.0.0.1&quot;
+    pub local_port: u16,        // SOCKS5 proxy port
+}
+</code></pre>
+<h4 id="tunnel-configuration-typescript">Tunnel Configuration (TypeScript)</h4>
+<pre><code class="language-typescript">// src/types/tunnel.ts
+
+export interface TunnelConfig {
+  id: string;
+  name: string;
+  sshConnectionId: string;
+  tunnelType: TunnelType;
+  autoStart: boolean;
+  reconnectOnDisconnect: boolean;
+}
+
+export type TunnelType =
+  | { type: &quot;local&quot;; config: LocalForwardConfig }
+  | { type: &quot;remote&quot;; config: RemoteForwardConfig }
+  | { type: &quot;dynamic&quot;; config: DynamicForwardConfig };
+
+export interface LocalForwardConfig {
+  localHost: string;
+  localPort: number;
+  remoteHost: string;
+  remotePort: number;
+}
+
+export interface RemoteForwardConfig {
+  remoteHost: string;
+  remotePort: number;
+  localHost: string;
+  localPort: number;
+}
+
+export interface DynamicForwardConfig {
+  localHost: string;
+  localPort: number;
+}
+
+export type TunnelStatus =
+  | &quot;saved&quot;
+  | &quot;connecting&quot;
+  | &quot;active&quot;
+  | &quot;disconnected&quot;
+  | &quot;reconnecting&quot;
+  | &quot;failed&quot;
+  | &quot;stopping&quot;;
+
+export interface TunnelState {
+  tunnelId: string;
+  status: TunnelStatus;
+  error?: string;
+  stats?: TunnelStats;
+}
+
+export interface TunnelStats {
+  bytesUp: number;
+  bytesDown: number;
+  activeConnections: number;
+}
+</code></pre>
+<h4 id="storage-format">Storage Format</h4>
+<p>Tunnels are stored in a separate file <code>tunnels.json</code> (alongside <code>connections.json</code>) to keep concerns separated:</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;tunnels&quot;: [
+    {
+      &quot;id&quot;: &quot;tun-abc123&quot;,
+      &quot;name&quot;: &quot;Production DB Tunnel&quot;,
+      &quot;sshConnectionId&quot;: &quot;conn-xyz789&quot;,
+      &quot;tunnelType&quot;: {
+        &quot;type&quot;: &quot;local&quot;,
+        &quot;config&quot;: {
+          &quot;localHost&quot;: &quot;127.0.0.1&quot;,
+          &quot;localPort&quot;: 3306,
+          &quot;remoteHost&quot;: &quot;db-server&quot;,
+          &quot;remotePort&quot;: 3306
+        }
+      },
+      &quot;autoStart&quot;: true,
+      &quot;reconnectOnDisconnect&quot;: true
+    }
+  ]
+}
+</code></pre>
+<h3 id="2-backend-architecture">2. Backend Architecture</h3>
+<h4 id="tunnel-manager">Tunnel Manager</h4>
+<p>The <code>TunnelManager</code> is the central backend component, similar to <code>TerminalManager</code> for terminal sessions:</p>
+<pre><code class="language-rust">// src-tauri/src/tunnel/tunnel_manager.rs
+
+pub struct TunnelManager {
+    tunnels: HashMap&lt;String, ActiveTunnel&gt;,
+    session_pool: SshSessionPool,
+    config_store: TunnelConfigStore,
+}
+
+impl TunnelManager {
+    pub async fn start_tunnel(&amp;mut self, tunnel_id: &amp;str) -&gt; Result&lt;()&gt;;
+    pub async fn stop_tunnel(&amp;mut self, tunnel_id: &amp;str) -&gt; Result&lt;()&gt;;
+    pub fn get_status(&amp;self, tunnel_id: &amp;str) -&gt; Option&lt;TunnelState&gt;;
+    pub fn get_all_statuses(&amp;self) -&gt; Vec&lt;TunnelState&gt;;
+}
+</code></pre>
+<h4 id="ssh-session-pool">SSH Session Pool</h4>
+<p>To avoid redundant SSH connections when multiple tunnels use the same SSH server:</p>
+<pre><code class="language-rust">// src-tauri/src/tunnel/session_pool.rs
+
+pub struct SshSessionPool {
+    sessions: HashMap&lt;String, PooledSession&gt;,  // keyed by ssh_connection_id
+}
+
+struct PooledSession {
+    session: Arc&lt;ssh2::Session&gt;,
+    ref_count: usize,
+}
+
+impl SshSessionPool {
+    /// Get an existing session or create a new one.
+    pub fn get_or_create(
+        &amp;mut self,
+        connection_id: &amp;str,
+        ssh_config: &amp;SshConfig,
+    ) -&gt; Result&lt;Arc&lt;ssh2::Session&gt;&gt;;
+
+    /// Release a session (decrement ref count, close if zero).
+    pub fn release(&amp;mut self, connection_id: &amp;str);
+}
+</code></pre>
+<h4 id="forwarders">Forwarders</h4>
+<p>Each forwarding type is a separate module using <code>tokio</code> for async I/O:</p>
+<pre><code class="language-rust">// src-tauri/src/tunnel/local_forward.rs
+pub struct LocalForwarder {
+    listener: TcpListener,
+    session: Arc&lt;ssh2::Session&gt;,
+    config: LocalForwardConfig,
+    stats: Arc&lt;AtomicTunnelStats&gt;,
+    shutdown: tokio::sync::watch::Sender&lt;bool&gt;,
+}
+
+// src-tauri/src/tunnel/remote_forward.rs
+pub struct RemoteForwarder { /* ... */ }
+
+// src-tauri/src/tunnel/dynamic_forward.rs
+pub struct DynamicForwarder { /* SOCKS5 implementation */ }
+</code></pre>
+<p>Note: The <code>ssh2</code> crate operates synchronously. Port forwarding relay loops should use blocking I/O on dedicated threads (similar to the existing <code>SshConnection</code> reader thread pattern), with a <code>tokio::sync::watch</code> channel for shutdown signaling.</p>
+<h3 id="3-tauri-commands">3. Tauri Commands</h3>
+<pre><code class="language-rust">// src-tauri/src/commands/tunnel_commands.rs
+
+#[tauri::command]
+pub fn get_tunnels(state: State&lt;TunnelManager&gt;) -&gt; Result&lt;Vec&lt;TunnelConfig&gt;&gt;;
+
+#[tauri::command]
+pub fn save_tunnel(state: State&lt;TunnelManager&gt;, config: TunnelConfig) -&gt; Result&lt;()&gt;;
+
+#[tauri::command]
+pub fn delete_tunnel(state: State&lt;TunnelManager&gt;, tunnel_id: String) -&gt; Result&lt;()&gt;;
+
+#[tauri::command]
+pub fn start_tunnel(state: State&lt;TunnelManager&gt;, tunnel_id: String) -&gt; Result&lt;()&gt;;
+
+#[tauri::command]
+pub fn stop_tunnel(state: State&lt;TunnelManager&gt;, tunnel_id: String) -&gt; Result&lt;()&gt;;
+
+#[tauri::command]
+pub fn get_tunnel_statuses(state: State&lt;TunnelManager&gt;) -&gt; Result&lt;Vec&lt;TunnelState&gt;&gt;;
+</code></pre>
+<h3 id="4-tauri-events">4. Tauri Events</h3>
+<pre><code class="language-rust">// src-tauri/src/events/tunnel_events.rs
+
+/// Emitted when a tunnel's status changes.
+#[derive(Debug, Clone, Serialize)]
+pub struct TunnelStatusEvent {
+    pub tunnel_id: String,
+    pub status: String,      // &quot;active&quot;, &quot;failed&quot;, &quot;disconnected&quot;, etc.
+    pub error: Option&lt;String&gt;,
+}
+
+/// Emitted periodically with traffic statistics.
+#[derive(Debug, Clone, Serialize)]
+pub struct TunnelStatsEvent {
+    pub tunnel_id: String,
+    pub bytes_up: u64,
+    pub bytes_down: u64,
+    pub active_connections: u32,
+}
+</code></pre>
+<h3 id="5-frontend-components">5. Frontend Components</h3>
+<h4 id="file-structure">File Structure</h4>
+<pre><code>src/
+  components/
+    TunnelSidebar/
+      TunnelSidebar.tsx         # Main sidebar panel
+      TunnelSidebar.css
+      TunnelListItem.tsx        # Individual tunnel entry
+    TunnelEditor/
+      TunnelEditor.tsx          # Tunnel config tab (form + diagram)
+      TunnelEditor.css
+      TunnelDiagram.tsx         # Visual diagram component
+      TunnelDiagram.css
+      TunnelTypeSelector.tsx    # Local/Remote/Dynamic dropdown
+  types/
+    tunnel.ts                   # TypeScript types (see above)
+  services/
+    tunnelApi.ts                # Tauri command wrappers
+</code></pre>
+<h4 id="store-extensions">Store Extensions</h4>
+<p>The Zustand store (<code>appStore.ts</code>) gains tunnel-related state and actions:</p>
+<pre><code class="language-typescript">// Additions to AppState interface
+
+// State
+tunnels: TunnelConfig[];
+tunnelStates: Record&lt;string, TunnelState&gt;;
+
+// Actions
+loadTunnels: () =&gt; Promise&lt;void&gt;;
+saveTunnel: (config: TunnelConfig) =&gt; Promise&lt;void&gt;;
+deleteTunnel: (tunnelId: string) =&gt; Promise&lt;void&gt;;
+startTunnel: (tunnelId: string) =&gt; Promise&lt;void&gt;;
+stopTunnel: (tunnelId: string) =&gt; Promise&lt;void&gt;;
+openTunnelEditorTab: (tunnelId: string | null) =&gt; void;
+</code></pre>
+<h4 id="sidebar-view-extension">Sidebar View Extension</h4>
+<p>The <code>SidebarView</code> type gains a new value:</p>
+<pre><code class="language-typescript">export type SidebarView = &quot;connections&quot; | &quot;files&quot; | &quot;tunnels&quot;;
+</code></pre>
+<p>The <code>ActivityBar</code> <code>TOP_ITEMS</code> array gains a new entry:</p>
+<pre><code class="language-typescript">{ view: &quot;tunnels&quot;, icon: ArrowLeftRight, label: &quot;SSH Tunnels&quot; }
+</code></pre>
+<h4 id="tab-content-type-extension">Tab Content Type Extension</h4>
+<p>A new tab content type is added for the tunnel editor:</p>
+<pre><code class="language-typescript">export type TabContentType =
+  | &quot;terminal&quot;
+  | &quot;settings&quot;
+  | &quot;editor&quot;
+  | &quot;connection-editor&quot;
+  | &quot;log-viewer&quot;
+  | &quot;tunnel-editor&quot;; // NEW
+</code></pre>
+<h3 id="6-visual-diagram-component">6. Visual Diagram Component</h3>
+<p>The <code>TunnelDiagram</code> component renders the three-box visual using pure CSS (no canvas or SVG library). Each box is a styled <code>div</code> with a label. Arrows between boxes use CSS pseudo-elements or a simple inline SVG. The diagram re-renders reactively based on the current form state.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph TunnelDiagram
+        A[SourceBox] --&gt;|arrow| B[MiddleBox]
+        B --&gt;|arrow| C[TargetBox]
+    end
+
+    subgraph Props
+        D[tunnelType]
+        E[localHost + localPort]
+        F[sshConnectionName + sshPort]
+        G[remoteHost + remotePort]
+    end
+
+    D --&gt; A
+    E --&gt; A
+    F --&gt; B
+    G --&gt; C
+</pre>
+</div>
+<p>The diagram layout depends on tunnel type:</p>
+<ul>
+<li><strong>Local</strong>: <code>[Your PC] → [SSH Server] → [Target]</code></li>
+<li><strong>Remote</strong>: <code>[Target] ← [SSH Server] ← [Your PC]</code></li>
+<li><strong>Dynamic</strong>: <code>[Your PC] → [SSH Server] → [Internet]</code></li>
+</ul>
+<p>Labels below each box change to clarify the role ("Listen here", "Tunnel via", "Forward to").</p>
+<h3 id="7-integration-with-existing-ssh-connections">7. Integration with Existing SSH Connections</h3>
+<p>Tunnels reference existing SSH connections by <code>id</code> rather than duplicating SSH configuration. This means:</p>
+<ul>
+<li>Tunnel SSH auth uses the same mechanism as terminal SSH connections (password prompt, key auth, agent)</li>
+<li>If an SSH connection's host/port/credentials change, all tunnels using it automatically use the updated config</li>
+<li>Deleting an SSH connection that tunnels depend on orphans those tunnels (they cannot start until reassigned)</li>
+</ul>
+<h3 id="8-file-structure-summary">8. File Structure Summary</h3>
+<pre><code>src-tauri/src/
+  tunnel/                        # NEW module
+    mod.rs
+    config.rs                    # TunnelConfig, TunnelType, storage format
+    tunnel_manager.rs            # TunnelManager — central orchestrator
+    session_pool.rs              # SshSessionPool — shared SSH sessions
+    local_forward.rs             # Local port forwarding (ssh -L)
+    remote_forward.rs            # Remote port forwarding (ssh -R)
+    dynamic_forward.rs           # SOCKS5 dynamic forwarding (ssh -D)
+    storage.rs                   # Read/write tunnels.json
+  commands/
+    tunnel_commands.rs           # NEW: Tauri IPC commands for tunnels
+  events/
+    tunnel_events.rs             # NEW: Tunnel status + stats events
+
+src/
+  components/
+    TunnelSidebar/               # NEW
+      TunnelSidebar.tsx
+      TunnelSidebar.css
+      TunnelListItem.tsx
+    TunnelEditor/                # NEW
+      TunnelEditor.tsx
+      TunnelEditor.css
+      TunnelDiagram.tsx
+      TunnelDiagram.css
+      TunnelTypeSelector.tsx
+  types/
+    tunnel.ts                    # NEW: TypeScript tunnel types
+  services/
+    tunnelApi.ts                 # NEW: Tauri command wrappers
+</code></pre>
+<h3 id="9-implementation-order">9. Implementation Order</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    P1["PR 1: Data model + storage
+    (tunnel types, tunnels.json, Tauri commands for CRUD)"]
+
+    P2["PR 2: Tunnel sidebar + activity bar
+    (SidebarView extension, TunnelSidebar, TunnelListItem)"]
+
+    P3["PR 3: Tunnel editor tab
+    (TunnelEditor, TunnelTypeSelector, TunnelDiagram)"]
+
+    P4["PR 4: Local forwarding backend
+    (SshSessionPool, LocalForwarder, start/stop commands)"]
+
+    P5["PR 5: Remote forwarding backend
+    (RemoteForwarder)"]
+
+    P6["PR 6: Dynamic (SOCKS5) forwarding backend
+    (DynamicForwarder)"]
+
+    P7["PR 7: Live status + stats
+    (Tauri events, traffic counters, sidebar status display)"]
+
+    P8["PR 8: Auto-start + reconnection
+    (auto-start on launch, exponential backoff reconnect)"]
+
+    P1 --&gt; P2
+    P1 --&gt; P4
+    P2 --&gt; P3
+    P4 --&gt; P5
+    P4 --&gt; P6
+    P4 --&gt; P7
+    P7 --&gt; P8
+</pre>
+</div>
+<ol>
+<li><strong>PR 1 — Data model + storage</strong>: Define Rust and TypeScript types, create <code>tunnels.json</code> storage, add CRUD Tauri commands. No UI yet.</li>
+<li><strong>PR 2 — Sidebar + activity bar</strong>: Add <code>"tunnels"</code> sidebar view, <code>ArrowLeftRight</code> icon in activity bar, <code>TunnelSidebar</code> component showing saved tunnels.</li>
+<li><strong>PR 3 — Tunnel editor</strong>: The configuration tab with the visual diagram, form fields, and SSH connection dropdown.</li>
+<li><strong>PR 4 — Local forwarding</strong>: SSH session pool + local port forwarding implementation. This is the most common tunnel type.</li>
+<li><strong>PR 5 — Remote forwarding</strong>: Remote port forwarding using <code>tcpip_forward</code>.</li>
+<li><strong>PR 6 — Dynamic forwarding</strong>: SOCKS5 proxy implementation.</li>
+<li><strong>PR 7 — Live status</strong>: Tauri events for status changes and traffic stats, sidebar status indicators.</li>
+<li><strong>PR 8 — Auto-start + reconnection</strong>: Auto-start tunnels on app launch, exponential backoff reconnection.</li>
+</ol>
+<p>PRs 2-3 (frontend) and PR 4 (backend) can proceed in parallel after PR 1. PRs 5-6 can also proceed in parallel.</p>
+<h3 id="10-design-decision-summary">10. Design Decision Summary</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Choice</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Storage location</td>
+<td>Separate <code>tunnels.json</code></td>
+<td>Keeps tunnel config decoupled from connection config; easier to manage independently</td>
+</tr>
+<tr>
+<td>SSH session management</td>
+<td>Shared session pool</td>
+<td>Avoids redundant SSH connections; multiple tunnels through same server share one session</td>
+</tr>
+<tr>
+<td>Forwarding implementation</td>
+<td><code>ssh2</code> crate with blocking threads</td>
+<td>Matches existing SSH backend pattern; <code>ssh2</code> is synchronous, so threading is required</td>
+</tr>
+<tr>
+<td>SOCKS5 for dynamic</td>
+<td>Custom minimal implementation</td>
+<td>Only SOCKS5 CONNECT needed; avoids external dependency for simple protocol</td>
+</tr>
+<tr>
+<td>Tunnel type tagging</td>
+<td><code>#[serde(tag = "type", content = "config")]</code></td>
+<td>Matches existing <code>ConnectionConfig</code> serialization pattern</td>
+</tr>
+<tr>
+<td>Sidebar panel vs tab</td>
+<td>Sidebar panel for list, tab for editor</td>
+<td>Consistent with connections pattern (sidebar = list, tab = editor)</td>
+</tr>
+<tr>
+<td>Visual diagram</td>
+<td>Pure CSS boxes + arrows</td>
+<td>No extra dependency; simple layout that renders reliably across platforms</td>
+</tr>
+<tr>
+<td>Auto-start</td>
+<td>Per-tunnel toggle</td>
+<td>Not all tunnels should auto-start; user controls which ones do</td>
+</tr>
+<tr>
+<td>Reconnection</td>
+<td>Exponential backoff with cap</td>
+<td>Standard resilience pattern; 30s cap prevents excessive waiting</td>
+</tr>
+</tbody>
+</table>
+</div>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

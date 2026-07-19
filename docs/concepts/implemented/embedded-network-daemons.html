@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embedded Network Daemons (Quick-Share FTP/HTTP/TFTP Servers) (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Embedded Network Daemons (Quick-Share FTP/HTTP/TFTP Servers)</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/526">#526</a></span>
+          <span><code>docs/concepts/implemented/embedded-network-daemons.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>Add lightweight, embeddable network servers (HTTP, FTP, TFTP) to termiHub that users can start directly from the application for ad-hoc file sharing and testing. This eliminates the need for external tools when transferring files to devices that only support specific protocols — network equipment requiring TFTP firmware updates, quick HTTP file serving for downloads, or FTP for legacy device support.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Start/stop HTTP, TFTP, and FTP servers from within termiHub with minimal configuration</li>
+<li>Serve files from any local directory with a single click</li>
+<li>Provide a dedicated sidebar panel ("Services") for managing running servers</li>
+<li>Persist server configurations for quick re-use</li>
+<li>Support auto-start for frequently used server configurations</li>
+<li>Integrate with the file browser via right-click context menu ("Share via...")</li>
+<li>Bind to localhost by default with explicit opt-in for LAN exposure</li>
+<li>Show live statistics (connections, bytes transferred) for active servers</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>Full-featured production server capabilities (virtual hosts, CGI, PHP, etc.)</li>
+<li>Serving files from remote connections (SFTP/SSH) — only local directories</li>
+<li>User management beyond simple username/password authentication</li>
+<li>HTTPS/FTPS/TLS support (these are quick-share servers, not production deployments)</li>
+<li>Persistent upload storage management (uploaded files go to the configured directory as-is)</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="services-sidebar-panel">Services Sidebar Panel</h3>
+<p>A new sidebar panel accessible from the Activity Bar (icon: <code>Server</code> from Lucide):</p>
+<pre><code>┌──────────────────────────┐
+│ SERVICES            [+]  │
+├──────────────────────────┤
+│ 🔍 [Filter services...  ]│
+├──────────────────────────┤
+│ ● HTTP — Project Files   │  ← Green dot = running
+│   :8080 → ~/projects     │
+│   ▸ 3 connections        │
+│                          │
+│ ○ TFTP — Firmware Share  │  ← Gray dot = stopped
+│   :6969 → ~/firmware     │
+│                          │
+│ ○ FTP — Dev Share        │  ← Gray dot = stopped
+│   :2121 → ~/shared       │
+├──────────────────────────┤
+│ No more services.        │
+│ Click [+] to add one.    │
+└──────────────────────────┘
+</code></pre>
+<p>Each service entry shows:</p>
+<ul>
+<li><strong>Status indicator</strong> — colored dot (green = running, gray = stopped, red = error)</li>
+<li><strong>Protocol badge</strong> — <code>HTTP</code>, <code>FTP</code>, or <code>TFTP</code></li>
+<li><strong>Name</strong> — user-defined label</li>
+<li><strong>Bind address and port</strong></li>
+<li><strong>Root directory</strong> (abbreviated path)</li>
+<li><strong>Live stats</strong> when running (active connections, bytes transferred)</li>
+</ul>
+<p>Right-clicking a service shows a context menu:</p>
+<pre><code>┌─────────────────────┐
+│ Start               │
+│ Stop                │
+│ ─────────────────── │
+│ Edit...             │
+│ Duplicate           │
+│ ─────────────────── │
+│ Copy URL            │  ← e.g., http://192.168.1.10:8080
+│ Open in Browser     │  ← HTTP only
+│ ─────────────────── │
+│ Delete              │
+└─────────────────────┘
+</code></pre>
+<h3 id="service-configuration-dialog">Service Configuration Dialog</h3>
+<p>Opened when creating a new service or editing an existing one:</p>
+<pre><code>┌──────────────────────────────────────────────────┐
+│  Configure Service                               │
+├──────────────────────────────────────────────────┤
+│                                                  │
+│  Name:          [Firmware Share               ]  │
+│                                                  │
+│  Protocol:      ( ) HTTP  (●) TFTP  ( ) FTP     │
+│                                                  │
+│  Root Directory: [~/firmware            ] [📁]   │
+│                                                  │
+│  ┌─ Network ───────────────────────────────────┐ │
+│  │ Bind Address:  [127.0.0.1          ] [▾]    │ │
+│  │ Port:          [6969               ]        │ │
+│  │                                             │ │
+│  │ ☐ Expose to LAN (bind 0.0.0.0)             │ │
+│  └─────────────────────────────────────────────┘ │
+│                                                  │
+│  ┌─ Options ───────────────────────────────────┐ │
+│  │ ☐ Auto-start when termiHub launches         │ │
+│  │ ☐ Read-only (disable uploads/writes)        │ │
+│  │ ☐ Allow directory listing          (HTTP)   │ │
+│  └─────────────────────────────────────────────┘ │
+│                                                  │
+│  ┌─ Authentication (FTP only) ─────────────────┐ │
+│  │ ( ) Anonymous access                        │ │
+│  │ (●) Username / Password                     │ │
+│  │     User: [admin                  ]         │ │
+│  │     Pass: [••••••                 ]         │ │
+│  └─────────────────────────────────────────────┘ │
+│                                                  │
+│               [Cancel]  [Save]                   │
+└──────────────────────────────────────────────────┘
+</code></pre>
+<p>Protocol-specific options:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>HTTP</th>
+<th>FTP</th>
+<th>TFTP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Directory listing</td>
+<td>Yes</td>
+<td>N/A</td>
+<td>N/A</td>
+</tr>
+<tr>
+<td>Read-only mode</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Authentication</td>
+<td>No</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Custom index file</td>
+<td>Yes</td>
+<td>No</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="lan-exposure-warning">LAN Exposure Warning</h3>
+<p>When the user checks "Expose to LAN", a warning dialog appears:</p>
+<pre><code>┌──────────────────────────────────────────────┐
+│  ⚠ Security Warning                         │
+├──────────────────────────────────────────────┤
+│                                              │
+│  Binding to 0.0.0.0 will make this server   │
+│  accessible to ALL devices on your network.  │
+│                                              │
+│  Anyone on the same network can:             │
+│  • Download files from the shared directory  │
+│  • Upload files (if read-only is off)        │
+│                                              │
+│  Only enable this on trusted networks.       │
+│                                              │
+│           [Cancel]  [I Understand]           │
+└──────────────────────────────────────────────┘
+</code></pre>
+<h3 id="file-browser-integration">File Browser Integration</h3>
+<p>Right-clicking a directory in the local file browser shows an additional context menu group:</p>
+<pre><code>┌──────────────────────────┐
+│ Open in Terminal         │
+│ ──────────────────────── │
+│ Share via HTTP Server    │
+│ Share via FTP Server     │
+│ Share via TFTP Server    │
+└──────────────────────────┘
+</code></pre>
+<p>Selecting "Share via..." creates a new service configuration pre-filled with the selected directory as the root and a default port, then immediately starts the server. A toast notification confirms:</p>
+<pre><code>┌──────────────────────────────────────────┐
+│ ✓ HTTP server started on :8080           │
+│   Serving ~/projects/firmware            │
+│   http://127.0.0.1:8080     [Copy URL]   │
+└──────────────────────────────────────────┘
+</code></pre>
+<h3 id="status-bar-integration">Status Bar Integration</h3>
+<p>When one or more servers are running, a status bar item appears:</p>
+<pre><code>┌──────────────────────────────────────────────────────────┐
+│  … │ 🖥 2 services │ …                                   │  ← Status bar
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Clicking it opens the Services sidebar panel.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    A[Activity Bar&lt;br&gt;Server Icon] --&gt; B[Services Sidebar]
+    C[File Browser&lt;br&gt;Right-Click] --&gt; D[Quick Share]
+    D --&gt; E[Auto-create&lt;br&gt;Config]
+    E --&gt; F[Start Server]
+    F --&gt; B
+    G[Status Bar&lt;br&gt;Services Count] --&gt; B
+</pre>
+</div>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="creating-a-service">Creating a Service</h3>
+<ol>
+<li>User clicks <code>[+]</code> in the Services sidebar header or uses "Share via..." from the file browser</li>
+<li>The configuration dialog opens (pre-filled for "Share via..." actions)</li>
+<li>User selects protocol, root directory, port, and options</li>
+<li>On save, the configuration is persisted to <code>embedded_servers.json</code></li>
+<li>The service appears in the sidebar in stopped state (unless triggered by "Share via...")</li>
+</ol>
+<h3 id="starting-a-service">Starting a Service</h3>
+<ol>
+<li>User clicks the start action (play button on hover, or context menu → Start)</li>
+<li>Backend validates the configuration:
+   - Root directory exists and is readable
+   - Port is available (not already in use)</li>
+<li>The server binds to the configured address and port</li>
+<li>Status transitions to "Running" and the sidebar updates with a green indicator</li>
+<li>A Tauri event (<code>embedded-server-status-changed</code>) pushes the state to the frontend</li>
+</ol>
+<h3 id="stopping-a-service">Stopping a Service</h3>
+<ol>
+<li>User clicks the stop action or context menu → Stop</li>
+<li>Backend sets the shutdown flag and waits for the listener thread to join</li>
+<li>Active connections are allowed to complete (with a timeout)</li>
+<li>Status transitions to "Stopped"</li>
+</ol>
+<h3 id="application-lifecycle">Application Lifecycle</h3>
+<ul>
+<li>On startup, services with <code>auto_start: true</code> are started automatically (after a brief delay, matching the tunnel auto-start pattern)</li>
+<li>On application exit (window <code>Destroyed</code> event), all running servers are stopped gracefully</li>
+<li>If a server crashes or encounters an unrecoverable error, it transitions to error state and emits a status event with the error message</li>
+</ul>
+<h3 id="port-conflict-handling">Port Conflict Handling</h3>
+<p>If the requested port is already in use:</p>
+<ol>
+<li>The start operation fails with a clear error message: "Port 8080 is already in use"</li>
+<li>The service transitions to error state in the sidebar</li>
+<li>The user can edit the configuration to choose a different port</li>
+</ol>
+<h3 id="quick-share-workflow">Quick Share Workflow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Right-click directory&lt;br&gt;in File Browser] --&gt; B{Select protocol}
+    B --&gt;|HTTP| C[Create HTTP config&lt;br&gt;port 8080]
+    B --&gt;|FTP| D[Create FTP config&lt;br&gt;port 2121]
+    B --&gt;|TFTP| E[Create TFTP config&lt;br&gt;port 6969]
+    C --&gt; F[Start server immediately]
+    D --&gt; F
+    E --&gt; F
+    F --&gt; G{Port available?}
+    G --&gt;|Yes| H[Server running&lt;br&gt;Show toast with URL]
+    G --&gt;|No| I[Try next port&lt;br&gt;8081, 8082...]
+    I --&gt; G
+    H --&gt; J[Service visible&lt;br&gt;in sidebar]
+</pre>
+</div>
+<h3 id="edge-cases">Edge Cases</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Root directory deleted while serving</td>
+<td>Server returns 404/error for requests; status shows warning</td>
+</tr>
+<tr>
+<td>Port conflict on auto-start</td>
+<td>Service enters error state; user notified via status event</td>
+</tr>
+<tr>
+<td>Multiple servers on same port</td>
+<td>Second start fails with clear error</td>
+</tr>
+<tr>
+<td>Very large file download</td>
+<td>Streamed, not buffered into memory</td>
+</tr>
+<tr>
+<td>Concurrent uploads to same file (FTP)</td>
+<td>Last-write-wins semantics</td>
+</tr>
+<tr>
+<td>Symlinks in root directory</td>
+<td>Followed by default; do not follow symlinks outside root</td>
+</tr>
+<tr>
+<td>Path traversal attack (e.g., <code>/../</code>)</td>
+<td>Resolved and rejected if outside root directory</td>
+</tr>
+<tr>
+<td>App crash during file transfer</td>
+<td>OS reclaims socket; partial uploads may remain</td>
+</tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="server-lifecycle-state-diagram">Server Lifecycle State Diagram</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Configured : Service created
+    Configured --&gt; Starting : Start requested
+    Starting --&gt; Running : Bind successful
+    Starting --&gt; Error : Bind failed (port in use, permission denied)
+    Running --&gt; Stopping : Stop requested
+    Running --&gt; Error : Runtime error (I/O failure, root dir removed)
+    Stopping --&gt; Stopped : Graceful shutdown complete
+    Stopped --&gt; Starting : Restart requested
+    Error --&gt; Starting : Retry after fix
+    Error --&gt; Configured : Edit configuration
+    Configured --&gt; [*] : Delete service
+    Stopped --&gt; [*] : Delete service
+</pre>
+</div>
+<h3 id="quick-share-sequence">Quick Share Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant FB as File Browser
+    participant FE as Frontend
+    participant BE as Server Manager
+    participant SRV as HTTP/FTP/TFTP Server
+
+    User-&gt;&gt;FB: Right-click directory
+    FB-&gt;&gt;FE: Show context menu
+    User-&gt;&gt;FE: "Share via HTTP Server"
+    FE-&gt;&gt;BE: create_and_start_server(config)
+    BE-&gt;&gt;BE: Persist config to JSON
+    BE-&gt;&gt;SRV: Bind and start listener
+    SRV--&gt;&gt;BE: Listening on :8080
+    BE--&gt;&gt;FE: Event: status = Running
+    FE-&gt;&gt;User: Toast: "HTTP server on :8080"
+    FE-&gt;&gt;FE: Update sidebar &amp; status bar
+</pre>
+</div>
+<h3 id="file-request-sequence-http-example">File Request Sequence (HTTP Example)</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Client as HTTP Client
+    participant SRV as HTTP Server
+    participant FS as Local Filesystem
+
+    Client-&gt;&gt;SRV: GET /firmware/image.bin
+    SRV-&gt;&gt;SRV: Resolve path, check within root
+    SRV-&gt;&gt;FS: Open file for reading
+    FS--&gt;&gt;SRV: File handle
+    SRV-&gt;&gt;Client: 200 OK (streamed response)
+
+    Note over Client,SRV: Path traversal attempt
+    Client-&gt;&gt;SRV: GET /../../etc/passwd
+    SRV-&gt;&gt;SRV: Resolve path → outside root
+    SRV-&gt;&gt;Client: 403 Forbidden
+</pre>
+</div>
+<h3 id="auto-start-sequence">Auto-Start Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant App as Tauri App
+    participant SM as Server Manager
+    participant SRV as Server Instance
+
+    App-&gt;&gt;SM: setup() → register as managed state
+    App-&gt;&gt;App: Window created
+    SM-&gt;&gt;SM: spawn(auto_start_services)
+    Note over SM: 500ms delay (match tunnel pattern)
+    loop For each auto_start config
+        SM-&gt;&gt;SRV: Start server
+        alt Success
+            SRV--&gt;&gt;SM: Running
+            SM-&gt;&gt;App: emit("embedded-server-status-changed")
+        else Port in use
+            SRV--&gt;&gt;SM: Error
+            SM-&gt;&gt;App: emit("embedded-server-status-changed", error)
+        end
+    end
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>Based on the project architecture as of the time of concept creation. The codebase may evolve before implementation.</p>
+</blockquote>
+<h3 id="new-rust-module-src-taurisrcembedded_servers">New Rust Module: <code>src-tauri/src/embedded_servers/</code></h3>
+<p>Following the <code>tunnel/</code> module pattern:</p>
+<pre><code>src-tauri/src/embedded_servers/
+├── mod.rs              # Module declarations
+├── config.rs           # EmbeddedServerConfig, store types, status enum
+├── storage.rs          # JSON persistence with recovery
+├── server_manager.rs   # EmbeddedServerManager (Tauri managed state)
+├── http_server.rs      # HTTP server implementation
+├── ftp_server.rs       # FTP server implementation
+└── tftp_server.rs      # TFTP server implementation
+</code></pre>
+<h3 id="config-types-rust">Config Types (Rust)</h3>
+<pre><code class="language-rust">#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct EmbeddedServerConfig {
+    pub id: String,
+    pub name: String,
+    pub server_type: ServerType,
+    pub root_directory: String,
+    pub bind_host: String,       // &quot;127.0.0.1&quot; or &quot;0.0.0.0&quot;
+    pub port: u16,
+    pub auto_start: bool,
+    pub read_only: bool,
+    // HTTP-specific
+    pub directory_listing: Option&lt;bool&gt;,
+    // FTP-specific
+    pub ftp_auth: Option&lt;FtpAuth&gt;,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub enum ServerType {
+    Http,
+    Ftp,
+    Tftp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub enum FtpAuth {
+    Anonymous,
+    Credentials { username: String, password: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub enum ServerStatus {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct ServerStats {
+    pub active_connections: u64,
+    pub total_connections: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = &quot;camelCase&quot;)]
+pub struct ServerState {
+    pub server_id: String,
+    pub status: ServerStatus,
+    pub error: Option&lt;String&gt;,
+    pub stats: Option&lt;ServerStats&gt;,
+    pub started_at: Option&lt;String&gt;,  // ISO 8601 timestamp
+}
+</code></pre>
+<h3 id="server-manager-rust">Server Manager (Rust)</h3>
+<pre><code class="language-rust">pub struct EmbeddedServerManager {
+    configs: Mutex&lt;EmbeddedServerStore&gt;,
+    active_servers: Mutex&lt;HashMap&lt;String, ActiveServer&gt;&gt;,
+    app_handle: AppHandle,
+}
+
+struct ActiveServer {
+    config: EmbeddedServerConfig,
+    shutdown: Arc&lt;AtomicBool&gt;,
+    thread_handle: Option&lt;JoinHandle&lt;()&gt;&gt;,
+    stats: Arc&lt;ServerStats&gt;,  // atomic counters
+    started_at: Instant,
+}
+</code></pre>
+<p>Follows the <code>TunnelManager</code> pattern exactly:</p>
+<ul>
+<li>Registered via <code>app.manage()</code> in <code>lib.rs::run()</code></li>
+<li>Auto-starts services in a background thread after setup</li>
+<li>Stops all servers on window <code>Destroyed</code> event</li>
+<li>Emits <code>"embedded-server-status-changed"</code> events</li>
+</ul>
+<h3 id="server-implementations">Server Implementations</h3>
+<p>Each server type implements a common pattern:</p>
+<pre><code class="language-rust">trait EmbeddedServer: Send + 'static {
+    fn start(
+        config: &amp;EmbeddedServerConfig,
+        shutdown: Arc&lt;AtomicBool&gt;,
+        stats: Arc&lt;ServerStats&gt;,
+    ) -&gt; anyhow::Result&lt;()&gt;;
+}
+</code></pre>
+<p><strong>HTTP Server</strong> — Use <code>axum</code> (already part of the Tokio ecosystem):</p>
+<ul>
+<li>Serve static files from root directory using <code>tower-http::services::ServeDir</code></li>
+<li>Optional directory listing via a custom handler</li>
+<li>Streamed responses for large files</li>
+</ul>
+<p><strong>TFTP Server</strong> — Custom implementation (protocol is simple, UDP-based):</p>
+<ul>
+<li>Single-threaded UDP listener</li>
+<li>Implements RRQ (read) and WRQ (write) opcodes per RFC 1350</li>
+<li>512-byte block transfer with ACK</li>
+</ul>
+<p><strong>FTP Server</strong> — Use <code>libunftp</code> crate:</p>
+<ul>
+<li>Provides an async FTP server with configurable authenticators and storage backends</li>
+<li>Filesystem storage backend maps to the configured root directory</li>
+</ul>
+<h3 id="new-tauri-ipc-commands">New Tauri IPC Commands</h3>
+<pre><code class="language-rust">// src-tauri/src/commands/embedded_servers.rs
+
+#[tauri::command]
+fn list_embedded_servers(manager: State&lt;'_, EmbeddedServerManager&gt;) -&gt; Vec&lt;ServerState&gt;;
+
+#[tauri::command]
+fn create_embedded_server(manager: State&lt;'_, EmbeddedServerManager&gt;, config: EmbeddedServerConfig) -&gt; Result&lt;String, String&gt;;
+
+#[tauri::command]
+fn update_embedded_server(manager: State&lt;'_, EmbeddedServerManager&gt;, config: EmbeddedServerConfig) -&gt; Result&lt;(), String&gt;;
+
+#[tauri::command]
+fn delete_embedded_server(manager: State&lt;'_, EmbeddedServerManager&gt;, id: String) -&gt; Result&lt;(), String&gt;;
+
+#[tauri::command]
+fn start_embedded_server(manager: State&lt;'_, EmbeddedServerManager&gt;, id: String) -&gt; Result&lt;(), String&gt;;
+
+#[tauri::command]
+fn stop_embedded_server(manager: State&lt;'_, EmbeddedServerManager&gt;, id: String) -&gt; Result&lt;(), String&gt;;
+
+#[tauri::command]
+fn get_embedded_server_stats(manager: State&lt;'_, EmbeddedServerManager&gt;, id: String) -&gt; Result&lt;ServerState, String&gt;;
+</code></pre>
+<h3 id="typescript-types">TypeScript Types</h3>
+<pre><code class="language-typescript">// src/types/embeddedServer.ts
+
+export type ServerType = &quot;http&quot; | &quot;ftp&quot; | &quot;tftp&quot;;
+
+export type ServerStatus = &quot;stopped&quot; | &quot;starting&quot; | &quot;running&quot; | &quot;stopping&quot; | &quot;error&quot;;
+
+export interface FtpAuth {
+  type: &quot;anonymous&quot; | &quot;credentials&quot;;
+  username?: string;
+  password?: string;
+}
+
+export interface EmbeddedServerConfig {
+  id: string;
+  name: string;
+  serverType: ServerType;
+  rootDirectory: string;
+  bindHost: string;
+  port: number;
+  autoStart: boolean;
+  readOnly: boolean;
+  directoryListing?: boolean;
+  ftpAuth?: FtpAuth;
+}
+
+export interface ServerStats {
+  activeConnections: number;
+  totalConnections: number;
+  bytesSent: number;
+  bytesReceived: number;
+}
+
+export interface ServerState {
+  serverId: string;
+  status: ServerStatus;
+  error?: string;
+  stats?: ServerStats;
+  startedAt?: string;
+}
+</code></pre>
+<h3 id="frontend-components">Frontend Components</h3>
+<pre><code>src/components/
+├── EmbeddedServerSidebar/
+│   ├── EmbeddedServerSidebar.tsx    # Main sidebar panel
+│   ├── EmbeddedServerList.tsx       # List of configured servers
+│   ├── EmbeddedServerItem.tsx       # Single server entry with status
+│   └── EmbeddedServerDialog.tsx     # Create/edit configuration dialog
+</code></pre>
+<h3 id="store-changes">Store Changes</h3>
+<pre><code class="language-typescript">// appStore.ts additions
+
+// Extend SidebarView union type
+type SidebarView = &quot;connections&quot; | &quot;files&quot; | &quot;tunnels&quot; | &quot;services&quot;;
+
+// Add to store state
+embeddedServers: ServerState[];
+setEmbeddedServers: (servers: ServerState[]) =&gt; void;
+</code></pre>
+<h3 id="activity-bar-addition">Activity Bar Addition</h3>
+<p>Add a new entry to <code>TOP_ITEMS</code> in <code>ActivityBar.tsx</code>:</p>
+<pre><code class="language-typescript">{ view: &quot;services&quot;, icon: Server, label: &quot;Services&quot; }
+</code></pre>
+<h3 id="event-handling">Event Handling</h3>
+<pre><code class="language-typescript">// src/services/events.ts — new event listener
+listen&lt;ServerState&gt;(&quot;embedded-server-status-changed&quot;, (event) =&gt; {
+  // Update store with new server state
+});
+</code></pre>
+<h3 id="storage">Storage</h3>
+<ul>
+<li>Config file: <code>&lt;app_config_dir&gt;/embedded_servers.json</code></li>
+<li>Same recovery pattern as tunnels (<code>load_with_recovery</code>)</li>
+<li>Schema version field for future migrations</li>
+</ul>
+<h3 id="new-dependencies">New Dependencies</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Crate</th>
+<th>Purpose</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>axum</code></td>
+<td>HTTP server</td>
+<td>Tokio-native, lightweight</td>
+</tr>
+<tr>
+<td><code>tower-http</code></td>
+<td>Static file serving</td>
+<td><code>ServeDir</code> for directory serving</td>
+</tr>
+<tr>
+<td><code>libunftp</code></td>
+<td>FTP server</td>
+<td>Async FTP server framework</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>TFTP will use a custom implementation (UDP, ~200 lines) rather than pulling in a crate for this simple protocol.</p>
+<h3 id="integration-diagram">Integration Diagram</h3>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    subgraph Frontend
+        AB[Activity Bar] --&gt; SS[Services Sidebar]
+        FB[File Browser] --&gt;|"Share via..."| SS
+        SB[Status Bar] --&gt;|Click| SS
+        SS --&gt; SD[Server Dialog]
+        SS --&gt; SL[Server List]
+    end
+
+    subgraph "Tauri IPC"
+        IPC[Commands: create, start,&lt;br&gt;stop, delete, list, stats]
+        EVT[Event: embedded-server-&lt;br&gt;status-changed]
+    end
+
+    subgraph "Rust Backend"
+        SM[EmbeddedServerManager]
+        ST[Storage: embedded_servers.json]
+        SM --&gt; HTTP[HTTP Server&lt;br&gt;axum + tower-http]
+        SM --&gt; FTP[FTP Server&lt;br&gt;libunftp]
+        SM --&gt; TFTP[TFTP Server&lt;br&gt;custom UDP]
+        SM --&gt; ST
+    end
+
+    SS &lt;--&gt;|commands| IPC
+    IPC &lt;--&gt; SM
+    SM --&gt;|events| EVT
+    EVT --&gt; SS
+
+    subgraph "Network"
+        HTTP --&gt;|":8080"| C1[HTTP Clients]
+        FTP --&gt;|":2121"| C2[FTP Clients]
+        TFTP --&gt;|":6969 UDP"| C3[TFTP Clients]
+    end
+</pre>
+</div>
+<h3 id="files-to-modify">Files to Modify</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src-tauri/src/lib.rs</code></td>
+<td>Register <code>EmbeddedServerManager</code>, add IPC commands, add shutdown handler</td>
+</tr>
+<tr>
+<td><code>src-tauri/Cargo.toml</code></td>
+<td>Add <code>axum</code>, <code>tower-http</code>, <code>libunftp</code> dependencies</td>
+</tr>
+<tr>
+<td><code>src/store/appStore.ts</code></td>
+<td>Add <code>"services"</code> to <code>SidebarView</code>, add embedded server state</td>
+</tr>
+<tr>
+<td><code>src/components/ActivityBar/ActivityBar.tsx</code></td>
+<td>Add Services entry to <code>TOP_ITEMS</code></td>
+</tr>
+<tr>
+<td><code>src/components/Sidebar/Sidebar.tsx</code></td>
+<td>Add <code>EmbeddedServerSidebar</code> rendering case</td>
+</tr>
+<tr>
+<td><code>src/components/Sidebar/FileBrowser.tsx</code></td>
+<td>Add "Share via..." context menu items</td>
+</tr>
+<tr>
+<td><code>src/components/StatusBar/StatusBar.tsx</code></td>
+<td>Add running services count indicator</td>
+</tr>
+<tr>
+<td><code>src/services/api.ts</code></td>
+<td>Add IPC command wrappers</td>
+</tr>
+<tr>
+<td><code>src/services/events.ts</code></td>
+<td>Add event listener for server status changes</td>
+</tr>
+<tr>
+<td><code>src/types/embeddedServer.ts</code></td>
+<td>New file: TypeScript types</td>
+</tr>
+</tbody>
+</table>
+</div>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

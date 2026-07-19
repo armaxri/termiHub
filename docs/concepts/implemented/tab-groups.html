@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tab Groups / Workspace Tabs (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Tab Groups / Workspace Tabs</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/546">#546</a></span>
+          <span><code>docs/concepts/implemented/tab-groups.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub currently supports one split-panel workspace at a time. Users can split panels horizontally or vertically, but all panels live in a single shared layout. This breaks down for users who maintain multiple distinct workflow contexts simultaneously — for example, a local dev context (shell + editor), a deployment context (agent runner + log tail), and an SSH context (remote shell + SFTP browser). Switching between these contexts today means tearing down and rebuilding the panel layout.</p>
+<p><strong>Tab Groups</strong> introduce a named, tabbed layer at the workspace level. Each tab group is an independent panel tree with its own split layout. Users can switch between groups instantly — all terminal sessions in inactive groups remain fully alive, they are simply hidden. Users can also drag individual terminal tabs between groups to reorganize their contexts freely.</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    App["termiHub Window"]
+    TG1["Tab Group: Dev\n(active)"]
+    TG2["Tab Group: Deploy"]
+    TG3["Tab Group: SSH"]
+
+    App --&gt; TG1
+    App --&gt; TG2
+    App --&gt; TG3
+
+    TG1 --&gt; PT1["Panel Tree\n(split layout)"]
+    TG2 --&gt; PT2["Panel Tree\n(split layout)"]
+    TG3 --&gt; PT3["Panel Tree\n(split layout)"]
+
+    PT1 --&gt; L1["Panel: shell + editor"]
+    PT2 --&gt; L2["Panel: agent + logs"]
+    PT3 --&gt; L3["Panel: SSH + SFTP"]
+</pre>
+</div>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="design-principle-toolbar-integration">Design Principle: Toolbar Integration</h3>
+<p>Tab group selectors live <strong>inside the existing toolbar bar</strong>, not in a separate strip. This is the key design decision. The toolbar already spans the full width at the top of the terminal view and its left side is currently empty. Tab group chips occupy that space.</p>
+<p>This avoids the most common pitfall of multi-level tab designs: stacking two rows of tab-like controls (one for groups, one for terminal tabs within panels), which creates visual confusion about which level the user is interacting with.</p>
+<p>The resulting layout has a clear three-level hierarchy:</p>
+<pre><code>┌────────────────────────────────────────────────────────────────────────────┐
+│  [Dev ×]  [Deploy ×]  [SSH ×]  [+]          [+] [⊏] [⊐] [−] [⊢] [☰]   │  ← Toolbar (workspace level)
+├────────────────────────────────────────────────────────────────────────────┤
+│  [bash ×]  [ssh-prod ×]  [vim ×]                                           │  ← TabBar (terminal level)
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│   terminal output                                                          │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>Level 1 — Toolbar</strong>: workspace-level tab group selector chips (left) + terminal action buttons (right)
+<strong>Level 2 — TabBar</strong>: terminal tabs within the active panel (inside the panel, not the toolbar)
+<strong>Level 3 — Content</strong>: terminal output</p>
+<p>When there is only one tab group (the default), the chips are hidden and the toolbar looks exactly as it does today.</p>
+<h3 id="toolbar-layout-with-tab-groups">Toolbar Layout with Tab Groups</h3>
+<pre><code>┌────────────────────────────────────────────────────────────────────────────┐
+│  [⬡ Dev ×]  [⬡ Deploy ×]  [⬡ SSH ×]  [+]       [+] [⊏] [⊐] [−] [⊢]  │
+└────────────────────────────────────────────────────────────────────────────┘
+    ↑ group chips (left)                              ↑ existing action buttons (right)
+</code></pre>
+<p>The toolbar uses <code>justify-content: space-between</code>:</p>
+<ul>
+<li><strong>Left side</strong>: tab group chips, each with name and close button; followed by a "+" button to add a group</li>
+<li><strong>Right side</strong>: existing toolbar action buttons (new terminal, split, close panel, toggle sidebar, etc.) — unchanged</li>
+</ul>
+<p>When group chips overflow the available left-side space, the chip area scrolls horizontally (no overflow ellipsis — users should see full group names).</p>
+<h3 id="tab-group-chip-appearance">Tab Group Chip Appearance</h3>
+<p>Chips are <strong>pill-shaped</strong> (fully rounded), clearly distinct from the file-tab shape of terminal tabs in panel TabBars. This visual distinction reinforces the hierarchy: pill = workspace level, file-tab = terminal level.</p>
+<pre><code>Inactive:  [  Dev ×  ]   — transparent background, secondary text color, no border
+Active:    [  Dev ×  ]   — filled background (--bg-active), primary text, subtle border
+Hover:     [  Dev ×  ]   — slightly lighter background
+</code></pre>
+<p>When a group has a user-assigned accent color, a small colored dot precedes the name:</p>
+<pre><code>Active:    [ ● Dev ×  ]
+</code></pre>
+<p>The close button (×) on each chip is hidden by default and fades in on hover or when the chip is active, exactly as terminal tab close buttons work.</p>
+<h3 id="chip-interactions">Chip Interactions</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Click chip</td>
+<td>Switch to that tab group (instant, session preserved)</td>
+</tr>
+<tr>
+<td>Double-click chip</td>
+<td>Inline rename</td>
+</tr>
+<tr>
+<td>Right-click chip</td>
+<td>Context menu: Rename, Set Color, Duplicate, Move Left, Move Right, Close</td>
+</tr>
+<tr>
+<td>Drag chip</td>
+<td>Reorder within the toolbar chip area</td>
+</tr>
+<tr>
+<td>Drag terminal tab → chip</td>
+<td>Terminal tab moves to that group (drop on chip)</td>
+</tr>
+<tr>
+<td>Drag terminal tab → chip (hover 500 ms)</td>
+<td>Auto-switch to target group, then drop into split view</td>
+</tr>
+<tr>
+<td>Click × on chip</td>
+<td>Close that tab group</td>
+</tr>
+<tr>
+<td>Click + (after chips)</td>
+<td>Create new empty tab group, switch to it</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="cross-group-tab-drag-and-drop">Cross-Group Tab Drag-and-Drop</h3>
+<p>Users drag terminal tabs (from panel TabBars) to a different tab group by:</p>
+<ol>
+<li><strong>Drop on chip directly</strong>: the terminal tab moves to that group as a new single-panel leaf.</li>
+<li><strong>Dwell-to-switch</strong>: hovering the dragged tab over a chip for 500 ms auto-switches to that group. The user can then drop the tab onto any split zone (panel edge or center) within the newly visible layout.</li>
+</ol>
+<p>During an active drag, all group chips in the toolbar highlight as valid drop targets.</p>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant TabBar as Source TabBar
+    participant Toolbar as Toolbar Chip
+    participant Target as Target Group Layout
+
+    User-&gt;&gt;TabBar: drag start (tabId)
+    TabBar--&gt;&gt;Toolbar: chips become drop targets
+    User-&gt;&gt;Toolbar: hover over target chip (500 ms dwell)
+    Toolbar--&gt;&gt;Target: auto-switch to target group
+    User-&gt;&gt;Target: drop on panel edge or center
+    Target--&gt;&gt;Target: tab inserted, session preserved
+</pre>
+</div>
+<h3 id="closing-a-tab-group">Closing a Tab Group</h3>
+<ul>
+<li>If the group has no running sessions: close immediately</li>
+<li>If any session is active/running: show a confirmation dialog listing them</li>
+<li>The last tab group cannot be closed (no × shown when only one group remains)</li>
+<li>After close: adjacent group becomes active; if the chip area becomes empty (back to one group), the chip area collapses and the toolbar returns to its default appearance</li>
+</ul>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="session-preservation">Session Preservation</h3>
+<p>Terminal sessions are never destroyed when switching tab groups. The <code>TerminalRegistry</code> DOM-parking mechanism preserves xterm instances when tabs move between panels; tab groups extend this principle: all panels in inactive groups remain mounted in the React tree, hidden via <code>display: none</code>. PTY sessions stay fully alive.</p>
+<h3 id="keyboard-shortcuts">Keyboard Shortcuts</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Shortcut</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl/Cmd+Shift+[</code></td>
+<td>Previous tab group</td>
+</tr>
+<tr>
+<td><code>Ctrl/Cmd+Shift+]</code></td>
+<td>Next tab group</td>
+</tr>
+<tr>
+<td><code>Ctrl/Cmd+Shift+T</code></td>
+<td>New tab group</td>
+</tr>
+<tr>
+<td><code>Ctrl/Cmd+Shift+W</code></td>
+<td>Close current tab group</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>These follow the browser-tab shortcut convention and are documented in the keyboard shortcut overlay.</p>
+<h3 id="workspace-integration">Workspace Integration</h3>
+<p>Workspace definitions currently describe a single panel tree (<code>layout</code> field). With tab groups, a workspace can optionally define multiple panel trees (one per tab group). Existing single-tree workspaces remain valid and open as a single unnamed tab group.</p>
+<pre><code>WorkspaceDefinition
+  ├── layout?          (existing — single panel tree, backward compatible)
+  └── tabGroups?       (new — array of named panel trees)
+        ├── name
+        ├── color?
+        └── layout
+</code></pre>
+<h3 id="state-persistence">State Persistence</h3>
+<p>The full tab group state (group list, names, colors, panel trees, active group) is persisted across app restarts as part of the existing app state serialization.</p>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="tab-group-state-machine">Tab Group State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; SingleGroup : app start (default)
+
+    SingleGroup : Single Group\n(chips hidden, toolbar normal)
+    MultiGroup : Multiple Groups\n(chips visible in toolbar)
+
+    SingleGroup --&gt; MultiGroup : user clicks +
+    MultiGroup --&gt; SingleGroup : user closes until 1 remains
+
+    MultiGroup --&gt; MultiGroup : switch active group
+    MultiGroup --&gt; MultiGroup : rename / recolor group
+    MultiGroup --&gt; MultiGroup : reorder groups
+    MultiGroup --&gt; MultiGroup : move terminal tab between groups
+</pre>
+</div>
+<h3 id="toolbar-states">Toolbar States</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; NoChips : single group (default)
+
+    NoChips : Toolbar — chips area hidden\nappears as normal toolbar today
+    ChipsVisible : Toolbar — chips visible on left\naction buttons remain on right
+
+    NoChips --&gt; ChipsVisible : second group created
+    ChipsVisible --&gt; NoChips : last extra group closed
+    ChipsVisible --&gt; ChipsVisible : switch / rename / reorder / close group
+</pre>
+</div>
+<h3 id="tab-group-lifecycle">Tab Group Lifecycle</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[User clicks +] --&gt; B[New TabGroup created\nwith empty PanelNode]
+    B --&gt; C[Auto-name: Group N]
+    C --&gt; D[Switch to new group\nchips appear in toolbar]
+    D --&gt; E{Add terminals?}
+    E -- New terminal --&gt; F[Terminal tab in group]
+    E -- Drag from other group --&gt; G[Terminal tab moved]
+    G --&gt; H{Source group now empty?}
+    H -- Yes, and not last --&gt; I[Close source group]
+    H -- No --&gt; F
+    I --&gt; F
+    F --&gt; K[Group in active use]
+    K --&gt; L[User clicks × on chip]
+    L --&gt; M{Active sessions?}
+    M -- Yes --&gt; N[Confirmation dialog]
+    N -- Cancel --&gt; K
+    N -- Confirm --&gt; O[Close sessions]
+    O --&gt; P[Remove group]
+    M -- No --&gt; P
+    P --&gt; Q{One group remains?}
+    Q -- Yes --&gt; R[Hide chip area\ntoolbar returns to default]
+    Q -- No --&gt; S[Focus adjacent group]
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>This section reflects the codebase state at concept creation (2026-03-27). The implementation should adapt as the codebase evolves.</p>
+</blockquote>
+<h3 id="data-model">Data Model</h3>
+<pre><code class="language-typescript">interface TabGroup {
+  id: string;
+  name: string;
+  color?: string;           // optional accent dot color
+  rootPanel: PanelNode;     // independent panel tree (existing type, unchanged)
+  activePanelId: string | null;
+}
+
+// AppState gains:
+tabGroups: TabGroup[];
+activeTabGroupId: string;
+</code></pre>
+<p>Migration: on first launch after upgrade, wrap the existing <code>rootPanel</code> in a single <code>TabGroup { name: "Main" }</code>.</p>
+<h3 id="store-changes-appstorets">Store Changes (<code>appStore.ts</code>)</h3>
+<p>New actions:</p>
+<pre><code class="language-typescript">addTabGroup(name?: string): string
+closeTabGroup(groupId: string): void
+renameTabGroup(groupId: string, name: string): void
+setTabGroupColor(groupId: string, color: string | null): void
+setActiveTabGroup(groupId: string): void
+reorderTabGroups(fromIndex: number, toIndex: number): void
+duplicateTabGroup(groupId: string): void
+moveTabToGroup(tabId: string, fromPanelId: string, toGroupId: string): void
+</code></pre>
+<p>All existing panel/tab actions implicitly operate on the active group's <code>rootPanel</code>. This is non-breaking: callers do not need to pass <code>groupId</code>.</p>
+<h3 id="component-changes">Component Changes</h3>
+<p><strong><code>TerminalView</code> toolbar</strong> (<code>TerminalView.tsx</code>):</p>
+<p>The toolbar <code>div</code> changes from a single right-aligned actions row to a space-between layout:</p>
+<pre><code class="language-tsx">&lt;div className=&quot;terminal-view__toolbar&quot;&gt;
+  &lt;TabGroupChips /&gt; {/* left — hidden when tabGroups.length &lt;= 1 */}
+  &lt;div className=&quot;terminal-view__toolbar-actions&quot;&gt;{/* existing action buttons unchanged */}&lt;/div&gt;
+&lt;/div&gt;
+</code></pre>
+<p><code>TabGroupChips</code> is a new internal component (or a separate <code>TabGroupChips.tsx</code> file). It renders:</p>
+<ul>
+<li>A <code>DndContext</code> + <code>SortableContext</code> for chip reordering (chip-level drag only; tab-level cross-group drag uses the parent DndContext in TerminalView)</li>
+<li>One <code>TabGroupChip</code> per group (pill-shaped, with context menu)</li>
+<li>A <code>+</code> button after the chips</li>
+</ul>
+<p><strong><code>SplitView</code></strong> (<code>SplitView.tsx</code>):</p>
+<p>Renders one <code>PanelNodeRenderer</code> per tab group, all mounted, only active one visible:</p>
+<pre><code class="language-tsx">&lt;div className=&quot;split-view-container&quot;&gt;
+  {tabGroups.map((group) =&gt; (
+    &lt;div key={group.id} style={{ display: group.id === activeTabGroupId ? &quot;flex&quot; : &quot;none&quot; }}&gt;
+      &lt;PanelNodeRenderer node={group.rootPanel} /&gt;
+    &lt;/div&gt;
+  ))}
+&lt;/div&gt;
+</code></pre>
+<p><strong><code>TerminalView</code> DndContext</strong>:</p>
+<p>The <code>DndContext</code> must wrap both <code>TabGroupChips</code> and <code>SplitView</code> so that dragging a terminal tab from a panel can land on a group chip. This means lifting <code>DndContext</code> from <code>SplitView</code> to <code>TerminalView</code> — the entire terminal view becomes one unified drag context.</p>
+<p><strong><code>TerminalHost</code></strong> (internal to <code>TerminalView</code>):</p>
+<p>All terminal instances across all groups remain mounted at a stable position in the React tree. This prevents unmount/remount (which would kill PTY sessions) when switching groups.</p>
+<pre><code class="language-tsx">function TerminalHost() {
+  const allTabs = getAllTabsAcrossAllGroups(); // from tabGroups in store
+  return allTabs.map(tab =&gt; &lt;Terminal key={tab.id} ... /&gt;);
+}
+</code></pre>
+<h3 id="toolbar-css">Toolbar CSS</h3>
+<p>The toolbar changes from:</p>
+<pre><code class="language-css">.terminal-view__toolbar {
+  justify-content: flex-end; /* current: all buttons right-aligned */
+}
+</code></pre>
+<p>to:</p>
+<pre><code class="language-css">.terminal-view__toolbar {
+  justify-content: space-between; /* chips left, actions right */
+}
+</code></pre>
+<p>The chip area within the toolbar:</p>
+<pre><code class="language-css">.tab-group-chips {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1; /* takes remaining left space */
+  min-width: 0; /* allows flex shrink */
+}
+
+.tab-group-chip {
+  border-radius: 100px; /* pill — NOT tab-shaped */
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  /* ... */
+}
+
+.tab-group-chip--active {
+  background-color: var(--bg-active);
+  border-color: var(--border-primary);
+}
+</code></pre>
+<h3 id="workspace-definition-extension">Workspace Definition Extension</h3>
+<pre><code class="language-typescript">interface WorkspaceDefinition {
+  id: string;
+  name: string;
+  layout?: WorkspaceLayoutNode; // existing — still valid
+  tabGroups?: WorkspaceTabGroupDef[]; // new
+}
+
+interface WorkspaceTabGroupDef {
+  name: string;
+  color?: string;
+  layout: WorkspaceLayoutNode;
+}
+</code></pre>
+<h3 id="performance">Performance</h3>
+<p>All tab group panel trees are mounted simultaneously (for session preservation). Inactive groups use <code>display: none</code>, removing them from layout calculations. xterm instances in hidden panels do not render or animate. For users with many groups and panels, future optimization: lazy unmount after configurable inactivity, re-parking terminals back to <code>TerminalHost</code>.</p>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Context-Aware Keyboard-Shortcut Routing (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Context-Aware Keyboard-Shortcut Routing</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/787">#787</a></span>
+          <span><code>docs/concepts/backlog/context-aware-keyboard-shortcuts.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#background-how-shortcuts-are-handled-today">Background: how shortcuts are handled today</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+          <li><a href="#summary">Summary</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub dispatches every application keyboard shortcut from a <strong>single global
+<code>window</code> keydown handler</strong> (<code>src/hooks/useKeyboardShortcuts.ts</code>). That handler
+asks the keybinding service (<code>src/services/keybindings.ts</code>) which <em>action</em> a key
+event maps to, then runs the action — <strong>without regard for which kind of tab is
+currently active</strong>.</p>
+<p>This works for genuinely global actions (new terminal, split, zoom, switch tab),
+but it actively breaks tabs that embed their own editing surface. The clearest
+symptom:</p>
+<ul>
+<li>On <strong>macOS</strong>, the <code>find-in-terminal</code> action defaults to <strong>Cmd+F</strong>.</li>
+<li>The global handler's <code>find-in-terminal</code> case calls <code>e.preventDefault()</code>
+  <strong>unconditionally</strong>, and only opens the terminal search bar when the active tab
+  is a terminal.</li>
+<li>So when a <strong>Monaco editor tab</strong> is active (e.g. the new <em>Open in Editor</em>
+  scratch tab, or any <code>FileEditor</code>), pressing <strong>Cmd+F</strong> is swallowed by the
+  global handler and <strong>Monaco's built-in find widget never opens</strong>.</li>
+</ul>
+<p>The same <em>class</em> of problem applies to any shortcut a focused editor or input
+owns: the global layer can intercept the key before the focused widget sees it.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    K["User presses Cmd+F&lt;br/&gt;(editor tab active)"] --&gt; G["Global window keydown handler"]
+    G --&gt; M{"action ==&lt;br/&gt;find-in-terminal?"}
+    M -- yes --&gt; P["e.preventDefault() — always"]
+    P --&gt; T{"active tab is&lt;br/&gt;a terminal?"}
+    T -- no --&gt; X["Nothing happens.&lt;br/&gt;Monaco never receives Cmd+F"]
+    T -- yes --&gt; S["Open terminal search bar"]
+    style X fill:#5a1e1e,stroke:#c77,color:#fff
+    style P fill:#5a4a1e,stroke:#cc7,color:#fff
+</pre>
+</div>
+<p><strong>Goal of this concept:</strong> make shortcut handling <strong>context-aware</strong> so that the
+routing differs by the active tab's content type. Editor (Monaco) tabs — and,
+more generally, input-bearing tabs — should receive the shortcuts they own
+(find, replace, select-all, …), while truly global app shortcuts keep working
+everywhere. The behavior should be predictable, configurable where it already is
+today, and consistent across macOS, Windows, and Linux.</p>
+<h3 id="non-goals">Non-goals</h3>
+<ul>
+<li>Rebuilding the keybinding configuration UI or the chord engine.</li>
+<li>Changing the existing <strong>terminal pass-through</strong> mechanism
+  (<code>isEventFromTerminal</code> / <code>isShellReservedKey</code>), which already lets shell keys
+  reach the PTY. This concept <em>composes with</em> that mechanism rather than
+  replacing it.</li>
+<li>Adding new user-facing shortcuts. (A future enhancement may add an explicit
+  "Find in Editor" binding, but it is optional — see <em>General Handling</em>.)</li>
+</ul>
+<hr>
+<h2 id="background-how-shortcuts-are-handled-today">Background: how shortcuts are handled today</h2>
+<p>A precise picture of the current architecture, because the design builds on it.</p>
+<h3 id="the-two-global-listeners">The two global listeners</h3>
+<p><code>useKeyboardShortcuts()</code> installs two <code>window</code> keydown listeners:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Listener</th>
+<th>Phase</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>handleZoomCapture</code></td>
+<td><strong>capture</strong></td>
+<td>Intercepts the zoom-panel chord (<code>Cmd/Ctrl+Shift+Enter</code>) <em>before</em> Monaco can act on it, then <code>preventDefault()</code> + <code>stopPropagation()</code>.</td>
+</tr>
+<tr>
+<td><code>handleKeyDown</code></td>
+<td><strong>bubble</strong></td>
+<td>Matches all other actions via <code>processKeyEvent()</code> and runs them in a big <code>switch</code>.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code>src/hooks/useKeyboardShortcuts.ts:21-31</code> (capture) and <code>:40-249</code> (bubble).</p>
+<h3 id="the-bubble-handlers-decision-flow">The bubble handler's decision flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A["window keydown (bubble)"] --&gt; B{"passthrough enabled&lt;br/&gt;AND event from terminal&lt;br/&gt;AND shell-reserved key?"}
+    B -- yes --&gt; R1["return — let PTY handle it"]
+    B -- no --&gt; C["action = processKeyEvent(e)"]
+    C --&gt; D{"action == null?"}
+    D -- yes --&gt; R2["return — browser/Monaco handles it"]
+    D -- no --&gt; E{"action == chord-pending?"}
+    E -- yes --&gt; R3["preventDefault(); return"]
+    E -- no --&gt; F["switch(action) → run case"]
+    F --&gt; G["Most cases: preventDefault() + run"]
+</pre>
+</div>
+<p>Key facts that matter for this design:</p>
+<ol>
+<li><strong><code>processKeyEvent()</code> is tab-type-blind.</strong> It matches a key event to an
+   action purely from the keybinding table + user overrides
+   (<code>src/services/keybindings.ts:481-519</code>). It has no notion of "which tab is
+   focused".</li>
+<li><strong>If no action matches, the handler returns <em>without</em> <code>preventDefault()</code></strong>
+   (<code>:56</code>). This is why Monaco's find works on Windows/Linux today:
+   <code>find-in-terminal</code> defaults to <strong>Ctrl+Shift+F</strong> there, so plain <strong>Ctrl+F</strong>
+   doesn't match any action and falls through to Monaco.</li>
+<li><strong>If an action matches, the matching <code>switch</code> case almost always calls
+   <code>preventDefault()</code> first</strong> — including <code>find-in-terminal</code> (<code>:189-197</code>), which
+   prevents the default <em>before</em> checking the tab type. That is the bug.</li>
+<li><strong>There is no guard for <code>document.activeElement</code> being an input/textarea/
+   contenteditable.</strong> The only focus-aware guard is terminal-specific
+   (<code>isEventFromTerminal</code>, <code>src/services/keybindings.ts:567-577</code>).</li>
+</ol>
+<h3 id="where-monaco-fits">Where Monaco fits</h3>
+<p><code>FileEditor</code> (<code>src/components/FileEditor/FileEditor.tsx</code>) mounts Monaco and adds
+only <strong>one</strong> custom action — Save on <code>Cmd/Ctrl+S</code> (<code>:233-240</code>). Everything else
+(find <code>Cmd/Ctrl+F</code>, replace <code>Cmd/Ctrl+H</code> on mac / <code>Ctrl+H</code>, select-all, word
+navigation, multi-cursor, …) is Monaco's own built-in keybinding set. Monaco
+only receives those events if the global handler does <strong>not</strong> <code>preventDefault()</code>
+them first.</p>
+<h3 id="the-collision-surface">The collision surface</h3>
+<p>The concrete collisions are where a <strong>global binding's effective combo on a
+platform equals a combo Monaco (or a plain input) owns</strong>:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Combo</th>
+<th>macOS global action</th>
+<th>Win/Linux global action</th>
+<th>Owned by editor?</th>
+<th>Collision today?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cmd/Ctrl+F</td>
+<td><code>find-in-terminal</code> (mac)</td>
+<td><em>(none — find-in-terminal is Ctrl+Shift+F)</em></td>
+<td>Monaco find</td>
+<td><strong>Yes on macOS</strong></td>
+</tr>
+<tr>
+<td>Cmd/Ctrl+A</td>
+<td><code>select-all</code> (mac)</td>
+<td><em>(none — select-all is Ctrl+Shift+A)</em></td>
+<td>Monaco/input select-all</td>
+<td>Potential on macOS</td>
+</tr>
+<tr>
+<td>Cmd/Ctrl+C / V</td>
+<td><code>copy</code> / <code>paste</code> (mac)</td>
+<td><em>(none — Ctrl+Shift+C/V)</em></td>
+<td>Monaco/input clipboard</td>
+<td>Potential on macOS</td>
+</tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<p><strong>Observation:</strong> because the Windows/Linux defaults were deliberately chosen to
+avoid single-modifier combos (to protect the shell), most collisions only
+surface on <strong>macOS</strong>, where the conventional single-<code>Cmd</code> combos overlap with
+what editors and inputs expect. The design must still be cross-platform, since
+users can rebind anything.</p>
+</blockquote>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<p>This is primarily a <strong>behavioral</strong> change — there is no large new screen. From
+the user's perspective, the win is "shortcuts now do the obvious thing for the
+tab I'm looking at." The visible surfaces are:</p>
+<h3 id="1-the-editor-tab-itself-primary">1. The editor tab itself (primary)</h3>
+<p>When an editor (Monaco) tab is the active tab and focused:</p>
+<ul>
+<li><strong>Cmd+F / Ctrl+F</strong> opens <strong>Monaco's find widget</strong> (the familiar overlay in the
+  top-right of the editor with <em>Aa</em>, <em>.*</em>, whole-word toggles and match count),
+  instead of being swallowed.</li>
+<li><strong>Cmd+Alt+F / Ctrl+H</strong> opens Monaco's find-and-replace.</li>
+<li><strong>Cmd+A / Ctrl+A</strong> selects all text in the editor.</li>
+<li>All other Monaco editing shortcuts behave as a developer expects from VS Code.</li>
+</ul>
+<pre><code>┌── editor: server-output.log (Unsaved) ───────────────────────────┐
+│                                          ┌─────────────────────┐ │
+│  2026-06-05 12:00:01  starting service   │ Find  ▢ Aa .* &quot;ab&quot;  │ │
+│  2026-06-05 12:00:02  bound :8080        │ error          3/12 │ │
+│  2026-06-05 12:00:03  ERROR cannot bind  │  ⌄  ⌃  ✕            │ │
+│  ...                                     └─────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
+        ▲ Cmd+F now opens THIS, not the terminal search bar
+</code></pre>
+<h3 id="2-the-terminal-tab-unchanged">2. The terminal tab (unchanged)</h3>
+<p>When a terminal tab is active, <strong>Cmd+F / Ctrl+Shift+F</strong> opens the existing
+<strong>terminal search bar</strong> (<code>TerminalSearchBar</code>) exactly as today. No regression.</p>
+<h3 id="3-keyboard-shortcuts-overlay-settings-light-touch">3. Keyboard Shortcuts overlay &amp; Settings (light touch)</h3>
+<p>The existing shortcuts overlay (<code>show-shortcuts</code>) and the keybinding settings
+screen list actions in categories. To make the new routing legible, each
+configurable action gains a small <strong>scope hint</strong> so users understand <em>where</em> a
+shortcut applies:</p>
+<pre><code>Terminal
+  Find in Terminal            ⌘F        Active in: Terminal tabs
+  Clear Terminal              ⇧⌘K       Active in: Terminal tabs
+
+General
+  Toggle Sidebar              ⌘B        Active in: All tabs
+  Open Settings               ⌘,        Active in: All tabs
+</code></pre>
+<blockquote>
+<p>The scope hint is <strong>informational only</strong> in this concept. It reuses the
+existing <code>category</code> grouping and adds a derived "Active in" label from the new
+scope metadata (see <em>Preliminary Implementation Details</em>). No new editing
+controls are required for the MVP.</p>
+</blockquote>
+<h3 id="4-optional-a-settings-toggle-for-editor-delegation">4. Optional: a settings toggle for editor delegation</h3>
+<p>A single, discoverable toggle under <strong>Settings → Keyboard</strong> (or <strong>Terminal</strong>,
+matching where <code>terminalKeyPassthrough</code> lives):</p>
+<pre><code>☑  Let editor tabs handle their own editing shortcuts (Find, Replace, Select All)
+    When on, shortcuts like Cmd+F go to the focused editor instead of the
+    global app when an editor tab is active.
+</code></pre>
+<p>This mirrors the existing <code>terminalKeyPassthrough</code> setting and gives users an
+escape hatch. Default: <strong>on</strong>.</p>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="core-idea-every-action-declares-a-scope-and-the-dispatcher-consults-the-active-context">Core idea: every action declares a <strong>scope</strong>, and the dispatcher consults the <strong>active context</strong></h3>
+<p>Two new notions:</p>
+<ol>
+<li>
+<p><strong>Action scope</strong> — metadata on each keybinding describing <em>where</em> it should
+   fire. Proposed scopes:
+   - <code>global</code> — fires regardless of active tab (new terminal, split, zoom,
+     switch tab, open settings, toggle sidebar, tab-group actions).
+   - <code>terminal</code> — fires only when the active tab is a terminal
+     (<code>find-in-terminal</code>, <code>clear-terminal</code>; terminal <code>copy</code>/<code>paste</code>/<code>select-all</code>
+     are already routed through the xterm custom handler).
+   - <code>editor-delegated</code> — when the active tab is an editor/input surface, the
+     global handler <strong>does not</strong> claim the key; it lets the focused widget
+     handle it. (Conceptually: "this combo is owned by the editor when an editor
+     is focused.")</p>
+</li>
+<li>
+<p><strong>Active context</strong> — derived at dispatch time from the active tab's
+   <code>contentType</code> (and, defensively, from <code>document.activeElement</code>). Buckets:
+   - <code>terminal</code>
+   - <code>editor</code> (Monaco: <code>editor</code> content type)
+   - <code>form</code> (input-bearing tabs: <code>connection-editor</code>, <code>tunnel-editor</code>,
+     <code>workspace-editor</code>, <code>settings</code>, <code>network-diagnostic</code>)
+   - <code>other</code> (read-only tabs: <code>log-viewer</code>, <code>agent-error</code>)</p>
+</li>
+</ol>
+<p>The dispatcher's rule becomes:</p>
+<blockquote>
+<p>Run a matched action <strong>only if its scope is compatible with the active
+context</strong>. If the active context is an editor/form and the matched action is
+<code>terminal</code>-scoped or <code>editor-delegated</code>, the global handler <strong>bails out without
+<code>preventDefault()</code></strong>, so the focused widget receives the key natively.</p>
+</blockquote>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A["window keydown (bubble)"] --&gt; PT{"terminal pass-through&lt;br/&gt;applies?"}
+    PT -- yes --&gt; RP["return — PTY handles it"]
+    PT -- no --&gt; B["action = processKeyEvent(e)"]
+    B --&gt; C{"action == null?"}
+    C -- yes --&gt; RN["return — focused widget / browser handles it"]
+    C -- no --&gt; CTX["ctx = activeContext()"]
+    CTX --&gt; D{"scope(action) compatible&lt;br/&gt;with ctx?"}
+    D -- no --&gt; RD["return WITHOUT preventDefault&lt;br/&gt;→ editor/input gets the key"]
+    D -- yes --&gt; E["preventDefault(); run action"]
+</pre>
+</div>
+<h3 id="user-journeys">User journeys</h3>
+<h4 id="journey-a-find-in-an-editor-tab-the-reported-bug">Journey A — Find in an editor tab (the reported bug)</h4>
+<ol>
+<li>User opens an <em>Open in Editor</em> scratch tab (captured terminal output) or any
+   file in the editor.</li>
+<li>User presses <strong>Cmd+F</strong> (macOS).</li>
+<li>The active context is <code>editor</code>. The matched action <code>find-in-terminal</code> is
+   <code>terminal</code>-scoped → <strong>not compatible</strong> → the global handler returns without
+   preventing the default.</li>
+<li>Monaco receives <strong>Cmd+F</strong> and opens its find widget. ✅</li>
+</ol>
+<h4 id="journey-b-find-in-a-terminal-tab-unchanged">Journey B — Find in a terminal tab (unchanged)</h4>
+<ol>
+<li>User focuses a terminal tab.</li>
+<li>Presses <strong>Cmd+F</strong> (macOS) / <strong>Ctrl+Shift+F</strong> (Win/Linux).</li>
+<li>Active context is <code>terminal</code>; <code>find-in-terminal</code> is <code>terminal</code>-scoped →
+   compatible → <code>preventDefault()</code> + open the terminal search bar. ✅</li>
+</ol>
+<h4 id="journey-c-global-shortcut-from-anywhere">Journey C — Global shortcut from anywhere</h4>
+<ol>
+<li>User is in an editor tab and presses <strong>Cmd+\</strong> (split right).</li>
+<li><code>split-right</code> is <code>global</code> → compatible with any context → runs. ✅
+   (Editors do not own <code>Cmd+\\</code>, so nothing is lost.)</li>
+</ol>
+<h4 id="journey-d-typing-in-a-form-field">Journey D — Typing in a form field</h4>
+<ol>
+<li>User edits a connection name in <code>ConnectionEditor</code> and presses <strong>Cmd+A</strong>.</li>
+<li>Active context is <code>form</code>; <code>select-all</code> (mac default <code>Cmd+A</code>) is treated as
+   <code>editor-delegated</code> → the handler bails → the input selects its own text. ✅</li>
+</ol>
+<h3 id="edge-cases-decisions">Edge cases &amp; decisions</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Edge case</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Split view, focused panel is a terminal but another panel shows an editor</strong></td>
+<td>Context is derived from the <strong>active panel's active tab</strong> (<code>activePanelId</code> → <code>activeTabId</code>), which is how focus already works. The defensive <code>document.activeElement</code> check disambiguates when focus is inside a specific widget.</td>
+</tr>
+<tr>
+<td><strong>User rebinds <code>find-in-terminal</code> to Ctrl+Shift+F on macOS</strong></td>
+<td>No collision with Monaco's Cmd+F; both work. Scope logic still applies harmlessly.</td>
+</tr>
+<tr>
+<td><strong>User rebinds a <code>global</code> action to a combo Monaco owns (e.g. Cmd+F → split)</strong></td>
+<td><code>global</code> scope wins by design (it is explicitly app-wide). The settings UI can warn on a known-editor-combo collision, but the rule stays simple: <code>global</code> always fires.</td>
+</tr>
+<tr>
+<td><strong>Read-only tabs (<code>log-viewer</code>, <code>agent-error</code>)</strong></td>
+<td>Context <code>other</code>. <code>find-in-terminal</code> does nothing there today; under the new rule it simply isn't claimed, leaving the door open to add a LogViewer find later without touching the dispatcher.</td>
+</tr>
+<tr>
+<td><strong>Terminal pass-through interaction</strong></td>
+<td>Unchanged and evaluated <strong>first</strong>. The new scope check only runs for events that were <em>not</em> already handed to the PTY.</td>
+</tr>
+<tr>
+<td><strong><code>copy</code>/<code>paste</code>/<code>select-all</code> in terminals</strong></td>
+<td>Still handled by the xterm <code>attachCustomKeyEventHandler</code> path (<code>Terminal.tsx</code>). The scope rule only changes what the <em>global</em> handler claims; it doesn't alter the terminal's own handler.</td>
+</tr>
+<tr>
+<td><strong>Capture-phase zoom chord</strong></td>
+<td>Unchanged. It is intentionally global and must pre-empt Monaco; it stays a capture-phase special case.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="optional-enhancement-an-explicit-find-in-editor-action">Optional enhancement: an explicit "Find in Editor" action</h3>
+<p>Rather than <em>only</em> delegating to Monaco's native binding, a future iteration
+could add a first-class <code>find-in-editor</code> action (default Cmd/Ctrl+F, scope
+<code>editor</code>) that calls Monaco's find controller programmatically
+(<code>editor.getAction("actions.find").run()</code>). This makes the find shortcut appear
+in the shortcuts overlay and rebindable. <strong>For the MVP, native delegation is
+simpler and sufficient</strong> — this is listed as a follow-up, not a requirement.</p>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="active-context-state-derivation">Active-context state derivation</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Resolve
+    Resolve: Resolve active tab
+    Resolve --&gt; Terminal: contentType == "terminal"
+    Resolve --&gt; Editor: contentType == "editor"
+    Resolve --&gt; Form: contentType ∈ {connection-editor,\ntunnel-editor, workspace-editor,\nsettings, network-diagnostic}
+    Resolve --&gt; Other: contentType ∈ {log-viewer, agent-error}
+    Resolve --&gt; Other: no active tab
+
+    Terminal --&gt; [*]
+    Editor --&gt; [*]
+    Form --&gt; [*]
+    Other --&gt; [*]
+</pre>
+</div>
+<h3 id="sequence-cmdf-on-a-monaco-editor-tab-fixed-behavior">Sequence — Cmd+F on a Monaco editor tab (fixed behavior)</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant W as window (bubble listener)
+    participant KB as keybindings.processKeyEvent
+    participant CTX as activeContext()
+    participant M as Monaco editor
+
+    U-&gt;&gt;W: keydown Cmd+F
+    W-&gt;&gt;W: terminal pass-through? (no — editor focused)
+    W-&gt;&gt;KB: processKeyEvent(e)
+    KB--&gt;&gt;W: "find-in-terminal"
+    W-&gt;&gt;CTX: activeContext()
+    CTX--&gt;&gt;W: "editor"
+    W-&gt;&gt;W: scope(find-in-terminal)=terminal,\nnot compatible with "editor"
+    W--&gt;&gt;U: return WITHOUT preventDefault
+    Note over W,M: event continues to Monaco
+    M-&gt;&gt;M: built-in Cmd+F → open find widget
+    M--&gt;&gt;U: find widget visible
+</pre>
+</div>
+<h3 id="sequence-cmdf-on-a-terminal-tab-unchanged">Sequence — Cmd+F on a terminal tab (unchanged)</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant W as window (bubble listener)
+    participant KB as keybindings.processKeyEvent
+    participant CTX as activeContext()
+    participant S as Store / TerminalSearchBar
+
+    U-&gt;&gt;W: keydown Cmd+F
+    W-&gt;&gt;KB: processKeyEvent(e)
+    KB--&gt;&gt;W: "find-in-terminal"
+    W-&gt;&gt;CTX: activeContext()
+    CTX--&gt;&gt;W: "terminal"
+    W-&gt;&gt;W: scope compatible → claim it
+    W-&gt;&gt;W: e.preventDefault()
+    W-&gt;&gt;S: toggleTerminalSearch(activeTabId)
+    S--&gt;&gt;U: terminal search bar opens
+</pre>
+</div>
+<h3 id="decision-flow-scope-compatibility">Decision flow — scope compatibility</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A["scope(action), ctx"] --&gt; G{"scope == global?"}
+    G -- yes --&gt; Y["compatible ✓"]
+    G -- no --&gt; T{"scope == terminal?"}
+    T -- yes --&gt; TC{"ctx == terminal?"}
+    TC -- yes --&gt; Y
+    TC -- no --&gt; N["not compatible ✗&lt;br/&gt;(bail, no preventDefault)"]
+    T -- no --&gt; ED{"scope == editor-delegated?"}
+    ED -- yes --&gt; EDC{"ctx ∈ editor, form?"}
+    EDC -- yes --&gt; N
+    EDC -- no --&gt; Y
+</pre>
+</div>
+<blockquote>
+<p>Reading the <code>editor-delegated</code> branch: when an editor/form is active, an
+editor-delegated combo is <strong>handed to the widget</strong> (the global handler bails);
+in any other context the global handler may still claim it (e.g. a terminal
+tab where the editor isn't present).</p>
+</blockquote>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>Based on the architecture at concept-creation time (June 2026). File paths and
+line numbers reflect the current <code>develop</code>. The codebase may evolve before
+implementation; treat this as the planned approach, not a binding spec.</p>
+</blockquote>
+<h3 id="1-add-scope-metadata-to-keybindings">1. Add <code>scope</code> metadata to keybindings</h3>
+<p>In <code>src/types/keybindings.ts</code>, extend <code>KeyBinding</code>:</p>
+<pre><code class="language-ts">/** Where an action is allowed to fire, relative to the active tab. */
+export type ShortcutScope = &quot;global&quot; | &quot;terminal&quot; | &quot;editor-delegated&quot;;
+
+export interface KeyBinding {
+  // ...existing fields...
+  /** Defaults to &quot;global&quot; when omitted. */
+  scope?: ShortcutScope;
+}
+</code></pre>
+<p>Annotate <code>DEFAULT_BINDINGS</code> in <code>src/services/keybindings.ts</code>:</p>
+<ul>
+<li><code>find-in-terminal</code>, <code>clear-terminal</code> → <code>scope: "terminal"</code>.</li>
+<li><code>copy</code>, <code>paste</code>, <code>select-all</code> → <code>scope: "editor-delegated"</code> (so an active
+  editor/form keeps native clipboard/select behavior; terminals already route
+  these through the xterm handler).</li>
+<li>Everything else (sidebar, settings, new-terminal, split, focus, zoom, tabs,
+  tab-groups) → <code>scope: "global"</code> (the default).</li>
+</ul>
+<blockquote>
+<p>Keeping <code>scope</code> optional and defaulting to <code>global</code> means no behavior change
+for unannotated actions and a minimal, reviewable diff.</p>
+</blockquote>
+<h3 id="2-derive-the-active-context">2. Derive the active context</h3>
+<p>Add a small helper — either in <code>src/utils/panelTree.ts</code> (next to
+<code>getAllLeaves</code>) or a new <code>src/utils/activeContext.ts</code>:</p>
+<pre><code class="language-ts">export type ActiveContext = &quot;terminal&quot; | &quot;editor&quot; | &quot;form&quot; | &quot;other&quot;;
+
+const FORM_TYPES = new Set&lt;TabContentType&gt;([
+  &quot;connection-editor&quot;,
+  &quot;tunnel-editor&quot;,
+  &quot;workspace-editor&quot;,
+  &quot;settings&quot;,
+  &quot;network-diagnostic&quot;,
+]);
+
+export function activeContextFromTab(tab?: TerminalTab): ActiveContext {
+  if (!tab) return &quot;other&quot;;
+  if (tab.contentType === &quot;terminal&quot;) return &quot;terminal&quot;;
+  if (tab.contentType === &quot;editor&quot;) return &quot;editor&quot;;
+  if (FORM_TYPES.has(tab.contentType)) return &quot;form&quot;;
+  return &quot;other&quot;;
+}
+</code></pre>
+<p>The dispatcher resolves the active tab the same way the existing
+<code>find-in-terminal</code> case already does (<code>useKeyboardShortcuts.ts:191-192</code>):
+<code>activePanelId → panel.activeTabId → tab</code>.</p>
+<p><strong>Defensive focus check (optional but recommended):</strong> when
+<code>document.activeElement</code> is inside a <code>.monaco-editor</code>, an <code>&lt;input&gt;</code>, a
+<code>&lt;textarea&gt;</code>, or a <code>contenteditable</code>, treat the context as at least <code>editor</code>/
+<code>form</code> regardless of tab type. This guards modal/portal inputs that aren't a
+distinct tab. A helper analogous to <code>isEventFromTerminal</code>:</p>
+<pre><code class="language-ts">export function isEventFromTextInput(e: KeyboardEvent): boolean {
+  const el = (e.target as Element | null) ?? document.activeElement;
+  if (!el || typeof (el as Element).closest !== &quot;function&quot;) return false;
+  return !!(el as Element).closest(
+    &quot;input, textarea, [contenteditable=''], [contenteditable='true'], .monaco-editor&quot;
+  );
+}
+</code></pre>
+<h3 id="3-gate-the-dispatcher-on-scope-compatibility">3. Gate the dispatcher on scope compatibility</h3>
+<p>In <code>src/hooks/useKeyboardShortcuts.ts</code>, between the <code>processKeyEvent</code> result and
+the <code>switch</code>, compute the context once and bail early when incompatible:</p>
+<pre><code class="language-ts">const action = processKeyEvent(e);
+if (!action) return;
+if (action === &quot;chord-pending&quot;) {
+  e.preventDefault();
+  return;
+}
+
+const allLeaves = getAllLeaves(rootPanel);
+const panel = allLeaves.find((p) =&gt; p.id === activePanelId);
+const activeTab = panel?.tabs.find((t) =&gt; t.id === panel.activeTabId);
+const ctx = activeContextFromTab(activeTab);
+
+if (!isScopeCompatible(action, ctx, e)) {
+  // Editor / input owns this combo here — let it through untouched.
+  return;
+}
+// ...existing switch, now safe to preventDefault per case...
+</code></pre>
+<p><code>isScopeCompatible(action, ctx, e)</code> implements the decision flow above using the
+action's <code>scope</code> (looked up from the binding table) plus, optionally, the
+<code>isEventFromTextInput(e)</code> defensive check. The existing <code>find-in-terminal</code> case
+can then <strong>drop its internal <code>contentType === "terminal"</code> check</strong> (the gate
+already guarantees it), removing the unconditional-<code>preventDefault</code> bug.</p>
+<h3 id="4-reuse-not-rebuild">4. Reuse, not rebuild</h3>
+<ul>
+<li><strong>No change to <code>processKeyEvent</code>/chord engine</strong> — scope is applied <em>after</em>
+  matching, so chords, overrides, and platform defaults are untouched.</li>
+<li><strong>No change to the terminal pass-through</strong> (<code>isEventFromTerminal</code> /
+  <code>isShellReservedKey</code>) — it runs first and short-circuits.</li>
+<li><strong>No change to Monaco</strong> for the MVP — native delegation is achieved simply by
+  the global handler not preventing the default. (The optional <code>find-in-editor</code>
+  action in <em>General Handling</em> would later call
+  <code>editor.getAction("actions.find")?.run()</code> from <code>FileEditor</code>.)</li>
+<li><strong>Settings toggle</strong> reuses the <code>AppSettings</code> pattern already used by
+  <code>terminalKeyPassthrough</code> (read in the dispatcher; default on).</li>
+</ul>
+<h3 id="5-surfacing-scope-in-the-ui-optional-low-cost">5. Surfacing scope in the UI (optional, low-cost)</h3>
+<p>The shortcuts overlay and keybinding settings already iterate <code>DEFAULT_BINDINGS</code>
+grouped by <code>category</code>. Add a derived "Active in" label from <code>scope</code>
+(<code>global → All tabs</code>, <code>terminal → Terminal tabs</code>, <code>editor-delegated → Editors &amp;
+inputs</code>). No new data model — purely presentational.</p>
+<h3 id="6-testing-strategy">6. Testing strategy</h3>
+<p>Following the project's TDD preference, unit tests are the highest-value layer
+here because the routing is pure logic:</p>
+<ul>
+<li><strong><code>isScopeCompatible</code> / <code>activeContextFromTab</code> unit tests</strong> — table-driven over
+  <code>(action scope, active context)</code> pairs, asserting compatible/incompatible.</li>
+<li><strong>Dispatcher unit tests</strong> — simulate <code>KeyboardEvent</code>s with a mocked store
+  (active tab of each <code>contentType</code>) and assert:</li>
+<li><code>find-in-terminal</code> (Cmd+F, mac) on an <code>editor</code> tab → <code>preventDefault</code> <strong>not</strong>
+    called and <code>toggleTerminalSearch</code> <strong>not</strong> called (regression test for the
+    reported bug).</li>
+<li><code>find-in-terminal</code> on a <code>terminal</code> tab → <code>preventDefault</code> called +
+    <code>toggleTerminalSearch</code> invoked.</li>
+<li>A <code>global</code> action (e.g. <code>split-right</code>) fires in every context.</li>
+<li><strong>Manual test (macOS-specific)</strong> — <code>tauri-driver</code> cannot drive WKWebView on
+  macOS (ADR-5), and Monaco's find widget is a visual surface, so add a manual
+  test under <strong>Tab Management</strong> in <code>docs/testing.md</code> / <code>tests/manual/</code>:
+  <em>"Cmd+F in an editor tab opens Monaco's find widget; Cmd+F in a terminal tab
+  opens the terminal search bar."</em></li>
+</ul>
+<h3 id="7-rollout-risk">7. Rollout / risk</h3>
+<ul>
+<li><strong>Low blast radius:</strong> behavior only changes for combos that both match a
+  global action <em>and</em> collide with an editor/input context. On Windows/Linux the
+  deliberate avoidance of single-modifier defaults means almost nothing changes;
+  the main beneficiary is macOS.</li>
+<li><strong>Reversible:</strong> the settings toggle disables editor delegation, restoring the
+  old global-first behavior if a user prefers it.</li>
+<li><strong>Forward-compatible:</strong> the <code>scope</code> field and <code>ActiveContext</code> buckets give a
+  clean place to hang future per-surface shortcuts (LogViewer find, form-specific
+  actions) without another dispatcher rewrite.</li>
+</ul>
+<hr>
+<h2 id="summary">Summary</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>Today</th>
+<th>Proposed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dispatch basis</td>
+<td>Key combo only (tab-type-blind)</td>
+<td>Key combo <strong>+ action scope + active context</strong></td>
+</tr>
+<tr>
+<td>Cmd+F in editor tab (mac)</td>
+<td>Swallowed; Monaco find never opens</td>
+<td>Delegated to Monaco's find widget</td>
+</tr>
+<tr>
+<td>Cmd+F in terminal tab</td>
+<td>Opens terminal search bar</td>
+<td>Unchanged</td>
+</tr>
+<tr>
+<td>Global shortcuts (split, zoom, …)</td>
+<td>Work everywhere</td>
+<td>Work everywhere (<code>global</code> scope)</td>
+</tr>
+<tr>
+<td>Editing combos in forms (mac)</td>
+<td>Can be intercepted globally</td>
+<td>Delegated to the focused input</td>
+</tr>
+<tr>
+<td>Configurability</td>
+<td>Per-action rebinding</td>
+<td>Per-action rebinding <strong>+ scope-derived "Active in" hint + optional master toggle</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The change is a focused, low-risk routing rule layered on top of the existing
+keybinding service: actions declare a <strong>scope</strong>, the dispatcher derives the
+<strong>active context</strong> from the already-tracked active tab, and the global handler
+only claims a key when the two are compatible — otherwise it steps aside so the
+focused editor or input handles its own shortcuts.</p>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

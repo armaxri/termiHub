@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>In-Field Update Mechanism (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>In-Field Update Mechanism</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Partial</span>
+          <span><code>docs/concepts/partial/in-field-update-mechanism.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#variant-comparison">Variant Comparison</a></li>
+          <li><a href="#phased-approach">Phased Approach</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>Users who have installed termiHub have no way to discover that a new version is available without
+manually checking the GitHub releases page. For a security-sensitive tool that manages SSH
+credentials, serial connections, and tunnels, silent outdatedness is a real risk: a critical
+security patch may sit uninstalled on user machines for weeks or months.</p>
+<p>This concept designs an update awareness and delivery system for termiHub installations. Three
+implementation variants are defined and compared — from a minimal notification-only approach to
+a fully automatic silent updater — so that the implementation choice can be made with full
+visibility of the trade-offs involved. A phased adoption path is proposed, starting with the
+lowest-complexity variant and progressively enhancing it.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Ensure users know when a new version of termiHub is available</li>
+<li>Prioritize security patches — they must not be suppressible by "skip this version"</li>
+<li>Provide a clear path from minimal implementation to full in-app update delivery</li>
+<li>Document code signing requirements and infrastructure costs for each variant</li>
+<li>Keep the update check privacy-respecting and transparent to users</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>Release planning and dependency management (see
+  <a href="../backlog/release-planning-and-dependency-management.html">Release Planning and Dependency Management</a>)</li>
+<li>Automatic rollback in case of bad updates (out of scope for initial phases)</li>
+<li>Delta/differential updates (full installer replacement only)</li>
+<li>Update channels (stable/beta selection) — noted as a future extension</li>
+<li>Enterprise managed-update or MDM integration</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<p>The update UI adapts to which variant is implemented. All variants share a common entry point in
+the status bar and a Settings page section. Higher variants add progressive capability on top.</p>
+<h3 id="shared-status-bar-update-indicator">Shared: Status Bar Update Indicator</h3>
+<p>A version chip in the bottom status bar serves as the primary visual anchor for update
+awareness:</p>
+<pre><code>┌────────────────────────────────────────────────────────────────────────────────┐
+│  ● SSH: server-1  ● Local Shell  ●●● Tabs (3)          v0.1.0 ● [CPU 12%]    │
+│                                                          ───────               │
+│                                                          Update dot appears    │
+│                                                          when update available │
+└────────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>When an update is available, a colored dot (amber for regular updates, red for security patches)
+appears beside the version number. Clicking the version chip opens the update notification popup.</p>
+<h3 id="shared-update-notification-popup">Shared: Update Notification Popup</h3>
+<p>A non-blocking popup appears once when an update is detected (startup or background check):</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────────┐
+│  ●  termiHub v0.2.0 is available                              [×]    │
+│  ─────────────────────────────────────────────────────────────────   │
+│  You are running v0.1.0                                              │
+│                                                                      │
+│  [What's New]          [Open Downloads Page]    [Skip This Version]  │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>For security patches the popup is styled differently and "Skip This Version" is absent:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────────┐
+│  🔒  Security update: termiHub v0.1.1                         [×]    │
+│  ─────────────────────────────────────────────────────────────────   │
+│  This release addresses a security vulnerability. Updating is        │
+│  strongly recommended.                                               │
+│                                                                      │
+│  [What's New]                              [Open Downloads Page]     │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="shared-settings-updates-page">Shared: Settings &gt; Updates Page</h3>
+<p>A dedicated section under Settings provides full update control:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────────┐
+│  Settings                                              Updates        │
+│  ────────────────────────────────────────────────────────────────    │
+│  General                                                             │
+│  Terminal                  Current version      v0.1.0               │
+│  SSH                       Latest version       v0.2.0  ● Available  │
+│  Appearance                Last checked         2026-04-17 14:32     │
+│  Updates  ◄                                                          │
+│  Advanced                  [Check Now]          [Open Downloads Page]│
+│                                                                      │
+│                            ─────────────────────────────────────     │
+│                            Auto-check for updates                    │
+│                            ● On startup    ○ Never                   │
+│                                                                      │
+│                            Skipped version: v0.1.1   [Clear]        │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="variant-b-addition-download-progress">Variant B Addition: Download Progress</h3>
+<p>Variant B adds a download progress row to both the popup and the settings page:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────────┐
+│  ●  termiHub v0.2.0 is ready to install                      [×]    │
+│  ─────────────────────────────────────────────────────────────────   │
+│  Download complete  ████████████████████████████████  100%          │
+│                                                                      │
+│  [Install and Restart]             [Later]    [Skip This Version]    │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Status bar during download:</p>
+<pre><code>│  v0.1.0 ↓ 34%                                                       │
+</code></pre>
+<h3 id="variant-c-addition-post-launch-banner">Variant C Addition: Post-Launch Banner</h3>
+<p>After a silent auto-install, a one-time info banner appears on next launch:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────────┐
+│  ℹ  termiHub was updated to v0.2.0 — What's New    [Dismiss]   [×]  │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Settings &gt; Updates gets a rollback row:</p>
+<pre><code>│  Previous version: v0.1.0                                           │
+│  [Restore Previous Version]                                         │
+</code></pre>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="update-check-endpoint">Update Check Endpoint</h3>
+<p><strong>All variants</strong> use the GitHub Releases API as the update source — no custom server
+infrastructure is required for basic update detection:</p>
+<pre><code>GET https://api.github.com/repos/armaxri/termiHub/releases/latest
+</code></pre>
+<p>Response fields used:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tag_name</code></td>
+<td>Latest version string (e.g., <code>"v0.2.0"</code>)</td>
+</tr>
+<tr>
+<td><code>prerelease</code></td>
+<td>Skip pre-releases on stable channel</td>
+</tr>
+<tr>
+<td><code>body</code></td>
+<td>Release notes (shown in "What's New")</td>
+</tr>
+<tr>
+<td><code>assets[].browser_download_url</code></td>
+<td>Download links per platform (Variant B/C)</td>
+</tr>
+<tr>
+<td><code>html_url</code></td>
+<td>GitHub releases page URL (Variant A)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The version in the response is compared against the running app version using semver comparison.
+If <code>latest &gt; running</code>, an update is available.</p>
+<p>A <strong>security release</strong> is detected by checking whether the release body contains the keyword
+<code>&lt;!-- security --&gt;</code> (a convention the release workflow adds, or detectable via the <code>security</code>
+GitHub label on the associated PR/issue). Security releases bypass the "skip this version"
+suppression.</p>
+<h3 id="check-frequency">Check Frequency</h3>
+<ul>
+<li><strong>On startup</strong>: once, after a 5-second delay (avoid blocking startup UX)</li>
+<li><strong>While running</strong>: every 24 hours, only if the app has been continuously open</li>
+<li><strong>Manual</strong>: "Check Now" button in Settings &gt; Updates always triggers an immediate check</li>
+<li><strong>Rate limit</strong>: if the last check was less than 1 hour ago (excluding manual), skip</li>
+</ul>
+<p>The last check timestamp and the result are persisted in the app config file alongside other
+settings.</p>
+<h3 id="skip-version-behavior">Skip Version Behavior</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>User clicks "Skip This Version"</td>
+<td>Persisted to config; no more notifications for that version</td>
+</tr>
+<tr>
+<td>A newer version is released</td>
+<td>Skip record is ignored; notification resumes for new version</td>
+</tr>
+<tr>
+<td>Next major version</td>
+<td>Skip record is cleared (major version change resets suppression)</td>
+</tr>
+<tr>
+<td>Security release</td>
+<td>Skip is ignored regardless; notification always shown</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="privacy-considerations">Privacy Considerations</h3>
+<p>The update check sends a standard HTTPS GET to <code>api.github.com</code> with:</p>
+<ul>
+<li>The <code>User-Agent</code> header identifying termiHub and its version</li>
+<li>No personal data, no telemetry, no identifiers beyond what any browser would send to GitHub</li>
+</ul>
+<p>Users who disable auto-checking ("Never" in settings) can still use the manual "Check Now" button.
+This should be documented in the app's privacy note.</p>
+<h3 id="platform-detection">Platform Detection</h3>
+<p>The running platform (<code>darwin-aarch64</code>, <code>darwin-x86_64</code>, <code>windows-x86_64</code>, <code>linux-x86_64</code>,
+<code>linux-aarch64</code>) is needed by Variants B and C to select the correct download asset. For
+Variant A the platform does not matter — the download page link is the same for all.</p>
+<p>Tauri exposes <code>std::env::consts::OS</code> and <code>std::env::consts::ARCH</code> on the backend for platform
+detection.</p>
+<hr>
+<h2 id="variant-comparison">Variant Comparison</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th>A: Notify Only</th>
+<th>B: Download + Prompt</th>
+<th>C: Fully Automatic</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>User friction</strong></td>
+<td>Medium (browser download + manual install)</td>
+<td>Low (one "Install" click)</td>
+<td>Minimal (nothing required)</td>
+</tr>
+<tr>
+<td><strong>Code complexity</strong></td>
+<td>Low</td>
+<td>High</td>
+<td>Very High</td>
+</tr>
+<tr>
+<td><strong>New Tauri plugin</strong></td>
+<td>None</td>
+<td><code>tauri-plugin-updater</code></td>
+<td><code>tauri-plugin-updater</code></td>
+</tr>
+<tr>
+<td><strong>Code signing required</strong></td>
+<td>No</td>
+<td>Yes — macOS + Windows</td>
+<td>Yes — macOS + Windows</td>
+</tr>
+<tr>
+<td><strong>Update manifest needed</strong></td>
+<td>No (GitHub API)</td>
+<td>Yes (signed manifest JSON)</td>
+<td>Yes (signed manifest JSON)</td>
+</tr>
+<tr>
+<td><strong>Rollback support</strong></td>
+<td>N/A (user reinstalls old version)</td>
+<td>Not included</td>
+<td>Required for safety</td>
+</tr>
+<tr>
+<td><strong>Privacy impact</strong></td>
+<td>Minimal (GitHub API request)</td>
+<td>Same</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>Platform parity</strong></td>
+<td>Full (all 5 platforms equal)</td>
+<td>Near-full</td>
+<td>Near-full (Linux auto-update harder)</td>
+</tr>
+<tr>
+<td><strong>Infrastructure cost</strong></td>
+<td>$0 (GitHub API is free)</td>
+<td>~$0 if manifest on GitHub Releases</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>Certificate cost</strong></td>
+<td>$0</td>
+<td>macOS $99/yr + Windows $200–600/yr</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>Estimated impl effort</strong></td>
+<td>1–2 days</td>
+<td>1–2 weeks</td>
+<td>3–5 weeks</td>
+</tr>
+<tr>
+<td><strong>Recommended for</strong></td>
+<td>Phase 1 (now)</td>
+<td>Phase 2 (optional)</td>
+<td>Phase 3 (optional)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="code-signing-deep-dive">Code Signing Deep-Dive</h3>
+<p>Code signing is required by macOS and Windows for Variants B and C because the OS must verify
+the downloaded installer before executing it as part of the in-app update flow.</p>
+<p><strong>macOS:</strong></p>
+<ul>
+<li>Requires an Apple Developer Program membership ($99/year)</li>
+<li>All distributed binaries must be signed and notarized with Apple's servers</li>
+<li>Tauri already supports macOS code signing via <code>APPLE_CERTIFICATE</code> and related CI secrets</li>
+<li>Notarization adds ~5 minutes to the release CI pipeline</li>
+<li>Without signing: macOS Gatekeeper blocks the installer from running silently</li>
+</ul>
+<p><strong>Windows:</strong></p>
+<ul>
+<li>Requires a code signing certificate from a trusted CA:</li>
+<li>OV (Organization Validation): $200–400/year, works for signing</li>
+<li>EV (Extended Validation): $400–600/year, immediately trusted by SmartScreen</li>
+<li>Standard OV certificates trigger SmartScreen warnings initially (reputation builds over time)</li>
+<li>Tauri supports Windows signing via <code>TAURI_SIGNING_PRIVATE_KEY</code> CI secrets</li>
+<li>Without signing: Windows SmartScreen may block the installer silently in B/C flows</li>
+</ul>
+<p><strong>Linux:</strong></p>
+<ul>
+<li>No OS-level signing requirement for AppImage or .deb/.rpm</li>
+<li>GPG signing is conventional for package repos but optional for direct downloads</li>
+<li>Auto-update on Linux is feasible without code signing</li>
+</ul>
+<h3 id="update-manifest-format-variants-b-and-c">Update Manifest Format (Variants B and C)</h3>
+<p>Tauri's updater plugin requires a JSON manifest at a stable URL:</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: &quot;0.2.0&quot;,
+  &quot;notes&quot;: &quot;See full release notes at https://github.com/armaxri/termiHub/releases/tag/v0.2.0&quot;,
+  &quot;pub_date&quot;: &quot;2026-04-17T12:00:00Z&quot;,
+  &quot;platforms&quot;: {
+    &quot;darwin-aarch64&quot;: {
+      &quot;url&quot;: &quot;https://github.com/armaxri/termiHub/releases/download/v0.2.0/termiHub_0.2.0_aarch64.dmg&quot;,
+      &quot;signature&quot;: &quot;&lt;ed25519-signature&gt;&quot;
+    },
+    &quot;darwin-x86_64&quot;: {
+      &quot;url&quot;: &quot;https://github.com/armaxri/termiHub/releases/download/v0.2.0/termiHub_0.2.0_x64.dmg&quot;,
+      &quot;signature&quot;: &quot;&lt;ed25519-signature&gt;&quot;
+    },
+    &quot;windows-x86_64&quot;: {
+      &quot;url&quot;: &quot;https://github.com/armaxri/termiHub/releases/download/v0.2.0/termiHub_0.2.0_x64-setup.msi&quot;,
+      &quot;signature&quot;: &quot;&lt;ed25519-signature&gt;&quot;
+    },
+    &quot;linux-x86_64&quot;: {
+      &quot;url&quot;: &quot;https://github.com/armaxri/termiHub/releases/download/v0.2.0/termiHub_0.2.0_amd64.AppImage&quot;,
+      &quot;signature&quot;: &quot;&lt;ed25519-signature&gt;&quot;
+    }
+  }
+}
+</code></pre>
+<p>The manifest can be published as a release asset (<code>latest.json</code>) during the release CI workflow
+and hosted at a stable URL (e.g., via GitHub Pages or a simple CDN).</p>
+<hr>
+<h2 id="phased-approach">Phased Approach</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────────────┐
+│  Phase 1 — Variant A: Notify Only                   (Recommended Now)  │
+│                                                                         │
+│  • GitHub API check on startup                                          │
+│  • Status bar update dot                                                │
+│  • Non-blocking toast notification                                      │
+│  • Settings &gt; Updates page                                              │
+│  • Security patch bypass of skip                                        │
+│  • No code signing needed, no new infrastructure                        │
+│  • Effort: ~1–2 days                                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+          │
+          │  (optional future step)
+          ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Phase 2 — Variant B: Download + Prompt             (Optional)         │
+│                                                                         │
+│  • Everything in Phase 1, plus:                                         │
+│  • tauri-plugin-updater integration                                     │
+│  • Signed update manifest on GitHub Releases                            │
+│  • In-app download with progress indicator                              │
+│  • &quot;Install and Restart&quot; prompt                                         │
+│  • Requires code signing (macOS + Windows)                              │
+│  • Effort: ~1–2 weeks + certificate setup time                          │
+└─────────────────────────────────────────────────────────────────────────┘
+          │
+          │  (optional future step — evaluate after Phase 2 user feedback)
+          ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Phase 3 — Variant C: Fully Automatic               (Optional)         │
+│                                                                         │
+│  • Everything in Phase 2, plus:                                         │
+│  • Silent background download + auto-install on next restart            │
+│  • Post-launch &quot;updated to vX.Y.Z&quot; banner                               │
+│  • Rollback to previous version from Settings                           │
+│  • Note: likely overkill for a developer/ops tool where users           │
+│    prefer to control when updates happen                                │
+│  • Effort: ~3–5 weeks additional                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>The decision of when (or whether) to advance from Phase 1 to Phase 2 should be driven by user
+feedback: if users report that manual re-download is a significant friction point, Phase 2 is
+worthwhile. For a developer tool with technically sophisticated users, Phase 1 may be sufficient
+long-term.</p>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="update-availability-state-machine">Update Availability State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle
+
+    Idle --&gt; Checking : App launch (5s delay)\nor 24h interval\nor manual "Check Now"
+
+    Checking --&gt; UpToDate : running == latest
+    Checking --&gt; UpdateAvailable : latest &gt; running
+    Checking --&gt; CheckFailed : Network error /\nAPI unavailable
+
+    CheckFailed --&gt; Idle : Silent fail;\nretry next cycle
+
+    UpToDate --&gt; Idle : No action;\nschedule next check
+
+    UpdateAvailable --&gt; Notified : Show dot + toast
+    Notified --&gt; Skipped : User clicks\n"Skip This Version"\n(not security)
+    Notified --&gt; Dismissed : User dismisses\nnotification
+    Notified --&gt; Downloading : Variant B/C:\n"Download" triggered
+    Notified --&gt; OpenedBrowser : Variant A:\n"Open Downloads Page"
+
+    Skipped --&gt; Idle : Persist skip to config
+    Dismissed --&gt; Idle : Show dot only;\nno re-toast until\nnew version
+    OpenedBrowser --&gt; Idle
+
+    Downloading --&gt; DownloadComplete : Download successful
+    Downloading --&gt; DownloadFailed : Network error
+    DownloadFailed --&gt; Notified : Show error;\noffer retry
+    DownloadComplete --&gt; ReadyToInstall : Variant B: show prompt
+    DownloadComplete --&gt; PendingRestart : Variant C: silent
+
+    ReadyToInstall --&gt; Installing : User confirms
+    ReadyToInstall --&gt; Idle : User clicks "Later"
+
+    Installing --&gt; [*] : App restarts
+    PendingRestart --&gt; [*] : Next app launch\ntriggers install
+</pre>
+</div>
+<h3 id="variant-a-notify-only-user-journey">Variant A: Notify-Only User Journey</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[App starts] --&gt; B[5-second delay]
+    B --&gt; C{Last check\n&lt; 1 hour ago?}
+    C --&gt;|Yes| D[Skip check]
+    C --&gt;|No| E[GET github.com/releases/latest]
+    E --&gt; F{API success?}
+    F --&gt;|No| G[Silent fail;\nlog to LogViewer]
+    F --&gt;|Yes| H{latest &gt; running?}
+    H --&gt;|No| I[Update last_check_time\nStatus: Up to date]
+    H --&gt;|Yes| J{Security release?}
+    J --&gt;|Yes| K[Show security popup\nno skip option\nRed dot in status bar]
+    J --&gt;|No| L{Version already\nskipped?}
+    L --&gt;|Yes| M[Show amber dot only\nno popup]
+    L --&gt;|No| N[Show update popup\nAmber dot in status bar]
+
+    K --&gt; O[User clicks\nOpen Downloads Page]
+    N --&gt; O
+    N --&gt; P[User clicks\nSkip This Version]
+    N --&gt; Q[User dismisses popup]
+
+    O --&gt; R[Open GitHub Releases\nin default browser]
+    P --&gt; S[Persist skipped version\nto config]
+    Q --&gt; T[Dot remains;\nno re-popup this session]
+</pre>
+</div>
+<h3 id="variant-b-download-and-prompt-sequence">Variant B: Download and Prompt Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant UI as React Frontend
+    participant Store as Zustand Store
+    participant Tauri as Tauri Backend
+    participant Plugin as tauri-plugin-updater
+    participant GH as GitHub / Manifest
+
+    UI-&gt;&gt;Tauri: check_for_updates()
+    Tauri-&gt;&gt;GH: GET update manifest
+    GH--&gt;&gt;Tauri: { version, platforms, signatures }
+    Tauri-&gt;&gt;Tauri: semver compare;\nverify signature
+    Tauri--&gt;&gt;Store: updateAvailable: true,\nlatestVersion: "0.2.0"
+    Store--&gt;&gt;UI: re-render status bar dot + popup
+
+    UI-&gt;&gt;Tauri: download_update()
+    Tauri-&gt;&gt;Plugin: start download
+    Plugin-&gt;&gt;GH: Download installer asset
+    loop Download progress
+        Plugin--&gt;&gt;Tauri: progress event (bytes downloaded)
+        Tauri--&gt;&gt;Store: downloadProgress: 0..100
+        Store--&gt;&gt;UI: update progress bar
+    end
+    Plugin--&gt;&gt;Tauri: download complete; installer staged
+    Tauri--&gt;&gt;Store: readyToInstall: true
+    Store--&gt;&gt;UI: show "Install and Restart" dialog
+
+    UI-&gt;&gt;Tauri: install_update()
+    Tauri-&gt;&gt;Plugin: apply update + restart
+    Note over Tauri,Plugin: App process exits;\ninstaller runs;\napp relaunches at new version
+</pre>
+</div>
+<h3 id="security-update-skip-bypass">Security Update Skip Bypass</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Update detected] --&gt; B[Parse GitHub Release body]
+    B --&gt; C{Contains\nsecurity marker?}
+    C --&gt;|Yes| D[Mark as security release]
+    C --&gt;|No| E[Mark as regular release]
+
+    D --&gt; F[Show security popup\nred dot\nno Skip option]
+    E --&gt; G{User previously\nskipped this version?}
+    G --&gt;|Yes| H[Show amber dot only\nsilent — no popup]
+    G --&gt;|No| I[Show regular popup\namber dot\nSkip option available]
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<h3 id="variant-a-phase-1-notify-only">Variant A — Phase 1 (Notify Only)</h3>
+<p><strong>Backend</strong> (<code>src-tauri/src/</code>):</p>
+<p>New file: <code>src-tauri/src/commands/update.rs</code></p>
+<pre><code class="language-rust">use semver::Version;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateInfo {
+    pub available: bool,
+    pub latest_version: String,
+    pub release_url: String,
+    pub release_notes: String,
+    pub is_security: bool,
+}
+
+#[tauri::command]
+pub async fn check_for_updates(app_version: String) -&gt; Result&lt;UpdateInfo, String&gt; {
+    // GET https://api.github.com/repos/armaxri/termiHub/releases/latest
+    // Compare semver, detect security marker, return UpdateInfo
+}
+</code></pre>
+<ul>
+<li>Uses <code>reqwest</code> (already a workspace dependency)</li>
+<li>Security detection: check if release body contains <code>&lt;!-- security --&gt;</code> marker (convention to
+  add to release workflow)</li>
+<li>Persisted state: extend existing app config JSON with <code>last_update_check</code> and
+  <code>skipped_update_version</code> fields</li>
+</ul>
+<p><strong>Frontend</strong>:</p>
+<p>New components:</p>
+<ul>
+<li><code>src/components/StatusBar/UpdateIndicator.tsx</code> — version chip with optional dot badge;
+  <code>onClick</code> opens update popup</li>
+<li><code>src/components/UpdateNotification/UpdateNotification.tsx</code> — toast/dialog with action buttons</li>
+<li>New section in <code>src/components/Settings/</code> (existing settings layout) for the Updates page</li>
+</ul>
+<p>Zustand store additions in <code>src/store/appStore.ts</code>:</p>
+<pre><code class="language-typescript">updateAvailable: boolean;
+latestVersion: string | null;
+latestReleaseUrl: string | null;
+latestReleaseNotes: string | null;
+isSecurityUpdate: boolean;
+updateCheckState: &quot;idle&quot; | &quot;checking&quot; | &quot;up-to-date&quot; | &quot;available&quot; | &quot;error&quot;;
+skippedVersion: string | null;
+</code></pre>
+<p>New Tauri event or invoke call on startup (after 5-second delay) and a 24-hour interval via
+<code>setInterval</code>.</p>
+<p><strong>No infrastructure changes required.</strong> The GitHub Releases API is unauthenticated for public
+repositories (rate limit: 60 req/hour per IP — well within normal usage).</p>
+<hr>
+<h3 id="variant-b-phase-2-download-prompt">Variant B — Phase 2 (Download + Prompt)</h3>
+<p><strong>Additional dependencies</strong>:</p>
+<ul>
+<li><code>src-tauri/Cargo.toml</code>: add <code>tauri-plugin-updater</code></li>
+<li><code>tauri.conf.json</code>: add updater plugin configuration with endpoint URL and public key</li>
+</ul>
+<p><strong>Update manifest</strong>:</p>
+<p>A <code>latest.json</code> manifest is generated and signed during the release CI workflow
+(<code>.github/workflows/release.yml</code>). The signing private key is stored as a GitHub Actions secret.
+The manifest is uploaded as a release asset or to a GitHub Pages endpoint.</p>
+<p><strong>Additional Tauri commands</strong>:</p>
+<ul>
+<li><code>download_update()</code> — starts download, emits <code>update-download-progress</code> events</li>
+<li><code>install_update()</code> — applies the downloaded update and restarts</li>
+</ul>
+<p><strong>Frontend additions</strong>:</p>
+<ul>
+<li>Progress bar component in <code>UpdateNotification.tsx</code></li>
+<li>Status bar shows download percentage during active download</li>
+</ul>
+<p><strong>Code signing CI secrets</strong> to add (platform-specific):</p>
+<ul>
+<li><code>APPLE_CERTIFICATE</code>, <code>APPLE_CERTIFICATE_PASSWORD</code>, <code>APPLE_ID</code>, <code>APPLE_TEAM_ID</code> (macOS)</li>
+<li><code>TAURI_SIGNING_PRIVATE_KEY</code>, <code>WINDOWS_CERTIFICATE</code> (Windows)</li>
+</ul>
+<hr>
+<h3 id="variant-c-phase-3-fully-automatic">Variant C — Phase 3 (Fully Automatic)</h3>
+<p>Built on top of Phase 2. Additional work:</p>
+<ul>
+<li>Auto-trigger download on update detection (no user prompt for download)</li>
+<li>Persist "pending update" state across app restarts</li>
+<li>On next launch: apply pending update before showing main UI, then show "updated to vX.Y.Z"
+  banner</li>
+<li>Settings &gt; Updates: show previous version with a "Restore" button</li>
+<li>Rollback: re-download the previous installer asset from GitHub Releases, run it</li>
+</ul>
+<p>Rollback is the main complexity driver for Phase 3. A simpler approach: link to the previous
+GitHub Release for manual rollback, rather than implementing automatic rollback.</p>
+<hr>
+<h3 id="config-schema-extension">Config Schema Extension</h3>
+<p>The app config JSON (existing settings persistence) gains update-related fields:</p>
+<pre><code class="language-json">{
+  &quot;updates&quot;: {
+    &quot;auto_check&quot;: true,
+    &quot;last_check_time&quot;: &quot;2026-04-17T14:32:00Z&quot;,
+    &quot;skipped_version&quot;: null,
+    &quot;pending_install_version&quot;: null
+  }
+}
+</code></pre>
+<p><code>pending_install_version</code> is only used by Variant C to persist a staged update across restarts.</p>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1360 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Concept (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Agent Concept</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span><code>docs/concepts/implemented/agent.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+          <li><a href="#design-decisions">Design Decisions</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>The termiHub agent is a standalone daemon that runs on remote hosts (build servers, NAS devices, ARM boards, any Linux/macOS machine) and acts as <strong>termiHub's persistent backend on that machine</strong>. It provides the same capabilities as the local termiHub desktop — shells, serial ports, Docker containers, SSH connections to other hosts — but keeps sessions alive independently of the desktop app.</p>
+<p>The agent has the <strong>full capabilities of the local machine</strong> in terms of connections: local shells, serial ports, SSH to other hosts, Docker containers, and file browsing. The only restriction is that <strong>an agent cannot deploy another agent</strong> — there is no recursive agent chaining.</p>
+<p><strong>Core motivations:</strong></p>
+<ul>
+<li><strong>Session persistence</strong> — A developer starts a long-running build on a remote build server, shuts down their laptop for the night, and reconnects the next morning to find the terminal still running with full output history.</li>
+<li><strong>Unified experience</strong> — Whether working locally or remotely, the UI behaves identically. The agent supports the same prepared connections, folders, and session model as the local desktop.</li>
+<li><strong>Zero setup</strong> — termiHub auto-deploys the agent when connecting to a new host. No manual installation, no version mismatches.</li>
+<li><strong>Multi-host orchestration</strong> — A developer can have agents on multiple machines, each managing their own sessions, all visible in one termiHub sidebar.</li>
+</ul>
+<div class="diagram">
+  <pre class="mermaid">
+graph LR
+    Desktop[termiHub Desktop]
+
+    subgraph "Build Server"
+        AgentA[Agent]
+        ShellA1[bash: cargo build]
+        ShellA2[bash: htop]
+    end
+
+    subgraph "ARM Device"
+        AgentB[Agent]
+        SerialB1["/dev/ttyUSB0"]
+        ShellB1["bash: journalctl -f"]
+        SSHTarget["SSH → Other Host"]
+    end
+
+    Desktop -- SSH --&gt; AgentA
+    Desktop -- SSH --&gt; AgentB
+    AgentA --&gt; ShellA1
+    AgentA --&gt; ShellA2
+    AgentB --&gt; SerialB1
+    AgentB --&gt; ShellB1
+    AgentB -- SSH --&gt; SSHTarget
+</pre>
+</div>
+<p><strong>Capability comparison — local vs. agent:</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th style="text-align: center;">Local Desktop</th>
+<th style="text-align: center;">Agent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local shells</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>Serial ports</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>SSH connections</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>Docker containers</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>File browsing (SFTP/local)</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>Prepared connections + folders</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>Session persistence (survive disconnect)</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>Session persistence (survive restart)</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">Yes</td>
+</tr>
+<tr>
+<td>Deploy an agent on a target</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;"><strong>No</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="prepared-connections-vs-running-sessions">Prepared Connections vs. Running Sessions</h3>
+<p>The agent uses the same two-tier model as the local desktop:</p>
+<ul>
+<li>
+<p><strong>Prepared connections</strong> are saved, reusable configurations (SSH host, serial port config, Docker container, local shell). They are organized in <strong>folders</strong> for grouping. They appear in the sidebar and persist on disk. The user double-clicks or right-clicks "Connect" to create a session from a prepared connection.</p>
+</li>
+<li>
+<p><strong>Running sessions</strong> are active, live instances created from a prepared connection. They appear as <strong>children</strong> of their parent prepared connection in the tree and as <strong>tabs</strong> in the terminal area. On the local desktop, sessions are ephemeral (closing the app kills them). On an agent, sessions are <strong>persistent</strong> — they survive desktop disconnects and even agent restarts.</p>
+</li>
+</ul>
+<div class="diagram">
+  <pre class="mermaid">
+erDiagram
+    FOLDER ||--o{ FOLDER : "contains (nested)"
+    FOLDER ||--o{ PREPARED_CONNECTION : "organizes"
+    PREPARED_CONNECTION ||--o{ RUNNING_SESSION : "creates"
+    RUNNING_SESSION ||--o| TAB : "displayed as"
+
+    FOLDER {
+        string id
+        string name
+        string parentId
+        bool isExpanded
+    }
+    PREPARED_CONNECTION {
+        string id
+        string name
+        string folderId
+        enum connectionType
+        json config
+        json terminalOptions
+    }
+    RUNNING_SESSION {
+        uuid sessionId
+        string parentConnectionId
+        enum status
+        datetime createdAt
+        string title
+    }
+    TAB {
+        string tabId
+        string panelId
+        bool isActive
+    }
+</pre>
+</div>
+<p><strong>On the agent</strong>, this same model is fully replicated. The agent stores its own prepared connections and folders, just like the local desktop stores them locally. Prepared connections are <strong>created manually</strong> by the user through the desktop UI — there is no auto-discovery of serial ports, Docker containers, or other resources. The user explicitly defines what connections the agent should manage, just as they would for local connections. The one exception is that a freshly deployed agent starts with a <strong>"Default Shell"</strong> prepared connection pre-created (using the host's default shell), so the user can immediately open a terminal without any setup.</p>
+<p>This means a user can:</p>
+<ul>
+<li>Create folders on the agent to organize connections (e.g., "Test Rigs", "Serial Devices")</li>
+<li>Save prepared connections on the agent (e.g., SSH to a sensor node, serial to /dev/ttyUSB0)</li>
+<li>Open multiple running sessions from one prepared connection</li>
+<li>Reconnect later and find both prepared connections and running sessions intact</li>
+</ul>
+<h3 id="connection-tree-sidebar">Connection Tree (Sidebar)</h3>
+<p>The sidebar is divided into <strong>separate sections</strong> for each connection source. Each section contains its own tree of prepared connections (organized by folders) with running sessions nested under their parent.</p>
+<pre><code>LOCAL CONNECTIONS
+│
+├── 📁 Hardware
+│   ├── 🔌 Serial: /dev/tty.usbmodem1    ← prepared (not connected)
+│   └── 🔌 Serial: /dev/tty.usbserial    ← prepared (not connected)
+│
+├── 🐚 Default Shell                      ← prepared connection
+│   └── ▶ bash                            ← running session (active tab)
+│
+├── 🐳 Docker: my-dev-container           ← prepared connection
+│   ├── ▶ zsh — cargo build              ← running session
+│   └── ▶ zsh                            ← running session
+│
+└── 📡 staging-server                     ← prepared SSH (no agent)
+    └── (not connected)
+
+─────────────────────────────────────────
+
+EXTERNAL: team-connections.json           ← imported file
+│
+├── 📁 Team Servers
+│   ├── 📡 CI Runner                      ← prepared SSH
+│   └── 📡 Staging DB                     ← prepared SSH
+│
+└── 📡 Shared Test Host                   ← prepared SSH
+
+─────────────────────────────────────────
+
+AGENT: pi-workshop (● online)
+│
+├── 📁 Serial Devices
+│   ├── 🔌 /dev/ttyUSB0 · 115200         ← prepared connection
+│   │   └── ▶ ttyUSB0 — connected [14h]  ← running session
+│   └── 🔌 /dev/ttyACM0 · 9600           ← prepared (not connected)
+│
+├── 🐚 Default Shell                      ← prepared connection
+│   ├── ▶ bash — make test       [14h]   ← running session
+│   └── ▶ bash — htop            [2h]    ← running session
+│
+└── 📡 SSH → sensor-node                  ← prepared connection (jump host)
+    └── ▶ bash — tail -f log     [6h]    ← running session on target
+
+─────────────────────────────────────────
+
+AGENT: build-server (● online)
+│
+├── 🐚 Default Shell                      ← prepared connection
+│   ├── ▶ bash — cargo build     [22h]   ← running session (overnight!)
+│   └── ▶ bash                   [22h]   ← running session
+│
+└── 📁 Deploy Targets
+    ├── 📡 SSH → prod-1                   ← prepared connection
+    └── 📡 SSH → prod-2                   ← prepared connection
+
+─────────────────────────────────────────
+
+AGENT: nas-backup (○ offline)             ← not currently reachable
+│
+└── (connect to see sessions)
+</code></pre>
+<p><strong>Key principles:</strong></p>
+<ul>
+<li><strong>Separate sections</strong> for each connection source: local connections, each external file, and each remote agent. They are visually distinct and independently collapsible.</li>
+<li><strong>Prepared connections</strong> are always visible in the tree, whether or not they have active sessions. They define <em>what can be connected to</em>.</li>
+<li><strong>Running sessions</strong> appear as children of their parent prepared connection. They show the running command and uptime. They are the <em>active instances</em>.</li>
+<li><strong>Folders</strong> organize prepared connections within each section. The agent supports the same folder hierarchy as the local desktop.</li>
+<li><strong>Agent status</strong> is shown in the section header: <code>online</code>, <code>offline</code>, <code>deploying</code>, <code>updating</code>.</li>
+<li><strong>Offline agents</strong> show only their name and status — no tree content. The agent's prepared connections and sessions are only visible after connecting. There is no local cache of the agent's state.</li>
+<li><strong>No agent on a host</strong> — plain SSH/telnet connections without an agent appear under "Local Connections" since they have no persistence and no remote state.</li>
+</ul>
+<h3 id="session-detail-monitoring">Session Detail &amp; Monitoring</h3>
+<p>When a connection (host) is selected in the tree, a detail panel can show:</p>
+<pre><code>┌────────────────────────────────────────────────┐
+│ 📡 pi-workshop                                 │
+│ Host: 192.168.1.42 · Agent v0.3.0 · Up 3d 14h │
+│                                                │
+│ ┌──── Monitoring ────────────────────────────┐ │
+│ │ CPU: ████████░░ 78%    MEM: ██████░░░░ 62% │ │
+│ │ Disk: ███░░░░░░░ 28%   Net: ↓12 KB/s ↑3   │ │
+│ └────────────────────────────────────────────┘ │
+│                                                │
+│ Sessions (3 active)                            │
+│ ┌────────────────────────────────────────────┐ │
+│ │ 🔌 /dev/ttyUSB0  · 115200 baud · 14h      │ │
+│ │ 🐚 make test     · running     · 14h      │ │
+│ │ 🐚 htop          · running     · 2h       │ │
+│ └────────────────────────────────────────────┘ │
+│                                                │
+│ [+ New Shell]  [+ New Serial]  [Kill All]      │
+└────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>Monitoring context:</strong></p>
+<ul>
+<li>For a directly connected host, monitoring shows <strong>that host's</strong> stats (CPU, memory, disk, network).</li>
+<li>For a <strong>jump host connection</strong> (SSH from agent to another target), monitoring shows the <strong>final target's</strong> stats, but the agent performs the calculation.</li>
+</ul>
+<div class="diagram">
+  <pre class="mermaid">
+graph LR
+    subgraph "Desktop"
+        UI[Monitoring Panel&lt;br/&gt;shows Target stats]
+    end
+
+    subgraph "Agent Host"
+        Agent[Agent&lt;br/&gt;runs commands on Target&lt;br/&gt;parses &amp; calculates]
+    end
+
+    subgraph "Target Host"
+        Target[Target&lt;br/&gt;responds to&lt;br/&gt;monitoring commands]
+    end
+
+    UI -- "display results" --- Agent
+    Agent -- "SSH: top, df, free" --&gt; Target
+    Target -- "raw output" --&gt; Agent
+</pre>
+</div>
+<h3 id="tab-management">Tab Management</h3>
+<ul>
+<li>Each session opens as a <strong>tab</strong> in the main terminal area (same as local tabs).</li>
+<li>Remote tabs show a subtle <strong>host badge</strong> (e.g., small colored dot or hostname label) to distinguish which host they belong to.</li>
+<li><strong>Split views</strong> work across local and remote tabs.</li>
+<li><strong>Tab state is persisted</strong>: when reconnecting to an agent, tabs restore in their previous positions (tab order, split layout).</li>
+</ul>
+<h3 id="reconnection-flow-user-experience">Reconnection Flow (User Experience)</h3>
+<p>When the user opens termiHub after being disconnected:</p>
+<pre><code>┌─────────────────────────────────────────┐
+│        Reconnecting to 3 hosts...       │
+│                                         │
+│  ● pi-workshop      ████████░░  80%     │
+│    Reattaching 3 sessions...            │
+│                                         │
+│  ● build-server     ██████████  Done ✓  │
+│    1 session restored                   │
+│                                         │
+│  ○ nas-backup        Connection failed  │
+│    Will retry in 30s                    │
+│                                         │
+│  [Reconnect All]  [Skip Offline]        │
+└─────────────────────────────────────────┘
+</code></pre>
+<ul>
+<li><strong>Automatic</strong>: termiHub tries to reconnect to all known agents on startup.</li>
+<li><strong>Progressive</strong>: Each host reconnects independently; fast hosts restore first.</li>
+<li><strong>Graceful failure</strong>: Unreachable hosts are marked offline; the user can retry later.</li>
+<li><strong>Tab restoration</strong>: As each session reattaches, its tab appears in the previous position with buffered output replayed.</li>
+<li><strong>Prepared connections available after connect</strong>: Once reconnected to an agent, all prepared connections and folders are fetched from the agent. If the agent was rebooted and sessions are gone, the prepared connections are still there — just with no running sessions underneath.</li>
+</ul>
+<h3 id="agent-deployment-ui">Agent Deployment UI</h3>
+<p>When connecting to a host that doesn't have an agent (or has an outdated version):</p>
+<pre><code>┌─────────────────────────────────────────┐
+│  Agent Setup: pi-workshop               │
+│                                         │
+│  No compatible agent found on host.     │
+│  Current: (none) · Required: v0.3.0     │
+│                                         │
+│  termiHub will:                         │
+│  1. Download agent binary for aarch64   │
+│  2. Install to ~/.local/bin/            │
+│  3. Start the agent                     │
+│                                         │
+│  [Install Agent]  [Connect Without]     │
+└─────────────────────────────────────────┘
+</code></pre>
+<ul>
+<li><strong>"Connect Without"</strong> falls back to plain SSH (no persistence, no monitoring).</li>
+<li>For updates, the dialog shows current vs. required version.</li>
+<li>The installation progress is shown in a terminal tab so the user can see what's happening.</li>
+</ul>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="auto-deployment-workflow">Auto-Deployment Workflow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Desktop as termiHub Desktop
+    participant Host as Remote Host (via SSH)
+    participant GitHub as GitHub Releases
+
+    User-&gt;&gt;Desktop: Connect to host
+    Desktop-&gt;&gt;Host: SSH connect
+    Desktop-&gt;&gt;Host: Check: termihub-agent --version
+
+    alt Agent missing or version mismatch
+        Desktop-&gt;&gt;User: Show deployment dialog
+        User-&gt;&gt;Desktop: Confirm install
+
+        alt Released version
+            Desktop-&gt;&gt;GitHub: Download binary for target arch
+            GitHub--&gt;&gt;Desktop: Binary
+        else Development build
+            Note over Desktop: Use bundled binary
+        end
+
+        Desktop-&gt;&gt;Host: SFTP upload to ~/.local/bin/
+        Desktop-&gt;&gt;Host: chmod +x termihub-agent
+        Desktop-&gt;&gt;Host: Start: termihub-agent --stdio
+    else Agent exists and compatible
+        Desktop-&gt;&gt;Host: Start: termihub-agent --stdio
+    end
+
+    Host--&gt;&gt;Desktop: JSON-RPC: initialize (capabilities)
+    Desktop-&gt;&gt;Host: JSON-RPC: session.list (reconnect existing)
+    Desktop--&gt;&gt;User: Sessions restored
+</pre>
+</div>
+<p><strong>Version matching strategy:</strong></p>
+<ul>
+<li>The agent version must be <strong>compatible</strong> with the desktop version (same major version, agent minor &gt;= desktop expected minor).</li>
+<li>Released termiHub versions download the matching agent from GitHub Releases.</li>
+<li>Development builds bundle the agent binary (compiled for the developer's own architecture) to avoid requiring internet access from the remote host.</li>
+<li>Architecture detection: the desktop runs <code>uname -m</code> on the remote host to determine which binary to deploy (x86_64, aarch64, armv7, etc.).</li>
+</ul>
+<h3 id="session-persistence">Session Persistence</h3>
+<p>Sessions must survive <strong>two types of disconnections</strong>:</p>
+<ol>
+<li>
+<p><strong>Desktop disconnect</strong> (network loss, laptop sleep, app closed) — the agent keeps all sessions alive. Output is buffered in ring buffers. Desktop reconnects and reattaches.</p>
+</li>
+<li>
+<p><strong>Agent restart</strong> (crash, manual restart) — shell sessions survive via the <strong>Session Daemon</strong> architecture (see Implementation Details). Serial sessions are re-opened from persisted configuration.</p>
+</li>
+</ol>
+<p><strong>Host reboot</strong> kills all sessions — session daemons do not survive a full OS restart. This is an acceptable trade-off. The agent and its prepared connections are restored on the next connection, but running sessions are gone.</p>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Running: Session created
+
+    Running --&gt; Detached: Desktop disconnects
+    Detached --&gt; Running: Desktop reconnects &amp; attaches
+
+    Running --&gt; Orphaned: Agent process dies
+    Detached --&gt; Orphaned: Agent process dies
+    Orphaned --&gt; Detached: Agent restarts &amp; reclaims
+    Detached --&gt; Running: Desktop reconnects &amp; attaches
+
+    Running --&gt; Closed: User closes session
+    Detached --&gt; Closed: User closes session
+    Orphaned --&gt; Closed: Session daemon exits (shell exited)
+
+    Running --&gt; Dead: Host reboot
+    Detached --&gt; Dead: Host reboot
+    Orphaned --&gt; Dead: Host reboot
+    Dead --&gt; [*]: Sessions lost, prepared connections remain
+
+    Closed --&gt; [*]
+</pre>
+</div>
+<p><strong>State definitions:</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th style="text-align: center;">Desktop</th>
+<th style="text-align: center;">Agent</th>
+<th style="text-align: center;">Daemon</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Running</strong></td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+<td>Normal operation, output streaming to desktop</td>
+</tr>
+<tr>
+<td><strong>Detached</strong></td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">Yes</td>
+<td style="text-align: center;">Yes</td>
+<td>Desktop disconnected, output buffered in ring buf.</td>
+</tr>
+<tr>
+<td><strong>Orphaned</strong></td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">No</td>
+<td style="text-align: center;">Yes</td>
+<td>Agent died, session daemon keeps shell alive</td>
+</tr>
+<tr>
+<td><strong>Closed</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">No</td>
+<td>Session terminated, resources released</td>
+</tr>
+<tr>
+<td><strong>Dead</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">—</td>
+<td>Host rebooted, all sessions lost</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="multi-user-isolation">Multi-User Isolation</h3>
+<p>When multiple developers connect to the same remote host, each user runs <strong>their own agent process</strong>. The desktop SSH-execs <code>termihub-agent --stdio</code> under each user's OS account, so each agent instance is fully isolated — separate process, separate config directory, separate session daemons.</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph TB
+    subgraph "Remote Host: build-server"
+        subgraph "alice's agent (UID: alice)"
+            A_Agent[Agent Process]
+            A_SD1[Session Daemon&lt;br/&gt;cargo build]
+            A_SD2[Session Daemon&lt;br/&gt;htop]
+        end
+
+        subgraph "bob's agent (UID: bob)"
+            B_Agent[Agent Process]
+            B_SD1[Session Daemon&lt;br/&gt;make test]
+        end
+    end
+
+    subgraph "Alice's Laptop"
+        AliceDesktop[termiHub Desktop]
+    end
+
+    subgraph "Bob's Laptop"
+        BobDesktop[termiHub Desktop]
+    end
+
+    AliceDesktop -- "SSH as alice" --&gt; A_Agent
+    BobDesktop -- "SSH as bob" --&gt; B_Agent
+
+    A_Agent --&gt; A_SD1
+    A_Agent --&gt; A_SD2
+    B_Agent --&gt; B_SD1
+</pre>
+</div>
+<p><strong>Isolation rules:</strong></p>
+<ul>
+<li>Each SSH connection spawns an agent process under the connecting user's UID.</li>
+<li>Each user has their own config directory (<code>~/.config/termihub-agent/</code>), their own socket directory, and their own session daemons.</li>
+<li>There is no shared agent process — isolation is enforced at the OS level by running separate processes under separate users.</li>
+<li>Users cannot see or interact with each other's sessions, prepared connections, or files.</li>
+</ul>
+<div class="diagram">
+  <pre class="mermaid">
+erDiagram
+    USER ||--|| SSH_CONNECTION : "authenticates via"
+    SSH_CONNECTION ||--|| AGENT_PROCESS : "spawns"
+    AGENT_PROCESS ||--o{ SESSION : "manages"
+    AGENT_PROCESS ||--o{ PREPARED_CONNECTION : "stores"
+    SESSION }o--|| SESSION_DAEMON : "managed by"
+    SESSION_DAEMON }o--|| PTY : "holds"
+
+    USER {
+        string ssh_username
+        string ssh_key
+    }
+    AGENT_PROCESS {
+        int pid
+        string os_username
+        string config_dir
+        string socket_dir
+    }
+    SESSION {
+        uuid session_id
+        enum type
+        enum status
+        datetime created_at
+    }
+    SESSION_DAEMON {
+        int pid
+        string socket_path
+    }
+</pre>
+</div>
+<h3 id="agent-as-connection-hub-jump-host">Agent as Connection Hub (Jump Host)</h3>
+<p>The agent has the full capabilities of the local machine — except it <strong>cannot deploy another agent</strong>. Just as the local app can open SSH connections to remote hosts, an agent can open connections <strong>from its host</strong> to other targets. This makes the agent a natural jump host.</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph LR
+    subgraph "Developer Laptop"
+        Desktop[termiHub Desktop]
+    end
+
+    subgraph "Agent Host (Build Server)"
+        Agent[Agent]
+        LocalShell["Local Shell&lt;br/&gt;cargo build"]
+        LocalSerial["Serial&lt;br/&gt;/dev/ttyUSB0"]
+    end
+
+    subgraph "Target A (Sensor Node)"
+        TargetA_Shell[Shell via SSH]
+    end
+
+    subgraph "Target B (Test Rig)"
+        TargetB_Shell[Shell via SSH]
+        TargetB_Serial[Serial via SSH tunnel]
+    end
+
+    Desktop -- "SSH" --&gt; Agent
+    Agent --&gt; LocalShell
+    Agent --&gt; LocalSerial
+    Agent -- "SSH" --&gt; TargetA_Shell
+    Agent -- "SSH" --&gt; TargetB_Shell
+    Agent -- "SSH tunnel" --&gt; TargetB_Serial
+</pre>
+</div>
+<p>All of these connections — local shells, serial ports, SSH to other hosts — are <strong>prepared connections</strong> stored on the agent, organized in folders. In the connection tree, the agent section shows both prepared connections and their running sessions:</p>
+<pre><code>AGENT: build-server (● online)
+│
+├── 🐚 Default Shell                      ← prepared connection
+│   ├── ▶ bash — cargo build     [22h]   ← running session
+│   └── ▶ bash                   [22h]   ← running session
+│
+├── 🔌 /dev/ttyUSB0 · 115200              ← prepared connection
+│   └── ▶ ttyUSB0 — connected   [22h]   ← running session
+│
+├── 📁 Deploy Targets                     ← folder on the agent
+│   ├── 📡 SSH → sensor-node              ← prepared connection
+│   │   └── ▶ bash — tail -f    [6h]    ← running session on target
+│   └── 📡 SSH → test-rig                 ← prepared connection
+│       ├── ▶ bash — pytest      [3h]    ← running session on target
+│       └── ▶ serial /dev/ttyACM0 [3h]   ← serial tunneled via SSH
+</code></pre>
+<p><strong>Monitoring behavior:</strong></p>
+<ul>
+<li>Selecting "build-server" in the tree shows build-server's CPU/memory/disk.</li>
+<li>Selecting "SSH → sensor-node" shows sensor-node's stats (commands run by agent over SSH, parsed by agent, sent to desktop).</li>
+<li>The desktop never directly contacts the target — everything goes through the agent.</li>
+</ul>
+<h3 id="file-browsing-through-the-agent">File Browsing Through the Agent</h3>
+<p>File browsing is handled through <strong>agent-side RPC methods</strong> rather than a separate SFTP channel from the desktop. This keeps all agent interactions flowing through the same JSON-RPC protocol and — critically — enables file browsing on jump host targets that the desktop cannot reach directly.</p>
+<p>The file browsing scope is <strong>connection-scoped</strong>: each prepared connection can have a "Browse Files" action, and the agent resolves which filesystem to browse based on the connection type:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Connection Type</th>
+<th>File Browsing Method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local shell</td>
+<td>Agent reads its own local filesystem directly</td>
+</tr>
+<tr>
+<td>SSH to target</td>
+<td>Agent SFTPs to the target and relays results via RPC</td>
+</tr>
+<tr>
+<td>Serial</td>
+<td>Not applicable (no filesystem access)</td>
+</tr>
+<tr>
+<td>Docker</td>
+<td>Agent execs into the container to list/read files</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="diagram">
+  <pre class="mermaid">
+graph LR
+    subgraph "Desktop"
+        UI["File Browser Panel"]
+    end
+
+    subgraph "Agent Host"
+        Agent["Agent"]
+        LocalFS["Local Filesystem"]
+    end
+
+    subgraph "Jump Target"
+        TargetFS["Target Filesystem"]
+    end
+
+    UI -- "files.list {connectionId}" --&gt; Agent
+    Agent -- "direct read" --&gt; LocalFS
+    Agent -- "SFTP" --&gt; TargetFS
+    Agent -- "files.list result" --&gt; UI
+</pre>
+</div>
+<p><strong>Why RPC over direct SFTP:</strong></p>
+<ul>
+<li><strong>Uniform protocol</strong> — All agent communication (sessions, monitoring, files) uses the same JSON-RPC channel. No extra SFTP credential management or separate connections.</li>
+<li><strong>Jump host support</strong> — The desktop cannot SFTP to a target behind the agent. The agent acts as the relay, SFTPing to the target on behalf of the desktop.</li>
+<li><strong>Security model</strong> — File access inherits the agent's per-user isolation. No additional authentication needed beyond the existing SSH session.</li>
+</ul>
+<h3 id="prepared-connections-running-sessions-relationship">Prepared Connections &amp; Running Sessions Relationship</h3>
+<p>Prepared connections define <em>how</em> to connect. Running sessions are <em>active instances</em> created from those settings. This relationship is the same on the local desktop and on the agent.</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    subgraph "Stored on Agent (persistent)"
+        F1[Folder: Deploy Targets]
+        PC1["Prepared Connection&lt;br/&gt;Default Shell&lt;br/&gt;shell: /bin/bash"]
+        PC2["Prepared Connection&lt;br/&gt;/dev/ttyUSB0&lt;br/&gt;baud: 115200"]
+        PC3["Prepared Connection&lt;br/&gt;SSH → sensor-node&lt;br/&gt;host: 10.0.0.5"]
+        F1 --&gt; PC3
+    end
+
+    subgraph "Running on Agent (live)"
+        S1[Session: bash — make test&lt;br/&gt;running 14h]
+        S2[Session: bash — htop&lt;br/&gt;running 2h]
+        S3[Session: ttyUSB0&lt;br/&gt;connected 14h]
+        S4[Session: bash — tail -f&lt;br/&gt;running 6h]
+    end
+
+    PC1 --&gt; S1
+    PC1 --&gt; S2
+    PC2 --&gt; S3
+    PC3 --&gt; S4
+</pre>
+</div>
+<ul>
+<li>A user can create <strong>multiple sessions</strong> from one prepared connection.</li>
+<li><strong>Prepared connections</strong> are stored on the agent (persisted to disk, survive restarts and reboots).</li>
+<li><strong>Running sessions</strong> are managed by the agent (survive desktop disconnects and agent restarts, but not host reboots).</li>
+<li>On reconnect, the desktop matches its saved tab layout to agent sessions by session ID.</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="agent-lifecycle">Agent Lifecycle</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; NotInstalled: Host has no agent
+
+    NotInstalled --&gt; Deploying: Desktop triggers install
+    Deploying --&gt; Stopped: Binary deployed
+
+    Stopped --&gt; Starting: Desktop connects &amp; starts
+    Starting --&gt; Running: Initialize handshake OK
+
+    Running --&gt; Connected: Desktop attached
+    Connected --&gt; Running: Desktop disconnects
+    Running --&gt; Stopping: Shutdown signal
+
+    Connected --&gt; Updating: Version mismatch detected
+    Running --&gt; Updating: Desktop requests update
+    Updating --&gt; Stopping: Graceful shutdown
+    Stopping --&gt; Stopped: Sessions orphaned to daemons
+    Stopped --&gt; Starting: New version started
+
+    Stopping --&gt; [*]: Uninstall
+</pre>
+</div>
+<h3 id="full-connection-sequence">Full Connection Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Desktop as termiHub Desktop
+    participant Agent as Agent Process
+    participant SD as Session Daemons
+
+    User-&gt;&gt;Desktop: Open termiHub
+
+    Note over Desktop: Auto-reconnect to known hosts
+
+    Desktop-&gt;&gt;Agent: SSH connect
+    Desktop-&gt;&gt;Agent: termihub-agent --stdio
+    Agent--&gt;&gt;Desktop: Ready (stdio connected)
+
+    Desktop-&gt;&gt;Agent: initialize {version, client_id}
+    Agent--&gt;&gt;Desktop: {capabilities, agent_version}
+
+    Desktop-&gt;&gt;Agent: session.list
+    Agent-&gt;&gt;SD: Check running daemons
+    SD--&gt;&gt;Agent: 3 sessions alive
+    Agent--&gt;&gt;Desktop: [{session1}, {session2}, {session3}]
+
+    Note over Desktop: Match sessions to saved tab layout
+
+    loop For each previous session
+        Desktop-&gt;&gt;Agent: session.attach {session_id}
+        Agent-&gt;&gt;SD: Connect to daemon socket
+        SD--&gt;&gt;Agent: Replay ring buffer
+        Agent--&gt;&gt;Desktop: Buffered output (base64)
+        Note over Desktop: Tab appears with history
+    end
+
+    Desktop--&gt;&gt;User: All tabs restored
+
+    Note over User,SD: Normal operation — input/output streaming
+
+    User-&gt;&gt;Desktop: Create new terminal
+    Desktop-&gt;&gt;Agent: session.create {type: shell}
+    Agent-&gt;&gt;SD: Spawn new session daemon
+    SD--&gt;&gt;Agent: Session ready, socket path
+    Agent--&gt;&gt;Desktop: {session_id}
+    Desktop-&gt;&gt;Agent: session.attach {session_id}
+</pre>
+</div>
+<h3 id="agent-update-sequence">Agent Update Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Desktop as termiHub Desktop
+    participant Agent as Agent (old version)
+    participant SD as Session Daemons
+    participant NewAgent as Agent (new version)
+    participant GitHub as GitHub Releases
+
+    Desktop-&gt;&gt;Agent: initialize
+    Agent--&gt;&gt;Desktop: {version: "0.2.0"}
+    Note over Desktop: Expected: 0.3.0 — mismatch!
+
+    Desktop-&gt;&gt;Desktop: Show update dialog to user
+
+    Desktop-&gt;&gt;Agent: shutdown (graceful)
+    Note over Agent: Detach from all session daemons
+    Note over Agent: Save state to disk
+    Agent--&gt;&gt;Desktop: Shutdown ACK
+    Note over Agent: Process exits
+    Note over SD: Daemons keep running (orphaned)
+
+    Desktop-&gt;&gt;GitHub: Download v0.3.0 for target arch
+    GitHub--&gt;&gt;Desktop: Binary
+    Desktop-&gt;&gt;Desktop: SFTP upload + chmod
+
+    Desktop-&gt;&gt;NewAgent: termihub-agent --stdio
+    Desktop-&gt;&gt;NewAgent: initialize {version: "0.3.0"}
+    NewAgent-&gt;&gt;SD: Scan for orphaned daemons
+    SD--&gt;&gt;NewAgent: Found 3 orphaned sessions
+    NewAgent--&gt;&gt;Desktop: {version: "0.3.0", sessions: 3}
+
+    Note over Desktop: Seamless — sessions survived the update
+</pre>
+</div>
+<h3 id="session-daemon-lifecycle">Session Daemon Lifecycle</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Spawning: Agent creates session
+
+    Spawning --&gt; Active: Daemon started, PTY ready
+    Active --&gt; Attached: Agent connects via socket
+
+    Attached --&gt; Active: Agent disconnects (detach)
+    Attached --&gt; Active: Agent process dies
+
+    Active --&gt; Attached: Agent reconnects via socket
+
+    Active --&gt; Exited: Shell process exits
+    Attached --&gt; Exited: Shell process exits
+
+    Exited --&gt; [*]: Daemon cleans up and exits
+
+    note right of Active
+        Daemon keeps running independently.
+        Buffers output in ring buffer.
+        No agent connection required.
+    end note
+</pre>
+</div>
+<h3 id="monitoring-data-flow">Monitoring Data Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Desktop as termiHub Desktop
+    participant Agent as Agent
+    participant LocalHost as Agent Host (local)
+    participant Target as Jump Target (remote)
+
+    Note over Desktop,Target: Scenario 1: Monitoring the agent's own host
+
+    Desktop-&gt;&gt;Agent: monitoring.subscribe {host: "self"}
+    loop Every 2 seconds
+        Agent-&gt;&gt;LocalHost: Read /proc/stat, /proc/meminfo, df
+        LocalHost--&gt;&gt;Agent: Raw data
+        Agent-&gt;&gt;Agent: Parse &amp; calculate percentages
+        Agent--&gt;&gt;Desktop: monitoring.data {cpu: 78, mem: 62, ...}
+    end
+
+    Note over Desktop,Target: Scenario 2: Monitoring a jump target
+
+    Desktop-&gt;&gt;Agent: monitoring.subscribe {host: "sensor-node"}
+    loop Every 5 seconds
+        Agent-&gt;&gt;Target: SSH exec: cat /proc/stat, free, df
+        Target--&gt;&gt;Agent: Raw output
+        Agent-&gt;&gt;Agent: Parse &amp; calculate percentages
+        Agent--&gt;&gt;Desktop: monitoring.data {cpu: 45, mem: 31, ...}
+    end
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>Based on the project architecture at the time of concept creation (February 2026). The codebase may evolve between concept creation and implementation.</p>
+</blockquote>
+<h3 id="session-daemon-architecture">Session Daemon Architecture</h3>
+<p>To achieve session persistence across agent restarts <strong>without external dependencies</strong> (no tmux/screen), each shell session is managed by an independent <strong>Session Daemon</strong> process.</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph TB
+    subgraph "Agent Process"
+        Manager[Session Manager]
+        Transport[JSON-RPC Transport]
+    end
+
+    subgraph "Session Daemon 1"
+        SD1_Socket["Unix Socket&lt;br/&gt;/tmp/termihub/alice/session-abc.sock"]
+        SD1_PTY[PTY Master]
+        SD1_Buffer["Ring Buffer&lt;br/&gt;(configurable)"]
+        SD1_Shell["/bin/bash"]
+    end
+
+    subgraph "Session Daemon 2"
+        SD2_Socket["Unix Socket&lt;br/&gt;/tmp/termihub/alice/session-def.sock"]
+        SD2_PTY[PTY Master]
+        SD2_Buffer["Ring Buffer&lt;br/&gt;(configurable)"]
+        SD2_Shell["/bin/zsh"]
+    end
+
+    Transport &lt;--&gt; Manager
+    Manager &lt;-- "Unix Socket" --&gt; SD1_Socket
+    Manager &lt;-- "Unix Socket" --&gt; SD2_Socket
+    SD1_Socket --&gt; SD1_PTY
+    SD1_PTY --&gt; SD1_Buffer
+    SD1_PTY &lt;--&gt; SD1_Shell
+    SD2_Socket --&gt; SD2_PTY
+    SD2_PTY --&gt; SD2_Buffer
+    SD2_PTY &lt;--&gt; SD2_Shell
+</pre>
+</div>
+<p><strong>How it works:</strong></p>
+<ol>
+<li>
+<p><strong>Session creation</strong>: The agent forks a session daemon process. The daemon:
+   - Creates a Unix domain socket at a well-known path (e.g., <code>/tmp/termihub/&lt;user&gt;/session-&lt;id&gt;.sock</code>)
+   - Allocates a PTY pair (<code>openpty</code>)
+   - Spawns the shell as a child process attached to the PTY slave
+   - Enters a loop: read from PTY master → store in ring buffer (configurable size, default 1 MiB) + forward to connected agent (if any)</p>
+</li>
+<li>
+<p><strong>Agent connection</strong>: The agent connects to the daemon's Unix socket. Protocol between agent and daemon is minimal:
+   - Agent → Daemon: input data, resize commands
+   - Daemon → Agent: output data, exit notifications
+   - Daemon → Agent: ring buffer replay on attach</p>
+</li>
+<li>
+<p><strong>Agent dies</strong>: The daemon detects the socket disconnect. It continues running, buffering all PTY output. The shell process is unaffected (it's a child of the daemon, not the agent).</p>
+</li>
+<li>
+<p><strong>Agent restarts</strong>: The agent scans <code>/tmp/termihub/&lt;user&gt;/</code> for existing daemon sockets. For each socket found, it reconnects, gets a buffer replay, and resumes management.</p>
+</li>
+<li>
+<p><strong>Shell exits</strong>: The daemon detects the child process exit, records the exit code, notifies the agent (if connected), cleans up the socket file, and exits.</p>
+</li>
+</ol>
+<p><strong>Serial sessions</strong> do not use daemons — they are managed directly by the agent process since serial port file descriptors cannot survive process restarts in the same way. On agent restart, serial sessions are re-opened from persisted configuration and the ring buffer is lost (acceptable trade-off; the ring buffer is primarily for surviving desktop disconnects, not agent restarts).</p>
+<p><strong>Docker sessions</strong> — The agent manages container lifecycle: it can <strong>create</strong> a session (start a container or exec into an existing one), <strong>reattach</strong> to a running container session after disconnect, and <strong>stop</strong> a container when requested. Without explicit stop, containers continue running. The agent tracks container IDs in <code>state.json</code> and reconnects to them on restart.</p>
+<p><strong>Terminal resize on reconnect</strong> — When a desktop reconnects with a different terminal size (e.g., switching from a 120x40 monitor to an 80x24 laptop), the agent <strong>resizes the PTY to the new client's dimensions</strong>. This is normal terminal behavior — programs that handle <code>SIGWINCH</code> (like vim, htop, less) adapt their layout, and those that don't simply continue with the new size. No special viewport mapping or scroll handling is needed.</p>
+<p><strong>Ring buffer configuration</strong> — The ring buffer size defaults to 1 MiB per session but is <strong>configurable per session</strong> via the prepared connection settings. For long-running sessions producing heavy output (e.g., 22+ hours of build logs), users can increase the buffer. The setting is stored in the session's config in <code>state.json</code>.</p>
+<h3 id="state-persistence">State Persistence</h3>
+<p>The agent persists critical state to disk so it can recover after restarts:</p>
+<p><strong>Persisted (survives agent restart and host reboot):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Data</th>
+<th>Location</th>
+<th>Format</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prepared connections</td>
+<td><code>~/.config/termihub-agent/connections.json</code></td>
+<td>JSON</td>
+</tr>
+<tr>
+<td>Folders</td>
+<td><code>~/.config/termihub-agent/connections.json</code></td>
+<td>JSON</td>
+</tr>
+<tr>
+<td>Session definitions</td>
+<td><code>~/.config/termihub-agent/sessions.json</code></td>
+<td>JSON</td>
+</tr>
+<tr>
+<td>Active session metadata</td>
+<td><code>~/.config/termihub-agent/state.json</code></td>
+<td>JSON</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Ephemeral (survives agent restart, lost on host reboot):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Data</th>
+<th>Location</th>
+<th>Format</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Session daemon sockets</td>
+<td><code>/tmp/termihub/&lt;user&gt;/session-*.sock</code></td>
+<td>Unix sockets</td>
+</tr>
+<tr>
+<td>Session daemon PIDs</td>
+<td>Referenced in <code>state.json</code></td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Prepared connections</strong> (<code>connections.json</code>) mirrors the desktop's connection store:</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;folders&quot;: [
+    { &quot;id&quot;: &quot;folder-1&quot;, &quot;name&quot;: &quot;Serial Devices&quot;, &quot;parentId&quot;: null, &quot;isExpanded&quot;: true },
+    { &quot;id&quot;: &quot;folder-2&quot;, &quot;name&quot;: &quot;Deploy Targets&quot;, &quot;parentId&quot;: null, &quot;isExpanded&quot;: true }
+  ],
+  &quot;connections&quot;: [
+    {
+      &quot;id&quot;: &quot;conn-1&quot;,
+      &quot;name&quot;: &quot;Default Shell&quot;,
+      &quot;folderId&quot;: null,
+      &quot;config&quot;: { &quot;type&quot;: &quot;local&quot;, &quot;config&quot;: { &quot;shell&quot;: &quot;/bin/bash&quot; } }
+    },
+    {
+      &quot;id&quot;: &quot;conn-2&quot;,
+      &quot;name&quot;: &quot;/dev/ttyUSB0&quot;,
+      &quot;folderId&quot;: &quot;folder-1&quot;,
+      &quot;config&quot;: { &quot;type&quot;: &quot;serial&quot;, &quot;config&quot;: { &quot;port&quot;: &quot;/dev/ttyUSB0&quot;, &quot;baud_rate&quot;: 115200 } }
+    },
+    {
+      &quot;id&quot;: &quot;conn-3&quot;,
+      &quot;name&quot;: &quot;SSH to sensor-node&quot;,
+      &quot;folderId&quot;: &quot;folder-2&quot;,
+      &quot;config&quot;: { &quot;type&quot;: &quot;ssh&quot;, &quot;config&quot;: { &quot;host&quot;: &quot;10.0.0.5&quot;, &quot;username&quot;: &quot;pi&quot; } }
+    }
+  ]
+}
+</code></pre>
+<p><strong>Active session metadata</strong> (<code>state.json</code>) tracks running sessions:</p>
+<pre><code class="language-json">{
+  &quot;sessions&quot;: {
+    &quot;abc-123&quot;: {
+      &quot;type&quot;: &quot;shell&quot;,
+      &quot;title&quot;: &quot;cargo build&quot;,
+      &quot;parent_connection_id&quot;: &quot;conn-1&quot;,
+      &quot;created_at&quot;: &quot;2026-02-19T08:30:00Z&quot;,
+      &quot;daemon_socket&quot;: &quot;/tmp/termihub/alice/session-abc-123.sock&quot;,
+      &quot;config&quot;: { &quot;shell&quot;: &quot;/bin/bash&quot;, &quot;cols&quot;: 120, &quot;rows&quot;: 40, &quot;ring_buffer_size&quot;: 1048576 }
+    },
+    &quot;def-456&quot;: {
+      &quot;type&quot;: &quot;serial&quot;,
+      &quot;title&quot;: &quot;/dev/ttyUSB0&quot;,
+      &quot;parent_connection_id&quot;: &quot;conn-2&quot;,
+      &quot;created_at&quot;: &quot;2026-02-19T08:30:00Z&quot;,
+      &quot;config&quot;: { &quot;port&quot;: &quot;/dev/ttyUSB0&quot;, &quot;baud_rate&quot;: 115200 }
+    }
+  }
+}
+</code></pre>
+<p><strong>On agent startup:</strong></p>
+<ol>
+<li>Load <code>connections.json</code> — prepared connections and folders are always available</li>
+<li>Load <code>state.json</code> — check for sessions from before the restart</li>
+<li>For shell sessions: scan for daemon sockets, reconnect to living daemons, mark dead sessions as closed</li>
+<li>For serial sessions: attempt to re-open serial ports from saved config</li>
+<li>Report recovered sessions in <code>initialize</code> response</li>
+</ol>
+<h3 id="agent-binary-distribution">Agent Binary Distribution</h3>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    subgraph "Build Pipeline"
+        CI[GitHub Actions CI]
+        CI --&gt; BinX86[linux-x86_64]
+        CI --&gt; BinARM64[linux-aarch64]
+        CI --&gt; BinARMv7[linux-armv7]
+        CI --&gt; BinMacX86[darwin-x86_64]
+        CI --&gt; BinMacARM[darwin-aarch64]
+    end
+
+    subgraph "Distribution"
+        BinX86 --&gt; Release[GitHub Release&lt;br/&gt;v0.3.0]
+        BinARM64 --&gt; Release
+        BinARMv7 --&gt; Release
+        BinMacX86 --&gt; Release
+        BinMacARM --&gt; Release
+
+        BinX86 --&gt; Bundle[Bundled in&lt;br/&gt;Desktop Installer]
+        BinMacARM --&gt; Bundle
+    end
+
+    subgraph "Deployment"
+        Release --&gt; Download[Download on demand&lt;br/&gt;for target arch]
+        Bundle --&gt; DevDeploy[Dev: use bundled binary]
+    end
+</pre>
+</div>
+<p><strong>Architecture detection</strong>: Desktop runs <code>uname -m</code> on the remote host via SSH to determine the correct binary.</p>
+<p><strong>Bundling strategy:</strong></p>
+<ul>
+<li><strong>Development builds</strong>: Bundle the agent binary for common architectures (same as dev machine). No internet required from remote host.</li>
+<li><strong>Release builds</strong>: Desktop downloads the matching agent binary from GitHub Releases. The desktop knows which release tag matches its own version.</li>
+<li><strong>Fallback</strong>: If GitHub is unreachable, fall back to any bundled binary that matches the target architecture.</li>
+</ul>
+<h3 id="protocol-extensions-beyond-current-v010">Protocol Extensions (Beyond Current v0.1.0)</h3>
+<p>The current JSON-RPC protocol needs these additions to support the full agent vision:</p>
+<p><strong>Agent lifecycle:</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Direction</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent.shutdown</code></td>
+<td>D→A</td>
+<td>Graceful shutdown (orphan sessions to daemons)</td>
+</tr>
+<tr>
+<td><code>agent.update</code></td>
+<td>D→A</td>
+<td>Prepare for update (same as shutdown + update intent)</td>
+</tr>
+<tr>
+<td><code>session.recover</code></td>
+<td>D→A</td>
+<td>Trigger recovery scan for orphaned session daemons</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Prepared connections &amp; folders (mirroring desktop model):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Direction</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>connections.list</code></td>
+<td>D→A</td>
+<td>List all prepared connections and folders</td>
+</tr>
+<tr>
+<td><code>connections.create</code></td>
+<td>D→A</td>
+<td>Create a prepared connection on the agent</td>
+</tr>
+<tr>
+<td><code>connections.update</code></td>
+<td>D→A</td>
+<td>Update a prepared connection's config</td>
+</tr>
+<tr>
+<td><code>connections.delete</code></td>
+<td>D→A</td>
+<td>Delete a prepared connection</td>
+</tr>
+<tr>
+<td><code>connections.folders.create</code></td>
+<td>D→A</td>
+<td>Create a folder on the agent</td>
+</tr>
+<tr>
+<td><code>connections.folders.update</code></td>
+<td>D→A</td>
+<td>Rename/move a folder</td>
+</tr>
+<tr>
+<td><code>connections.folders.delete</code></td>
+<td>D→A</td>
+<td>Delete a folder</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>File browsing (connection-scoped):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Direction</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>files.list</code></td>
+<td>D→A</td>
+<td>List directory contents (scoped to a connection)</td>
+</tr>
+<tr>
+<td><code>files.read</code></td>
+<td>D→A</td>
+<td>Read file content</td>
+</tr>
+<tr>
+<td><code>files.write</code></td>
+<td>D→A</td>
+<td>Write file content</td>
+</tr>
+<tr>
+<td><code>files.delete</code></td>
+<td>D→A</td>
+<td>Delete a file or directory</td>
+</tr>
+<tr>
+<td><code>files.rename</code></td>
+<td>D→A</td>
+<td>Rename/move a file or directory</td>
+</tr>
+<tr>
+<td><code>files.stat</code></td>
+<td>D→A</td>
+<td>Get file metadata (size, permissions, modified time)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Monitoring:</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Direction</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>monitoring.subscribe</code></td>
+<td>D→A</td>
+<td>Start receiving monitoring data for a host</td>
+</tr>
+<tr>
+<td><code>monitoring.unsubscribe</code></td>
+<td>D→A</td>
+<td>Stop monitoring data stream</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>New notification types:</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Notification</th>
+<th>When</th>
+<th>Data</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>monitoring.data</code></td>
+<td>Periodic</td>
+<td>CPU, memory, disk, network stats</td>
+</tr>
+<tr>
+<td><code>session.recovered</code></td>
+<td>After agent restart</td>
+<td>List of recovered session IDs</td>
+</tr>
+<tr>
+<td><code>agent.shutting_down</code></td>
+<td>Before shutdown</td>
+<td>Reason, estimated recovery time</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="desktop-side-changes">Desktop-Side Changes</h3>
+<p>The Tauri desktop app needs modifications to support the full agent experience:</p>
+<ol>
+<li>
+<p><strong>Sidebar refactor</strong> — The sidebar needs separate, collapsible sections for each connection source: local connections, each external source file, and each remote agent. Each section renders the same tree model (folders → prepared connections → running sessions).</p>
+</li>
+<li>
+<p><strong>Agent connection tree sync</strong> — When connected to an agent, the desktop fetches the agent's prepared connections and folders (<code>connections.list</code>) and renders them in the agent's sidebar section. Changes to prepared connections on the agent (create, edit, delete, reorder) go through the agent's JSON-RPC API.</p>
+</li>
+<li>
+<p><strong>Tab state persistence</strong> — The desktop must save tab layout (positions, split views, which session each tab shows) per agent, so tabs restore in the correct positions on reconnect.</p>
+</li>
+<li>
+<p><strong>Agent manager expansion</strong> — <code>agent_manager.rs</code> needs to handle:
+   - Auto-deployment workflow (version check, binary upload, restart)
+   - Session recovery on reconnect (match saved tabs to recovered sessions)
+   - Prepared connection CRUD via JSON-RPC
+   - Monitoring subscription management</p>
+</li>
+<li>
+<p><strong>File browser integration</strong> — The existing SFTP file browser needs to be adapted to work through the agent's <code>files.*</code> RPC methods instead of opening a direct SFTP connection. For local connections, the desktop continues using its own local filesystem API. For agent connections (including jump host targets), all file operations route through the agent's JSON-RPC channel.</p>
+</li>
+<li>
+<p><strong>No offline cache</strong> — The desktop does not cache agent state. Agent sections in the sidebar show only name and status when offline. The full tree (prepared connections, folders, running sessions) is fetched live from the agent on each connect.</p>
+</li>
+</ol>
+<h3 id="security-considerations">Security Considerations</h3>
+<ul>
+<li><strong>Session isolation</strong>: Session daemons run under the connecting user's UID. OS-level permissions prevent cross-user access to Unix sockets and PTYs.</li>
+<li><strong>Socket permissions</strong>: Daemon sockets are created with <code>0700</code> permissions in a user-owned directory.</li>
+<li><strong>No privilege escalation</strong>: The agent never runs as root. Each user's agent instance runs under their own account.</li>
+<li><strong>Transport security</strong>: All communication is encrypted by the SSH tunnel. No additional TLS layer needed.</li>
+<li><strong>Agent binary integrity</strong>: Released binaries should be signed or checksum-verified before deployment.</li>
+</ul>
+<hr>
+<h2 id="design-decisions">Design Decisions</h2>
+<blockquote>
+<p>Resolved during concept design.</p>
+</blockquote>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Question</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Ring buffer size</td>
+<td>Configurable per session (default 1 MiB). Stored in prepared connection settings.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Windows agent support</td>
+<td>Not in initial implementation. Noted for future — would require named pipes and ConPTY instead of Unix sockets and PTYs.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Docker session persistence</td>
+<td>Agent manages container lifecycle: create, reattach, and stop. Containers run until explicitly stopped.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>External connection sources on agents</td>
+<td>Desktop-only feature. Agents only have locally created prepared connections.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Terminal resize on reconnect</td>
+<td>Standard resize — PTY is resized to new client dimensions. Programs handle <code>SIGWINCH</code> as usual.</td>
+</tr>
+</tbody>
+</table>
+</div>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Guided Manual Testing (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Guided Manual Testing</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span><code>docs/concepts/implemented/guided-manual-testing.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub has 97 manual test items in <code>docs/testing.md</code> that cannot be fully automated. These tests verify platform-specific behavior (macOS key repeat, WSL shell detection, Windows shells), native OS dialogs (file picker, save, import/export), visual rendering (Powerline glyphs, white flash timing, 1px panel borders), external application integration (VS Code), and OS-level features (app icon). Currently, a developer must read the testing document, mentally filter for their platform, manually set up infrastructure, perform each test, and track results in their head — a tedious, error-prone process.</p>
+<h3 id="motivation">Motivation</h3>
+<ul>
+<li><strong>Manual testing is slow and inconsistent</strong>: Each release requires walking through ~97 items across up to 4 platforms. Different developers may interpret instructions differently or skip steps.</li>
+<li><strong>No structured tracking</strong>: Results live in a developer's head or scattered checkboxes. There is no persistent record of what was tested, when, by whom, or on which OS version.</li>
+<li><strong>Infrastructure setup is ad hoc</strong>: Some tests require Docker containers, some require the app running, some need specific connections pre-created. The developer must figure this out each time.</li>
+<li><strong>Platform filtering is manual</strong>: A developer on macOS must scan the entire list to find the ~50 macOS-relevant items, mentally skipping Windows/WSL tests.</li>
+</ul>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Provide a <strong>YAML-based test definition format</strong> that mirrors the structure in <code>docs/testing.md</code>, adding machine-readable metadata (platform, category, prerequisites, verification steps)</li>
+<li>Build a <strong>shell-script guided test runner</strong> (<code>scripts/test-manual.sh</code>) that presents applicable tests one at a time</li>
+<li><strong>Automate infrastructure setup</strong> by reusing existing Docker compose files and the <code>TERMIHUB_CONFIG_DIR</code> mechanism for pre-creating connections</li>
+<li>Support <strong>automated verification</strong> where possible (file existence checks, JSON validation, process/port checks) with fallback to user confirmation (pass/fail/skip)</li>
+<li>Generate a <strong>JSON report</strong> with timestamps, platform info, and per-test results that can be attached to release checklists or PR reviews</li>
+<li><strong>Integrate with existing infrastructure</strong> — reuse <code>tests/docker/docker-compose.yml</code>, <code>tests/fixtures/ssh-keys/</code>, and <code>examples/</code> without duplicating any setup logic</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>Replacing the existing automated E2E test suite (WebdriverIO + tauri-driver)</li>
+<li>Full automation of visual verification (screenshot diffing, pixel comparison)</li>
+<li>A GUI-based test runner (the CLI is sufficient for developer workflows)</li>
+<li>Cross-machine test coordination (each developer runs the runner locally)</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<p>This is a developer-facing CLI tool. The "UI" is the terminal output during a guided test session.</p>
+<h3 id="session-overview">Session Overview</h3>
+<p>When the runner starts, it displays a session summary showing the platform, applicable test count, and infrastructure status:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────┐
+│  termiHub Guided Manual Tests                                    │
+│  Platform:  macOS 14.5 (aarch64)                                │
+│  App:       v0.12.0 (release build)                             │
+│  Date:      2026-02-25T14:30:00Z                                │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Test categories for this platform:                              │
+│    Local Shell .................. 12 tests                       │
+│    SSH .......................... 14 tests                       │
+│    Serial .......................  2 tests                       │
+│    Tab Management ...............  5 tests                       │
+│    Connection Management ........  8 tests                       │
+│    File Browser .................  4 tests                       │
+│    UI / Layout ..................  9 tests                       │
+│    Remote Agent .................  4 tests                       │
+│    Credential Store .............  3 tests                       │
+│    Cross-Platform ...............  3 tests                       │
+│                                                                  │
+│  Total applicable: 64 of 97 tests                               │
+│                                                                  │
+│  Infrastructure:                                                 │
+│    Docker ............. available                                │
+│    Virtual serial ..... available (socat)                        │
+│    USB serial ......... not detected                             │
+│    App binary ......... found (release build)                   │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+
+Press Enter to begin, or 'q' to quit.
+</code></pre>
+<h3 id="individual-test-card">Individual Test Card</h3>
+<p>Each test is presented in a structured card with clear phases:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────┐
+│  [12/64]  MT-LOCAL-03  macOS key repeat fix                     │
+│  Category: Local Shell   Platform: macOS   PR: #48              │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  SETUP (automated):                                              │
+│    [done] App launched with test config                          │
+│    [done] Local shell connection &quot;Key Repeat Test&quot; created       │
+│                                                                  │
+│  INSTRUCTIONS:                                                   │
+│    1. Switch to the &quot;Key Repeat Test&quot; tab in the app             │
+│    2. Hold any letter key (e.g., 'k') for 3 seconds             │
+│    3. Observe the terminal output                                │
+│                                                                  │
+│  EXPECTED:                                                       │
+│    - Key repeats continuously (kkkkkkkkkkkk...)                  │
+│    - Accent picker does NOT appear                               │
+│    - No delay before repeat starts                               │
+│                                                                  │
+│  RESULT: [p]ass  [f]ail  [s]kip  [n]ote  [q]uit                │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="test-with-automated-verification">Test With Automated Verification</h3>
+<p>Some tests include automated verification steps that the runner executes after the manual action:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────┐
+│  [28/64]  MT-CONN-05  Export connections to file                │
+│  Category: Connection Management   Platform: all   PR: #33     │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  SETUP (automated):                                              │
+│    [done] App launched with 3 test connections pre-loaded        │
+│                                                                  │
+│  INSTRUCTIONS:                                                   │
+│    1. In the app, click the gear icon menu &gt; &quot;Export&quot;            │
+│    2. In the native save dialog, save to:                        │
+│       /tmp/termihub-test-export.json                             │
+│    3. Press Enter here when done (or 's' to skip)               │
+│                                                                  │
+│  VERIFICATION (automated):                                       │
+│    [ ] File /tmp/termihub-test-export.json exists                │
+│    [ ] File contains valid JSON                                  │
+│    [ ] JSON has &quot;connections&quot; array with &gt;= 3 entries            │
+│    [ ] No &quot;password&quot; fields contain non-null values              │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+
+Press Enter to run verification...
+
+  VERIFICATION:
+    [pass] File exists
+    [pass] Valid JSON
+    [pass] 3 connections found
+    [pass] No passwords in export
+
+  All checks passed. Mark as [p]ass? (Enter to confirm)
+</code></pre>
+<h3 id="session-summary">Session Summary</h3>
+<p>At the end, the runner prints a summary and writes the report:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────┐
+│  Session Complete                                                │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Results:                                                        │
+│    Passed .................. 51                                  │
+│    Failed .................  3                                   │
+│    Skipped ................  8                                   │
+│    Not run ................  2                                   │
+│                                                                  │
+│  Failed tests:                                                   │
+│    MT-UI-01  No white flash on startup                          │
+│      Note: &quot;Brief 50ms white flash visible on cold start&quot;       │
+│    MT-SSH-07  Powerline glyph rendering                         │
+│      Note: &quot;Black rectangle behind user@host segment&quot;           │
+│    MT-CRED-02  Master password auto-lock                        │
+│      Note: &quot;Store did not lock after timeout elapsed&quot;           │
+│                                                                  │
+│  Report saved to:                                                │
+│    tests/reports/manual-2026-02-25T143000-macos-arm64.json      │
+│                                                                  │
+│  Duration: 28m 14s                                               │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="command-line-interface">Command-Line Interface</h3>
+<pre><code>Usage: python scripts/test-manual.py [OPTIONS]
+
+Options:
+  --category &lt;name&gt;     Run only tests in a specific category
+                        (local-shell, ssh, serial, tab-management,
+                         connection-management, file-browser, ui-layout,
+                         remote-agent, credential-store, cross-platform,
+                         config-recovery)
+  --test &lt;id&gt;           Run a single test by ID (e.g., MT-LOCAL-03)
+  --platform &lt;os&gt;       Override platform detection (macos, linux, windows)
+  --skip-setup          Skip infrastructure setup (assume already running)
+  --skip-infra          Skip Docker container management
+  --keep-infra          Keep Docker containers running after session
+  --app-path &lt;path&gt;     Path to app binary (overrides auto-detection)
+  --report-dir &lt;dir&gt;    Output directory for reports (default: tests/reports/)
+  --resume &lt;file&gt;       Resume a previous session from a report file
+  --list                List all tests for the current platform (no run)
+  --help, -h            Show this help message
+</code></pre>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="test-definition-format">Test Definition Format</h3>
+<p>Tests are defined in YAML files organized by category, living in <code>tests/manual/</code>. Each file corresponds to one section of the manual testing checklist in <code>docs/testing.md</code>.</p>
+<h4 id="example-local-shell-tests">Example: Local Shell Tests</h4>
+<pre><code class="language-yaml"># tests/manual/local-shell.yaml
+category: local-shell
+display_name: &quot;Local Shell&quot;
+
+tests:
+  - id: MT-LOCAL-01
+    name: &quot;PowerShell input works on new connection&quot;
+    pr: 198
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: &quot;PowerShell Input Test&quot;
+          type: local
+          config:
+            shellType: powershell
+      - connect: &quot;PowerShell Input Test&quot;
+    instructions:
+      - &quot;Observe the terminal tab that just opened&quot;
+      - &quot;Type any text (e.g., 'hello') — it should appear immediately&quot;
+      - &quot;You should NOT need to click the terminal area first&quot;
+    expected:
+      - &quot;Keyboard input works immediately without clicking the terminal&quot;
+    verification: manual
+
+  - id: MT-LOCAL-03
+    name: &quot;macOS key repeat fix&quot;
+    pr: 48
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: &quot;Key Repeat Test&quot;
+          type: local
+          config:
+            shellType: zsh
+      - connect: &quot;Key Repeat Test&quot;
+    instructions:
+      - &quot;Switch to the 'Key Repeat Test' tab in the app&quot;
+      - &quot;Hold any letter key (e.g., 'k') for 3 seconds&quot;
+      - &quot;Observe the terminal output&quot;
+    expected:
+      - &quot;Key repeats continuously (kkkkkkkkkkkk...)&quot;
+      - &quot;Accent picker does NOT appear&quot;
+      - &quot;No delay before repeat starts&quot;
+    verification: manual
+</code></pre>
+<h4 id="example-connection-management-tests-with-automated-verification">Example: Connection Management Tests (with automated verification)</h4>
+<pre><code class="language-yaml"># tests/manual/connection-management.yaml
+category: connection-management
+display_name: &quot;Connection Management&quot;
+
+tests:
+  - id: MT-CONN-05
+    name: &quot;Export connections to file&quot;
+    pr: 33
+    platforms: [all]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: &quot;Export Test SSH&quot;
+          type: ssh
+          config:
+            host: &quot;192.168.1.100&quot;
+            port: 22
+            username: &quot;admin&quot;
+            authMethod: password
+      - create_connection:
+          name: &quot;Export Test Local&quot;
+          type: local
+          config:
+            shellType: bash
+      - create_connection:
+          name: &quot;Export Test Telnet&quot;
+          type: telnet
+          config:
+            host: &quot;10.0.0.50&quot;
+            port: 23
+    instructions:
+      - &quot;In the app, click the gear icon menu &gt; 'Export'&quot;
+      - &quot;In the native save dialog, save to: /tmp/termihub-test-export.json&quot;
+      - &quot;Press Enter here when done&quot;
+    expected:
+      - &quot;Native save dialog opens&quot;
+      - &quot;File is written with connection data&quot;
+      - &quot;No passwords in exported file&quot;
+    verification:
+      type: combined
+      automated:
+        - type: file_exists
+          path: &quot;/tmp/termihub-test-export.json&quot;
+          description: &quot;Export file exists&quot;
+        - type: json_check
+          path: &quot;/tmp/termihub-test-export.json&quot;
+          jq: &quot;.connections | length &gt;= 3&quot;
+          description: &quot;At least 3 connections in export&quot;
+        - type: json_check
+          path: &quot;/tmp/termihub-test-export.json&quot;
+          jq: &quot;[.connections[].config.config.password // empty] | length == 0&quot;
+          description: &quot;No passwords in export&quot;
+      manual_prompt: &quot;Did the native save dialog appear correctly?&quot;
+</code></pre>
+<h4 id="test-definition-fields">Test Definition Fields</h4>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Unique ID, format <code>MT-&lt;CATEGORY&gt;-&lt;NN&gt;</code></td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Human-readable test name</td>
+</tr>
+<tr>
+<td><code>pr</code></td>
+<td>number</td>
+<td>no</td>
+<td>PR reference for traceability</td>
+</tr>
+<tr>
+<td><code>platforms</code></td>
+<td>list</td>
+<td>yes</td>
+<td><code>[macos]</code>, <code>[windows]</code>, <code>[linux]</code>, or <code>[all]</code></td>
+</tr>
+<tr>
+<td><code>prerequisites</code></td>
+<td>map</td>
+<td>yes</td>
+<td>Required infrastructure (see below)</td>
+</tr>
+<tr>
+<td><code>setup</code></td>
+<td>list</td>
+<td>no</td>
+<td>Automated setup steps (see Setup Actions)</td>
+</tr>
+<tr>
+<td><code>instructions</code></td>
+<td>list</td>
+<td>yes</td>
+<td>Steps for the human to perform</td>
+</tr>
+<tr>
+<td><code>expected</code></td>
+<td>list</td>
+<td>yes</td>
+<td>What the human should observe</td>
+</tr>
+<tr>
+<td><code>verification</code></td>
+<td>string/map</td>
+<td>yes</td>
+<td><code>manual</code> or automated check definition</td>
+</tr>
+<tr>
+<td><code>tags</code></td>
+<td>list</td>
+<td>no</td>
+<td>Additional tags for filtering (e.g., <code>visual</code>, <code>native-dialog</code>)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4 id="prerequisite-types">Prerequisite Types</h4>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>app</code></td>
+<td>bool</td>
+<td>App must be running</td>
+</tr>
+<tr>
+<td><code>docker</code></td>
+<td>bool/list</td>
+<td>Docker containers needed (true = default profile, list = specific profiles)</td>
+</tr>
+<tr>
+<td><code>serial</code></td>
+<td>bool</td>
+<td>Virtual serial ports needed</td>
+</tr>
+<tr>
+<td><code>usb_serial</code></td>
+<td>bool</td>
+<td>Physical USB-to-serial hardware needed</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4 id="setup-actions">Setup Actions</h4>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>create_connection</code></td>
+<td>Write a connection to the test <code>connections.json</code> (name, type, config)</td>
+</tr>
+<tr>
+<td><code>connect</code></td>
+<td>Instruction to double-click a named connection (displayed to user, not automated)</td>
+</tr>
+<tr>
+<td><code>start_docker</code></td>
+<td>Ensure specific Docker compose profiles are running</td>
+</tr>
+<tr>
+<td><code>start_serial</code></td>
+<td>Ensure virtual serial ports are running via socat</td>
+</tr>
+<tr>
+<td><code>navigate</code></td>
+<td>Instruction to navigate to a specific screen (settings, file browser, etc.)</td>
+</tr>
+<tr>
+<td><code>wait</code></td>
+<td>Pause for a specified duration in ms</td>
+</tr>
+<tr>
+<td><code>cleanup_file</code></td>
+<td>Remove a file from a previous test run (e.g., <code>/tmp/termihub-test-export.json</code>)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4 id="verification-types">Verification Types</h4>
+<pre><code class="language-yaml"># Manual confirmation only — user decides pass/fail
+verification: manual
+
+# File existence check
+verification:
+  type: file_exists
+  path: &quot;/tmp/termihub-test-export.json&quot;
+  description: &quot;Export file was created&quot;
+
+# JSON content check via jq
+verification:
+  type: json_check
+  path: &quot;/tmp/termihub-test-export.json&quot;
+  jq: &quot;.connections | length &gt;= 3&quot;
+  description: &quot;At least 3 connections in export&quot;
+
+# Process running check
+verification:
+  type: process_running
+  name: &quot;termiHub&quot;
+  description: &quot;App is still running (no crash)&quot;
+
+# TCP port listening (for tunnel tests)
+verification:
+  type: port_listening
+  port: 18080
+  description: &quot;Tunnel local port is listening&quot;
+
+# Combined: automated checks + manual confirmation for visual aspects
+verification:
+  type: combined
+  automated:
+    - type: file_exists
+      path: &quot;/tmp/termihub-test-export.json&quot;
+      description: &quot;Export file exists&quot;
+  manual_prompt: &quot;Did the native save dialog appear correctly?&quot;
+</code></pre>
+<h3 id="infrastructure-lifecycle">Infrastructure Lifecycle</h3>
+<p>The runner manages infrastructure in three phases using lazy initialization — resources are only started when the first test requiring them is encountered.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    Start([Runner starts]) --&gt; Detect[Detect platform + capabilities]
+    Detect --&gt; Load[Load YAML test definitions]
+    Load --&gt; Filter[Filter by platform + CLI args]
+    Filter --&gt; Collect[Collect all prerequisites]
+    Collect --&gt; Summary[Show session summary]
+    Summary --&gt; Begin{User starts?}
+    Begin --&gt;|Enter| Loop
+
+    subgraph Loop["Test loop"]
+        Next[Next test] --&gt; NeedsDocker{Needs Docker?}
+        NeedsDocker --&gt;|"Yes, not running"| StartDocker[docker compose up -d]
+        StartDocker --&gt; HealthCheck[Wait for health checks]
+        HealthCheck --&gt; NeedsApp
+        NeedsDocker --&gt;|"Already running"| NeedsApp
+        NeedsDocker --&gt;|No| NeedsApp
+
+        NeedsApp{Needs app?} --&gt;|"Yes, not running"| GenConnections[Generate connections.json]
+        GenConnections --&gt; LaunchApp["Launch app with TERMIHUB_CONFIG_DIR"]
+        LaunchApp --&gt; NeedsSerial
+        NeedsApp --&gt;|"Already running"| NeedsSerial
+        NeedsApp --&gt;|No| NeedsSerial
+
+        NeedsSerial{Needs serial?} --&gt;|"Yes, not running"| StartSocat[Create socat PTY pairs]
+        StartSocat --&gt; Present
+        NeedsSerial --&gt;|"Already running"| Present
+        NeedsSerial --&gt;|No| Present
+
+        Present[Present test card] --&gt; UserAction[User performs test + reports result]
+        UserAction --&gt; Record[Record result + save progress]
+        Record --&gt; More{More tests?}
+        More --&gt;|Yes| Next
+    end
+
+    More --&gt;|No| Teardown
+    Begin --&gt;|q| Exit([Exit])
+
+    Teardown[Tear down infra] --&gt; Report[Write JSON report]
+    Report --&gt; PrintSummary[Print session summary]
+    PrintSummary --&gt; Done([Done])
+</pre>
+</div>
+<h3 id="connection-pre-creation">Connection Pre-Creation</h3>
+<p>The runner pre-creates connections by:</p>
+<ol>
+<li>Scanning all tests that will be run and collecting <code>create_connection</code> setup actions</li>
+<li>Generating a <code>connections.json</code> in a temporary config directory</li>
+<li>Launching the app with <code>TERMIHUB_CONFIG_DIR</code> pointing to that directory</li>
+</ol>
+<p>This reuses the same mechanism as <code>examples/scripts/start-test-environment.sh</code>. The generated file follows the exact <code>ConnectionStore</code> format:</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;folders&quot;: [
+    {
+      &quot;id&quot;: &quot;folder-manual-test&quot;,
+      &quot;name&quot;: &quot;Manual Test Connections&quot;,
+      &quot;parentId&quot;: null,
+      &quot;isExpanded&quot;: true
+    }
+  ],
+  &quot;connections&quot;: [
+    {
+      &quot;id&quot;: &quot;mt-conn-001&quot;,
+      &quot;name&quot;: &quot;Key Repeat Test&quot;,
+      &quot;config&quot;: {
+        &quot;type&quot;: &quot;local&quot;,
+        &quot;config&quot;: { &quot;shellType&quot;: &quot;zsh&quot; }
+      },
+      &quot;folderId&quot;: &quot;folder-manual-test&quot;
+    },
+    {
+      &quot;id&quot;: &quot;mt-conn-002&quot;,
+      &quot;name&quot;: &quot;SSH Password Test&quot;,
+      &quot;config&quot;: {
+        &quot;type&quot;: &quot;ssh&quot;,
+        &quot;config&quot;: {
+          &quot;host&quot;: &quot;127.0.0.1&quot;,
+          &quot;port&quot;: 2201,
+          &quot;username&quot;: &quot;testuser&quot;,
+          &quot;authMethod&quot;: &quot;password&quot;
+        }
+      },
+      &quot;folderId&quot;: &quot;folder-manual-test&quot;
+    }
+  ],
+  &quot;agents&quot;: []
+}
+</code></pre>
+<h3 id="platform-aware-filtering">Platform-Aware Filtering</h3>
+<p>Each test declares its supported platforms. The runner detects the current platform at startup and filters accordingly:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    Start([Runner starts]) --&gt; Detect{Detect platform}
+    Detect --&gt;|"uname = Darwin"| Mac["platform = macos"]
+    Detect --&gt;|"uname = Linux"| Linux["platform = linux"]
+    Detect --&gt;|"MSYSTEM set or WSL"| Win["platform = windows"]
+
+    Mac --&gt; Filter["Filter: platforms contains 'macos' or 'all'"]
+    Linux --&gt; Filter2["Filter: platforms contains 'linux' or 'all'"]
+    Win --&gt; Filter3["Filter: platforms contains 'windows' or 'all'"]
+
+    Filter --&gt; Sort["Sort by category, then ID"]
+    Filter2 --&gt; Sort
+    Filter3 --&gt; Sort
+
+    Sort --&gt; Present["Present filtered test list to user"]
+</pre>
+</div>
+<h3 id="report-format">Report Format</h3>
+<p>The JSON report captures full context for reproducibility and can be attached to release checklists or PR reviews:</p>
+<pre><code class="language-json">{
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;session&quot;: {
+    &quot;id&quot;: &quot;session-2026-02-25T143000&quot;,
+    &quot;started_at&quot;: &quot;2026-02-25T14:30:00Z&quot;,
+    &quot;completed_at&quot;: &quot;2026-02-25T14:58:14Z&quot;,
+    &quot;duration_seconds&quot;: 1694
+  },
+  &quot;environment&quot;: {
+    &quot;platform&quot;: &quot;macos&quot;,
+    &quot;arch&quot;: &quot;aarch64&quot;,
+    &quot;os_version&quot;: &quot;macOS 14.5&quot;,
+    &quot;app_version&quot;: &quot;0.12.0&quot;,
+    &quot;docker_available&quot;: true,
+    &quot;serial_available&quot;: true
+  },
+  &quot;summary&quot;: {
+    &quot;total&quot;: 64,
+    &quot;passed&quot;: 51,
+    &quot;failed&quot;: 3,
+    &quot;skipped&quot;: 8,
+    &quot;not_run&quot;: 2
+  },
+  &quot;results&quot;: [
+    {
+      &quot;id&quot;: &quot;MT-LOCAL-03&quot;,
+      &quot;name&quot;: &quot;macOS key repeat fix&quot;,
+      &quot;category&quot;: &quot;local-shell&quot;,
+      &quot;status&quot;: &quot;passed&quot;,
+      &quot;timestamp&quot;: &quot;2026-02-25T14:32:15Z&quot;,
+      &quot;duration_seconds&quot;: 45,
+      &quot;note&quot;: null,
+      &quot;verification_type&quot;: &quot;manual&quot;
+    },
+    {
+      &quot;id&quot;: &quot;MT-UI-01&quot;,
+      &quot;name&quot;: &quot;No white flash on startup&quot;,
+      &quot;category&quot;: &quot;ui&quot;,
+      &quot;status&quot;: &quot;failed&quot;,
+      &quot;timestamp&quot;: &quot;2026-02-25T14:45:30Z&quot;,
+      &quot;duration_seconds&quot;: 30,
+      &quot;note&quot;: &quot;Brief 50ms white flash visible on cold start&quot;,
+      &quot;verification_type&quot;: &quot;manual&quot;
+    }
+  ]
+}
+</code></pre>
+<h3 id="resume-support">Resume Support</h3>
+<p>If a session is interrupted (Ctrl+C, quit, or crash), the in-progress report is saved after every test result. The <code>--resume &lt;file&gt;</code> flag allows continuing from where the session left off, skipping already-completed tests. This is important because a full manual test session can take 30-60 minutes — an interruption should not require starting over.</p>
+<h3 id="relationship-to-docstestingmd">Relationship to docs/testing.md</h3>
+<p>The YAML test definitions are the <strong>machine-readable counterpart</strong> to the manual testing section in <code>docs/testing.md</code>. They should be kept in sync:</p>
+<ul>
+<li>When a new manual test is added to <code>docs/testing.md</code>, a corresponding YAML definition should be added to the appropriate file in <code>tests/manual/</code></li>
+<li>The YAML files become the <strong>source of truth</strong> for guided testing; <code>docs/testing.md</code> provides the human-readable overview and E2E coverage analysis</li>
+<li>A future CI check could validate that every manual test ID in the YAML files has a corresponding entry in <code>docs/testing.md</code></li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="test-runner-state-machine">Test Runner State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Init: Script starts
+
+    Init --&gt; PlatformDetect: Parse arguments
+    PlatformDetect --&gt; PrereqCheck: Detect OS, arch
+
+    PrereqCheck --&gt; LoadTests: Prerequisites met
+    PrereqCheck --&gt; MissingPrereqs: Missing tools
+    MissingPrereqs --&gt; [*]: Print error + exit
+
+    LoadTests --&gt; FilterTests: Load YAML definitions
+    FilterTests --&gt; ShowSummary: Filter by platform + args
+
+    ShowSummary --&gt; WaitStart: Display session overview
+    WaitStart --&gt; UserQuit: User presses 'q'
+    WaitStart --&gt; RunTests: User presses Enter
+
+    state RunTests {
+        [*] --&gt; NextTest
+        NextTest --&gt; SetupInfra: Test needs Docker/serial/app
+        NextTest --&gt; PresentTest: No setup needed
+
+        SetupInfra --&gt; InfraReady: Containers healthy / app running
+        SetupInfra --&gt; InfraFail: Timeout or error
+        InfraFail --&gt; SkipTest: Record skip with reason
+        InfraReady --&gt; PresentTest
+
+        PresentTest --&gt; AwaitAction: Display test card
+        AwaitAction --&gt; RunVerification: User presses Enter
+        AwaitAction --&gt; RecordPass: User presses 'p'
+        AwaitAction --&gt; RecordFail: User presses 'f'
+        AwaitAction --&gt; RecordSkip: User presses 's'
+        AwaitAction --&gt; AddNote: User presses 'n'
+        AwaitAction --&gt; Quit: User presses 'q'
+
+        AddNote --&gt; AwaitAction: Note recorded
+
+        RunVerification --&gt; AutoChecks: Run automated checks
+        AutoChecks --&gt; AllPassed: All checks pass
+        AutoChecks --&gt; SomeFailed: Some checks fail
+        AllPassed --&gt; ConfirmPass: Suggest pass
+        SomeFailed --&gt; ConfirmResult: Show failures
+        ConfirmPass --&gt; RecordPass: User confirms
+        ConfirmResult --&gt; RecordPass: User overrides
+        ConfirmResult --&gt; RecordFail: User confirms failure
+
+        RecordPass --&gt; SaveProgress: status = passed
+        RecordFail --&gt; SaveProgress: status = failed
+        RecordSkip --&gt; SaveProgress: status = skipped
+        SkipTest --&gt; SaveProgress: status = skipped (infra)
+
+        SaveProgress --&gt; NextTest: More tests
+        SaveProgress --&gt; [*]: All tests done
+
+        Quit --&gt; [*]: Save partial report
+    }
+
+    RunTests --&gt; Teardown: All tests complete or quit
+    UserQuit --&gt; [*]: No tests run
+
+    Teardown --&gt; WriteReport: Cleanup infra
+    WriteReport --&gt; ShowSummary2: Save JSON report
+    ShowSummary2 --&gt; [*]: Print summary + exit
+</pre>
+</div>
+<h3 id="infrastructure-lifecycle-sequence">Infrastructure Lifecycle Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant R as Test Runner
+    participant D as Docker
+    participant S as Socat
+    participant A as termiHub App
+    participant U as User
+
+    R-&gt;&gt;R: Detect platform
+    R-&gt;&gt;R: Load + filter YAML tests
+    R-&gt;&gt;R: Collect all prerequisites
+
+    R-&gt;&gt;U: Show session summary
+    U-&gt;&gt;R: Enter (start)
+
+    Note over R,D: First test needing Docker
+    R-&gt;&gt;D: docker compose -f tests/docker/docker-compose.yml up -d
+    D--&gt;&gt;R: Containers starting
+    R-&gt;&gt;D: Health check loop (nc -z ports)
+    D--&gt;&gt;R: All healthy
+
+    Note over R,A: First test needing app
+    R-&gt;&gt;R: Generate connections.json in tmpdir
+    R-&gt;&gt;A: Launch with TERMIHUB_CONFIG_DIR=tmpdir
+    A--&gt;&gt;R: Process started
+    R-&gt;&gt;R: Wait 5s for app init
+
+    Note over R,S: First test needing serial
+    R-&gt;&gt;S: socat pty,raw,echo=0,link=/tmp/serial-a ...
+    S--&gt;&gt;R: Virtual serial pair created
+
+    loop Each test
+        R-&gt;&gt;U: Present test card
+        U-&gt;&gt;A: Perform actions in app
+        U-&gt;&gt;R: Report result (p/f/s/n)
+        R-&gt;&gt;R: Record result, save progress
+    end
+
+    R-&gt;&gt;R: Session complete
+    R-&gt;&gt;D: docker compose down (unless --keep-infra)
+    R-&gt;&gt;S: kill socat process
+    R-&gt;&gt;R: Write JSON report
+    R-&gt;&gt;U: Print summary
+
+    Note over A: App left running for user inspection
+</pre>
+</div>
+<h3 id="single-test-execution-flow">Single Test Execution Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    Start([Next test]) --&gt; CheckPrereqs{Prerequisites met?}
+
+    CheckPrereqs --&gt;|Missing Docker| StartDocker[Start Docker containers]
+    CheckPrereqs --&gt;|Missing app| StartApp[Launch app with test config]
+    CheckPrereqs --&gt;|Missing serial| StartSerial[Create virtual serial ports]
+    CheckPrereqs --&gt;|All met| RunSetup
+
+    StartDocker --&gt; HealthOK{Health checks pass?}
+    HealthOK --&gt;|Yes| CheckPrereqs
+    HealthOK --&gt;|Timeout| SkipTest[Skip test + record reason]
+
+    StartApp --&gt; AppOK{App responds?}
+    AppOK --&gt;|Yes| CheckPrereqs
+    AppOK --&gt;|No| SkipTest
+
+    StartSerial --&gt; PortsOK{Ports exist?}
+    PortsOK --&gt;|Yes| CheckPrereqs
+    PortsOK --&gt;|No| SkipTest
+
+    RunSetup[Execute setup actions] --&gt; Present[Display test card]
+    Present --&gt; UserInput{User input}
+
+    UserInput --&gt;|p| Pass[Record PASS]
+    UserInput --&gt;|f| PromptNote[Prompt for failure note]
+    UserInput --&gt;|s| Skip[Record SKIP]
+    UserInput --&gt;|n| Note[Enter note text]
+    UserInput --&gt;|Enter| HasVerify{Has automated verification?}
+    UserInput --&gt;|q| Quit[Save partial report + exit]
+
+    Note --&gt; UserInput
+    PromptNote --&gt; Fail[Record FAIL + note]
+
+    HasVerify --&gt;|Yes| RunChecks[Execute verification checks]
+    HasVerify --&gt;|No| ManualOnly[Prompt pass/fail]
+    ManualOnly --&gt; UserInput
+
+    RunChecks --&gt; CheckResults{All pass?}
+    CheckResults --&gt;|Yes| SuggestPass["Suggest PASS (Enter to confirm)"]
+    CheckResults --&gt;|No| ShowFailures[Show failed checks]
+
+    SuggestPass --&gt;|Enter| Pass
+    SuggestPass --&gt;|f| PromptNote
+
+    ShowFailures --&gt;|p| Pass
+    ShowFailures --&gt;|f| PromptNote
+
+    Pass --&gt; Save[Save to report]
+    Fail --&gt; Save
+    Skip --&gt; Save
+    SkipTest --&gt; Save
+
+    Save --&gt; Done([Next test or finish])
+</pre>
+</div>
+<h3 id="test-categories-and-id-mapping">Test Categories and ID Mapping</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph "YAML Files in tests/manual/"
+        LS["local-shell.yaml&lt;br/&gt;MT-LOCAL-01..12"]
+        SSH["ssh.yaml&lt;br/&gt;MT-SSH-01..14"]
+        SER["serial.yaml&lt;br/&gt;MT-SER-01..02"]
+        TAB["tab-management.yaml&lt;br/&gt;MT-TAB-01..05"]
+        CON["connection-management.yaml&lt;br/&gt;MT-CONN-01..08"]
+        FB["file-browser.yaml&lt;br/&gt;MT-FB-01..04"]
+        ED["editor.yaml&lt;br/&gt;MT-EDIT-01..02"]
+        UI["ui-layout.yaml&lt;br/&gt;MT-UI-01..09"]
+        AG["remote-agent.yaml&lt;br/&gt;MT-AGENT-01..04"]
+        CR["credential-store.yaml&lt;br/&gt;MT-CRED-01..03"]
+        XP["cross-platform.yaml&lt;br/&gt;MT-XPLAT-01..03"]
+    end
+
+    subgraph "Platform Filter Results"
+        MAC["macOS: ~64 tests"]
+        LIN["Linux: ~40 tests"]
+        WIN["Windows: ~55 tests"]
+    end
+
+    LS --&gt; MAC
+    LS --&gt; WIN
+    SSH --&gt; MAC &amp; LIN &amp; WIN
+    SER --&gt; MAC &amp; LIN
+    TAB --&gt; MAC &amp; LIN &amp; WIN
+    CON --&gt; MAC &amp; LIN &amp; WIN
+    FB --&gt; MAC &amp; WIN
+    ED --&gt; MAC &amp; LIN &amp; WIN
+    UI --&gt; MAC &amp; LIN &amp; WIN
+    AG --&gt; MAC &amp; LIN &amp; WIN
+    CR --&gt; MAC &amp; LIN &amp; WIN
+    XP --&gt; MAC &amp; LIN &amp; WIN
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<h3 id="file-structure">File Structure</h3>
+<pre><code>tests/
+  manual/                             # YAML test definitions
+    local-shell.yaml                  # ~20 tests (macOS key repeat, WSL, doubled text, etc.)
+    ssh.yaml                          # ~35 tests (Powerline, X11, key auth, monitoring, tunnels)
+    serial.yaml                       #  ~2 tests (Nerd Font glyphs)
+    tab-management.yaml               # ~17 tests (drag, save to file, horizontal scroll, split views)
+    connection-management.yaml        # ~31 tests (import/export, icons, external files, validation)
+    file-browser.yaml                 # ~20 tests (SFTP, VS Code, WSL paths, editor)
+    ui-layout.yaml                    # ~20 tests (white flash, theme, borders, app icon)
+    remote-agent.yaml                 #  ~8 tests (cleanup, setup wizard, error dialog)
+    credential-store.yaml             #  ~8 tests (master password, auto-lock)
+    cross-platform.yaml               #  ~3 tests (shell list, serial ports, X11)
+    config-recovery.yaml              # ~12 tests (corrupt settings, nested tree data model)
+  reports/                            # Generated JSON reports (gitignored)
+    .gitkeep
+scripts/
+  test-manual.py                      # Cross-platform Python guided test runner
+</code></pre>
+<h3 id="runner-implementation">Runner Implementation</h3>
+<p>The runner is a single Python script (<code>scripts/test-manual.py</code>), chosen over the originally planned bash + jq + .cmd wrapper approach because:</p>
+<ul>
+<li><strong>Cross-platform natively</strong>: Python runs on macOS, Linux, and Windows without requiring Git Bash or WSL</li>
+<li><strong>No extra dependencies</strong>: Python handles YAML (PyYAML), JSON, and interactive I/O natively — no <code>jq</code> needed</li>
+<li><strong>Single file</strong>: Eliminates the need for a separate YAML-to-JSON helper and Windows .cmd wrapper</li>
+<li><strong>Cleaner logic</strong>: argparse for CLI arguments, <code>socket</code> for port checks, <code>subprocess</code> for Docker/socat management</li>
+</ul>
+<p>Python 3.8+ with PyYAML is already a project prerequisite (used by the serial echo server).</p>
+<p><strong>Key structure:</strong></p>
+<pre><code class="language-python">#!/usr/bin/env python3
+
+# 1. Parse arguments (argparse: --category, --test, --platform, etc.)
+# 2. Detect platform (platform module -&gt; macos/linux/windows)
+# 3. Check prerequisites (Docker, socat availability)
+# 4. Load YAML test definitions directly (yaml.safe_load)
+# 5. Filter tests by platform and CLI args
+# 6. Show session summary, wait for user
+# 7. Infrastructure management (lazy start, atexit cleanup)
+# 8. Main loop: present tests one at a time, collect results
+# 9. Verification engine (automated checks + manual confirmation)
+# 10. Save progress after each test (resume support)
+# 11. Generate JSON report + print summary
+</code></pre>
+<h3 id="verification-engine">Verification Engine</h3>
+<p>Implemented as Python functions using only the standard library:</p>
+<pre><code class="language-python">def run_verification(verification):
+    &quot;&quot;&quot;Dispatch to the appropriate check based on type.&quot;&quot;&quot;
+    checks = []
+    vtype = verification.get(&quot;type&quot;, &quot;&quot;)
+
+    if vtype == &quot;file_exists&quot;:
+        checks.append({
+            &quot;description&quot;: verification[&quot;description&quot;],
+            &quot;passed&quot;: os.path.isfile(verification[&quot;path&quot;]),
+        })
+
+    elif vtype == &quot;json_check&quot;:
+        # Uses json.load for validation; optionally jq if available
+        try:
+            with open(verification[&quot;path&quot;]) as f:
+                json.load(f)
+            passed = True
+        except (json.JSONDecodeError, FileNotFoundError):
+            passed = False
+        checks.append({&quot;description&quot;: verification[&quot;description&quot;], &quot;passed&quot;: passed})
+
+    elif vtype == &quot;process_running&quot;:
+        # Uses subprocess: pgrep on Unix, tasklist on Windows
+        ...
+
+    elif vtype == &quot;port_listening&quot;:
+        # Uses socket.create_connection with timeout
+        try:
+            with socket.create_connection((&quot;127.0.0.1&quot;, port), timeout=2):
+                passed = True
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            passed = False
+        checks.append({&quot;description&quot;: verification[&quot;description&quot;], &quot;passed&quot;: passed})
+
+    elif vtype == &quot;combined&quot;:
+        for auto_check in verification.get(&quot;automated&quot;, []):
+            checks.extend(run_verification(auto_check))
+
+    return checks
+</code></pre>
+<h3 id="app-binary-detection">App Binary Detection</h3>
+<p>The runner auto-detects the app binary based on platform:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Binary Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>macOS</td>
+<td><code>src-tauri/target/release/bundle/macos/termiHub.app/Contents/MacOS/termiHub</code></td>
+</tr>
+<tr>
+<td>Linux</td>
+<td><code>src-tauri/target/release/termihub</code></td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>src-tauri/target/release/termihub.exe</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>If the binary is not found, the runner prompts the user to build first (<code>pnpm tauri build</code>) or to provide a path via <code>--app-path</code>.</p>
+<h3 id="integration-with-existing-infrastructure">Integration with Existing Infrastructure</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Existing Asset</th>
+<th>How the Runner Uses It</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/docker/docker-compose.yml</code></td>
+<td>Started directly via <code>docker compose up -d</code> for tests needing SSH/telnet containers</td>
+</tr>
+<tr>
+<td><code>tests/fixtures/ssh-keys/</code></td>
+<td>Referenced in instructions (e.g., "use the ed25519 key at <code>tests/fixtures/ssh-keys/ed25519</code>")</td>
+</tr>
+<tr>
+<td><code>TERMIHUB_CONFIG_DIR</code> env var</td>
+<td>Used to inject pre-created connections into the app at launch</td>
+</tr>
+<tr>
+<td><code>examples/</code> patterns</td>
+<td>Infrastructure lifecycle patterns reused from <code>start-test-environment.sh</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="test-to-yaml-migration-from-docstestingmd">Test-to-YAML Migration from docs/testing.md</h3>
+<p>Every manual test item in <code>docs/testing.md</code> maps to a YAML entry:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>testing.md Section</th>
+<th>YAML File</th>
+<th>ID Prefix</th>
+<th>~Count</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local Shell</td>
+<td><code>local-shell.yaml</code></td>
+<td><code>MT-LOCAL</code></td>
+<td>20</td>
+</tr>
+<tr>
+<td>SSH</td>
+<td><code>ssh.yaml</code></td>
+<td><code>MT-SSH</code></td>
+<td>35</td>
+</tr>
+<tr>
+<td>Serial</td>
+<td><code>serial.yaml</code></td>
+<td><code>MT-SER</code></td>
+<td>2</td>
+</tr>
+<tr>
+<td>Tab Management + Split Views</td>
+<td><code>tab-management.yaml</code></td>
+<td><code>MT-TAB</code></td>
+<td>17</td>
+</tr>
+<tr>
+<td>Connection Management</td>
+<td><code>connection-management.yaml</code></td>
+<td><code>MT-CONN</code></td>
+<td>31</td>
+</tr>
+<tr>
+<td>File Browser + Editor</td>
+<td><code>file-browser.yaml</code></td>
+<td><code>MT-FB</code></td>
+<td>20</td>
+</tr>
+<tr>
+<td>UI / Layout</td>
+<td><code>ui-layout.yaml</code></td>
+<td><code>MT-UI</code></td>
+<td>20</td>
+</tr>
+<tr>
+<td>Remote Agent</td>
+<td><code>remote-agent.yaml</code></td>
+<td><code>MT-AGENT</code></td>
+<td>8</td>
+</tr>
+<tr>
+<td>Credential Store</td>
+<td><code>credential-store.yaml</code></td>
+<td><code>MT-CRED</code></td>
+<td>8</td>
+</tr>
+<tr>
+<td>Cross-Platform</td>
+<td><code>cross-platform.yaml</code></td>
+<td><code>MT-XPLAT</code></td>
+<td>3</td>
+</tr>
+<tr>
+<td>Configuration Recovery</td>
+<td><code>config-recovery.yaml</code></td>
+<td><code>MT-RECOVERY</code></td>
+<td>12</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="dependencies">Dependencies</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Purpose</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>python3</code> + <code>PyYAML</code></td>
+<td>Runner + YAML parsing</td>
+<td>yes</td>
+<td>Already a project prerequisite (serial echo server)</td>
+</tr>
+<tr>
+<td><code>jq</code></td>
+<td>JSON verification checks</td>
+<td>optional</td>
+<td>Used for <code>json_check</code> if available; graceful fallback</td>
+</tr>
+<tr>
+<td><code>docker</code></td>
+<td>Container infrastructure</td>
+<td>for SSH/telnet/SFTP tests</td>
+<td>Already used by test-system scripts</td>
+</tr>
+<tr>
+<td><code>socat</code></td>
+<td>Virtual serial ports</td>
+<td>for serial tests</td>
+<td>Already used by test-system scripts</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="future-enhancements-out-of-scope">Future Enhancements (Out of Scope)</h3>
+<ul>
+<li><strong>Screenshot capture</strong>: Auto-capture at each test step via <code>screencapture</code> (macOS) / <code>scrot</code> (Linux), attach to report</li>
+<li><strong>HTML report viewer</strong>: Render JSON reports with filtering, sorting, and charts</li>
+<li><strong>CI integration</strong>: Run guided tests in CI with a "manual approval" gate</li>
+<li><strong>Test definition validation</strong>: CI check ensuring YAML definitions stay in sync with <code>docs/testing.md</code></li>
+<li><strong>Notification hooks</strong>: Slack/email alerts when manual test sessions are needed for a release</li>
+</ul>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

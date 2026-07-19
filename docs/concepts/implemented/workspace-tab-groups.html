@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workspace Tab Group Support (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Workspace Tab Group Support</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/566">#566</a></span>
+          <span><code>docs/concepts/implemented/workspace-tab-groups.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub supports two orthogonal layout features that are currently disconnected:</p>
+<ul>
+<li><strong>Workspaces</strong> — named, saved panel layouts that users can design, store, and restore. Each workspace definition contains a single panel tree (<code>layout</code>).</li>
+<li><strong>Tab Groups</strong> (#546) — runtime named panel trees that allow users to maintain multiple independent split layouts simultaneously, switching between them without killing sessions.</li>
+</ul>
+<p>The gap: a user who builds a careful multi-group session (e.g. <em>Dev</em> / <em>Deploy</em> / <em>Monitoring</em>) has no way to save that full context as a workspace. When they launch a saved workspace, only one panel tree is restored. Their tab group organization is lost on every restart.</p>
+<p>This concept extends the workspace configuration schema and related UI/logic so that workspaces can optionally capture and restore a full set of named tab groups — while remaining fully backward compatible with existing single-layout workspace files.</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    subgraph Before ["Before: Single Layout"]
+        WS1["WorkspaceDefinition"] --&gt; L1["layout (single panel tree)"]
+    end
+
+    subgraph After ["After: Multi-Group Support"]
+        WS2["WorkspaceDefinition"] --&gt; L2["layout? (optional, backward compat)"]
+        WS2 --&gt; TGs["tabGroups? (array)"]
+        TGs --&gt; G1["TabGroupDef: Dev\n└─ layout (panel tree)"]
+        TGs --&gt; G2["TabGroupDef: Deploy\n└─ layout (panel tree)"]
+        TGs --&gt; G3["TabGroupDef: Monitoring\n└─ layout (panel tree)"]
+    end
+</pre>
+</div>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="workspace-editor-group-strip">Workspace Editor: Group Strip</h3>
+<p>The Workspace Editor currently shows a single <strong>Layout</strong> section containing a <code>LayoutDesigner</code>. When the workspace defines multiple tab groups, the editor gains a <strong>group strip</strong> above the layout designer — a compact horizontal bar showing the groups as clickable chips, mirroring the toolbar chip design from #546.</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│  Name: [________________________]                               │
+│  Description: [________________________]                         │
+│                                                                  │
+│  Layout                                                          │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  [Dev ×]  [Deploy ×]  [Monitoring ×]  [+ Add Group]      │   │  ← group strip
+│  ├──────────────────────────────────────────────────────────┤   │
+│  │                                                          │   │
+│  │  LayoutDesigner for selected group                       │   │
+│  │                                                          │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│  3 groups · 8 panels · 12 tabs                                   │
+│                                                                  │
+│  [Save]  [Cancel]                                                │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<ul>
+<li><strong>Group strip</strong> appears only when the workspace has 2 or more groups. For single-group workspaces the strip is hidden and the editor looks unchanged.</li>
+<li><strong>Active group chip</strong> is highlighted. Clicking another chip switches the LayoutDesigner to show that group's layout.</li>
+<li><strong><code>[× close]</code></strong> on a chip removes the group and its layout from the workspace definition (with confirmation if the group has tabs).</li>
+<li><strong><code>[+ Add Group]</code></strong> appends a new empty group with a default name (e.g. <em>Group 2</em>). The strip scrolls horizontally if there are many groups.</li>
+<li><strong>Rename</strong>: double-click a chip label to rename inline.</li>
+<li><strong>Color picker</strong>: right-click a chip → <em>Set color</em> (optional dot accent, same colors as runtime tab groups).</li>
+</ul>
+<h3 id="workspace-editor-info-line">Workspace Editor: Info Line</h3>
+<p>The summary line below the LayoutDesigner reflects the whole workspace:</p>
+<ul>
+<li>Single group: <code>2 panels, 4 tabs</code> (unchanged)</li>
+<li>Multiple groups: <code>3 groups · 8 panels · 12 tabs</code></li>
+</ul>
+<h3 id="workspace-sidebar">Workspace Sidebar</h3>
+<p>The workspace list entry shows group count when applicable:</p>
+<pre><code>┌──────────────────────────────────────────┐
+│  Full Stack Project                      │
+│  3 groups · 12 connections               │
+│  [Launch]  [Edit]  [...]                 │
+└──────────────────────────────────────────┘
+</code></pre>
+<p>Single-group workspaces continue to show only the connection count.</p>
+<h3 id="save-current-as-workspace-dialog">"Save Current as Workspace" Dialog</h3>
+<p>The quick-save dialog (triggered from the WorkspaceSidebar without opening the editor) gains a scope selector when multiple tab groups are active:</p>
+<pre><code>┌──────────────────────────────────────────┐
+│  Save as Workspace                       │
+│                                          │
+│  Name: [___________________________]     │
+│  Description: [___________________]      │
+│                                          │
+│  Capture:                                │
+│  ○ All tab groups (Dev, Deploy, SSH)     │  ← default
+│  ○ Active group only (Dev)               │
+│                                          │
+│  [Save]  [Cancel]                        │
+└──────────────────────────────────────────┘
+</code></pre>
+<p>When only one tab group exists, the scope selector is hidden.</p>
+<h3 id="workspace-launch-behavior">Workspace Launch Behavior</h3>
+<p>When a multi-group workspace is launched:</p>
+<ol>
+<li>All existing sessions are preserved (same as today — launching replaces the panel layout, existing tabs in non-workspace panels are gone).</li>
+<li>All workspace tab groups are restored in order: names, colors, layouts, and connection configurations.</li>
+<li>The first group in the definition becomes the active tab group.</li>
+<li>The <code>activeWorkspaceName</code> is set to the workspace name as today.</li>
+</ol>
+<p>The user sees the toolbar chip strip appear immediately with all restored groups.</p>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="backward-compatibility">Backward Compatibility</h3>
+<p>Existing workspace files (with a top-level <code>layout</code> field and no <code>tabGroups</code>) continue to work without any migration:</p>
+<ul>
+<li>If <code>tabGroups</code> is absent and <code>layout</code> is present → load the single layout into a single "Main" group (existing behavior).</li>
+<li>If <code>tabGroups</code> is present → use the tab groups; the legacy <code>layout</code> field (if present) is ignored.</li>
+<li>New workspaces created with multiple groups will have <code>tabGroups</code> and no <code>layout</code> field.</li>
+<li>New workspaces created with a single group will have only <code>layout</code> (no change to file format for the common case).</li>
+</ul>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    load["Load WorkspaceDefinition"] --&gt; hasGroups{"tabGroups\npresent?"}
+    hasGroups --&gt;|yes| multi["Restore all tab groups"]
+    hasGroups --&gt;|no| hasLayout{"layout\npresent?"}
+    hasLayout --&gt;|yes| single["Restore single layout\ninto 'Main' group"]
+    hasLayout --&gt;|no| empty["Restore empty workspace\n(edge case)"]
+</pre>
+</div>
+<h3 id="connection-count-in-workspacesummary">Connection Count in WorkspaceSummary</h3>
+<p><code>WorkspaceSummary.connectionCount</code> currently reflects the single layout's tab count. With multi-group support, it should reflect the total tab count across all groups.</p>
+<h3 id="import-export">Import / Export</h3>
+<p>The existing workspace import/export format is JSON. The <code>WorkspaceImportPreview</code> type currently shows <code>workspaceCount</code> and <code>totalTabCount</code>. It should gain a <code>totalGroupCount</code> field so the import confirmation UI can show: <em>"3 workspaces, 7 groups total, 24 connections"</em>.</p>
+<h3 id="workspace-editor-for-existing-workspaces">Workspace Editor for Existing Workspaces</h3>
+<p>Opening an existing single-layout workspace in the editor presents the unchanged single-group view. The user can explicitly add a group (via <code>[+ Add Group]</code>), at which point the file will be saved with the <code>tabGroups</code> format on next save.</p>
+<h3 id="unsaved-changes-warning">Unsaved Changes Warning</h3>
+<p>If the user has made manual changes to the live tab group layout (added groups, renamed, moved tabs) and then launches a workspace, the existing "this will replace your layout" behavior applies — no new prompt is needed specifically for tab groups.</p>
+<h3 id="active-group-after-launch">Active Group After Launch</h3>
+<p>The first group in the <code>tabGroups</code> array is considered the primary group and becomes active on launch. The array order reflects the left-to-right chip order in the toolbar.</p>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="workspace-definition-variants">Workspace Definition Variants</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Legacy : load file with layout field only
+    [*] --&gt; MultiGroup : load file with tabGroups field
+
+    Legacy : Legacy Format\n(single panel tree)
+    MultiGroup : Multi-Group Format\n(array of named panel trees)
+
+    Legacy --&gt; MultiGroup : user adds a group in the editor\nand saves
+    MultiGroup --&gt; MultiGroup : edit groups / layouts
+</pre>
+</div>
+<h3 id="launch-workspace-sequence">Launch Workspace Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant WS as WorkspaceSidebar
+    participant Store as appStore
+    participant API as workspaceApi
+
+    U-&gt;&gt;WS: click Launch
+    WS-&gt;&gt;Store: launchWorkspace(id)
+    Store-&gt;&gt;API: loadWorkspace(id)
+    API--&gt;&gt;Store: WorkspaceDefinition
+
+    alt tabGroups present
+        Store-&gt;&gt;Store: buildTabGroupsFromWorkspace(tabGroups)
+        Note over Store: creates TabGroup[] with\nnew PanelNode trees
+        Store-&gt;&gt;Store: set tabGroups, activeTabGroupId,\nrootPanel, activePanelId,\nactiveWorkspaceName
+    else legacy layout
+        Store-&gt;&gt;Store: buildPanelTreeFromWorkspace(layout)
+        Store-&gt;&gt;Store: set rootPanel, activePanelId,\nactiveWorkspaceName
+    end
+
+    Store--&gt;&gt;WS: state updated
+    WS--&gt;&gt;U: workspace active (groups visible in toolbar)
+</pre>
+</div>
+<h3 id="save-all-groups-sequence">Save All Groups Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant D as SaveDialog
+    participant Store as appStore
+    participant API as workspaceApi
+
+    U-&gt;&gt;D: click "Save as Workspace"
+    D-&gt;&gt;Store: read tabGroups + rootPanel + activeTabGroupId
+    Note over D: if &gt;1 group: show scope selector
+    U-&gt;&gt;D: choose "All tab groups", enter name
+    D-&gt;&gt;Store: saveCurrentAsWorkspace(name, desc, scope=all)
+    Store-&gt;&gt;Store: captureAllTabGroups() →\nWorkspaceTabGroupDef[]
+    Store-&gt;&gt;API: saveWorkspace({id, name, tabGroups})
+    API--&gt;&gt;Store: ok
+    Store-&gt;&gt;Store: loadWorkspaces() — refresh list
+    Store--&gt;&gt;D: done
+    D--&gt;&gt;U: workspace saved
+</pre>
+</div>
+<h3 id="workspace-editor-tab-group-state">Workspace Editor Tab Group State</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; SingleGroup : new workspace or\nlegacy load
+
+    SingleGroup : Single Group\n(group strip hidden)
+    MultiGroup : Multiple Groups\n(group strip visible)
+    EditingGroup : Editing a Group's Layout
+
+    SingleGroup --&gt; MultiGroup : click [+ Add Group]
+    MultiGroup --&gt; SingleGroup : close until 1 group remains
+    MultiGroup --&gt; EditingGroup : click group chip
+    EditingGroup --&gt; MultiGroup : click different chip
+    EditingGroup --&gt; EditingGroup : modify layout in LayoutDesigner
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<h3 id="type-changes-srctypesworkspacets">Type Changes (<code>src/types/workspace.ts</code>)</h3>
+<pre><code class="language-typescript">/** Definition of a single tab group within a workspace. */
+export interface WorkspaceTabGroupDef {
+  name: string;
+  color?: string;
+  layout: WorkspaceLayoutNode;
+}
+
+/** A complete workspace definition. */
+export interface WorkspaceDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  /** Legacy single-panel-tree format. Ignored when tabGroups is present. */
+  layout?: WorkspaceLayoutNode;
+  /** Multi-group format. When present, layout is ignored. */
+  tabGroups?: WorkspaceTabGroupDef[];
+}
+
+/** Summary of a workspace for list display. */
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  description?: string;
+  connectionCount: number;
+  groupCount?: number; // undefined → single-group (legacy)
+}
+
+/** Preview of a workspace import file. */
+export interface WorkspaceImportPreview {
+  workspaceCount: number;
+  totalTabCount: number;
+  totalGroupCount: number; // new
+}
+</code></pre>
+<h3 id="new-utilities-srcutilsworkspacelayoutts">New Utilities (<code>src/utils/workspaceLayout.ts</code>)</h3>
+<pre><code class="language-typescript">/**
+ * Build an array of TabGroup objects from a workspace's tabGroups definitions.
+ * Each group gets a new ID and a freshly-built PanelNode tree.
+ */
+export function buildTabGroupsFromWorkspace(
+  tabGroupDefs: WorkspaceTabGroupDef[],
+  savedConnections: SavedConnection[],
+  defaultShell: string
+): TabGroup[];
+
+/**
+ * Capture the current live tab group state as WorkspaceTabGroupDef[].
+ * The active group uses the live rootPanel; inactive groups use their
+ * saved rootPanel from the tabGroups store slice.
+ */
+export function captureAllTabGroups(
+  tabGroups: TabGroup[],
+  activeTabGroupId: string,
+  liveRootPanel: PanelNode,
+  savedConnections: SavedConnection[]
+): WorkspaceTabGroupDef[];
+
+/**
+ * Count total tabs across all groups in a WorkspaceDefinition.
+ * Handles both legacy (layout) and multi-group (tabGroups) formats.
+ */
+export function countWorkspaceTabsTotal(definition: WorkspaceDefinition): number;
+</code></pre>
+<h3 id="store-changes-srcstoreappstorets">Store Changes (<code>src/store/appStore.ts</code>)</h3>
+<p><code>launchWorkspace</code>:</p>
+<ul>
+<li>After loading the definition, branch on <code>tabGroups</code> presence.</li>
+<li>If <code>tabGroups</code>: call <code>buildTabGroupsFromWorkspace()</code> → produce <code>TabGroup[]</code>, set full group state.</li>
+<li>If <code>layout</code> only: existing behavior unchanged.</li>
+</ul>
+<p><code>saveCurrentAsWorkspace</code>:</p>
+<ul>
+<li>Accept a <code>scope: "all" | "active"</code> parameter (default <code>"all"</code> when multi-group).</li>
+<li><code>"all"</code>: call <code>captureAllTabGroups()</code> → save with <code>tabGroups</code> field.</li>
+<li><code>"active"</code> or single-group: existing <code>captureCurrentLayout()</code> path → save with <code>layout</code> field.</li>
+</ul>
+<p><code>WorkspaceSummary</code> loading: Rust backend computes <code>connectionCount</code> from the entire definition (all groups if present), and returns <code>groupCount</code> when <code>tabGroups</code> is present.</p>
+<h3 id="workspaceeditor-changes-srccomponentsworkspaceeditorworkspaceeditortsx">WorkspaceEditor Changes (<code>src/components/WorkspaceEditor/WorkspaceEditor.tsx</code>)</h3>
+<p>State additions:</p>
+<pre><code class="language-typescript">const [tabGroupDefs, setTabGroupDefs] = useState&lt;WorkspaceTabGroupDef[] | null&gt;(null);
+// null → single-group mode (legacy UI); non-null → multi-group mode
+const [activeGroupIndex, setActiveGroupIndex] = useState(0);
+</code></pre>
+<p>Loading: if <code>ws.tabGroups</code> is present, set <code>tabGroupDefs = ws.tabGroups</code>; otherwise keep <code>tabGroupDefs = null</code> and use the existing <code>layout</code> state.</p>
+<p>Saving: if <code>tabGroupDefs</code> is non-null, produce <code>definition</code> with <code>tabGroups</code> and no <code>layout</code>; otherwise produce <code>definition</code> with <code>layout</code> as today.</p>
+<p>New sub-component <code>WorkspaceGroupStrip</code> (inline or extracted):</p>
+<ul>
+<li>Renders the group chips with add/rename/close controls.</li>
+<li>Props: <code>groups</code>, <code>activeIndex</code>, <code>onSelect</code>, <code>onAdd</code>, <code>onRename</code>, <code>onClose</code>, <code>onRecolor</code>.</li>
+</ul>
+<h3 id="rust-backend-minimal-changes">Rust Backend (minimal changes)</h3>
+<p>The workspace storage layer (<code>src-tauri/src/</code> and Rust serialization) already stores workspace definitions as opaque JSON. No Rust changes are needed to support the new fields — the additional fields will round-trip transparently as long as the TypeScript serialization is correct.</p>
+<p>The only Rust change needed is in <code>WorkspaceSummary</code> computation: if <code>tabGroups</code> is present in the stored JSON, sum tabs across all groups for <code>connectionCount</code>, and populate a new <code>groupCount</code> field.</p>
+<h3 id="test-plan-additions">Test Plan Additions</h3>
+<ul>
+<li>Unit tests for <code>buildTabGroupsFromWorkspace</code> (resolves connections, produces correct TabGroup shape)</li>
+<li>Unit tests for <code>captureAllTabGroups</code> (captures live + inactive groups correctly)</li>
+<li>Unit tests for <code>countWorkspaceTabsTotal</code> (legacy + multi-group)</li>
+<li>Unit test for <code>launchWorkspace</code> with multi-group definition (store state correct)</li>
+<li>Unit test for <code>saveCurrentAsWorkspace</code> with scope=all and scope=active</li>
+<li>WorkspaceEditor render test: group strip visible when tabGroupDefs.length &gt; 1</li>
+<li>WorkspaceEditor render test: group strip hidden when single group</li>
+<li>Backward compat test: launching a legacy workspace file (layout only) still works</li>
+</ul>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

@@ -2,7 +2,7 @@
  * termiHub single-file concept stylesheet.
  *
  * Document-level styling for the one-HTML-per-concept form (see
- * docs/concepts/implemented/ai-driven-concept-workflow.md). Loaded ALONGSIDE
+ * docs/concepts/implemented/ai-driven-concept-workflow.html). Loaded ALONGSIDE
  * mockup.css: mockup.css provides the app-chrome kit + design tokens (:root
  * vars) reused here; concept.css provides the surrounding document layout
  * (prose, headings, tables, diagram cards, table of contents).
@@ -285,4 +285,28 @@ pre.mermaid svg {
 .concept h2:hover .anchor,
 .concept h3:hover .anchor {
   opacity: 1;
+}
+
+/* ── Code blocks (non-mermaid <pre>) ──────────────────────────────────── */
+
+.concept pre:not(.mermaid) {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin: 0 0 16px;
+  overflow-x: auto;
+}
+
+/* Inside a code block, reset the inline-code chip styling. */
+.concept pre:not(.mermaid) code {
+  background: none;
+  color: var(--text-primary);
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  white-space: pre;
 }
