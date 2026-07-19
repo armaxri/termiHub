@@ -223,6 +223,15 @@ pub struct AppSettings {
     /// `#[serde(default)]` keeps older settings files forward-compatible.
     #[serde(default)]
     pub shell_integration: ShellIntegrationSettings,
+    /// Terminal output syntax-highlighting configuration (epic #1696).
+    ///
+    /// The full config shape is owned by the frontend
+    /// (`src/types/syntaxHighlighting.ts` / `SyntaxHighlightingConfig`); the
+    /// backend only persists it verbatim, so it is stored as an opaque JSON
+    /// value here rather than mirrored as a typed struct. Absent → the frontend
+    /// resolves the built-in defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub syntax_highlighting: Option<serde_json::Value>,
 }
 
 impl Default for AppSettings {
@@ -264,6 +273,7 @@ impl Default for AppSettings {
             updates: UpdateSettings::default(),
             serial_port_scan_prefixes: None,
             shell_integration: ShellIntegrationSettings::default(),
+            syntax_highlighting: None,
         }
     }
 }
@@ -853,6 +863,40 @@ mod tests {
         let settings = AppSettings::default();
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("experimentalFeaturesEnabled"));
+    }
+
+    #[test]
+    fn syntax_highlighting_round_trip_preserves_opaque_config() {
+        let config = serde_json::json!({
+            "enabled": true,
+            "builtinRules": { "error-keywords": true, "quoted-strings": false },
+            "customRules": [
+                {
+                    "id": "c1",
+                    "name": "Custom",
+                    "pattern": "foo",
+                    "style": { "color": "#123456" },
+                    "enabled": true,
+                    "priority": 5,
+                    "builtin": false
+                }
+            ]
+        });
+        let settings = AppSettings {
+            syntax_highlighting: Some(config.clone()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("syntaxHighlighting"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.syntax_highlighting, Some(config));
+    }
+
+    #[test]
+    fn syntax_highlighting_none_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("syntaxHighlighting"));
     }
 
     #[test]

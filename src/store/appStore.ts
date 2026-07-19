@@ -647,6 +647,17 @@ interface AppState {
   setTerminalSearchVisible: (tabId: string, visible: boolean) => void;
   toggleTerminalSearch: (tabId: string) => void;
 
+  /**
+   * Per-session temporary syntax-highlighting toggle (runtime-only, never
+   * persisted). Keyed by session id. Set by the status-bar quick toggle
+   * (epic #1696, child #1704) to override the resolved config for a single
+   * live session without touching saved settings. A missing entry means
+   * "follow the resolved config"; `setSessionHighlighting(id, undefined)`
+   * clears the override back to that state.
+   */
+  sessionHighlighting: Record<string, boolean>;
+  setSessionHighlighting: (sessionId: string, enabled: boolean | undefined) => void;
+
   // Large paste confirmation
   largePasteDialog: { open: boolean; charCount: number; onConfirm: (() => void) | null };
   showLargePasteDialog: (charCount: number, onConfirm: () => void) => void;
@@ -3195,6 +3206,15 @@ export const useAppStore = create<AppState>((set, get) => {
           [tabId]: !s.terminalSearchVisible[tabId],
         },
       })),
+
+    // Per-session syntax-highlighting toggle (runtime-only, never persisted)
+    sessionHighlighting: {},
+    setSessionHighlighting: (sessionId, enabled) =>
+      set((s) =>
+        enabled === undefined
+          ? { sessionHighlighting: omitKey(s.sessionHighlighting, sessionId) }
+          : { sessionHighlighting: { ...s.sessionHighlighting, [sessionId]: enabled } }
+      ),
 
     // Large paste confirmation
     largePasteDialog: { open: false, charCount: 0, onConfirm: null },
