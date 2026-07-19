@@ -142,6 +142,26 @@ export interface SshConfigImportHost {
   proxyJump: JumpHostConfig[];
 }
 
+/**
+ * A whole SSH connection resolved from a `~/.ssh/config` `Host` stanza (#1722),
+ * offered to the connection editor to pre-populate a new SSH connection.
+ *
+ * Unlike {@link SshConfigImportHost} (jump-host chain only), this is the target
+ * connection itself: `name` is the OpenSSH `Host` alias, `host`/`port`/`username`
+ * are the resolved `Hostname`/`Port`/`User`, and `authMethod`/`keyPath` mirror
+ * the jump-host import's mapping (`IdentityFile` → `"key"`, else `"agent"`).
+ * `proxyJump` is the target's own resolved hop chain, empty for a direct host.
+ */
+export interface SshConfigImportConnection {
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: string;
+  keyPath?: string;
+  proxyJump: JumpHostConfig[];
+}
+
 export type ConnectionTreeItem =
   | { type: "folder"; folder: ConnectionFolder }
   | { type: "connection"; connection: SavedConnection };
