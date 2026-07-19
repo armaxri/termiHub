@@ -3,15 +3,15 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { defaultHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { createCustomRule } from "@/services/customHighlightRules";
-import type { HighlightRule } from "@/types/syntaxHighlighting";
+import type { HighlightRule, SyntaxHighlightingConfig } from "@/types/syntaxHighlighting";
 import { CustomRuleEditor } from "./CustomRuleEditor";
 
 let container: HTMLDivElement;
 let root: Root;
 
-function render(props: Partial<React.ComponentProps<typeof CustomRuleEditor>> = {}) {
-  const onSave = props.onSave ?? vi.fn();
-  const onCancel = props.onCancel ?? vi.fn();
+function render(props: { rule?: HighlightRule; config?: SyntaxHighlightingConfig } = {}) {
+  const onSave = vi.fn();
+  const onCancel = vi.fn();
   act(() => {
     root.render(
       <CustomRuleEditor
