@@ -171,10 +171,12 @@ async fn connect_session(
 
     let connector_config = build_connector_config(cfg)?;
     // Register the CLIPRDR static channel (MS-RDPECLIP) so the session can bridge
-    // text clipboard both ways (#1756). The backend translates server callbacks
-    // into `ClipboardEvent`s the driver drains once it owns the active stage
-    // again; the receiver rides back out with the connection result.
-    let (clipboard_backend, clipboard_rx) = SidecarClipboardBackend::new();
+    // text clipboard both ways (#1756) and, when opted in, download files the
+    // remote copies into the shared folder (#1765). The backend translates server
+    // callbacks into `ClipboardEvent`s the driver drains once it owns the active
+    // stage again; the receiver rides back out with the connection result.
+    let (clipboard_backend, clipboard_rx) =
+        SidecarClipboardBackend::new(cfg.clipboard_download_dir());
     // Register the Display Control Virtual Channel (MS-RDPEDISP) so the session
     // can request dynamic resolution changes (#1755). It rides the drdynvc
     // static channel; the capabilities callback needs to send nothing, the
@@ -871,6 +873,21 @@ where
                 write_message(ipc_out, &SidecarMessage::Clipboard(text))
                     .await
                     .context("failed to forward remote clipboard to host")?;
+            }
+            ClipboardEvent::RequestFileContents(request) => {
+                // Ask the server for a size or byte range of a file the remote
+                // copied; the backend writes the bytes into the shared folder
+                // when the matching response arrives (#1765).
+                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
+                    Some(cliprdr) => cliprdr
+                        .request_file_contents(request)
+                        .context("cliprdr request_file_contents failed")?,
+                    None => {
+                        warn!("cliprdr channel unavailable; cannot request file contents");
+                        continue;
+                    }
+                };
+                write_cliprdr_messages(stage, transport, messages).await?;
             }
         }
     }
