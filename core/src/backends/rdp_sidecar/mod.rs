@@ -31,12 +31,14 @@
 //!
 //! Connect (TLS/NLA) → decode frames → keyboard/pointer/wheel input → server
 //! cursor → Display-Control dynamic resize (#1755) → CLIPRDR text clipboard both
-//! ways (#1756) → RDPDR drive redirection of one opted-in folder (#1757). Audio
-//! playback (rdpsnd) and CLIPRDR file transfer are sequenced follow-ups of
-//! #1757. Drive redirection is configured purely through [`config::RdpConfig`]
-//! (`driveRedirection` / `sharedFolderPath` / `driveName`), which flows to the
-//! sidecar in `HostMessage::Connect`, so this adapter needs no per-feature
-//! wiring.
+//! ways (#1756) → RDPDR drive redirection of one opted-in folder (#1757) →
+//! rdpsnd audio output played on the host (#1764, macOS/Windows). CLIPRDR file
+//! transfer remains a sequenced follow-up. Every one of these is configured
+//! purely through [`config::RdpConfig`] (`driveRedirection` / `sharedFolderPath`
+//! / `driveName` / `audioRedirection`), which flows to the sidecar in
+//! `HostMessage::Connect`, so this adapter needs no per-feature wiring — audio in
+//! particular is decoded **and played** inside the sidecar process, never
+//! crossing this IPC boundary.
 
 pub mod config;
 pub mod protocol;
