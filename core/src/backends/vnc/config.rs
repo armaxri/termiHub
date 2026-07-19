@@ -308,6 +308,123 @@ mod tests {
         assert!(toggle.visible_when.is_none());
     }
 
+    // --- SSH-tunnel key/agent auth (#1714) ---
+
+    #[test]
+    fn tunnel_defaults_to_password_auth() {
+        let cfg = VncConfig::default();
+        assert_eq!(cfg.ssh_auth_method(), "password");
+        let ssh = cfg.tunnel_ssh_config();
+        assert_eq!(ssh.auth_method, "password");
+        assert!(ssh.key_path.is_none());
+    }
+
+    #[test]
+    fn empty_auth_method_falls_back_to_password() {
+        // Connections saved before key/agent auth existed carry no method.
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({
+            "host": "h", "useSshTunnel": true, "sshAuthMethod": ""
+        }))
+        .unwrap();
+        assert_eq!(cfg.ssh_auth_method(), "password");
+        assert_eq!(cfg.tunnel_ssh_config().auth_method, "password");
+    }
+
+    #[test]
+    fn tunnel_key_auth_maps_key_path_and_passphrase() {
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "useSshTunnel": true,
+            "sshHost": "bastion",
+            "sshUsername": "admin",
+            "sshAuthMethod": "key",
+            "sshKeyPath": "~/.ssh/id_ed25519",
+            "sshPassword": "secret-passphrase"
+        }))
+        .unwrap();
+        let ssh = cfg.tunnel_ssh_config();
+        assert_eq!(ssh.auth_method, "key");
+        assert_eq!(ssh.host, "bastion");
+        assert_eq!(ssh.username, "admin");
+        assert_eq!(ssh.key_path.as_deref(), Some("~/.ssh/id_ed25519"));
+        // The password field carries the key passphrase for "key" auth.
+        assert_eq!(ssh.password.as_deref(), Some("secret-passphrase"));
+    }
+
+    #[test]
+    fn tunnel_agent_auth_needs_no_key_or_password() {
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({
+            "host": "h",
+            "useSshTunnel": true,
+            "sshAuthMethod": "agent"
+        }))
+        .unwrap();
+        let ssh = cfg.tunnel_ssh_config();
+        assert_eq!(ssh.auth_method, "agent");
+        assert!(ssh.key_path.is_none());
+        assert!(ssh.password.is_none());
+    }
+
+    #[test]
+    fn tunnel_empty_password_and_key_path_map_to_none() {
+        // Empty strings must become None so an unencrypted key isn't treated as
+        // passphrase-protected and an empty password isn't sent.
+        let cfg = VncConfig {
+            use_ssh_tunnel: true,
+            ssh_auth_method: "key".to_string(),
+            ssh_key_path: Some("  ".to_string()),
+            ssh_password: String::new(),
+            ..VncConfig::default()
+        };
+        let ssh = cfg.tunnel_ssh_config();
+        assert!(ssh.password.is_none());
+        assert!(ssh.key_path.is_none());
+    }
+
+    #[test]
+    fn schema_exposes_ssh_auth_method_and_key_path() {
+        let schema = vnc_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "sshTunnel").unwrap();
+        let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
+        assert!(keys.contains(&"sshAuthMethod"));
+        assert!(keys.contains(&"sshKeyPath"));
+
+        // Auth method is a select over password/key/agent, defaulting to password.
+        let method = group
+            .fields
+            .iter()
+            .find(|f| f.key == "sshAuthMethod")
+            .unwrap();
+        assert_eq!(method.default, Some(serde_json::json!("password")));
+        if let FieldType::Select { options } = &method.field_type {
+            let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+            assert_eq!(values, vec!["password", "key", "agent"]);
+        } else {
+            panic!("sshAuthMethod must be a select");
+        }
+        // The method select only appears once a tunnel is enabled.
+        let cond = method.visible_when.as_ref().unwrap();
+        assert_eq!(cond.field, "useSshTunnel");
+        assert_eq!(cond.equals, serde_json::json!(true));
+    }
+
+    #[test]
+    fn schema_key_path_is_file_picker_gated_on_key_auth() {
+        let schema = vnc_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "sshTunnel").unwrap();
+        let key_path = group.fields.iter().find(|f| f.key == "sshKeyPath").unwrap();
+        assert!(matches!(
+            key_path.field_type,
+            FieldType::FilePath {
+                kind: FilePathKind::File
+            }
+        ));
+        assert!(key_path.supports_tilde_expansion);
+        let cond = key_path.visible_when.as_ref().unwrap();
+        assert_eq!(cond.field, "sshAuthMethod");
+        assert_eq!(cond.equals, serde_json::json!("key"));
+    }
+
     #[test]
     fn schema_serializes() {
         // The whole schema must round-trip through serde for the IPC boundary.
