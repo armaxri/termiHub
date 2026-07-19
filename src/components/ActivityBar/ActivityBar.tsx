@@ -4,6 +4,7 @@ import {
   FolderOpen,
   ArrowLeftRight,
   LayoutGrid,
+  Clapperboard,
   Server,
   Settings,
   Download,
@@ -59,6 +60,7 @@ const REQUIRED_ITEMS: ActivityBarItemDef[] = [
 const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "files", icon: FolderOpen, label: "File Browser" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
+  { view: "macros", icon: Clapperboard, label: "Macros" },
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels", experimental: true },
   { view: "services", icon: Server, label: "Services", experimental: true },
   { view: "network-tools", icon: Stethoscope, label: "Network Tools", experimental: true },
