@@ -256,8 +256,7 @@ export function validateHighlightPattern(
   const { source, flags } = buildRuleSource(pattern, options);
 
   try {
-    // eslint-disable-next-line no-new
-    new RegExp(source, flags);
+    void new RegExp(source, flags);
   } catch (err) {
     return { valid: false, reason: `Invalid regular expression: ${describeError(err)}` };
   }

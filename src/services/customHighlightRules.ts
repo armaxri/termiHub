@@ -53,7 +53,10 @@ export function createCustomRule(
 }
 
 /** Appends a rule, returning a new array. */
-export function addCustomRule(rules: readonly HighlightRule[], rule: HighlightRule): HighlightRule[] {
+export function addCustomRule(
+  rules: readonly HighlightRule[],
+  rule: HighlightRule
+): HighlightRule[] {
   return [...rules, rule];
 }
 
