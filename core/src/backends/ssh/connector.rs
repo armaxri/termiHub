@@ -224,6 +224,29 @@ impl SshConnector for RusshSshConnector {
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("Channel open failed: {e}")))?;
 
+        // SSH agent forwarding (#1699): request it on the session channel to the
+        // final target so the local agent's keys reach the host — and, since this
+        // channel rides the jump-host tunnel, end to end through the chain. The
+        // server later opens an `auth-agent@openssh.com` channel that the handler
+        // bridges to the local agent. Skipped (with a clear log) when no agent is
+        // running, and best-effort (`want_reply=false`) so a server that does not
+        // support forwarding never fails the connection.
+        if config.forward_agent {
+            if super::agent_forward::local_agent_available().await {
+                match channel.agent_forward(false).await {
+                    Ok(()) => {
+                        tracing::debug!(host = %config.host, "requested SSH agent forwarding")
+                    }
+                    Err(e) => tracing::warn!("SSH agent forwarding request failed: {e}"),
+                }
+            } else {
+                tracing::debug!(
+                    host = %config.host,
+                    "forwardAgent is set but no local SSH agent is available; skipping"
+                );
+            }
+        }
+
         // User-specified environment variables (best-effort; many servers reject setenv).
         for (key, value) in &config.env {
             let _ = channel.set_env(false, key, value).await;

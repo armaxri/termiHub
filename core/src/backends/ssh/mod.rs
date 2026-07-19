@@ -4,6 +4,7 @@
 //! and file browsing (SFTP). This is the canonical SSH implementation,
 //! used by both the desktop and agent crates.
 
+mod agent_forward;
 pub mod auth;
 pub mod connector;
 pub mod exec;
@@ -185,6 +186,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         save_password: opt_bool("savePassword"),
         connect_timeout_secs: opt_u64("connectTimeoutSecs"),
         proxy_jump,
+        forward_agent: bool_field("forwardAgent", false),
     }
 }
 
@@ -1136,6 +1138,8 @@ mod tests {
         assert_eq!(config.username, "admin");
         assert_eq!(config.auth_method, "password");
         assert!(!config.enable_x11_forwarding);
+        // forwardAgent absent → off, so unmodified saved connections behave as before (#1699).
+        assert!(!config.forward_agent);
         assert!(config.env.is_empty());
     }
 
@@ -1149,6 +1153,7 @@ mod tests {
             "keyPath": "~/.ssh/id_ed25519",
             "shell": "/bin/zsh",
             "enableX11Forwarding": true,
+            "forwardAgent": true,
             "savePassword": true,
             "env": [
                 {"key": "LANG", "value": "en_US.UTF-8"},
@@ -1163,6 +1168,7 @@ mod tests {
         assert_eq!(config.key_path.as_deref(), Some("~/.ssh/id_ed25519"));
         assert_eq!(config.shell.as_deref(), Some("/bin/zsh"));
         assert!(config.enable_x11_forwarding);
+        assert!(config.forward_agent);
         assert_eq!(config.save_password, Some(true));
         assert_eq!(config.env.len(), 2);
         assert_eq!(config.env.get("LANG").unwrap(), "en_US.UTF-8");

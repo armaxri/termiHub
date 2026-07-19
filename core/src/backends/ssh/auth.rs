@@ -127,7 +127,10 @@ where
         ..Default::default()
     });
 
-    let (handler, registry, liveness) = TermiHubHandler::new();
+    // Enable agent-channel bridging on this session only when the connection
+    // opted into forwarding (#1699). Jump hops build a minimal config with the
+    // default (`false`), so a hop never bridges the agent.
+    let (handler, registry, liveness) = TermiHubHandler::new_with_forwarding(config.forward_agent);
 
     let mut session = russh::client::connect_stream(russh_config, stream, handler)
         .await
