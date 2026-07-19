@@ -15,7 +15,7 @@
  * The matching logic (`compileRules`, `findMatches`) is exported as pure
  * functions so it can be tested without a terminal instance.
  *
- * See `docs/concepts/partial/terminal-syntax-highlighting.md`.
+ * See `docs/concepts/partial/terminal-syntax-highlighting.html`.
  */
 
 import type { IBufferCell, IBufferLine, IDisposable, Terminal } from "@xterm/xterm";

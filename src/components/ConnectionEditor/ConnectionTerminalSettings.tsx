@@ -1,8 +1,19 @@
+import { useState } from "react";
+import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
-import type { ConnectionHighlightingOverride } from "@/types/syntaxHighlighting";
+import type { ConnectionHighlightingOverride, HighlightRule } from "@/types/syntaxHighlighting";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
-import { Input, NumberInput, Select, Toggle } from "@/components/ui";
+import { Button, Checkbox, Input, NumberInput, Select, Toggle } from "@/components/ui";
+import { CustomRuleEditor } from "@/components/Settings/CustomRuleEditor";
+import {
+  addCustomRule,
+  moveCustomRule,
+  removeCustomRule,
+  updateCustomRule,
+} from "@/services/customHighlightRules";
+import { defaultHighlightingConfig } from "@/services/syntaxHighlightingConfig";
+import "./ConnectionAdditionalRules.css";
 
 interface ConnectionTerminalSettingsProps {
   options: TerminalOptions;
@@ -35,6 +46,168 @@ export function applyHighlightingOverride(
     return { ...options, syntaxHighlighting: undefined };
   }
   return { ...options, syntaxHighlighting: { override, additionalRules } };
+}
+
+/**
+ * Compute the next {@link TerminalOptions} when the connection's list of
+ * additional highlight rules changes (epic #1696, child #1744).
+ *
+ * The override is preserved; only the rules change. Clearing the last rule
+ * while the override is still "global" collapses the whole `syntaxHighlighting`
+ * object back to `undefined` (mirroring {@link applyHighlightingOverride}) so a
+ * connection with no override and no extra rules does not persist an empty
+ * terminal override.
+ */
+export function applyAdditionalRules(
+  options: TerminalOptions,
+  additionalRules: HighlightRule[]
+): TerminalOptions {
+  const override = options.syntaxHighlighting?.override ?? "global";
+  if (override === "global" && additionalRules.length === 0) {
+    return { ...options, syntaxHighlighting: undefined };
+  }
+  return { ...options, syntaxHighlighting: { override, additionalRules } };
+}
+
+/** Which per-connection additional rule the inline editor is open for, if any. */
+type AdditionalRuleEditorState = { mode: "new" } | { mode: "edit"; id: string } | null;
+
+/**
+ * Per-connection "additional highlight rules" editor (#1744).
+ *
+ * Reuses the global {@link CustomRuleEditor} (regex-safety validated) and the
+ * pure custom-rule helpers to add / edit / delete / reorder rules stored in
+ * `TerminalOptions.syntaxHighlighting.additionalRules`. These rules are
+ * appended after the global rules by `resolveHighlightingConfig` — they can add
+ * patterns for this connection but never remove global rules.
+ */
+function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSettingsProps) {
+  const globalSettings = useAppStore((s) => s.settings);
+  const [editor, setEditor] = useState<AdditionalRuleEditorState>(null);
+
+  const rules = options.syntaxHighlighting?.additionalRules ?? [];
+  const globalConfig = globalSettings.syntaxHighlighting ?? defaultHighlightingConfig();
+
+  const setRules = (next: HighlightRule[]) => onChange(applyAdditionalRules(options, next));
+
+  const handleSave = (rule: HighlightRule) => {
+    const exists = rules.some((r) => r.id === rule.id);
+    setRules(exists ? updateCustomRule(rules, rule) : addCustomRule(rules, rule));
+    setEditor(null);
+  };
+
+  const editingRule = editor?.mode === "edit" ? rules.find((r) => r.id === editor.id) : undefined;
+
+  return (
+    <div className="settings-form__field">
+      <div className="connection-additional-rules__header">
+        <span className="settings-form__label">Additional rules for this connection</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Plus size={14} />}
+          onClick={() => setEditor({ mode: "new" })}
+          disabled={editor !== null}
+          data-testid="connection-additional-rule-add"
+        >
+          Add Rule
+        </Button>
+      </div>
+      <span className="settings-form__hint">
+        Extra highlight rules applied only to this connection, after the global rules. They can add
+        patterns but never remove global rules.
+      </span>
+
+      {rules.length === 0 && editor?.mode !== "new" ? (
+        <span
+          className="connection-additional-rules__empty"
+          data-testid="connection-additional-rules-empty"
+        >
+          No connection-specific rules yet. Add one to highlight patterns for this connection only.
+        </span>
+      ) : null}
+
+      {rules.map((rule, index) => {
+        const isEditing = editor?.mode === "edit" && editor.id === rule.id;
+        if (isEditing) return null;
+        return (
+          <div
+            className="connection-additional-rule"
+            key={rule.id}
+            data-testid={`connection-additional-rule-${rule.id}`}
+          >
+            <Checkbox
+              checked={rule.enabled}
+              onCheckedChange={(checked) =>
+                setRules(updateCustomRule(rules, { ...rule, enabled: checked }))
+              }
+              disabled={editor !== null}
+              aria-label={`Enable ${rule.name}`}
+              data-testid={`connection-additional-rule-enabled-${rule.id}`}
+            />
+            <span
+              className="connection-additional-rule__swatch"
+              style={{ backgroundColor: rule.style.color }}
+              aria-hidden="true"
+            />
+            <span className="connection-additional-rule__name">{rule.name}</span>
+            <code className="connection-additional-rule__pattern">{rule.pattern}</code>
+            <div className="connection-additional-rule__actions">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                icon={<ChevronUp size={14} />}
+                aria-label={`Move ${rule.name} up`}
+                disabled={editor !== null || index === 0}
+                onClick={() => setRules(moveCustomRule(rules, index, index - 1))}
+                data-testid={`connection-additional-rule-up-${rule.id}`}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                icon={<ChevronDown size={14} />}
+                aria-label={`Move ${rule.name} down`}
+                disabled={editor !== null || index === rules.length - 1}
+                onClick={() => setRules(moveCustomRule(rules, index, index + 1))}
+                data-testid={`connection-additional-rule-down-${rule.id}`}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                icon={<Pencil size={14} />}
+                aria-label={`Edit ${rule.name}`}
+                disabled={editor !== null}
+                onClick={() => setEditor({ mode: "edit", id: rule.id })}
+                data-testid={`connection-additional-rule-edit-${rule.id}`}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                icon={<Trash2 size={14} />}
+                aria-label={`Delete ${rule.name}`}
+                disabled={editor !== null}
+                onClick={() => setRules(removeCustomRule(rules, rule.id))}
+                data-testid={`connection-additional-rule-delete-${rule.id}`}
+              />
+            </div>
+          </div>
+        );
+      })}
+
+      {editor !== null ? (
+        <CustomRuleEditor
+          rule={editingRule}
+          config={globalConfig}
+          onSave={handleSave}
+          onCancel={() => setEditor(null)}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerminalSettingsProps) {
@@ -205,6 +378,8 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           connection regardless of the global switch.
         </span>
       </label>
+
+      <ConnectionAdditionalRules options={options} onChange={onChange} />
     </div>
   );
 }

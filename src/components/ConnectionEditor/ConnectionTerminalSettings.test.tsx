@@ -5,7 +5,9 @@ import { useAppStore } from "@/store/appStore";
 import {
   ConnectionTerminalSettings,
   applyHighlightingOverride,
+  applyAdditionalRules,
 } from "./ConnectionTerminalSettings";
+import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import type { TerminalOptions } from "@/types/terminal";
 import type { HighlightRule } from "@/types/syntaxHighlighting";
 
@@ -39,10 +41,14 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-vi.mock("@/themes", () => ({
-  applyTheme: vi.fn(),
-  onThemeChange: vi.fn(() => vi.fn()),
-}));
+vi.mock("@/themes", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/themes")>();
+  return {
+    ...actual,
+    applyTheme: vi.fn(),
+    onThemeChange: vi.fn(() => vi.fn()),
+  };
+});
 
 const emptyOptions: TerminalOptions = {};
 
@@ -309,5 +315,141 @@ describe("applyHighlightingOverride", () => {
       "global"
     );
     expect(next.syntaxHighlighting).toEqual({ override: "global", additionalRules: [rule] });
+  });
+});
+
+describe("applyAdditionalRules", () => {
+  const rule: HighlightRule = {
+    id: "custom-1",
+    name: "custom",
+    pattern: "foo",
+    style: { color: "#ff0000" },
+    enabled: true,
+    priority: 5,
+    builtin: false,
+  };
+
+  it("stores the rules under the current (default global) override", () => {
+    const next = applyAdditionalRules({ fontSize: 14 }, [rule]);
+    expect(next.syntaxHighlighting).toEqual({ override: "global", additionalRules: [rule] });
+    expect(next.fontSize).toBe(14);
+  });
+
+  it("preserves a non-global override when the rules change", () => {
+    const next = applyAdditionalRules(
+      { syntaxHighlighting: { override: "always-on", additionalRules: [] } },
+      [rule]
+    );
+    expect(next.syntaxHighlighting).toEqual({ override: "always-on", additionalRules: [rule] });
+  });
+
+  it("clears the whole override object when the last rule is removed under 'global'", () => {
+    const next = applyAdditionalRules(
+      { syntaxHighlighting: { override: "global", additionalRules: [rule] } },
+      []
+    );
+    expect(next.syntaxHighlighting).toBeUndefined();
+  });
+
+  it("keeps a non-global override even with no additional rules", () => {
+    const next = applyAdditionalRules(
+      { syntaxHighlighting: { override: "always-off", additionalRules: [rule] } },
+      []
+    );
+    expect(next.syntaxHighlighting).toEqual({ override: "always-off", additionalRules: [] });
+  });
+
+  it("produces a structure that resolves appended after the global rules", () => {
+    const globalRule: HighlightRule = {
+      id: "g-1",
+      name: "global",
+      pattern: "bar",
+      style: { color: "#00ff00" },
+      enabled: true,
+      priority: 1,
+      builtin: false,
+    };
+    const options = applyAdditionalRules({}, [rule]);
+    const resolved = resolveHighlightingConfig(
+      { enabled: true, builtinRules: {}, customRules: [globalRule] },
+      options.syntaxHighlighting
+    );
+    expect(resolved.customRules.map((r) => r.id)).toEqual(["g-1", "custom-1"]);
+  });
+});
+
+describe("ConnectionTerminalSettings — additional rules editor", () => {
+  const rule: HighlightRule = {
+    id: "custom-99",
+    name: "todos",
+    pattern: "TODO",
+    style: { color: "#ffaa00" },
+    enabled: true,
+    priority: 1,
+    builtin: false,
+  };
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  const byTestId = (id: string) =>
+    container.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
+
+  const click = (el: Element | null) => act(() => (el as HTMLElement).click());
+
+  it("renders the additional-rules section with an add button and empty state", () => {
+    renderWith(emptyOptions);
+    expect(byTestId("connection-additional-rule-add")).not.toBeNull();
+    expect(byTestId("connection-additional-rules-empty")).not.toBeNull();
+  });
+
+  it("lists an existing connection rule", () => {
+    renderWith({
+      ...emptyOptions,
+      syntaxHighlighting: { override: "global", additionalRules: [rule] },
+    });
+    expect(byTestId(`connection-additional-rule-${rule.id}`)).not.toBeNull();
+    expect(byTestId("connection-additional-rules-empty")).toBeNull();
+  });
+
+  it("adds a connection rule through the reused CustomRuleEditor", () => {
+    const onChange = renderWith(emptyOptions);
+    click(byTestId("connection-additional-rule-add"));
+
+    setValue(byTestId("custom-rule-name") as HTMLInputElement, "My Rule");
+    setValue(byTestId("custom-rule-pattern") as HTMLInputElement, "WARN");
+    click(byTestId("custom-rule-save"));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        syntaxHighlighting: expect.objectContaining({
+          override: "global",
+          additionalRules: expect.arrayContaining([
+            expect.objectContaining({ name: "My Rule", pattern: "WARN" }),
+          ]),
+        }),
+      })
+    );
+  });
+
+  it("removes a connection rule, clearing the override object when it was the last one", () => {
+    const onChange = renderWith({
+      ...emptyOptions,
+      syntaxHighlighting: { override: "global", additionalRules: [rule] },
+    });
+    click(byTestId(`connection-additional-rule-delete-${rule.id}`));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ syntaxHighlighting: undefined })
+    );
   });
 });
