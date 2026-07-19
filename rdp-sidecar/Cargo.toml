@@ -32,6 +32,10 @@ ironrdp = { version = "0.17", default-features = false, features = [
     # `displaycontrol` the monitor-layout resize processor that rides it.
     "dvc",
     "displaycontrol",
+    # Clipboard redirection static channel (MS-RDPECLIP) for bidirectional
+    # text clipboard bridging (#1756): `cliprdr` provides the CLIPRDR SVC
+    # processor plus its `CliprdrBackend` integration seam.
+    "cliprdr",
 ] }
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 ironrdp-tls = { version = "0.2", default-features = false, features = [

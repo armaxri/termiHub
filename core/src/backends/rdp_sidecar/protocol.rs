@@ -68,7 +68,8 @@ pub enum HostMessage {
         /// Requested height in pixels.
         height: u16,
     },
-    /// Push local clipboard text to the remote (CLIPRDR is a follow-up).
+    /// Push local clipboard text to the remote over the sidecar's CLIPRDR
+    /// channel (#1756).
     SetClipboard(String),
     /// Ask the sidecar to tear the session down and exit.
     Disconnect,
@@ -84,7 +85,7 @@ pub enum SidecarMessage {
     Frame(FrameUpdate),
     /// A cursor position / shape update.
     Cursor(CursorUpdate),
-    /// Remote clipboard text (CLIPRDR is a follow-up; unused for now).
+    /// Remote clipboard text, decoded from the sidecar's CLIPRDR channel (#1756).
     Clipboard(String),
     /// A fatal error; the sidecar exits after sending it.
     Error(String),

@@ -14,6 +14,7 @@
 //! active stage, `select!`-ing between server PDUs and host input events.
 
 use anyhow::{anyhow, Context, Result};
+use ironrdp::cliprdr::{Client as CliprdrRole, CliprdrClient, CliprdrSvcMessages};
 use ironrdp::connector::connection_activation::{
     ConnectionActivationSequence, ConnectionActivationState,
 };
@@ -46,6 +47,9 @@ use termihub_core::connection::{
     CursorShape, CursorUpdate, DirtyRect, FrameUpdate, GraphicalState, InputEvent,
 };
 
+use crate::clipboard::{
+    build_format_data_response, local_text_formats, ClipboardEvent, SidecarClipboardBackend,
+};
 use crate::input;
 
 /// The framed RDP transport after the TLS upgrade.
@@ -133,12 +137,18 @@ pub fn is_auth_error(msg: &str) -> bool {
 
 /// Run the IronRDP connect sequence to an active session: TCP → X.224 → TLS →
 /// CredSSP/NLA → capability exchange. Returns the negotiated result, the framed
-/// transport for the driver to take over, and the connector [`Config`] (needed
+/// transport for the driver to take over, the connector [`Config`] (needed
 /// verbatim to drive the Deactivation-Reactivation Sequence on dynamic resize,
-/// #1755).
+/// #1755), and the receiver on which the registered CLIPRDR backend surfaces
+/// clipboard events for the driver (#1756).
 async fn connect_session(
     cfg: &RdpConfig,
-) -> Result<(ConnectionResult, RdpFramed, ConnectorConfig)> {
+) -> Result<(
+    ConnectionResult,
+    RdpFramed,
+    ConnectorConfig,
+    std::sync::mpsc::Receiver<ClipboardEvent>,
+)> {
     let host = cfg.host.clone();
     let port = cfg.effective_port();
 
@@ -148,11 +158,17 @@ async fn connect_session(
     let client_addr = tcp.local_addr().context("RDP local address failed")?;
 
     let connector_config = build_connector_config(cfg)?;
+    // Register the CLIPRDR static channel (MS-RDPECLIP) so the session can bridge
+    // text clipboard both ways (#1756). The backend translates server callbacks
+    // into `ClipboardEvent`s the driver drains once it owns the active stage
+    // again; the receiver rides back out with the connection result.
+    let (clipboard_backend, clipboard_rx) = SidecarClipboardBackend::new();
     // Register the Display Control Virtual Channel (MS-RDPEDISP) so the session
     // can request dynamic resolution changes (#1755). It rides the drdynvc
     // static channel; the capabilities callback needs to send nothing, the
     // channel just has to be ready before we encode a resize.
     let mut connector = ClientConnector::new(connector_config.clone(), client_addr)
+        .with_static_channel(CliprdrClient::new(Box::new(clipboard_backend)))
         .with_static_channel(
             DrdynvcClient::new()
                 .with_dynamic_channel(DisplayControlClient::new(|_caps| Ok(Vec::new()))),
@@ -192,7 +208,7 @@ async fn connect_session(
     .await
     .context("RDP CredSSP / capability exchange failed")?;
 
-    Ok((result, framed, connector_config))
+    Ok((result, framed, connector_config, clipboard_rx))
 }
 
 /// Crop the tightly-packed RGBA pixels of an inclusive rectangle out of the
@@ -391,7 +407,7 @@ where
     .await
     .context("failed to write state")?;
 
-    let (result, framed, connector_config) = match connect_session(&cfg).await {
+    let (result, framed, connector_config, clipboard_rx) = match connect_session(&cfg).await {
         Ok(v) => v,
         Err(e) => {
             let state = if is_auth_error(&format!("{e:#}")) {
@@ -412,6 +428,7 @@ where
         result,
         framed,
         connector_config,
+        clipboard_rx,
         cfg.view_only,
         ipc_in,
         ipc_out,
@@ -432,6 +449,7 @@ async fn drive<R, W>(
     result: ConnectionResult,
     framed: RdpFramed,
     connector_config: ConnectorConfig,
+    clipboard_rx: std::sync::mpsc::Receiver<ClipboardEvent>,
     view_only: bool,
     ipc_in: &mut R,
     ipc_out: &mut W,
@@ -478,6 +496,10 @@ async fn drive<R, W>(
 
     let mut prev_buttons: u8 = 0;
     let mut cursor: (u32, u32) = (0, 0);
+    // The latest host clipboard text pushed via `SetClipboard`, served back to the
+    // server when it requests our clipboard data (#1756). `None` until the host
+    // copies something.
+    let mut local_clipboard: Option<String> = None;
 
     loop {
         tokio::select! {
@@ -533,8 +555,27 @@ async fn drive<R, W>(
                             ),
                         }
                     }
+                    HostMessage::SetClipboard(text) => {
+                        // The host copied text locally; mirror it to the remote
+                        // over CLIPRDR (#1756). View-only sessions never push the
+                        // local clipboard to the server.
+                        if view_only {
+                            continue;
+                        }
+                        local_clipboard = Some(text);
+                        if advertise_local_clipboard(
+                            &mut stage,
+                            &mut writer,
+                            local_clipboard.as_deref(),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
                     HostMessage::Disconnect => break,
-                    // Clipboard is a follow-up; a duplicate Connect is ignored.
+                    // A duplicate Connect is ignored.
                     other => debug!(?other, "rdp sidecar ignored host message"),
                 }
             }
@@ -553,6 +594,21 @@ async fn drive<R, W>(
                         break;
                     }
                 };
+                // Processing the PDU may have run CLIPRDR backend callbacks, which
+                // queue clipboard actions. Now that the active stage is ours again,
+                // drain them (#1756) before handling the graphics outputs.
+                if drain_clipboard_events(
+                    &clipboard_rx,
+                    &mut stage,
+                    &mut writer,
+                    ipc_out,
+                    local_clipboard.as_deref(),
+                )
+                .await
+                .is_err()
+                {
+                    break;
+                }
                 match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
                     Flow::Continue => {}
                     Flow::Stop => break,
@@ -659,6 +715,108 @@ async fn reactivate(
         }
     }
     Ok(framed)
+}
+
+/// Encode a batch of CLIPRDR channel messages against the active stage and write
+/// the resulting frame on the RDP transport. Building the messages needs a `&mut`
+/// borrow of the channel; encoding only needs `&self`, so callers build first,
+/// then hand the owned messages here (#1756).
+async fn write_cliprdr_messages<T>(
+    stage: &ActiveStage,
+    transport: &mut T,
+    messages: CliprdrSvcMessages<CliprdrRole>,
+) -> Result<()>
+where
+    T: FramedWrite,
+{
+    let frame = stage
+        .process_svc_processor_messages(messages)
+        .context("failed to encode cliprdr messages")?;
+    transport
+        .write_all(&frame)
+        .await
+        .context("failed to write cliprdr frame")?;
+    Ok(())
+}
+
+/// Advertise the host's current clipboard formats to the server (an empty list
+/// when the host clipboard is empty, which still drives the CLIPRDR init
+/// handshake to completion). Called both when the channel first requests a format
+/// list and whenever the host copies new text (#1756).
+async fn advertise_local_clipboard<T>(
+    stage: &mut ActiveStage,
+    transport: &mut T,
+    local_clipboard: Option<&str>,
+) -> Result<()>
+where
+    T: FramedWrite,
+{
+    let formats = local_text_formats(local_clipboard);
+    let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
+        Some(cliprdr) => cliprdr
+            .initiate_copy(&formats)
+            .context("cliprdr initiate_copy failed")?,
+        None => {
+            warn!("cliprdr channel unavailable; cannot advertise local clipboard");
+            return Ok(());
+        }
+    };
+    write_cliprdr_messages(stage, transport, messages).await
+}
+
+/// Drain the CLIPRDR backend's queued [`ClipboardEvent`]s now that the driver
+/// owns the active stage again, performing each channel action (advertise / fetch
+/// / provide) or forwarding received remote text to the host over IPC (#1756).
+async fn drain_clipboard_events<T, W>(
+    rx: &std::sync::mpsc::Receiver<ClipboardEvent>,
+    stage: &mut ActiveStage,
+    transport: &mut T,
+    ipc_out: &mut W,
+    local_clipboard: Option<&str>,
+) -> Result<()>
+where
+    T: FramedWrite,
+    W: AsyncWrite + Unpin,
+{
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            ClipboardEvent::AdvertiseLocal => {
+                advertise_local_clipboard(stage, transport, local_clipboard).await?;
+            }
+            ClipboardEvent::InitiatePaste(format) => {
+                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
+                    Some(cliprdr) => cliprdr
+                        .initiate_paste(format)
+                        .context("cliprdr initiate_paste failed")?,
+                    None => {
+                        warn!("cliprdr channel unavailable; cannot paste remote clipboard");
+                        continue;
+                    }
+                };
+                write_cliprdr_messages(stage, transport, messages).await?;
+            }
+            ClipboardEvent::ProvideData(format) => {
+                let response = build_format_data_response(format, local_clipboard);
+                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
+                    Some(cliprdr) => cliprdr
+                        .submit_format_data(response)
+                        .context("cliprdr submit_format_data failed")?,
+                    None => {
+                        warn!("cliprdr channel unavailable; cannot serve clipboard data");
+                        continue;
+                    }
+                };
+                write_cliprdr_messages(stage, transport, messages).await?;
+            }
+            ClipboardEvent::RemoteText(text) => {
+                debug!(len = text.len(), "forwarding remote clipboard text to host");
+                write_message(ipc_out, &SidecarMessage::Clipboard(text))
+                    .await
+                    .context("failed to forward remote clipboard to host")?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
