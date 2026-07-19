@@ -33,10 +33,7 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
-import {
-  resolveHighlightingConfig,
-  resolveActiveRules,
-} from "@/services/syntaxHighlightingConfig";
+import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
