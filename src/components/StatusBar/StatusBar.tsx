@@ -13,6 +13,7 @@ import {
   X,
   Check,
   ArrowUpCircle,
+  Monitor,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
@@ -103,6 +104,7 @@ export function StatusBar() {
       <div className="status-bar__section status-bar__section--left">
         <PortableBadge />
         <JumpHostStatus />
+        <RemoteDesktopStatus />
         <MonitoringStatus />
         <ServicesIndicator />
         <AgentUpdatesIndicator />
@@ -212,6 +214,52 @@ function JumpHostStatus() {
     <span className="status-bar__item" data-testid="status-bar-jump-host" title={`SSH: ${label}`}>
       <Route size={13} />
       SSH: {label}
+    </span>
+  );
+}
+
+/**
+ * Shared status-bar segment for the active graphical remote-desktop tab (#1709).
+ *
+ * Shows `<monitor> host:port · WxH · N-bit` while a `remote-desktop` tab is
+ * active: `host:port` and colour depth come from the connection config, and the
+ * live `WxH` resolution comes from the framebuffer surfaced to the store
+ * (`remoteDesktopResolutions`, keyed by session id). Renders nothing for any
+ * other active tab, so it disappears the moment a non-graphical tab is focused.
+ */
+function RemoteDesktopStatus() {
+  const activeTab = useAppStore((s) => {
+    const tab = getActiveTab(s);
+    return tab?.contentType === "remote-desktop" ? tab : null;
+  });
+  const sessionId = activeTab?.sessionId ?? null;
+  const resolution = useAppStore((s) =>
+    sessionId ? s.remoteDesktopResolutions[sessionId] : undefined
+  );
+
+  if (!activeTab) return null;
+
+  const cfg = activeTab.config.config as Record<string, unknown>;
+  const host = (cfg.host as string | undefined) || activeTab.title || "remote";
+  const port = cfg.port;
+  const hostPort = port !== undefined && port !== null && port !== "" ? `${host}:${port}` : host;
+  const colorDepth = cfg.colorDepth;
+
+  const parts = [hostPort];
+  if (resolution) parts.push(`${resolution.width}×${resolution.height}`);
+  if (colorDepth !== undefined && colorDepth !== null && colorDepth !== "") {
+    parts.push(`${colorDepth}-bit`);
+  }
+  const label = parts.join(" · ");
+
+  return (
+    <span
+      className="status-bar__item"
+      data-testid="status-bar-remote-desktop"
+      title={`Remote desktop: ${label}`}
+    >
+      <Monitor size={13} />
+      {label}
     </span>
   );
 }
