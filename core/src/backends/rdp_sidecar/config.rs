@@ -97,6 +97,12 @@ pub struct RdpConfig {
     /// User-visible name for the redirected drive; the remote shows it as
     /// "`<drive_name>` on termiHub". Defaults to `termiHub` when empty (#1757).
     pub drive_name: String,
+    /// Opt in to audio output redirection (rdpsnd): play the remote session's
+    /// audio on the local host. Off by default; the sidecar advertises PCM
+    /// formats and plays received `wave` PDUs through a host output device
+    /// (#1764). Audible playback is currently macOS/Windows only — the Linux
+    /// build omits the audio backend (see the #1764 Linux follow-up).
+    pub audio_redirection: bool,
 }
 
 impl Default for RdpConfig {
@@ -116,6 +122,7 @@ impl Default for RdpConfig {
             drive_redirection: false,
             shared_folder_path: String::new(),
             drive_name: String::new(),
+            audio_redirection: false,
         }
     }
 }
@@ -173,6 +180,11 @@ impl RdpConfig {
         }
         let canonical = std::fs::canonicalize(path).ok()?;
         canonical.is_dir().then_some(canonical)
+    }
+
+    /// Whether audio output redirection (rdpsnd playback) is opted in (#1764).
+    pub fn audio_enabled(&self) -> bool {
+        self.audio_redirection
     }
 
     /// The user-visible label for the redirected drive, defaulting to `termiHub`
@@ -322,6 +334,19 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                 placeholder: Some("termiHub".to_string()),
                 ..field("driveName", "Drive Name", FieldType::Text)
             },
+            SettingsField {
+                default: Some(serde_json::json!(false)),
+                description: Some(
+                    "Play the remote session's audio on this computer. Currently available on \
+                     macOS and Windows; Linux support is planned."
+                        .to_string(),
+                ),
+                ..field(
+                    "audioRedirection",
+                    "Redirect Audio Output",
+                    FieldType::Boolean,
+                )
+            },
         ],
     });
 
@@ -435,6 +460,7 @@ mod tests {
             drive_redirection: true,
             shared_folder_path: "/tmp/share".to_string(),
             drive_name: "Docs".to_string(),
+            audio_redirection: true,
         };
         let json = serde_json::to_value(&cfg).unwrap();
         let back: RdpConfig = serde_json::from_value(json).unwrap();
@@ -450,6 +476,29 @@ mod tests {
         assert!(back.drive_redirection);
         assert_eq!(back.shared_folder_path, "/tmp/share");
         assert_eq!(back.drive_label(), "Docs");
+        assert!(back.audio_enabled());
+    }
+
+    #[test]
+    fn audio_redirection_defaults_off() {
+        assert!(!RdpConfig::default().audio_enabled());
+        let on = RdpConfig {
+            audio_redirection: true,
+            ..Default::default()
+        };
+        assert!(on.audio_enabled());
+    }
+
+    #[test]
+    fn schema_exposes_audio_redirection_toggle() {
+        let schema = rdp_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "rdp").unwrap();
+        let audio = group
+            .fields
+            .iter()
+            .find(|f| f.key == "audioRedirection")
+            .expect("RDP schema must expose audioRedirection");
+        assert_eq!(audio.default, Some(serde_json::json!(false)));
     }
 
     #[test]

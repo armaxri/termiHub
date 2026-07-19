@@ -32,7 +32,7 @@ use ironrdp::pdu::input::fast_path::FastPathInputEvent;
 use ironrdp::pdu::rdp::capability_sets::{client_codecs_capabilities, MajorPlatformType};
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp::rdpdr::Rdpdr;
-use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
+use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput};
 use ironrdp_tokio::reqwest::ReqwestNetworkClient;
@@ -49,6 +49,7 @@ use termihub_core::connection::{
     CursorShape, CursorUpdate, DirtyRect, FrameUpdate, GraphicalState, InputEvent,
 };
 
+use crate::audio::RdpAudioBackend;
 use crate::clipboard::{
     build_format_data_response, local_text_formats, ClipboardEvent, SidecarClipboardBackend,
 };
@@ -120,7 +121,10 @@ fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
         license_cache: None,
         enable_server_pointer: true,
         autologon: false,
-        enable_audio_playback: false,
+        // When off, IronRDP sets the NO_AUDIO_PLAYBACK client-info flag telling
+        // the server to suppress audio; enabling it (opt-in per connection, #1764)
+        // lets the server stream to our rdpsnd handler.
+        enable_audio_playback: cfg.audio_enabled(),
         request_data: None,
         pointer_software_rendering: false,
         multitransport_flags: None,
@@ -182,21 +186,32 @@ async fn connect_session(
                 .with_dynamic_channel(DisplayControlClient::new(|_caps| Ok(Vec::new()))),
         );
 
+    // The `rdpsnd` (MS-RDPEAUDIO) channel carries audio output (#1764) and is
+    // *also* required to be co-advertised whenever `rdpdr` drive redirection is
+    // on (MS-RDPEFS talks back to `rdpdr` over it, #1757). So register it when
+    // either feature is opted in: a real audio-playing handler when audio is on,
+    // otherwise the no-op handler that just satisfies the RDPDR requirement.
+    let drive_root = cfg.shared_drive_root();
+    if cfg.audio_enabled() || drive_root.is_some() {
+        let rdpsnd_handler: Box<dyn RdpsndClientHandler> = if cfg.audio_enabled() {
+            debug!("registering rdpsnd audio output redirection");
+            Box::new(RdpAudioBackend::new())
+        } else {
+            Box::new(NoopRdpsndBackend)
+        };
+        connector = connector.with_static_channel(Rdpsnd::new(rdpsnd_handler));
+    }
+
     // Drive redirection (MS-RDPEFS) is opt-in per connection and serves exactly
-    // the one folder the user selected (#1757). MS-RDPEFS requires the `rdpsnd`
-    // channel to be co-advertised for the server to talk back to `rdpdr`, so we
-    // register a no-op `rdpsnd` handler alongside it (audio playback itself is a
-    // sequenced follow-up). When redirection is off, neither channel is
-    // registered and nothing on the local filesystem is exposed.
-    if let Some(root) = cfg.shared_drive_root() {
+    // the one folder the user selected (#1757). When redirection is off, the
+    // channel is not registered and nothing on the local filesystem is exposed.
+    if let Some(root) = drive_root {
         debug!(root = %root.display(), "registering rdpdr drive redirection");
         let backend = DriveRedirectBackend::new(root);
-        connector = connector
-            .with_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)))
-            .with_static_channel(
-                Rdpdr::new(Box::new(backend), CLIENT_NAME.to_string())
-                    .with_drives(Some(vec![(DRIVE_DEVICE_ID, cfg.drive_label())])),
-            );
+        connector = connector.with_static_channel(
+            Rdpdr::new(Box::new(backend), CLIENT_NAME.to_string())
+                .with_drives(Some(vec![(DRIVE_DEVICE_ID, cfg.drive_label())])),
+        );
     }
 
     // 1) X.224 negotiation up to the security-upgrade point.
