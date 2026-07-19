@@ -121,10 +121,7 @@ impl VncConfig {
         } else {
             Some(self.ssh_password.clone())
         };
-        let key_path = self
-            .ssh_key_path
-            .clone()
-            .filter(|p| !p.trim().is_empty());
+        let key_path = self.ssh_key_path.clone().filter(|p| !p.trim().is_empty());
         SshConfig {
             host: self.ssh_host.clone(),
             port: self.ssh_port,
@@ -297,7 +294,8 @@ pub fn vnc_settings_schema() -> SettingsSchema {
             },
             SettingsField {
                 description: Some(
-                    "SSH gateway password, or the passphrase for the selected key file.".to_string(),
+                    "SSH gateway password, or the passphrase for the selected key file."
+                        .to_string(),
                 ),
                 visible_when: when_tunnel_enabled(),
                 ..field("sshPassword", "SSH Password", FieldType::Password)
