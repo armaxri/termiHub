@@ -139,11 +139,6 @@ impl GraphicalSessionManager {
         self.sessions.lock().await.len()
     }
 
-    /// Whether the given session exists.
-    pub async fn has_session(&self, session_id: &str) -> bool {
-        self.sessions.lock().await.contains_key(session_id)
-    }
-
     /// Connect a new graphical session and start fanning its events out.
     ///
     /// Returns the new session id. Drives the state machine through
@@ -155,13 +150,10 @@ impl GraphicalSessionManager {
         settings: serde_json::Value,
         sink: S,
     ) -> Result<String, TerminalError> {
-        {
-            let sessions = self.sessions.lock().await;
-            if sessions.len() >= MAX_GRAPHICAL_SESSIONS {
-                return Err(TerminalError::SpawnFailed(
-                    "Maximum number of graphical sessions reached".to_string(),
-                ));
-            }
+        if self.session_count().await >= MAX_GRAPHICAL_SESSIONS {
+            return Err(TerminalError::SpawnFailed(
+                "Maximum number of graphical sessions reached".to_string(),
+            ));
         }
 
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -498,7 +490,7 @@ mod tests {
             .connect("mock-remote-desktop", serde_json::json!({}), sink.clone())
             .await
             .expect("connect");
-        assert!(mgr.has_session(&sid).await);
+        assert_eq!(mgr.session_count().await, 1);
 
         let states = sink.states.lock().unwrap().clone();
         assert_eq!(
@@ -524,7 +516,7 @@ mod tests {
         mgr.disconnect(&sid, sink.clone())
             .await
             .expect("disconnect");
-        assert!(!mgr.has_session(&sid).await);
+        assert_eq!(mgr.session_count().await, 0);
         assert!(sink
             .states
             .lock()
