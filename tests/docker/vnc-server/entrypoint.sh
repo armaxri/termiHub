@@ -49,4 +49,56 @@ for _ in 1 2 3; do
     sleep 0.5
 done
 
+# Keep x11vnc's selection machinery warm. A freshly started x11vnc does not
+# reliably forward the X selection as a ServerCutText to its *first* connecting
+# client — the selection watching only settles a little while after a client has
+# been attached. So hold a persistent internal VNC viewer connected: it renders
+# to a throwaway headless Xvfb :1 (never the served :0 framebuffer, so the test
+# pattern is untouched) and simply keeps a client attached, so the real test
+# client always connects to an already-warm server and receives the echo
+# promptly. The loop reconnects if the viewer ever drops.
+Xvfb :1 -screen 0 320x240x16 -nolisten tcp &
+for _ in $(seq 1 50); do
+    if xdpyinfo -display :1 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.2
+done
+while true; do
+    DISPLAY=:1 xtightvncviewer -passwd /root/.vnc/passwd -viewonly \
+        127.0.0.1:5900 >/dev/null 2>&1 || true
+    sleep 1
+done &
+
+# Own a known X selection so x11vnc forwards it to the client as an RFB
+# ServerCutText — the server->client clipboard path asserted by the VNC
+# integration test (#1737). This string MUST match VNC_SERVER_CLIPBOARD in
+# core/tests/vnc.rs. Kept pure ASCII so it survives the RFB latin-1 cut-text
+# encoding unchanged.
+CLIPBOARD_TEXT="termiHub vnc server clipboard 4711"
+# A distinct priming value the loop alternates with. x11vnc only emits a
+# ServerCutText on a *genuine* selection change and de-duplicates identical
+# text, and it does not replay its cached selection to a client that connects
+# later. Re-asserting the same value would therefore reach only whoever was
+# already attached for the very first change. Alternating between two different
+# values guarantees a real change every cycle, so a client attaching at any time
+# receives CLIPBOARD_TEXT on the next cycle.
+PRIMING_TEXT="termiHub vnc priming selection"
+
+# Each `xclip` invocation (no -loops) forks into the background and holds the
+# selection until a newer owner replaces it, so re-running it flips the value
+# and produces the change x11vnc forwards. Set both PRIMARY and CLIPBOARD every
+# phase because x11vnc may forward either.
+set_selection() {
+    text="$1"
+    printf '%s' "$text" | xclip -display :0 -selection primary >/dev/null 2>&1 || true
+    printf '%s' "$text" | xclip -display :0 -selection clipboard >/dev/null 2>&1 || true
+}
+while true; do
+    set_selection "$PRIMING_TEXT"
+    sleep 2
+    set_selection "$CLIPBOARD_TEXT"
+    sleep 2
+done &
+
 wait "$x11vnc_pid"

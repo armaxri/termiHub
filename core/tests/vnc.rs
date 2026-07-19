@@ -27,6 +27,10 @@ const VNC_PASSWORD: &str = "testpass";
 /// The fixture's framebuffer geometry.
 const FB_WIDTH: u32 = 1024;
 const FB_HEIGHT: u32 = 768;
+/// The known X selection the fixture owns, which x11vnc forwards to the client
+/// as an RFB `ServerCutText`. MUST match `CLIPBOARD_TEXT` in
+/// `tests/docker/vnc-server/entrypoint.sh`.
+const VNC_SERVER_CLIPBOARD: &str = "termiHub vnc server clipboard 4711";
 
 /// Settings JSON for the fixture with the correct password.
 fn vnc_settings(port: u16) -> serde_json::Value {
@@ -260,12 +264,49 @@ async fn vnc_03_input_and_clipboard() {
         .await
         .expect("VNC-03: set_clipboard should reach the server");
 
-    // get_clipboard reads the last server-pushed cut text; the fixture pushes
-    // none, so this must not error and simply reports no remote clipboard.
-    let remote = graphical.get_clipboard().await;
-    assert!(
-        remote.is_none(),
-        "VNC-03: fixture pushes no clipboard, expected None, got {remote:?}"
+    // get_clipboard reads the last server-pushed cut text. It must never error;
+    // its value is timing-dependent (the fixture pushes asynchronously), so the
+    // deterministic server->client assertion lives in VNC-05, not here.
+    let _ = graphical.get_clipboard().await;
+
+    vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── VNC-05: Server->client clipboard echo (ServerCutText) ───────────
+
+#[tokio::test]
+async fn vnc_05_server_clipboard_echo() {
+    require_docker!(port_vnc());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vnc_settings(port_vnc()))
+        .await
+        .expect("VNC-05: connect should succeed");
+
+    let graphical = vnc.graphical().expect("VNC-05: graphical backend present");
+
+    // The fixture owns a known X selection that x11vnc forwards as an RFB
+    // ServerCutText; the backend routes it (VncEvent::Text) into get_clipboard.
+    // Delivery is asynchronous and the fixture alternates the selection with a
+    // priming value to force genuine changes, so get_clipboard may transiently
+    // report the priming value — poll until the known value surfaces. The
+    // timeout is generous because x11vnc's selection forwarding takes a little
+    // while to warm up after the fixture starts (see tests/docker/vnc-server).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    let mut received = None;
+    while tokio::time::Instant::now() < deadline {
+        received = graphical.get_clipboard().await;
+        if received.as_deref() == Some(VNC_SERVER_CLIPBOARD) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    assert_eq!(
+        received.as_deref(),
+        Some(VNC_SERVER_CLIPBOARD),
+        "VNC-05: expected the server->client clipboard echo to surface the \
+         fixture's known selection, got {received:?}"
     );
 
     vnc.disconnect().await.expect("disconnect should succeed");

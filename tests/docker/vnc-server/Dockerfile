@@ -14,6 +14,12 @@
 #           BLUE, bottom-right WHITE. Solid regions decode to exact RGBA under
 #           every encoding, so the integration test can assert the decoded
 #           framebuffer pixel-for-pixel without tolerance games.
+# Clipboard: the entrypoint owns a known X selection (via xclip) so x11vnc
+#           forwards it to the client as an RFB ServerCutText — the server->client
+#           clipboard path (#1737) that the integration test asserts end to end.
+#           A persistent internal xtightvncviewer (rendered to a throwaway Xvfb
+#           :1) keeps x11vnc's selection machinery warm, since a fresh x11vnc
+#           does not reliably forward the selection to its very first client.
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     feh \
     imagemagick \
     x11-utils \
+    xclip \
+    xtightvncviewer \
     && rm -rf /var/lib/apt/lists/*
 
 # Bake the deterministic test pattern (four primary-colour quadrants of a
