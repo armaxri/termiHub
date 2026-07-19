@@ -74,6 +74,7 @@ podman compose -f tests/docker/docker-compose.yml up -d
 | `network-fault-proxy` | 2209        | `fault`  | tc/netem network fault injection              |
 | `sftp-stress`         | 2210        | `stress` | Pre-populated SFTP stress test data           |
 | `ftp-server`          | 2401 / 2402 | `ftp`    | External FTP/FTPS server + seeded `/pub` tree |
+| `vnc-server`          | 2501        | `vnc`    | x11vnc + Xvfb, static four-quadrant pattern   |
 
 ## Networks
 
@@ -236,6 +237,40 @@ suite alongside the other Docker integration tests:
 ./scripts/test-system-linux.sh   --with-ftp    # or --with-all
 ./scripts/test-system-windows.sh --with-ftp
 ```
+
+## VNC server (profile: `vnc`)
+
+A headless VNC (RFB) server — `x11vnc` attached to an `Xvfb :0` — serving a
+**static** four-quadrant test pattern (top-left RED, top-right GREEN,
+bottom-left BLUE, bottom-right WHITE) at 1024×768 over classic RFB **VncAuth**.
+
+| Setting  | Value                                            |
+| -------- | ------------------------------------------------ |
+| Port     | `2501` (host) → `5900` (container)               |
+| Password | `testpass` (VncAuth; VNC caps passwords at 8)    |
+| Pattern  | four solid-colour quadrants, baked at build time |
+
+The solid quadrants decode to exact RGBA under every encoding, so the
+integration test can assert the decoded framebuffer pixel-for-pixel. The pattern
+is painted **after** `x11vnc` connects (see `entrypoint.sh`): on a bare Xvfb with
+no window manager, a `feh` root-paint by the sole client does not survive that
+client exiting, so `x11vnc` is started first to hold the painted root.
+
+### Verifying the fixture
+
+```bash
+# Bring it up (named explicitly, so the vnc profile need not be enabled)
+docker compose -f tests/docker/docker-compose.yml up -d vnc-server
+
+# Drive the vnc backend against it (connect + auth, decode, input/clipboard)
+cargo test -p termihub-core --features vnc --test vnc -- --nocapture
+```
+
+The app-level Rust integration test lives at
+[`core/tests/vnc.rs`](../../core/tests/vnc.rs) — gated behind the `vnc` feature
+and skipping cleanly when the fixture is not up (`require_docker!`). Because
+per-PR CI runs `-m "not integration"` and never brings up Docker, this live
+negotiate → authenticate → decode path is only exercised by a **local** run.
 
 ## Requirements
 
