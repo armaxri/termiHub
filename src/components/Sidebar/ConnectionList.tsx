@@ -30,6 +30,7 @@ import {
   Route,
   Search,
   X,
+  FileDown,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
@@ -52,6 +53,7 @@ import {
   findJumpHostDependents,
 } from "@/utils/jumpHost";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import { BulkSshImportDialog } from "./BulkSshImportDialog";
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
@@ -475,6 +477,7 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
 
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
   const [agentFilterQuery, setAgentFilterQuery] = useState("");
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
@@ -506,6 +509,7 @@ export function ConnectionList() {
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
+  const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
@@ -1087,6 +1091,16 @@ export function ConnectionList() {
                   <Plus size={16} />
                 </button>
               </Tooltip>
+              <Tooltip content="Import from ~/.ssh/config" side="top">
+                <button
+                  className="connection-list__add-btn"
+                  onClick={() => setBulkImportOpen(true)}
+                  aria-label="Import from ~/.ssh/config"
+                  data-testid="connection-list-import-ssh-config"
+                >
+                  <FileDown size={16} />
+                </button>
+              </Tooltip>
             </div>
           </div>
           {!localCollapsed && (
@@ -1319,6 +1333,13 @@ export function ConnectionList() {
         onConfirm={handleInsecureFtpConfirm}
         onCancel={handleInsecureFtpCancel}
         data-testid="insecure-ftp-warning"
+      />
+      <BulkSshImportDialog
+        open={bulkImportOpen}
+        onOpenChange={setBulkImportOpen}
+        folders={folders}
+        existingConnections={connections}
+        onImport={bulkAddConnections}
       />
     </div>
   );

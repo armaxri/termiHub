@@ -698,6 +698,7 @@ interface AppState {
   reloadConnectionsFromBackend: () => void;
   toggleFolder: (folderId: string) => void;
   addConnection: (connection: SavedConnection) => void;
+  bulkAddConnections: (connections: SavedConnection[]) => void;
   updateConnection: (connection: SavedConnection) => void;
   deleteConnection: (connectionId: string) => void;
   bulkDeleteConnections: (connectionIds: string[]) => void;
@@ -3523,6 +3524,34 @@ export const useAppStore = create<AppState>((set, get) => {
           console.error("Failed to persist new connection:", err);
           toast.error(
             `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+    },
+
+    bulkAddConnections: (newConnections) => {
+      if (newConnections.length === 0) return;
+      set((state) => ({ connections: [...state.connections, ...newConnections] }));
+      frontendLog(
+        "connection_sync",
+        `bulkAddConnections: persisting ${newConnections.length} connections`
+      );
+      Promise.all(
+        newConnections.map((c) =>
+          persistConnection(stripPassword(c)).then((persistedId) =>
+            reconcileConnectionId(c.id, persistedId)
+          )
+        )
+      )
+        .then(() => {
+          toast.success(
+            `Imported ${newConnections.length} ${newConnections.length === 1 ? "connection" : "connections"}`
+          );
+          return applyConnectionReload();
+        })
+        .catch((err) => {
+          console.error("Failed to persist imported connections:", err);
+          toast.error(
+            `Failed to import connections: ${err instanceof Error ? err.message : String(err)}`
           );
         });
     },
