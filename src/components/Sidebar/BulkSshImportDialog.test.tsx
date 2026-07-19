@@ -38,7 +38,14 @@ function click(testid: string) {
 }
 
 const CONNECTIONS: SshConfigImportConnection[] = [
-  { name: "web", host: "web.internal", port: 2022, username: "alice", authMethod: "agent", proxyJump: [] },
+  {
+    name: "web",
+    host: "web.internal",
+    port: 2022,
+    username: "alice",
+    authMethod: "agent",
+    proxyJump: [],
+  },
   {
     name: "db",
     host: "db.internal",
@@ -50,9 +57,7 @@ const CONNECTIONS: SshConfigImportConnection[] = [
   },
 ];
 
-const FOLDERS: ConnectionFolder[] = [
-  { id: "f1", name: "Prod", parentId: null, isExpanded: false },
-];
+const FOLDERS: ConnectionFolder[] = [{ id: "f1", name: "Prod", parentId: null, isExpanded: false }];
 
 describe("BulkSshImportDialog", () => {
   beforeEach(() => {
@@ -112,7 +117,9 @@ describe("BulkSshImportDialog", () => {
       />
     );
     await flush();
-    const importBtn = document.querySelector('[data-testid="bulk-ssh-import"]') as HTMLButtonElement;
+    const importBtn = document.querySelector(
+      '[data-testid="bulk-ssh-import"]'
+    ) as HTMLButtonElement;
     expect(importBtn.disabled).toBe(true);
     click("bulk-ssh-import-check-web");
     expect(importBtn.disabled).toBe(false);
@@ -161,11 +168,11 @@ describe("BulkSshImportDialog", () => {
     );
     await flush();
 
-    // Pick the target folder "Prod" (f1) via the folder select's hidden native control.
     click("bulk-ssh-import-check-web");
     click("bulk-ssh-import");
 
-    // Folder defaults to root; with no root "web", name stays "web".
+    // Folder defaults to root; the existing "web" lives in folder f1, so a root
+    // import of "web" does not collide and keeps its name.
     const built = onImport.mock.calls[0][0] as SavedConnection[];
     expect(built).toHaveLength(1);
     expect(built[0].name).toBe("web");
