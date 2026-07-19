@@ -900,6 +900,52 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_without_line_height_and_confirm_close_live_session() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.line_height.is_none());
+        assert!(settings.confirm_close_live_session.is_none());
+    }
+
+    #[test]
+    fn deserialize_with_line_height_and_confirm_close_live_session() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "lineHeight": 1.2,
+            "confirmCloseLiveSession": false
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.line_height, Some(1.2));
+        assert_eq!(settings.confirm_close_live_session, Some(false));
+    }
+
+    #[test]
+    fn line_height_and_confirm_close_live_session_round_trip() {
+        // Regression for #1735: these two frontend AppSettings fields were
+        // absent from the Rust struct and silently dropped on save→load.
+        let settings = AppSettings {
+            line_height: Some(1.4),
+            confirm_close_live_session: Some(false),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("lineHeight"));
+        assert!(json.contains("confirmCloseLiveSession"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.line_height, Some(1.4));
+        assert_eq!(deserialized.confirm_close_live_session, Some(false));
+    }
+
+    #[test]
+    fn line_height_and_confirm_close_live_session_none_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("lineHeight"));
+        assert!(!json.contains("confirmCloseLiveSession"));
+    }
+
+    #[test]
     fn round_trip_serialization() {
         let settings = AppSettings {
             default_user: Some("testuser".to_string()),
