@@ -4,10 +4,14 @@ import { createRoot, Root } from "react-dom/client";
 import { AppSettings } from "@/types/connection";
 import { TerminalSettings } from "./TerminalSettings";
 
-vi.mock("@/themes", () => ({
-  applyTheme: vi.fn(),
-  onThemeChange: vi.fn(() => vi.fn()),
-}));
+vi.mock("@/themes", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/themes")>();
+  return {
+    ...actual,
+    applyTheme: vi.fn(),
+    onThemeChange: vi.fn(() => vi.fn()),
+  };
+});
 
 let container: HTMLDivElement;
 let root: Root;
