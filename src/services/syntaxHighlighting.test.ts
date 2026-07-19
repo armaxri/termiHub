@@ -4,10 +4,14 @@ import {
   SyntaxHighlightingEngine,
   compileRules,
   findMatches,
+  findMatchesGuarded,
   normalizeHexColor,
   styleDecorationElement,
 } from "./syntaxHighlighting";
 import type { HighlightRule } from "../types/syntaxHighlighting";
+import { frontendLog } from "../utils/frontendLog";
+
+vi.mock("../utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 function rule(
   overrides: Partial<HighlightRule> & Pick<HighlightRule, "id" | "pattern">
@@ -109,6 +113,39 @@ describe("findMatches overlap resolution", () => {
     // Should terminate and produce only the non-empty match.
     const matches = findMatches("xaax", compiled);
     expect(matches).toEqual([expect.objectContaining({ start: 1, end: 3 })]);
+  });
+});
+
+describe("findMatchesGuarded", () => {
+  it("returns the same matches as findMatches when the budget is not exceeded", () => {
+    const compiled = compileRules([rule({ id: "n", pattern: "\\d+" })]);
+    const { matches, timedOutRuleIds } = findMatchesGuarded("1 and 22 and 333", compiled);
+    expect(matches.map((m) => m.start)).toEqual([0, 6, 13]);
+    expect(timedOutRuleIds).toEqual([]);
+  });
+
+  it("reports rules it could not start once the deadline has passed", () => {
+    const compiled = compileRules([
+      rule({ id: "a", pattern: "A" }),
+      rule({ id: "b", pattern: "B" }),
+    ]);
+    // Clock: deadline is computed from the first read; the second read (before
+    // rule "a") is already past it, so both rules time out.
+    let t = 0;
+    const fakeNow = (): number => {
+      const v = t;
+      t += 100; // each read jumps 100ms; budget is 10ms
+      return v;
+    };
+    const { timedOutRuleIds } = findMatchesGuarded("A B", compiled, 10, fakeNow);
+    expect(timedOutRuleIds).toEqual(["a", "b"]);
+  });
+
+  it("does not time out when the injected clock stays within budget", () => {
+    const compiled = compileRules([rule({ id: "a", pattern: "A" })]);
+    const { timedOutRuleIds, matches } = findMatchesGuarded("A A", compiled, 50, () => 5);
+    expect(timedOutRuleIds).toEqual([]);
+    expect(matches).toHaveLength(2);
   });
 });
 
@@ -279,6 +316,38 @@ describe("SyntaxHighlightingEngine lifecycle", () => {
     await new Promise<void>((r) => term.write(long + "\r\n", () => r()));
 
     expect(decoSpy).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it("disables a rule that overruns the per-line scan budget and logs a recoverable error", async () => {
+    vi.mocked(frontendLog).mockClear();
+    term = await makeTerm("plain ERROR here\r\n");
+    const decoSpy = vi.spyOn(term, "registerDecoration");
+
+    // Injected clock advances past the 10ms budget on every read, so the very
+    // first scanned line trips the guard and the rule self-disables.
+    let t = 0;
+    const engine = new SyntaxHighlightingEngine(term, {
+      lineScanBudgetMs: 10,
+      now: () => {
+        const v = t;
+        t += 1000;
+        return v;
+      },
+    });
+    engine.enable([errorRule]);
+
+    // The slow rule produced no decoration and was dropped.
+    expect(decoSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(frontendLog)).toHaveBeenCalledWith(
+      "syntaxHighlighting",
+      expect.stringContaining("disabled slow highlight rule")
+    );
+
+    // It stays disabled: further matching output is not decorated either.
+    await new Promise<void>((r) => term.write("another ERROR\r\n", () => r()));
+    expect(decoSpy).not.toHaveBeenCalled();
+
     engine.dispose();
   });
 

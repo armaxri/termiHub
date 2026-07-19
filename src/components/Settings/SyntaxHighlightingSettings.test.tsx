@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { AppSettings } from "@/types/connection";
 import { BUILTIN_RULES } from "@/services/syntaxHighlightingRules";
 import { defaultHighlightingConfig } from "@/services/syntaxHighlightingConfig";
+import { createCustomRule } from "@/services/customHighlightRules";
 import { SyntaxHighlightingSettings } from "./SyntaxHighlightingSettings";
 
 let container: HTMLDivElement;
@@ -175,5 +176,113 @@ describe("SyntaxHighlightingSettings", () => {
       );
     });
     expect(masterToggle()).not.toBeNull();
+  });
+});
+
+function byTestId(id: string): HTMLElement {
+  return container.querySelector(`[data-testid="${id}"]`) as HTMLElement;
+}
+
+function setInput(el: HTMLElement, value: string) {
+  const input = el as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  act(() => input.dispatchEvent(new Event("input", { bubbles: true })));
+}
+
+function withCustomRules(...rules: ReturnType<typeof createCustomRule>[]): AppSettings {
+  return {
+    ...defaultSettings,
+    syntaxHighlighting: { ...defaultHighlightingConfig(), enabled: true, customRules: rules },
+  };
+}
+
+describe("SyntaxHighlightingSettings custom rules", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  function renderWith(settings: AppSettings, onChange = vi.fn()) {
+    act(() => {
+      root.render(<SyntaxHighlightingSettings settings={settings} onChange={onChange} />);
+    });
+    return onChange;
+  }
+
+  it("shows the empty state when there are no custom rules", () => {
+    renderWith(defaultSettings);
+    expect(byTestId("syntax-custom-rules-empty")).not.toBeNull();
+  });
+
+  it("opens the inline editor when Add Rule is clicked", () => {
+    renderWith(defaultSettings);
+    expect(byTestId("custom-rule-editor")).toBeNull();
+    act(() => byTestId("syntax-custom-rule-add").click());
+    expect(byTestId("custom-rule-editor")).not.toBeNull();
+  });
+
+  it("persists a new custom rule to customRules on save", () => {
+    const onChange = renderWith(defaultSettings);
+    act(() => byTestId("syntax-custom-rule-add").click());
+    setInput(byTestId("custom-rule-name"), "TODO");
+    setInput(byTestId("custom-rule-pattern"), "TODO");
+    act(() => byTestId("custom-rule-save").click());
+
+    const call = onChange.mock.calls[0][0] as AppSettings;
+    expect(call.syntaxHighlighting?.customRules).toHaveLength(1);
+    expect(call.syntaxHighlighting?.customRules[0].name).toBe("TODO");
+    expect(call.syntaxHighlighting?.customRules[0].builtin).toBe(false);
+  });
+
+  it("renders existing custom rules with their pattern", () => {
+    const rule = createCustomRule({ name: "Ports", pattern: ":\\d+" });
+    renderWith(withCustomRules(rule));
+    expect(byTestId(`syntax-custom-rule-${rule.id}`)).not.toBeNull();
+    expect(container.textContent).toContain("Ports");
+    expect(container.textContent).toContain(":\\d+");
+  });
+
+  it("toggling a custom rule's enabled flag writes the update", () => {
+    const rule = createCustomRule({ name: "Ports", pattern: ":\\d+" });
+    const onChange = renderWith(withCustomRules(rule));
+    act(() => byTestId(`syntax-custom-rule-enabled-${rule.id}`).click());
+    const call = onChange.mock.calls[0][0] as AppSettings;
+    expect(call.syntaxHighlighting?.customRules[0].enabled).toBe(false);
+  });
+
+  it("deletes a custom rule", () => {
+    const rule = createCustomRule({ name: "Ports", pattern: ":\\d+" });
+    const onChange = renderWith(withCustomRules(rule));
+    act(() => byTestId(`syntax-custom-rule-delete-${rule.id}`).click());
+    const call = onChange.mock.calls[0][0] as AppSettings;
+    expect(call.syntaxHighlighting?.customRules).toHaveLength(0);
+  });
+
+  it("reorders a custom rule down", () => {
+    const a = createCustomRule({ name: "A", pattern: "a" });
+    const b = createCustomRule({ name: "B", pattern: "b" });
+    const onChange = renderWith(withCustomRules(a, b));
+    act(() => byTestId(`syntax-custom-rule-down-${a.id}`).click());
+    const call = onChange.mock.calls[0][0] as AppSettings;
+    expect(call.syntaxHighlighting?.customRules.map((r) => r.id)).toEqual([b.id, a.id]);
+  });
+
+  it("edits an existing rule through the inline editor", () => {
+    const rule = createCustomRule({ name: "Ports", pattern: ":\\d+" });
+    const onChange = renderWith(withCustomRules(rule));
+    act(() => byTestId(`syntax-custom-rule-edit-${rule.id}`).click());
+    setInput(byTestId("custom-rule-name"), "Renamed");
+    act(() => byTestId("custom-rule-save").click());
+    const call = onChange.mock.calls[0][0] as AppSettings;
+    expect(call.syntaxHighlighting?.customRules).toHaveLength(1);
+    expect(call.syntaxHighlighting?.customRules[0].name).toBe("Renamed");
+    expect(call.syntaxHighlighting?.customRules[0].id).toBe(rule.id);
   });
 });
