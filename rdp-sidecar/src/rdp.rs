@@ -240,7 +240,8 @@ where
                 }
             }
             ActiveStageOutput::GraphicsUpdate(rect) => {
-                if let Some(dirty) = crop_rect(image, rect.left, rect.top, rect.right, rect.bottom) {
+                if let Some(dirty) = crop_rect(image, rect.left, rect.top, rect.right, rect.bottom)
+                {
                     let update = FrameUpdate {
                         width: image.width() as u32,
                         height: image.height() as u32,
@@ -275,13 +276,13 @@ where
                 let shape = (w != 0
                     && h != 0
                     && pointer.bitmap_data.len() == (w as usize) * (h as usize) * 4)
-                .then(|| CursorShape {
-                    width: w,
-                    height: h,
-                    hotspot_x: pointer.hotspot_x as u32,
-                    hotspot_y: pointer.hotspot_y as u32,
-                    data: pointer.bitmap_data.clone(),
-                });
+                    .then(|| CursorShape {
+                        width: w,
+                        height: h,
+                        hotspot_x: pointer.hotspot_x as u32,
+                        hotspot_y: pointer.hotspot_y as u32,
+                        data: pointer.bitmap_data.clone(),
+                    });
                 let visible = shape.is_some();
                 if emit_cursor(ipc_out, *cursor, visible, shape).await.is_err() {
                     return Flow::Stop;
@@ -354,9 +355,12 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    write_message(ipc_out, &SidecarMessage::State(GraphicalState::Authenticating))
-        .await
-        .context("failed to write state")?;
+    write_message(
+        ipc_out,
+        &SidecarMessage::State(GraphicalState::Authenticating),
+    )
+    .await
+    .context("failed to write state")?;
 
     let (result, framed) = match connect_session(&cfg).await {
         Ok(v) => v,
@@ -377,7 +381,11 @@ where
 
     drive(result, framed, cfg.view_only, ipc_in, ipc_out).await;
 
-    let _ = write_message(ipc_out, &SidecarMessage::State(GraphicalState::ServerClosed)).await;
+    let _ = write_message(
+        ipc_out,
+        &SidecarMessage::State(GraphicalState::ServerClosed),
+    )
+    .await;
     Ok(())
 }
 

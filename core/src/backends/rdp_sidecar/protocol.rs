@@ -100,10 +100,16 @@ where
     T: Serialize,
 {
     let body = rmp_serde::to_vec_named(msg).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("encode failed: {e}"))
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("encode failed: {e}"),
+        )
     })?;
     let len = u32::try_from(body.len()).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "message exceeds u32 length")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "message exceeds u32 length",
+        )
     })?;
     if len > MAX_MESSAGE_BYTES {
         return Err(std::io::Error::new(
@@ -139,7 +145,10 @@ where
     let mut body = vec![0u8; len as usize];
     reader.read_exact(&mut body).await?;
     rmp_serde::from_slice(&body).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("decode failed: {e}"))
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("decode failed: {e}"),
+        )
     })
 }
 
@@ -276,7 +285,9 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         buf.extend_from_slice(&(MAX_MESSAGE_BYTES + 1).to_le_bytes());
         let mut cursor = std::io::Cursor::new(buf);
-        let err = read_message::<_, SidecarMessage>(&mut cursor).await.unwrap_err();
+        let err = read_message::<_, SidecarMessage>(&mut cursor)
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }

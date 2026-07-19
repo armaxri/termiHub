@@ -126,9 +126,9 @@ pub fn translate(prev_buttons: u8, event: &InputEvent) -> Vec<FastPathInputEvent
             .map(|sc| vec![key_event(sc, *pressed)])
             .unwrap_or_default(),
         InputEvent::Pointer { x, y, buttons } => pointer_events(prev_buttons, *buttons, *x, *y),
-        InputEvent::Wheel {
-            x, y, delta_y, ..
-        } => wheel_event(*x, *y, *delta_y).into_iter().collect(),
+        InputEvent::Wheel { x, y, delta_y, .. } => {
+            wheel_event(*x, *y, *delta_y).into_iter().collect()
+        }
     }
 }
 

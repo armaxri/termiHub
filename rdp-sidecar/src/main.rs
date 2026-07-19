@@ -18,8 +18,8 @@ mod keymap;
 mod rdp;
 
 use anyhow::{bail, Context, Result};
-use termihub_core::backends::rdp_sidecar::protocol::{read_message, write_message, HostMessage};
 use termihub_core::backends::rdp_sidecar::protocol::SidecarMessage;
+use termihub_core::backends::rdp_sidecar::protocol::{read_message, write_message, HostMessage};
 use termihub_core::connection::GraphicalState;
 
 #[tokio::main]
@@ -36,9 +36,12 @@ async fn main() -> Result<()> {
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
 
-    write_message(&mut stdout, &SidecarMessage::State(GraphicalState::Connecting))
-        .await
-        .context("failed to write initial state")?;
+    write_message(
+        &mut stdout,
+        &SidecarMessage::State(GraphicalState::Connecting),
+    )
+    .await
+    .context("failed to write initial state")?;
 
     // The first message must be Connect; its RdpConfig carries the credentials,
     // which is why they arrive over stdin rather than argv/env.

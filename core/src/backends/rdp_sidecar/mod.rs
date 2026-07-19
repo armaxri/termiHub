@@ -322,9 +322,10 @@ impl ConnectionType for SidecarRdp {
                 ))
             })?;
 
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            SessionError::SpawnFailed("RDP helper stdin unavailable".to_string())
-        })?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| SessionError::SpawnFailed("RDP helper stdin unavailable".to_string()))?;
         let stdout = child.stdout.take().ok_or_else(|| {
             SessionError::SpawnFailed("RDP helper stdout unavailable".to_string())
         })?;
@@ -631,7 +632,10 @@ mod tests {
             .await
             .unwrap();
 
-        let got = frame_rx.recv().await.expect("a frame must reach the canvas");
+        let got = frame_rx
+            .recv()
+            .await
+            .expect("a frame must reach the canvas");
         assert_eq!(got, frame);
 
         cancel.cancel();
