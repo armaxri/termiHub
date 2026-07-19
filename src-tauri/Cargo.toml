@@ -11,7 +11,7 @@ edition = "2021"
 # FTP / FTPS connection type. Enabled by default so the desktop ships it, but
 # kept as a toggle so the registry registration is gated (`#[cfg(feature = "ftp")]`)
 # and a build without it still compiles.
-default = ["ftp", "mock-remote-desktop", "vnc"]
+default = ["ftp", "mock-remote-desktop", "vnc", "rdp-sidecar"]
 ftp = ["termihub-core/ftp"]
 # Mock graphical remote-desktop backend so the shared remote-desktop layer
 # (#1680) ships and is E2E-testable with no real VNC/RDP server. Gated so the
@@ -22,12 +22,11 @@ mock-remote-desktop = ["termihub-core/mock-remote-desktop"]
 # enables experimental features (#1705).
 vnc = ["termihub-core/vnc"]
 # RDP graphical remote-desktop backend via the IronRDP sidecar (#1747). Gated so
-# the registration is `#[cfg(feature = "rdp-sidecar")]`. NOT in `default` yet:
-# the `termihub-rdp-helper` binary must be built and bundled next to the app
-# (scripts/build-rdp-sidecar.sh) for a connect to succeed, and the Tauri
-# externalBin / release-CI cross-build wiring is a sequenced follow-up. CI still
-# exercises this path via `--all-features`. Ships experimental — hidden unless
-# the user enables experimental features (#1705).
+# the registration is `#[cfg(feature = "rdp-sidecar")]`. In `default` since #1754:
+# the `termihub-rdp-helper` binary is built by scripts/build-rdp-sidecar.sh and
+# bundled next to the app via Tauri `externalBin` (see tauri.conf.json), so
+# SidecarRdp's next-to-exe resolution finds it in a shipped build. Ships
+# experimental — hidden unless the user enables experimental features (#1705).
 rdp-sidecar = ["termihub-core/rdp-sidecar"]
 
 [lib]
