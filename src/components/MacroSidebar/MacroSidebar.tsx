@@ -1,9 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
-import { Circle, Search } from "lucide-react";
+import { Circle, Download, Search, Upload } from "lucide-react";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import { Button, Input, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { serializeMacros } from "@/services/macroIo";
 import type { Macro } from "@/types/macro";
 import { MacroListItem } from "./MacroListItem";
 import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
@@ -16,6 +19,15 @@ function generateMacroId(): string {
     return `macro-${c.randomUUID()}`;
   }
   return `macro-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Turn a macro name into a filesystem-friendly slug for the default filename. */
+function slugifyMacroName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "macro";
 }
 
 /** True when the macro matches the (already lower-cased) query across name/description/tags. */
@@ -31,12 +43,14 @@ function macroMatches(macro: Macro, query: string): boolean {
  * macros. Macros are recorded from the terminal toolbar and played back into the
  * active terminal; this panel is their home for organisation. Composed from the
  * shared UI primitives and the sidebar list-item shell, mirroring the workspace
- * and tunnel managers. Import/export is intentionally out of scope here (#1677).
+ * and tunnel managers. Macros can also be exported to / imported from portable
+ * JSON files, so they can be shared between machines (#1677).
  */
 export function MacroSidebar() {
   const macros = useAppStore((s) => s.macros);
   const saveMacroToBackend = useAppStore((s) => s.saveMacroToBackend);
   const deleteMacroFromBackend = useAppStore((s) => s.deleteMacroFromBackend);
+  const importMacros = useAppStore((s) => s.importMacros);
   const playMacro = useAppStore((s) => s.playMacro);
   const startMacroRecording = useAppStore((s) => s.startMacroRecording);
 
@@ -90,6 +104,67 @@ export function MacroSidebar() {
     },
     [macros, saveMacroToBackend]
   );
+
+  // Write a serialized macro payload to a user-chosen file. A cancelled save
+  // dialog returns null before any write, so it is a silent no-op; only a real
+  // write failure surfaces an error toast.
+  const writeMacrosToFile = useCallback(
+    async (payload: Macro[], defaultPath: string, successMessage: string) => {
+      try {
+        const filePath = await save({
+          defaultPath,
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (!filePath) return;
+        await writeTextFile(filePath, serializeMacros(payload));
+        toast.success(successMessage);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(`Failed to export macros: ${message}`);
+      }
+    },
+    []
+  );
+
+  const handleExportAll = useCallback(() => {
+    void writeMacrosToFile(
+      macros,
+      "termihub-macros.json",
+      `Exported ${macros.length} macro${macros.length === 1 ? "" : "s"}`
+    );
+  }, [macros, writeMacrosToFile]);
+
+  const handleExportOne = useCallback(
+    (macroId: string) => {
+      const macro = macros.find((m) => m.id === macroId);
+      if (!macro) return;
+      void writeMacrosToFile(
+        [macro],
+        `termihub-macro-${slugifyMacroName(macro.name)}.json`,
+        `Exported "${macro.name}"`
+      );
+    },
+    [macros, writeMacrosToFile]
+  );
+
+  const handleImport = useCallback(async () => {
+    // A cancelled open dialog is a silent no-op. A parse/validation failure is
+    // reported so the user knows nothing was imported (and the library is left
+    // untouched — importMacros validates before any backend write).
+    const filePath = await open({
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!filePath || Array.isArray(filePath)) return;
+    try {
+      const json = await readTextFile(filePath);
+      const count = await importMacros(json);
+      toast.success(`Imported ${count} macro${count === 1 ? "" : "s"}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to import macros: ${message}`);
+    }
+  }, [importMacros]);
 
   const handleDelete = useCallback(
     (macroId: string) => {
@@ -161,6 +236,29 @@ export function MacroSidebar() {
             Record New
           </Button>
         </Tooltip>
+        <Tooltip content="Export All Macros" side="top">
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<Download size={14} />}
+            onClick={handleExportAll}
+            disabled={macros.length === 0}
+            aria-label="Export All Macros"
+            data-testid="macro-export-all-btn"
+          />
+        </Tooltip>
+        <Tooltip content="Import Macros" side="top">
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<Upload size={14} />}
+            onClick={handleImport}
+            aria-label="Import Macros"
+            data-testid="macro-import-btn"
+          />
+        </Tooltip>
       </div>
       <div className="macro-sidebar__search">
         <Search size={14} className="macro-sidebar__search-icon" aria-hidden="true" />
@@ -204,6 +302,7 @@ export function MacroSidebar() {
                 onPlay={handlePlay}
                 onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
+                onExport={handleExportOne}
                 onDelete={handleDelete}
                 rowRef={ref}
                 rowProps={itemProps}
