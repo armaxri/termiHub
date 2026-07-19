@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Keyboard Shortcut Cheat Sheet Export (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Keyboard Shortcut Cheat Sheet Export</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span><code>docs/concepts/implemented/keyboard-cheatsheet-export.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#options-comparison">Options comparison</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>Users want a one-page printable reference of all keyboard shortcuts, including any
+customisations they have made. The goal is to produce a PDF cheat sheet with minimal
+friction: one click, and the result is either on screen ready to print or already saved
+as a PDF.</p>
+<p>The technical constraint is that <strong><code>window.print()</code> is blocked inside Tauri's WebView</strong>
+(WKWebView on macOS, WebView2 on Windows). Any print or PDF action must therefore
+involve the system browser or a native dialog.</p>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="entry-point">Entry point</h3>
+<p>A single button labelled <strong>"Export Cheat Sheet…"</strong> sits at the bottom of the
+<em>Settings → Keyboard Shortcuts</em> panel, next to the existing <em>Reset All to Defaults</em>
+button. It carries a <code>FileDown</code> icon.</p>
+<pre><code>┌──────────────────────────────────────────────────┐
+│  Keyboard Shortcuts                              │
+│  ─────────────────────────────────────────────  │
+│  [search…]                                       │
+│                                                  │
+│  General                                         │
+│    Toggle Sidebar          Cmd+B          [↺]   │
+│    Open Settings           Cmd+,          [↺]   │
+│    Keyboard Shortcuts      Cmd+K Cmd+S    [↺]   │
+│  …                                               │
+│                                                  │
+│  [↺ Reset All to Defaults]  [⬇ Export Cheat Sheet…] │
+└──────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="interaction-flow-recommended-option-b-below">Interaction flow (recommended — Option B below)</h3>
+<ol>
+<li>User clicks <strong>Export Cheat Sheet…</strong></li>
+<li>A native <em>Save</em> dialog opens, pre-filled with <code>termihub-shortcuts.html</code> and an
+   HTML filter. User chooses location and confirms.</li>
+<li>The HTML file is written to disk and immediately opened in the system browser.</li>
+<li>The browser displays the cheat sheet formatted for print (A4 landscape, compact
+   3-column grid). The user presses <strong>Cmd+P</strong> / <strong>Ctrl+P</strong> and selects <em>Save as PDF</em>.</li>
+</ol>
+<p>Alternatively (Option A, zero-friction):</p>
+<ol>
+<li>User clicks <strong>Export Cheat Sheet…</strong></li>
+<li>No dialog — a file is written to the OS temp directory.</li>
+<li>The system browser opens immediately.</li>
+<li>The page auto-triggers the browser's print dialog (<code>window.onload = print</code>).</li>
+</ol>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="content-of-the-cheat-sheet">Content of the cheat sheet</h3>
+<ul>
+<li>All shortcuts from <code>DEFAULT_BINDINGS</code>, grouped by category (General, Clipboard,
+  Terminal, Navigation / Split, Tab Groups)</li>
+<li>Each row: action label + effective key binding (user override if present, else
+  platform default)</li>
+<li>Overridden bindings marked with <code>†</code> + a legend at the bottom</li>
+<li>Generation date in the header</li>
+</ul>
+<h3 id="user-overrides">User overrides</h3>
+<p>The cheat sheet always reflects the <em>effective</em> binding at export time, so it stays
+accurate regardless of how many overrides the user has set.</p>
+<h3 id="platform-defaults">Platform defaults</h3>
+<p><code>serializeBinding</code> already handles the Cmd/Ctrl distinction via <code>isMac()</code>, so the
+correct key labels are rendered for the current platform.</p>
+<hr>
+<h2 id="options-comparison">Options comparison</h2>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Option A — Temp + auto-print</th>
+<th>Option B — Save dialog + open</th>
+<th>Option C — In-app window</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Clicks to PDF</strong></td>
+<td>2 (click + confirm print)</td>
+<td>3 (click + save dialog + print)</td>
+<td>2 (click + print in new window)</td>
+</tr>
+<tr>
+<td><strong>User controls save location</strong></td>
+<td>No</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td><strong>File survives session</strong></td>
+<td>No (temp dir)</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td><strong>Works without browser</strong></td>
+<td>No</td>
+<td>No</td>
+<td>Yes (needs Tauri changes)</td>
+</tr>
+<tr>
+<td><strong>Implementation effort</strong></td>
+<td>Low</td>
+<td>Low (already done)</td>
+<td>High (new Tauri window)</td>
+</tr>
+<tr>
+<td><strong>Risk</strong></td>
+<td>Temp file may be blocked by OS policy</td>
+<td>None</td>
+<td>Requires Rust-side window config</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="recommended-approach-option-a-with-option-b-as-fallback">Recommended approach: Option A with Option B as fallback</h3>
+<p>Auto-write to a temp file and open in browser for zero friction. Fall back to a save
+dialog if writing the temp file fails (e.g. temp dir not writable, OS sandboxing).
+The auto-print trigger (<code>window.onload = () =&gt; { window.print(); }</code>) in the HTML
+means the user lands directly in the browser's print dialog, which has a "Save as PDF"
+destination on all supported platforms.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    A[User clicks Export] --&gt; B{Write to temp dir}
+    B -- success --&gt; C[Open file in browser]
+    C --&gt; D[Browser auto-opens print dialog]
+    D --&gt; E[User saves as PDF]
+    B -- failure --&gt; F[Show save dialog]
+    F -- confirmed --&gt; G[Write to chosen path]
+    G --&gt; C
+    F -- cancelled --&gt; H[Abort silently]
+</pre>
+</div>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="happy-path-temp-file">Happy path — temp file</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant UI as KeyboardSettings
+    participant Util as exportCheatSheet
+    participant FS as plugin-fs
+    participant Opener as plugin-opener
+    participant Browser as System Browser
+
+    U-&gt;&gt;UI: click "Export Cheat Sheet…"
+    UI-&gt;&gt;Util: exportCheatSheet()
+    Util-&gt;&gt;Util: buildCheatSheetHtml() — includes onload=print
+    Util-&gt;&gt;FS: writeTextFile(tempPath, html)
+    FS--&gt;&gt;Util: ok
+    Util-&gt;&gt;Opener: openPath(tempPath)
+    Opener--&gt;&gt;Browser: launch with file URL
+    Browser-&gt;&gt;Browser: onload → window.print()
+    Browser-&gt;&gt;U: Print dialog (Save as PDF)
+</pre>
+</div>
+<h3 id="fallback-path-save-dialog">Fallback path — save dialog</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant Util as exportCheatSheet
+    participant FS as plugin-fs
+    participant Dialog as plugin-dialog
+    participant Opener as plugin-opener
+
+    Util-&gt;&gt;FS: writeTextFile(tempPath, html)
+    FS--&gt;&gt;Util: error (permission denied / sandbox)
+    Util-&gt;&gt;Dialog: save({ defaultPath: "termihub-shortcuts.html" })
+    Dialog--&gt;&gt;U: native save dialog
+    U--&gt;&gt;Dialog: choose path
+    Dialog--&gt;&gt;Util: filePath
+    Util-&gt;&gt;FS: writeTextFile(filePath, html)
+    FS--&gt;&gt;Util: ok
+    Util-&gt;&gt;Opener: openPath(filePath)
+</pre>
+</div>
+<h3 id="state-diagram-for-the-button">State diagram for the button</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle
+    Idle --&gt; Writing : click Export
+    Writing --&gt; Opening : write ok
+    Writing --&gt; Dialog : write failed
+    Dialog --&gt; Writing : user confirmed path
+    Dialog --&gt; Idle : user cancelled
+    Opening --&gt; Idle : openPath called
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<h3 id="exportcheatsheet-updated"><code>exportCheatSheet()</code> (updated)</h3>
+<pre><code class="language-typescript">export async function exportCheatSheet(): Promise&lt;void&gt; {
+  const html = buildCheatSheetHtml({ autoPrint: true }); // adds onload=print
+
+  const tempPath = await resolvePath(&quot;termihub-shortcuts.html&quot;, BaseDirectory.Temp);
+
+  try {
+    await writeTextFile(tempPath, html, { baseDir: BaseDirectory.Temp });
+    await openPath(tempPath);
+    return;
+  } catch {
+    // Fall through to save dialog
+  }
+
+  const chosenPath = await save({
+    title: &quot;Save Keyboard Shortcuts Cheat Sheet&quot;,
+    defaultPath: &quot;termihub-shortcuts.html&quot;,
+    filters: [{ name: &quot;HTML File&quot;, extensions: [&quot;html&quot;] }],
+  });
+  if (!chosenPath) return;
+
+  // Strip auto-print for saved files so reopening later doesn't trigger print
+  const htmlNoAutoPrint = buildCheatSheetHtml({ autoPrint: false });
+  await writeTextFile(chosenPath, htmlNoAutoPrint);
+  await openPath(chosenPath);
+}
+</code></pre>
+<h3 id="buildcheatsheethtml-autoprint-addition"><code>buildCheatSheetHtml({ autoPrint })</code> addition</h3>
+<p>When <code>autoPrint: true</code>, the generated HTML includes:</p>
+<pre><code class="language-html">&lt;script&gt;
+  window.addEventListener(&quot;load&quot;, () =&gt; window.print());
+&lt;/script&gt;
+</code></pre>
+<p>This fires the browser's native print dialog immediately on page load. The user can
+cancel it and the page remains open for viewing.</p>
+<h3 id="tauri-permissions">Tauri permissions</h3>
+<p>All required permissions are already present in <code>capabilities/default.json</code>:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Permission</th>
+<th>Plugin</th>
+<th>Already granted</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fs:allow-write-text-file</code></td>
+<td>plugin-fs</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>opener:default</code></td>
+<td>plugin-opener</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>dialog:default</code></td>
+<td>plugin-dialog</td>
+<td>✓</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The only new permission needed is <code>fs:allow-app-temp-dir</code> (or equivalent scope for
+<code>BaseDirectory.Temp</code>) — this must be verified against the Tauri 2 fs plugin scope
+documentation at implementation time, as the exact scope token may differ across
+plugin versions.</p>
+<h3 id="temp-file-lifecycle">Temp file lifecycle</h3>
+<p>The temp file (<code>termihub-shortcuts.html</code>) is written to the OS temp directory and is
+not cleaned up by termiHub. The OS manages temp directory cleanup. If this is
+undesirable, a <code>setTimeout</code> cleanup after a brief delay (e.g. 30 s) can be added,
+but this risks deleting the file before slow browsers finish loading it.</p>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

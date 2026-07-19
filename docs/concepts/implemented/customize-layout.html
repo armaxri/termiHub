@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Customize Layout (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Customize Layout</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/196">#196</a></span>
+          <span><code>docs/concepts/implemented/customize-layout.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub currently has a fixed layout: Activity Bar on the left, Sidebar next to it, terminal area filling the remaining space, and a Status Bar at the bottom. Users cannot reposition these elements, hide them persistently, or switch between layout presets. VS Code provides a "Customize Layout" feature that gives users fine-grained control over where UI sections appear and how much space they occupy.</p>
+<p>This concept introduces a <strong>Customize Layout</strong> dialog accessible from the Activity Bar that lets users:</p>
+<ul>
+<li><strong>Toggle visibility</strong> of major UI sections (Activity Bar, Sidebar, Status Bar)</li>
+<li><strong>Reposition</strong> the Activity Bar (left, right, top, hidden) and Sidebar (left, right)</li>
+<li><strong>Apply layout presets</strong> (Default, Focus, Zen) for quick workspace switching</li>
+<li><strong>Save and restore</strong> custom layout configurations that persist across sessions</li>
+</ul>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Give users control over their workspace without requiring manual config file editing</li>
+<li>Support different workflows (e.g., "Zen mode" with maximum terminal space, "Focus mode" with no sidebar)</li>
+<li>Persist layout preferences across application restarts</li>
+<li>Maintain the existing VS Code-inspired dark aesthetic</li>
+<li>Keep the feature lightweight — pure CSS/state changes, no DOM restructuring</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>Fully detachable/floating panels (complex window management beyond current scope)</li>
+<li>Per-connection or per-tab layout profiles (layout is global)</li>
+<li>Custom ordering of Activity Bar items (separate concern)</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="customize-layout-dialog">Customize Layout Dialog</h3>
+<p>The dialog opens as a modal overlay, centered on the application window. It provides a visual preview of the current layout alongside controls for each UI section.</p>
+<pre><code>┌─────────────────────────────────────────────────────────┐
+│  Customize Layout                                   [X] │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  PRESETS                                                │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐                │
+│  │ ┌─┬──┬──┐│ │ ┌──┬─────┐│ │ ┌───────┐│                │
+│  │ │A│SB│T ││ │ │  │  T  ││ │ │       ││                │
+│  │ │ │  │  ││ │ │  │     ││ │ │   T   ││                │
+│  │ └─┴──┴──┘│ │ └──┴─────┘│ │ │       ││                │
+│  │ Default  │ │  Focus    │ │   Zen   ││                │
+│  └──────────┘ └──────────┘ └──────────┘                │
+│                                                         │
+│  ─────────────────────────────────────────              │
+│                                                         │
+│  ACTIVITY BAR                                           │
+│  Visibility:  [x] Visible                               │
+│  Position:    ( ) Left  (•) Right  ( ) Top              │
+│                                                         │
+│  SIDEBAR                                                │
+│  Visibility:  [x] Visible                               │
+│  Position:    (•) Left  ( ) Right                       │
+│                                                         │
+│  STATUS BAR                                             │
+│  Visibility:  [x] Visible                               │
+│                                                         │
+│  ─────────────────────────────────────────              │
+│                                                         │
+│  LAYOUT PREVIEW                                         │
+│  ┌──────────────────────────────────────┐               │
+│  │ ┌──┐┌─────┐┌──────────────────────┐ │               │
+│  │ │AB││ SB  ││     Terminal Area    │ │               │
+│  │ │  ││     ││                      │ │               │
+│  │ │  ││     ││                      │ │               │
+│  │ └──┘└─────┘└──────────────────────┘ │               │
+│  │ ┌──────────────────────────────────┐│               │
+│  │ │           Status Bar            ││               │
+│  │ └──────────────────────────────────┘│               │
+│  └──────────────────────────────────────┘               │
+│                                                         │
+│                              [Reset to Default] [Close] │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="layout-presets">Layout Presets</h3>
+<p>Three built-in presets provide quick workspace configurations:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Preset</th>
+<th>Activity Bar</th>
+<th>Sidebar</th>
+<th>Status Bar</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Default</strong></td>
+<td>Left, visible</td>
+<td>Left, visible</td>
+<td>Visible</td>
+<td>Standard termiHub layout — all UI elements in their default positions</td>
+</tr>
+<tr>
+<td><strong>Focus</strong></td>
+<td>Left, visible</td>
+<td>Hidden</td>
+<td>Visible</td>
+<td>Activity Bar remains for navigation, but sidebar is collapsed to maximize terminal space</td>
+</tr>
+<tr>
+<td><strong>Zen</strong></td>
+<td>Hidden</td>
+<td>Hidden</td>
+<td>Hidden</td>
+<td>Maximum terminal area — all chrome removed for distraction-free work</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Each preset is represented by a small thumbnail showing a schematic of the layout. The active preset is highlighted with the accent color border. Clicking a preset immediately applies it.</p>
+<p>If the user modifies individual settings after selecting a preset, the preset selection indicator is cleared (no preset is "active" — the layout is custom).</p>
+<h3 id="activity-bar-position-options">Activity Bar Position Options</h3>
+<pre><code>Left (default):            Right:                  Top:
+┌──┬──────────────┐       ┌──────────────┬──┐     ┌──────────────────┐
+│AB│  Content     │       │  Content     │AB│     │  AB (horizontal) │
+│  │              │       │              │  │     ├──────────────────┤
+│  │              │       │              │  │     │  Content         │
+└──┴──────────────┘       └──────────────┴──┘     └──────────────────┘
+</code></pre>
+<p>When positioned at the <strong>top</strong>, the Activity Bar renders horizontally with icons in a row instead of a column. The sidebar (if visible) sits below the top bar and to the left or right of the terminal area as configured.</p>
+<p>When <strong>hidden</strong>, the Activity Bar is not rendered at all. Sidebar views can still be toggled via keyboard shortcut or the toolbar button.</p>
+<h3 id="sidebar-position-options">Sidebar Position Options</h3>
+<pre><code>Left (default):            Right:
+┌──┬──────┬────────┐      ┌──┬────────┬──────┐
+│AB│  SB  │Terminal │      │AB│Terminal │  SB  │
+│  │      │        │      │  │        │      │
+└──┴──────┴────────┘      └──┴────────┴──────┘
+</code></pre>
+<p>The sidebar retains its current resizable behavior regardless of position. The resize handle moves to the appropriate edge.</p>
+<h3 id="status-bar-visibility">Status Bar Visibility</h3>
+<p>The Status Bar can be toggled on or off. When hidden, the terminal area extends to the full bottom of the window.</p>
+<h3 id="accessing-the-dialog">Accessing the Dialog</h3>
+<p>The Customize Layout dialog is accessible from two places:</p>
+<ol>
+<li><strong>Activity Bar</strong> — a new item in the settings dropdown menu (gear icon): "Customize Layout..."</li>
+<li><strong>Keyboard shortcut</strong> — no default shortcut assigned initially; users can discover the feature via the menu</li>
+</ol>
+<h3 id="live-preview">Live Preview</h3>
+<p>All changes are applied immediately (live preview). There is no "Apply" button — the dialog acts as a direct manipulation interface. The "Reset to Default" button reverts all layout settings to factory defaults. The "Close" button (or pressing Escape) dismisses the dialog.</p>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="opening-the-customize-layout-dialog">Opening the Customize Layout Dialog</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant AB as Activity Bar
+    participant Menu as Settings Dropdown
+    participant Store as App Store
+    participant Dialog as Layout Dialog
+
+    User-&gt;&gt;AB: Click gear icon
+    AB-&gt;&gt;Menu: Show dropdown
+    User-&gt;&gt;Menu: Click "Customize Layout..."
+    Menu-&gt;&gt;Store: setLayoutDialogOpen(true)
+    Store-&gt;&gt;Dialog: Render CustomizeLayoutDialog
+    Dialog-&gt;&gt;Dialog: Load current layout from store
+</pre>
+</div>
+<h3 id="applying-a-preset">Applying a Preset</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant Dialog as Layout Dialog
+    participant Store as App Store
+    participant App as App Component
+    participant Backend as Tauri Backend
+
+    User-&gt;&gt;Dialog: Click "Focus" preset
+    Dialog-&gt;&gt;Store: applyLayoutPreset("focus")
+    Store-&gt;&gt;Store: Update layout state
+    Store-&gt;&gt;App: Re-render with new layout
+    App-&gt;&gt;App: CSS classes update positions
+    Store-&gt;&gt;Backend: persistSettings(updatedSettings)
+    Backend-&gt;&gt;Backend: Write to config file
+</pre>
+</div>
+<h3 id="changing-individual-settings">Changing Individual Settings</h3>
+<ol>
+<li>User toggles a visibility checkbox or selects a position radio button</li>
+<li>The change is applied immediately to the store</li>
+<li>The App component re-renders with updated CSS classes</li>
+<li>The layout preview in the dialog updates to reflect the change</li>
+<li>If the current layout no longer matches any preset, the preset selection is cleared</li>
+<li>Settings are debounce-persisted (300ms) to the backend</li>
+</ol>
+<h3 id="persistence">Persistence</h3>
+<p>Layout preferences are stored as part of the existing <code>AppSettings</code> and persisted through the same Tauri backend mechanism. On application startup, the layout state is loaded from the config and applied before the first render to prevent layout jumps.</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[App starts] --&gt; B[Load AppSettings from backend]
+    B --&gt; C{Layout config present?}
+    C --&gt;|Yes| D[Apply saved layout]
+    C --&gt;|No| E[Apply default layout]
+    D --&gt; F[Render app with layout]
+    E --&gt; F
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style F fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<h3 id="keyboard-shortcut-interactions">Keyboard Shortcut Interactions</h3>
+<ul>
+<li><strong>Ctrl+B / Cmd+B</strong> (Toggle Sidebar): continues to work regardless of layout configuration. If the sidebar position changes, the toggle still works as expected.</li>
+<li><strong>Escape</strong>: closes the Customize Layout dialog</li>
+<li>The toolbar sidebar toggle button remains functional even when the Activity Bar is hidden</li>
+</ul>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>Activity Bar hidden + Sidebar visible</strong>: The sidebar still appears, but there is no Activity Bar to switch views. Users can switch sidebar views via the sidebar header or use the Activity Bar keyboard shortcut (if one exists). The toolbar's sidebar toggle button remains available.</li>
+<li><strong>All sections hidden (Zen mode)</strong>: Only the terminal toolbar and terminal area are visible. The toolbar always remains visible as it contains essential controls (new terminal, split, sidebar toggle). Users can exit Zen mode via the Customize Layout keyboard shortcut or by accessing the settings through the toolbar context menu.</li>
+<li><strong>Window too narrow for top Activity Bar</strong>: The top Activity Bar scrolls horizontally or collapses icons. Minimum window width requirements are not changed.</li>
+<li><strong>Layout dialog open during resize</strong>: The live preview updates correctly as the dialog itself may need to reflow.</li>
+<li><strong>Preset partially matches current settings</strong>: A preset is only highlighted as "active" if ALL its settings match the current layout. Partial matches do not highlight any preset.</li>
+<li><strong>First launch / missing config</strong>: Default layout is applied (Activity Bar left, Sidebar left and visible, Status Bar visible).</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="layout-state-machine">Layout State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Default: First launch / no config
+
+    Default --&gt; Custom: User changes any setting
+    Default --&gt; Focus: Apply Focus preset
+    Default --&gt; Zen: Apply Zen preset
+
+    Focus --&gt; Custom: User changes any setting
+    Focus --&gt; Default: Apply Default preset
+    Focus --&gt; Zen: Apply Zen preset
+
+    Zen --&gt; Custom: User changes any setting
+    Zen --&gt; Default: Apply Default preset
+    Zen --&gt; Focus: Apply Focus preset
+
+    Custom --&gt; Default: Apply Default preset
+    Custom --&gt; Focus: Apply Focus preset
+    Custom --&gt; Zen: Apply Zen preset
+    Custom --&gt; Custom: Change another setting
+</pre>
+</div>
+<h3 id="activity-bar-position-state">Activity Bar Position State</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Left: Default
+
+    Left --&gt; Right: Select Right
+    Left --&gt; Top: Select Top
+    Left --&gt; Hidden: Uncheck Visible
+
+    Right --&gt; Left: Select Left
+    Right --&gt; Top: Select Top
+    Right --&gt; Hidden: Uncheck Visible
+
+    Top --&gt; Left: Select Left
+    Top --&gt; Right: Select Right
+    Top --&gt; Hidden: Uncheck Visible
+
+    Hidden --&gt; Left: Check Visible (restores last position)
+    Hidden --&gt; Right: Check Visible (restores last position)
+    Hidden --&gt; Top: Check Visible (restores last position)
+</pre>
+</div>
+<h3 id="dialog-interaction-sequence">Dialog Interaction Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant Dialog as Layout Dialog
+    participant Store as App Store
+    participant App as App Component
+    participant Settings as Tauri Backend
+
+    User-&gt;&gt;Dialog: Open dialog
+    Dialog-&gt;&gt;Store: Read current layout
+    Store--&gt;&gt;Dialog: layoutConfig
+
+    alt User clicks preset
+        User-&gt;&gt;Dialog: Click "Zen"
+        Dialog-&gt;&gt;Store: applyLayoutPreset("zen")
+        Store-&gt;&gt;App: Re-render (all hidden)
+        Dialog-&gt;&gt;Dialog: Highlight "Zen" preset
+    else User changes individual setting
+        User-&gt;&gt;Dialog: Toggle "Activity Bar → Hidden"
+        Dialog-&gt;&gt;Store: setActivityBarVisible(false)
+        Store-&gt;&gt;App: Re-render (AB hidden)
+        Dialog-&gt;&gt;Dialog: Clear preset highlight
+    end
+
+    Store-&gt;&gt;Store: Debounce 300ms
+    Store-&gt;&gt;Settings: persistSettings(updated)
+    Settings--&gt;&gt;Store: OK
+
+    User-&gt;&gt;Dialog: Press Escape
+    Dialog-&gt;&gt;Store: setLayoutDialogOpen(false)
+</pre>
+</div>
+<h3 id="app-render-flow-with-layout">App Render Flow with Layout</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[App renders] --&gt; B{Activity Bar position?}
+
+    B --&gt;|Left| C[Flexbox: AB | Sidebar? | Terminal]
+    B --&gt;|Right| D[Flexbox: Sidebar? | Terminal | AB]
+    B --&gt;|Top| E[Column: AB | Row: Sidebar? + Terminal]
+    B --&gt;|Hidden| F[Flexbox: Sidebar? | Terminal]
+
+    C --&gt; G{Status Bar visible?}
+    D --&gt; G
+    E --&gt; G
+    F --&gt; G
+
+    G --&gt;|Yes| H[Render StatusBar at bottom]
+    G --&gt;|No| I[Skip StatusBar]
+
+    H --&gt; J[Final layout]
+    I --&gt; J
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style J fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<h3 id="settings-persistence-sequence">Settings Persistence Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Dialog as Layout Dialog
+    participant Store as Zustand Store
+    participant API as Tauri Commands
+    participant Disk as Config File
+
+    Dialog-&gt;&gt;Store: Update layout setting
+    Store-&gt;&gt;Store: Update in-memory state
+    Store-&gt;&gt;Store: Debounce 300ms
+    Store-&gt;&gt;API: save_settings(newSettings)
+    API-&gt;&gt;Disk: Write JSON config
+    Disk--&gt;&gt;API: OK
+    API--&gt;&gt;Store: Success
+
+    Note over Dialog,Store: On next app launch
+    Store-&gt;&gt;API: get_settings()
+    API-&gt;&gt;Disk: Read JSON config
+    Disk--&gt;&gt;API: Settings JSON
+    API--&gt;&gt;Store: AppSettings with layout
+    Store-&gt;&gt;Store: Apply layout before render
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation.</p>
+<h3 id="1-extend-appsettings-with-layout-config">1. Extend <code>AppSettings</code> with Layout Config</h3>
+<p>Add layout fields to the existing <code>AppSettings</code> interface in <code>src/types/connection.ts</code>:</p>
+<pre><code class="language-typescript">export interface LayoutConfig {
+  activityBarPosition: &quot;left&quot; | &quot;right&quot; | &quot;top&quot; | &quot;hidden&quot;;
+  sidebarPosition: &quot;left&quot; | &quot;right&quot;;
+  sidebarVisible: boolean;
+  statusBarVisible: boolean;
+}
+
+export interface AppSettings {
+  // ... existing fields ...
+  layout?: LayoutConfig;
+}
+</code></pre>
+<p>The <code>layout</code> field is optional — when absent, the default layout is applied (backward compatible). The defaults are:</p>
+<pre><code class="language-typescript">const DEFAULT_LAYOUT: LayoutConfig = {
+  activityBarPosition: &quot;left&quot;,
+  sidebarPosition: &quot;left&quot;,
+  sidebarVisible: true,
+  statusBarVisible: true,
+};
+</code></pre>
+<h3 id="2-add-layout-state-to-zustand-store">2. Add Layout State to Zustand Store</h3>
+<p>Extend <code>appStore.ts</code> with layout-specific state and actions:</p>
+<pre><code class="language-typescript">// New state fields
+layoutConfig: LayoutConfig;
+layoutDialogOpen: boolean;
+
+// New actions
+setLayoutDialogOpen: (open: boolean) =&gt; void;
+updateLayoutConfig: (partial: Partial&lt;LayoutConfig&gt;) =&gt; void;
+applyLayoutPreset: (preset: &quot;default&quot; | &quot;focus&quot; | &quot;zen&quot;) =&gt; void;
+</code></pre>
+<p>The <code>updateLayoutConfig</code> action merges partial updates, debounces persistence, and re-renders the app. The <code>applyLayoutPreset</code> action sets all layout fields at once.</p>
+<p>Preset definitions:</p>
+<pre><code class="language-typescript">const LAYOUT_PRESETS: Record&lt;string, LayoutConfig&gt; = {
+  default: {
+    activityBarPosition: &quot;left&quot;,
+    sidebarPosition: &quot;left&quot;,
+    sidebarVisible: true,
+    statusBarVisible: true,
+  },
+  focus: {
+    activityBarPosition: &quot;left&quot;,
+    sidebarPosition: &quot;left&quot;,
+    sidebarVisible: false,
+    statusBarVisible: true,
+  },
+  zen: {
+    activityBarPosition: &quot;hidden&quot;,
+    sidebarPosition: &quot;left&quot;,
+    sidebarVisible: false,
+    statusBarVisible: false,
+  },
+};
+</code></pre>
+<h3 id="3-modify-apptsx-layout-rendering">3. Modify <code>App.tsx</code> Layout Rendering</h3>
+<p>The <code>App</code> component currently renders a fixed flexbox structure:</p>
+<pre><code class="language-tsx">&lt;div className=&quot;app&quot;&gt;
+  &lt;div className=&quot;app__main&quot;&gt;
+    &lt;ActivityBar /&gt;
+    &lt;Sidebar /&gt;
+    &lt;TerminalView /&gt;
+  &lt;/div&gt;
+  &lt;StatusBar /&gt;
+&lt;/div&gt;
+</code></pre>
+<p>This needs to become layout-aware, using CSS classes driven by the store's <code>layoutConfig</code>:</p>
+<pre><code class="language-tsx">function App() {
+  const layout = useAppStore((s) =&gt; s.layoutConfig);
+
+  const appMainClass = [&quot;app__main&quot;, `app__main--ab-${layout.activityBarPosition}`].join(&quot; &quot;);
+
+  return (
+    &lt;div className=&quot;app&quot;&gt;
+      {layout.activityBarPosition === &quot;top&quot; &amp;&amp; &lt;ActivityBar horizontal /&gt;}
+      &lt;div className={appMainClass}&gt;
+        {layout.activityBarPosition === &quot;left&quot; &amp;&amp; &lt;ActivityBar /&gt;}
+        {layout.sidebarPosition === &quot;left&quot; &amp;&amp; layout.sidebarVisible &amp;&amp; &lt;Sidebar /&gt;}
+        &lt;TerminalView /&gt;
+        {layout.sidebarPosition === &quot;right&quot; &amp;&amp; layout.sidebarVisible &amp;&amp; &lt;Sidebar /&gt;}
+        {layout.activityBarPosition === &quot;right&quot; &amp;&amp; &lt;ActivityBar /&gt;}
+      &lt;/div&gt;
+      {layout.statusBarVisible &amp;&amp; &lt;StatusBar /&gt;}
+    &lt;/div&gt;
+  );
+}
+</code></pre>
+<p>The sidebar collapse toggle (<code>Ctrl+B</code>) should still work independently of the layout config — <code>sidebarCollapsed</code> is a runtime toggle, while <code>sidebarVisible</code> in the layout config controls the default/configured visibility. The interaction between these two states: when <code>sidebarVisible</code> is <code>false</code> in layout config, the sidebar never renders regardless of <code>sidebarCollapsed</code>. When <code>sidebarVisible</code> is <code>true</code>, the existing <code>sidebarCollapsed</code> toggle works as before.</p>
+<h3 id="4-css-changes">4. CSS Changes</h3>
+<p>Add conditional layout classes in <code>App.css</code>:</p>
+<pre><code class="language-css">/* Activity bar on right */
+.app__main--ab-right {
+  flex-direction: row;
+}
+
+/* Activity bar on top — main area becomes a column */
+.app__main--ab-top {
+  flex-direction: row; /* sidebar + terminal remain row */
+}
+
+/* No status bar — terminal extends to bottom */
+.app--no-statusbar .terminal-view {
+  /* Already handled by conditional render */
+}
+</code></pre>
+<p>The <code>ActivityBar</code> component needs a <code>horizontal</code> prop variant:</p>
+<pre><code class="language-css">.activity-bar--horizontal {
+  flex-direction: row;
+  width: 100%;
+  height: var(--activity-bar-width); /* same size, rotated */
+}
+</code></pre>
+<h3 id="5-new-components">5. New Components</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Location</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CustomizeLayoutDialog</code></td>
+<td><code>src/components/Settings/CustomizeLayoutDialog.tsx</code></td>
+<td>Modal dialog with preset thumbnails and section controls</td>
+</tr>
+<tr>
+<td><code>LayoutPreview</code></td>
+<td><code>src/components/Settings/LayoutPreview.tsx</code></td>
+<td>Small SVG/CSS preview of the current layout</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The dialog uses the existing Radix UI <code>Dialog</code> primitive (already used for <code>RenameDialog</code>, <code>ColorPickerDialog</code>) for consistent modal behavior.</p>
+<h3 id="6-activitybar-changes">6. ActivityBar Changes</h3>
+<p>The <code>ActivityBar</code> component (<code>src/components/ActivityBar/ActivityBar.tsx</code>) needs:</p>
+<ol>
+<li>A <code>horizontal</code> prop that switches between vertical (default) and horizontal rendering</li>
+<li>A new "Customize Layout..." entry in the settings dropdown menu</li>
+<li>CSS for horizontal mode (icons in a row, reduced height)</li>
+</ol>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph New/Modified Components
+        A[CustomizeLayoutDialog.tsx]
+        B[CustomizeLayoutDialog.css]
+        C[LayoutPreview.tsx]
+    end
+
+    subgraph Modified Files
+        D[App.tsx]
+        E[App.css]
+        F[ActivityBar.tsx]
+        G[ActivityBar.css]
+        H[appStore.ts]
+        I[connection.ts types]
+    end
+
+    subgraph Unchanged
+        J[Sidebar.tsx]
+        K[StatusBar.tsx]
+        L[TerminalView.tsx]
+        M[SplitView.tsx]
+    end
+
+    D --&gt; A
+    H --&gt; A
+    A --&gt; C
+    F --&gt; A
+
+    style New/Modified Components fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Modified Files fill:#3a2e1e,stroke:#cca700,color:#fff
+    style Unchanged fill:#2d2d2d,stroke:#555,color:#999
+</pre>
+</div>
+<h3 id="7-backend-changes">7. Backend Changes</h3>
+<p>No new Tauri commands are needed. The existing <code>get_settings</code> / <code>save_settings</code> commands already handle <code>AppSettings</code> as an opaque JSON blob. The new <code>layout</code> field is optional, so existing config files remain valid. The Rust <code>AppSettings</code> struct in the backend needs the new optional field added:</p>
+<pre><code class="language-rust">#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutConfig {
+    pub activity_bar_position: String,  // &quot;left&quot; | &quot;right&quot; | &quot;top&quot; | &quot;hidden&quot;
+    pub sidebar_position: String,       // &quot;left&quot; | &quot;right&quot;
+    pub sidebar_visible: bool,
+    pub status_bar_visible: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    // ... existing fields ...
+    #[serde(default)]
+    pub layout: Option&lt;LayoutConfig&gt;,
+}
+</code></pre>
+<h3 id="8-migration-path">8. Migration Path</h3>
+<ol>
+<li><strong>First PR</strong>: Add <code>LayoutConfig</code> type, store actions, and basic <code>App.tsx</code> layout switching (Activity Bar left/right/hidden, Sidebar left/right, Status Bar toggle). No dialog yet — changes applied via store for testing.</li>
+<li><strong>Second PR</strong>: Add <code>CustomizeLayoutDialog</code> with preset thumbnails and section controls. Wire up to Activity Bar menu.</li>
+<li><strong>Third PR</strong>: Add Activity Bar horizontal/top mode with CSS and responsive behavior.</li>
+<li><strong>Fourth PR</strong>: Add <code>LayoutPreview</code> component inside the dialog.</li>
+<li><strong>Fifth PR</strong>: Polish, keyboard accessibility, and documentation.</li>
+</ol>
+<h3 id="component-hierarchy">Component Hierarchy</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    App[App.tsx] --&gt; AB[ActivityBar]
+    App --&gt; SB[Sidebar]
+    App --&gt; TV[TerminalView]
+    App --&gt; STB[StatusBar]
+    App --&gt; CLD[CustomizeLayoutDialog]
+
+    AB --&gt; Menu[Settings Dropdown]
+    Menu --&gt;|"Customize Layout..."| CLD
+
+    CLD --&gt; Presets[Preset Thumbnails]
+    CLD --&gt; Controls[Section Controls]
+    CLD --&gt; Preview[LayoutPreview]
+
+    Controls --&gt; ABCtrl[Activity Bar Controls]
+    Controls --&gt; SBCtrl[Sidebar Controls]
+    Controls --&gt; STBCtrl[Status Bar Controls]
+
+    style CLD fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Presets fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Controls fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Preview fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

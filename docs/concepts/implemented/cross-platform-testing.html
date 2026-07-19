@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cross-Platform Testing (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Cross-Platform Testing</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/15">#15</a></span>
+          <span><code>docs/concepts/implemented/cross-platform-testing.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub is a cross-platform terminal hub that runs on Windows, macOS, and Linux. The Tauri 2 architecture — a Rust backend paired with a React/TypeScript frontend rendered in a platform-native WebView — means each platform introduces its own behavior differences, runtime quirks, and integration challenges. Platform-specific bugs have historically been among the hardest to catch and the most disruptive to users (e.g., SSH key paths breaking on Windows due to mixed path separators, shell detection launching WSL instead of PowerShell, WSL file browser showing "access denied" on drive-mounted paths).</p>
+<p>Today, CI runs unit tests on all three platforms via a GitHub Actions matrix (<code>ubuntu-latest</code>, <code>windows-latest</code>, <code>macos-latest</code>), and builds are produced for five targets (macOS x64/ARM64, Linux x64/ARM64, Windows x64). However, several gaps remain:</p>
+<ul>
+<li><strong>E2E tests run only on Linux</strong> (via Docker with <code>tauri-driver</code>). Windows E2E is technically supported by <code>tauri-driver</code> but not yet wired into CI. macOS has no native E2E support (ADR-5: no WKWebView driver).</li>
+<li><strong>Manual cross-platform tests are minimal</strong> — only three tests (XPLAT-01 to XPLAT-03) exist in <code>docs/manual-testing.md</code>, covering shell detection, serial port paths, and X11 forwarding.</li>
+<li><strong>Platform-specific test coverage is implicit</strong> — the CI matrix runs the same test suite everywhere, but there are no tests that explicitly verify platform-divergent behavior (e.g., <code>\\wsl$\</code> path conversion, <code>COM*</code> vs <code>/dev/tty*</code> enumeration, macOS key repeat fix).</li>
+<li><strong>No systematic tracking</strong> of which features have been verified on which platforms.</li>
+</ul>
+<p>This concept defines a comprehensive cross-platform testing strategy that closes these gaps.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Define a platform-specific test matrix that maps every feature area to its required platforms and test type (automated unit, automated E2E, manual)</li>
+<li>Expand CI to run E2E tests on Windows in addition to Linux</li>
+<li>Introduce platform-specific unit tests that explicitly exercise divergent behavior (path handling, shell detection, serial port enumeration)</li>
+<li>Create a platform verification tracking system so release managers know which platforms have been tested</li>
+<li>Establish clear workflows for developer local testing, CI automated testing, and pre-release verification</li>
+<li>Document macOS-specific testing procedures that compensate for the lack of native E2E support</li>
+</ul>
+<h3 id="non-goals">Non-Goals</h3>
+<ul>
+<li>Migrating away from WebdriverIO or <code>tauri-driver</code> — the existing E2E framework is retained</li>
+<li>Achieving native macOS E2E testing — this remains blocked on upstream <code>tauri-driver</code> support (ADR-5); Docker-based E2E and manual testing fill the gap</li>
+<li>Testing mobile platforms — termiHub is desktop-only</li>
+<li>Changing the test framework (Vitest, cargo test) — the focus is on coverage and process, not tooling changes</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<p>This is a testing infrastructure concept, not a user-facing feature. The "UI" here refers to developer-facing interfaces: CI dashboards, test reports, and local testing workflows.</p>
+<h3 id="ci-dashboard-github-actions">CI Dashboard (GitHub Actions)</h3>
+<p>The enhanced CI pipeline presents platform-specific results in the GitHub Actions summary view. Each workflow run shows a matrix of platform × test-type results:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│  Code Quality — Run #247                                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  UNIT TESTS                                                     │
+│  ┌──────────────┬──────────┬──────────┬──────────┐              │
+│  │ Platform     │ Rust     │ Frontend │ Agent    │              │
+│  ├──────────────┼──────────┼──────────┼──────────┤              │
+│  │ Ubuntu x64   │ ✓ 142    │ ✓ 89     │ ✓ 23    │              │
+│  │ Windows x64  │ ✓ 138    │ ✓ 89     │ — skip  │              │
+│  │ macOS ARM64  │ ✓ 140    │ ✓ 89     │ ✓ 23    │              │
+│  └──────────────┴──────────┴──────────┴──────────┘              │
+│                                                                 │
+│  PLATFORM-SPECIFIC TESTS                                        │
+│  ┌──────────────┬──────────────────────────────────┐            │
+│  │ Ubuntu x64   │ ✓ 12 (unix paths, shell detect)  │            │
+│  │ Windows x64  │ ✓ 18 (WSL, COM ports, UNC paths) │            │
+│  │ macOS ARM64  │ ✓ 8 (key repeat, zsh default)    │            │
+│  └──────────────┴──────────────────────────────────┘            │
+│                                                                 │
+│  E2E TESTS                                                      │
+│  ┌──────────────┬──────────────────────────────────┐            │
+│  │ Ubuntu x64   │ ✓ 30 (Docker + tauri-driver)     │            │
+│  │ Windows x64  │ ✓ 28 (native tauri-driver)       │            │
+│  │ macOS ARM64  │ ✓ 30 (Docker delegation)          │            │
+│  └──────────────┴──────────────────────────────────┘            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="platform-verification-checklist">Platform Verification Checklist</h3>
+<p>For releases, a platform verification checklist is generated as a GitHub issue template. This checklist tracks manual tests that must be executed on each platform before a release:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│  Release v0.5.0 — Platform Verification                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  WINDOWS                                    Tester: ________    │
+│  [x] Shell detection (PowerShell, cmd, Git Bash, WSL)           │
+│  [x] Serial ports (COM* enumeration)                            │
+│  [ ] SSH key auth (Ed25519, RSA)                                │
+│  [ ] WSL file browser path conversion                           │
+│  [ ] Nerd Font / Powerline rendering                            │
+│                                                                 │
+│  macOS                                      Tester: ________    │
+│  [ ] Shell detection (zsh default, bash, sh)                    │
+│  [ ] Key repeat (no accent picker)                              │
+│  [ ] X11 forwarding (XQuartz)                                   │
+│  [ ] WKWebView rendering quirks                                 │
+│  [ ] No doubled terminal text                                   │
+│                                                                 │
+│  LINUX                                      Tester: ________    │
+│  [ ] Shell detection (bash, zsh, sh)                            │
+│  [ ] Serial ports (/dev/tty* enumeration)                       │
+│  [ ] X11 forwarding (native X server)                           │
+│  [ ] Docker test environment                                    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="developer-local-testing-workflow">Developer Local Testing Workflow</h3>
+<p>Developers working on platform-specific code see a clear guide for what to test locally:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│  Developer Local Testing Guide                                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. Run platform-agnostic tests:                                │
+│     $ ./scripts/test.sh                                         │
+│                                                                 │
+│  2. Run platform-specific unit tests:                           │
+│     $ cd src-tauri &amp;&amp; cargo test --features platform-tests      │
+│                                                                 │
+│  3. Run E2E tests (Linux/Windows native, macOS via Docker):     │
+│     $ ./scripts/test-system.sh                                  │
+│                                                                 │
+│  4. For cross-platform changes, test on at least two platforms  │
+│     before creating a PR. Tag the PR with platform labels:      │
+│     [tested-windows] [tested-linux] [tested-macos]              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="platform-specific-feature-matrix">Platform-Specific Feature Matrix</h3>
+<p>The following matrix maps feature areas to their platform-divergent behavior and the required testing approach on each platform:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Feature Area</th>
+<th>Windows</th>
+<th>macOS</th>
+<th>Linux</th>
+<th>Test Type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Shell detection</strong></td>
+<td>PowerShell, cmd, Git Bash, WSL distros</td>
+<td>zsh (default), bash, sh</td>
+<td>bash/zsh/sh</td>
+<td>Unit (per-platform) + Manual</td>
+</tr>
+<tr>
+<td><strong>Local shell spawn</strong></td>
+<td>Absolute paths to avoid WSL interception</td>
+<td>Standard exec</td>
+<td>Standard exec</td>
+<td>Unit + E2E</td>
+</tr>
+<tr>
+<td><strong>File paths</strong></td>
+<td><code>\</code> separators, UNC paths (<code>\\wsl$\</code>), drive letters</td>
+<td><code>/</code> separators</td>
+<td><code>/</code> separators</td>
+<td>Unit (per-platform)</td>
+</tr>
+<tr>
+<td><strong>Serial ports</strong></td>
+<td><code>COM*</code> enumeration</td>
+<td><code>/dev/tty.*</code>, <code>/dev/cu.*</code></td>
+<td><code>/dev/ttyUSB*</code>, <code>/dev/ttyACM*</code></td>
+<td>Unit + Manual (hardware)</td>
+</tr>
+<tr>
+<td><strong>X11 forwarding</strong></td>
+<td>Not supported</td>
+<td>XQuartz (TCP on <code>localhost:N</code>)</td>
+<td>Native Unix socket or TCP</td>
+<td>Manual + E2E (Docker)</td>
+</tr>
+<tr>
+<td><strong>SSH key paths</strong></td>
+<td><code>C:\Users\&lt;user&gt;\.ssh\</code> with <code>\</code> separators</td>
+<td><code>~/.ssh/</code></td>
+<td><code>~/.ssh/</code></td>
+<td>Unit (per-platform)</td>
+</tr>
+<tr>
+<td><strong>Key repeat</strong></td>
+<td>Standard</td>
+<td>Requires <code>ApplePressAndHoldEnabled=false</code></td>
+<td>Standard</td>
+<td>Manual (macOS only)</td>
+</tr>
+<tr>
+<td><strong>WebView rendering</strong></td>
+<td>Edge WebView2</td>
+<td>WKWebView</td>
+<td>WebKitGTK</td>
+<td>Manual</td>
+</tr>
+<tr>
+<td><strong>Font rendering</strong></td>
+<td>Bundled Nerd Font required</td>
+<td>System fonts</td>
+<td>System fonts</td>
+<td>Manual</td>
+</tr>
+<tr>
+<td><strong>Agent daemon</strong></td>
+<td>Not supported (no <code>fork</code>)</td>
+<td><code>daemon(3)</code> via libc</td>
+<td><code>daemon(3)</code> via libc</td>
+<td>Unit (unix-only)</td>
+</tr>
+<tr>
+<td><strong>WSL integration</strong></td>
+<td>WSL distro detection, path conversion, OSC 7 injection</td>
+<td>N/A</td>
+<td>N/A</td>
+<td>Unit + Manual (Windows)</td>
+</tr>
+<tr>
+<td><strong>Tilde expansion</strong></td>
+<td><code>%USERPROFILE%</code></td>
+<td><code>$HOME</code></td>
+<td><code>$HOME</code></td>
+<td>Unit (per-platform)</td>
+</tr>
+<tr>
+<td><strong>Process exit codes</strong></td>
+<td>Windows exit codes</td>
+<td>POSIX signals</td>
+<td>POSIX signals</td>
+<td>Unit</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="developer-local-testing-workflow_1">Developer Local Testing Workflow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Developer makes changes] --&gt; B{Platform-specific code?}
+
+    B --&gt;|No| C[Run ./scripts/test.sh]
+    C --&gt; D[Run ./scripts/check.sh]
+    D --&gt; E[Create PR]
+
+    B --&gt;|Yes| F{Which platforms affected?}
+
+    F --&gt;|Windows only| G[Test on Windows]
+    G --&gt; G1[Unit tests: cargo test]
+    G1 --&gt; G2[Manual: verify WSL, COM ports, paths]
+    G2 --&gt; D
+
+    F --&gt;|macOS only| H[Test on macOS]
+    H --&gt; H1[Unit tests: cargo test]
+    H1 --&gt; H2[Manual: key repeat, WKWebView, XQuartz]
+    H2 --&gt; D
+
+    F --&gt;|Linux only| I[Test on Linux]
+    I --&gt; I1[Unit tests: cargo test]
+    I1 --&gt; I2[E2E: ./scripts/test-system.sh]
+    I2 --&gt; D
+
+    F --&gt;|Multiple platforms| J[Test on each affected platform]
+    J --&gt; J1[Run unit tests on each]
+    J1 --&gt; J2[Run platform-specific manual tests]
+    J2 --&gt; J3[Tag PR with tested platforms]
+    J3 --&gt; D
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style E fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<h3 id="ci-automated-testing-workflow">CI Automated Testing Workflow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[PR opened or push to main] --&gt; B[Code Quality Job]
+
+    B --&gt; C[Rust quality checks — Ubuntu only]
+    B --&gt; D[Frontend quality checks — Ubuntu only]
+    B --&gt; E[Unit tests — 3-platform matrix]
+    B --&gt; F[Security audits]
+    B --&gt; G[Commit lint]
+
+    E --&gt; E1[Ubuntu: Rust + Frontend + Agent tests]
+    E --&gt; E2[Windows: Rust + Frontend tests]
+    E --&gt; E3[macOS: Rust + Frontend + Agent tests]
+
+    A --&gt; H[Build Job]
+    H --&gt; H1[macOS x64 + ARM64]
+    H --&gt; H2[Linux x64 + ARM64]
+    H --&gt; H3[Windows x64]
+
+    A --&gt; I[E2E Job — new]
+    I --&gt; I1[Ubuntu: Docker + tauri-driver]
+    I --&gt; I2[Windows: native tauri-driver]
+
+    E1 --&gt; J{All green?}
+    E2 --&gt; J
+    E3 --&gt; J
+    I1 --&gt; J
+    I2 --&gt; J
+    H1 --&gt; J
+    H2 --&gt; J
+    H3 --&gt; J
+
+    J --&gt;|Yes| K[PR mergeable]
+    J --&gt;|No| L[Fix failures]
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style K fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+    style L fill:#2d2d2d,stroke:#d16969,color:#fff
+</pre>
+</div>
+<h3 id="pre-release-verification-workflow">Pre-Release Verification Workflow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor RM as Release Manager
+    participant GH as GitHub Issues
+    participant Win as Windows Tester
+    participant Mac as macOS Tester
+    participant Lin as Linux Tester
+
+    RM-&gt;&gt;GH: Create "Release vX.Y.Z — Platform Verification" issue
+    GH--&gt;&gt;Win: Assign Windows section
+    GH--&gt;&gt;Mac: Assign macOS section
+    GH--&gt;&gt;Lin: Assign Linux section
+
+    par Platform Testing
+        Win-&gt;&gt;Win: Run automated tests
+        Win-&gt;&gt;Win: Execute Windows manual checklist
+        Win-&gt;&gt;GH: Check off Windows items
+    and
+        Mac-&gt;&gt;Mac: Run automated tests
+        Mac-&gt;&gt;Mac: Execute macOS manual checklist
+        Mac-&gt;&gt;GH: Check off macOS items
+    and
+        Lin-&gt;&gt;Lin: Run automated tests
+        Lin-&gt;&gt;Lin: Execute Linux manual checklist
+        Lin-&gt;&gt;GH: Check off Linux items
+    end
+
+    RM-&gt;&gt;GH: Review all checkboxes
+    alt All platforms verified
+        RM-&gt;&gt;RM: Proceed with release
+    else Gaps remain
+        RM-&gt;&gt;GH: Request additional testing
+    end
+</pre>
+</div>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>WSL on Windows</strong>: WSL introduces a Linux-like environment inside Windows. Shell detection must find WSL distros, file browser must convert between <code>\\wsl$\&lt;distro&gt;\</code> UNC paths and Linux paths, and OSC 7 <code>PROMPT_COMMAND</code> injection must work across the boundary. Tests must cover both WSL 1 and WSL 2.</li>
+<li><strong>XQuartz on macOS</strong>: X11 forwarding on macOS requires XQuartz, which uses TCP on <code>localhost:N</code> rather than Unix sockets. This is tested manually because it requires a running XQuartz instance.</li>
+<li><strong>Virtual serial ports</strong>: Serial port testing requires hardware or virtual ports (<code>socat</code> on Linux/macOS). Windows virtual serial ports use tools like <code>com0com</code>. The CI environment cannot easily provide serial hardware, so serial tests remain manual or use platform-specific virtual port setups in Docker.</li>
+<li><strong>ARM64 builds</strong>: Linux ARM64 and macOS ARM64 builds are cross-compiled in CI. Unit tests run natively on the CI runner's architecture (x64 for Linux, ARM64 for macOS-latest). ARM64-specific bugs (if any) require manual testing on ARM hardware.</li>
+<li><strong>CI runner differences</strong>: <code>macos-latest</code> in GitHub Actions is ARM64 (Apple Silicon) since late 2024. This means macOS CI tests natively exercise the ARM64 code path but not x64. The reverse was true historically. Platform tests should not assume a specific architecture.</li>
+<li><strong>Docker on macOS</strong>: The <code>test-system.sh</code> script delegates to Docker on macOS for E2E tests. This tests the Linux build inside Docker, not the native macOS build. macOS-specific rendering (WKWebView) must be verified manually.</li>
+<li><strong>Agent on Windows</strong>: The remote agent's daemon mode uses Unix <code>fork</code>/<code>setsid</code> and is not supported on Windows. Agent tests that exercise daemon behavior should be <code>#[cfg(unix)]</code>-gated.</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="test-execution-pipeline">Test Execution Pipeline</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Triggered: PR opened / push
+
+    state "CI Pipeline" as CI {
+        Triggered --&gt; QualityChecks: Start
+        QualityChecks --&gt; UnitTests: Pass
+        QualityChecks --&gt; Failed: Fail
+
+        state "Unit Tests (3-platform matrix)" as UnitTests {
+            [*] --&gt; Ubuntu_Unit
+            [*] --&gt; Windows_Unit
+            [*] --&gt; macOS_Unit
+            Ubuntu_Unit --&gt; [*]: Done
+            Windows_Unit --&gt; [*]: Done
+            macOS_Unit --&gt; [*]: Done
+        }
+
+        UnitTests --&gt; E2E_Tests: All pass
+        UnitTests --&gt; Failed: Any fail
+
+        state "E2E Tests (2-platform)" as E2E_Tests {
+            [*] --&gt; Ubuntu_E2E: Docker + tauri-driver
+            [*] --&gt; Windows_E2E: native tauri-driver
+            Ubuntu_E2E --&gt; [*]: Done
+            Windows_E2E --&gt; [*]: Done
+        }
+
+        E2E_Tests --&gt; BuildMatrix: All pass
+        E2E_Tests --&gt; Failed: Any fail
+
+        state "Build (5 targets)" as BuildMatrix {
+            [*] --&gt; macOS_x64
+            [*] --&gt; macOS_ARM64
+            [*] --&gt; Linux_x64
+            [*] --&gt; Linux_ARM64
+            [*] --&gt; Windows_x64
+        }
+
+        BuildMatrix --&gt; Passed: All pass
+        BuildMatrix --&gt; Failed: Any fail
+    }
+
+    Passed --&gt; [*]: PR mergeable
+    Failed --&gt; [*]: Fix required
+</pre>
+</div>
+<h3 id="platform-test-decision-flow">Platform Test Decision Flow</h3>
+<p>This diagram shows how to decide which tests are needed for a given change:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Change submitted] --&gt; B{Touches platform-gated code?}
+
+    B --&gt;|No| C[Standard test suite sufficient]
+    C --&gt; C1[Unit tests on 3 platforms via CI]
+    C1 --&gt; C2[E2E on Linux + Windows via CI]
+    C2 --&gt; Done[Tests complete]
+
+    B --&gt;|Yes| D{Which cfg gates?}
+
+    D --&gt;|"#[cfg(windows)]"| E[Windows-specific]
+    E --&gt; E1[Windows unit tests must pass in CI]
+    E1 --&gt; E2[Manual: verify on real Windows machine]
+    E2 --&gt; E3[Check: WSL, path separators, COM ports]
+    E3 --&gt; Done
+
+    D --&gt;|"#[cfg(unix)]"| F[Unix-specific]
+    F --&gt; F1[Linux + macOS unit tests must pass in CI]
+    F1 --&gt; F2[Manual: verify on macOS if WKWebView-related]
+    F2 --&gt; Done
+
+    D --&gt;|"#[cfg(target_os = macos)]"| G[macOS-specific]
+    G --&gt; G1[macOS unit tests must pass in CI]
+    G1 --&gt; G2[Manual: verify on real macOS machine]
+    G2 --&gt; G3[Check: key repeat, XQuartz, WKWebView]
+    G3 --&gt; Done
+
+    D --&gt;|Multiple platforms| H[Cross-platform change]
+    H --&gt; H1[All platform unit tests must pass in CI]
+    H1 --&gt; H2[E2E on Linux + Windows]
+    H2 --&gt; H3[Manual: verify on each affected platform]
+    H3 --&gt; Done
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style Done fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<h3 id="e2e-test-execution-per-platform">E2E Test Execution Per Platform</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant CI as GitHub Actions
+    participant Lin as Ubuntu Runner
+    participant Win as Windows Runner
+    participant Mac as macOS Runner
+
+    CI-&gt;&gt;Lin: Start E2E job
+    CI-&gt;&gt;Win: Start E2E job
+    CI-&gt;&gt;Mac: Start E2E job (Docker delegation)
+
+    par Linux E2E
+        Lin-&gt;&gt;Lin: docker compose up (SSH, Telnet, serial)
+        Lin-&gt;&gt;Lin: tauri-driver (WebKitGTK)
+        Lin-&gt;&gt;Lin: WebdriverIO test suite
+        Lin--&gt;&gt;CI: Results: 30 tests
+    and Windows E2E
+        Win-&gt;&gt;Win: Build app (WebView2)
+        Win-&gt;&gt;Win: tauri-driver (msedgedriver)
+        Win-&gt;&gt;Win: WebdriverIO test suite
+        Note over Win: Serial/Telnet infra tests&lt;br/&gt;skipped (no Docker)
+        Win--&gt;&gt;CI: Results: 28 tests
+    and macOS E2E (Docker)
+        Mac-&gt;&gt;Mac: docker compose up
+        Mac-&gt;&gt;Mac: Run Linux E2E inside Docker
+        Note over Mac: Tests Linux build,&lt;br/&gt;not native macOS
+        Mac--&gt;&gt;CI: Results: 30 tests (Linux)
+    end
+
+    CI-&gt;&gt;CI: Aggregate results
+    CI-&gt;&gt;CI: Post summary to PR
+</pre>
+</div>
+<h3 id="platform-coverage-tracking-state">Platform Coverage Tracking State</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Untested: Feature added
+
+    Untested --&gt; PartiallyTested: Tested on 1 platform
+    PartiallyTested --&gt; PartiallyTested: Tested on additional platform
+    PartiallyTested --&gt; FullyTested: Tested on all required platforms
+
+    FullyTested --&gt; Regression: Bug found on a platform
+    Regression --&gt; PartiallyTested: Fix applied, re-test needed
+
+    state PartiallyTested {
+        [*] --&gt; CheckPlatforms
+        CheckPlatforms --&gt; WindowsTested: Verified on Windows
+        CheckPlatforms --&gt; macOSTested: Verified on macOS
+        CheckPlatforms --&gt; LinuxTested: Verified on Linux
+    }
+</pre>
+</div>
+<h3 id="release-verification-flow">Release Verification Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Release candidate tagged] --&gt; B[Create platform verification issue]
+    B --&gt; C[Assign testers per platform]
+
+    C --&gt; D[Windows verification]
+    C --&gt; E[macOS verification]
+    C --&gt; F[Linux verification]
+
+    D --&gt; D1[Run automated tests]
+    D1 --&gt; D2[Execute XPLAT-WIN manual tests]
+    D2 --&gt; D3[Execute regression tests from manual-tests-input.md]
+    D3 --&gt; D4{All pass?}
+
+    E --&gt; E1[Run automated tests]
+    E1 --&gt; E2[Execute XPLAT-MAC manual tests]
+    E2 --&gt; E3[Execute regression tests from manual-tests-input.md]
+    E3 --&gt; E4{All pass?}
+
+    F --&gt; F1[Run automated tests]
+    F1 --&gt; F2[Execute XPLAT-LIN manual tests]
+    F2 --&gt; F3[Run system tests: ./scripts/test-system.sh]
+    F3 --&gt; F4{All pass?}
+
+    D4 --&gt;|Yes| G[Windows verified]
+    D4 --&gt;|No| D5[File bug, block release]
+
+    E4 --&gt;|Yes| H[macOS verified]
+    E4 --&gt;|No| E5[File bug, block release]
+
+    F4 --&gt;|Yes| I[Linux verified]
+    F4 --&gt;|No| F5[File bug, block release]
+
+    G --&gt; J{All platforms verified?}
+    H --&gt; J
+    I --&gt; J
+
+    J --&gt;|Yes| K[Release approved]
+    J --&gt;|No| L[Resolve blockers]
+    L --&gt; C
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style K fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+    style D5 fill:#2d2d2d,stroke:#d16969,color:#fff
+    style E5 fill:#2d2d2d,stroke:#d16969,color:#fff
+    style F5 fill:#2d2d2d,stroke:#d16969,color:#fff
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation; this section captures the planned approach given the current state.</p>
+<h3 id="1-expand-the-manual-test-plan-with-platform-specific-tests">1. Expand the Manual Test Plan with Platform-Specific Tests</h3>
+<p>The current <code>docs/manual-testing.md</code> has three cross-platform tests (XPLAT-01 to XPLAT-03). This should be expanded into platform-specific subsections with comprehensive coverage:</p>
+<p><strong>New Windows-specific tests (XPLAT-WIN series):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Test</th>
+<th>Steps</th>
+<th>Expected Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>XPLAT-WIN-01</td>
+<td>WSL distro detection</td>
+<td>Open connection editor, select Local</td>
+<td>WSL distros listed (if WSL installed)</td>
+</tr>
+<tr>
+<td>XPLAT-WIN-02</td>
+<td>PowerShell via absolute path</td>
+<td>Create PowerShell connection, connect</td>
+<td>PowerShell launches (not WSL)</td>
+</tr>
+<tr>
+<td>XPLAT-WIN-03</td>
+<td>Git Bash via absolute path</td>
+<td>Create Git Bash connection, connect</td>
+<td>Git Bash launches (not WSL)</td>
+</tr>
+<tr>
+<td>XPLAT-WIN-04</td>
+<td>WSL file browser paths</td>
+<td>Open WSL tab, <code>cd /mnt/c/Users</code></td>
+<td>File browser shows <code>C:/Users</code></td>
+</tr>
+<tr>
+<td>XPLAT-WIN-05</td>
+<td>COM port enumeration</td>
+<td>Open serial connection editor</td>
+<td>COM ports listed</td>
+</tr>
+<tr>
+<td>XPLAT-WIN-06</td>
+<td>SSH key paths with backslashes</td>
+<td>Set SSH key to <code>~/.ssh/id_ed25519</code>, connect</td>
+<td>Key path resolved correctly</td>
+</tr>
+<tr>
+<td>XPLAT-WIN-07</td>
+<td>Nerd Font rendering</td>
+<td>Open PowerShell with Agnoster theme</td>
+<td>Powerline glyphs render correctly</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>New macOS-specific tests (XPLAT-MAC series):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Test</th>
+<th>Steps</th>
+<th>Expected Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>XPLAT-MAC-01</td>
+<td>Zsh as default shell</td>
+<td>Open connection editor, select Local</td>
+<td>Zsh marked as "(default)"</td>
+</tr>
+<tr>
+<td>XPLAT-MAC-02</td>
+<td>Key repeat works</td>
+<td>Open terminal, hold a letter key</td>
+<td>Key repeats without accent picker</td>
+</tr>
+<tr>
+<td>XPLAT-MAC-03</td>
+<td>No doubled text</td>
+<td>Open terminal, type commands</td>
+<td>Single characters, no duplication</td>
+</tr>
+<tr>
+<td>XPLAT-MAC-04</td>
+<td>X11 via XQuartz</td>
+<td>Enable X11 forwarding, run <code>xclock</code></td>
+<td>Window appears via XQuartz</td>
+</tr>
+<tr>
+<td>XPLAT-MAC-05</td>
+<td>Serial port paths</td>
+<td>Open serial connection editor</td>
+<td><code>/dev/tty.*</code> and <code>/dev/cu.*</code> listed</td>
+</tr>
+<tr>
+<td>XPLAT-MAC-06</td>
+<td>WKWebView rendering</td>
+<td>Inspect terminal rendering, scrolling</td>
+<td>No visual artifacts</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>New Linux-specific tests (XPLAT-LIN series):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Test</th>
+<th>Steps</th>
+<th>Expected Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>XPLAT-LIN-01</td>
+<td>Shell detection</td>
+<td>Open connection editor, select Local</td>
+<td>bash/zsh/sh listed</td>
+</tr>
+<tr>
+<td>XPLAT-LIN-02</td>
+<td>X11 forwarding native</td>
+<td>Enable X11, run <code>xclock</code> via SSH</td>
+<td>Window on local X display</td>
+</tr>
+<tr>
+<td>XPLAT-LIN-03</td>
+<td>Serial ports</td>
+<td>Open serial connection editor</td>
+<td><code>/dev/ttyUSB*</code>, <code>/dev/ttyACM*</code> listed</td>
+</tr>
+<tr>
+<td>XPLAT-LIN-04</td>
+<td>Docker test environment</td>
+<td>Run <code>./scripts/test-system.sh</code></td>
+<td>All system tests pass</td>
+</tr>
+<tr>
+<td>XPLAT-LIN-05</td>
+<td>E2E with tauri-driver</td>
+<td>Run <code>pnpm test:e2e</code></td>
+<td>All E2E tests pass</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="2-add-platform-specific-unit-tests">2. Add Platform-Specific Unit Tests</h3>
+<p>Create dedicated test modules that exercise platform-divergent code paths. These tests use <code>#[cfg]</code> gates so they only compile and run on the relevant platform.</p>
+<p><strong>New test file: <code>src-tauri/src/utils/platform_tests.rs</code></strong></p>
+<p>This module aggregates platform-specific tests that verify divergent behavior:</p>
+<ul>
+<li><strong>Windows tests</strong> (<code>#[cfg(windows)]</code>):</li>
+<li>WSL distro detection returns distro names</li>
+<li><code>normalize_separators</code> converts <code>\</code> to <code>/</code> and back</li>
+<li><code>expand_tilde</code> uses <code>%USERPROFILE%</code></li>
+<li>Shell detection finds PowerShell at its absolute path</li>
+<li>
+<p>COM port name pattern validation</p>
+</li>
+<li>
+<p><strong>Unix tests</strong> (<code>#[cfg(unix)]</code>):</p>
+</li>
+<li><code>expand_tilde</code> uses <code>$HOME</code></li>
+<li>Serial port path patterns (<code>/dev/tty*</code>)</li>
+<li>Shell detection finds default shell from <code>$SHELL</code></li>
+<li>
+<p>File permissions parsing (rwx)</p>
+</li>
+<li>
+<p><strong>macOS tests</strong> (<code>#[cfg(target_os = "macos")]</code>):</p>
+</li>
+<li><code>ApplePressAndHoldEnabled</code> key repeat configuration</li>
+<li>XQuartz TCP display detection</li>
+</ul>
+<p>Many of these tests already exist scattered across <code>shell_detect.rs</code>, <code>local.rs</code>, and <code>expand.rs</code>. The implementation consolidates them and fills the gaps.</p>
+<h3 id="3-ci-workflow-changes">3. CI Workflow Changes</h3>
+<h4 id="add-windows-e2e-to-ci">Add Windows E2E to CI</h4>
+<p>Extend <code>.github/workflows/code-quality.yml</code> (or a new <code>e2e.yml</code>) to run E2E tests on Windows:</p>
+<pre><code class="language-yaml">e2e-tests:
+  name: E2E Tests
+  runs-on: ${{ matrix.os }}
+  strategy:
+    matrix:
+      os: [ubuntu-latest, windows-latest]
+  steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: &quot;20&quot;
+        cache: &quot;pnpm&quot;
+    # Linux: install system deps + tauri-driver
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev ...
+        cargo install tauri-driver
+    # Windows: install tauri-driver
+    - name: Install tauri-driver (Windows)
+      if: matrix.os == 'windows-latest'
+      run: cargo install tauri-driver
+    - run: pnpm install --frozen-lockfile
+    - run: pnpm tauri build
+    - run: pnpm test:e2e:ci
+</code></pre>
+<p><strong>Key considerations for Windows E2E:</strong></p>
+<ul>
+<li><code>tauri-driver</code> on Windows uses <code>msedgedriver</code> (Edge WebView2 driver), which must be available on the runner. GitHub's <code>windows-latest</code> includes Edge.</li>
+<li>Docker is available on <code>windows-latest</code> runners but uses Windows containers by default. Linux containers (needed for SSH/Telnet test targets) require <code>--platform linux</code> or a separate Linux Docker daemon configuration. Infrastructure tests (SSH, Telnet, serial) may be skipped on Windows CI initially.</li>
+<li>The <code>wdio.conf.js</code> must handle platform differences in binary paths (e.g., <code>src-tauri/target/release/termiHub.exe</code> on Windows vs <code>src-tauri/target/release/termi-hub</code> on Linux).</li>
+</ul>
+<h4 id="add-platform-test-summary-to-ci">Add Platform Test Summary to CI</h4>
+<p>Add a job that aggregates test results across platforms and posts a summary:</p>
+<pre><code class="language-yaml">platform-summary:
+  name: Platform Test Summary
+  needs: [tests, e2e-tests, build]
+  runs-on: ubuntu-latest
+  if: always()
+  steps:
+    - name: Generate platform matrix summary
+      run: |
+        echo &quot;## Platform Test Matrix&quot; &gt;&gt; $GITHUB_STEP_SUMMARY
+        echo &quot;&quot; &gt;&gt; $GITHUB_STEP_SUMMARY
+        echo &quot;| Platform | Unit | E2E | Build |&quot; &gt;&gt; $GITHUB_STEP_SUMMARY
+        echo &quot;|----------|------|-----|-------|&quot; &gt;&gt; $GITHUB_STEP_SUMMARY
+        # ... populate from job results
+</code></pre>
+<h3 id="4-platform-detection-in-test-code">4. Platform Detection in Test Code</h3>
+<h4 id="rust-platform-test-helpers">Rust: Platform Test Helpers</h4>
+<p>Add a test utility module that provides platform detection helpers for tests:</p>
+<pre><code class="language-rust">// src-tauri/src/utils/test_helpers.rs (test-only)
+
+/// Returns true if running on a CI environment
+pub fn is_ci() -&gt; bool {
+    std::env::var(&quot;CI&quot;).is_ok()
+}
+
+/// Returns true if the current platform has Docker available
+pub fn has_docker() -&gt; bool {
+    std::process::Command::new(&quot;docker&quot;)
+        .arg(&quot;info&quot;)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Returns true if WSL is available (Windows only)
+#[cfg(windows)]
+pub fn has_wsl() -&gt; bool {
+    std::process::Command::new(&quot;wsl&quot;)
+        .arg(&quot;--list&quot;)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+</code></pre>
+<h4 id="typescript-platform-aware-e2e-tests">TypeScript: Platform-Aware E2E Tests</h4>
+<p>The WebdriverIO test suite should skip tests that cannot run on the current platform:</p>
+<pre><code class="language-typescript">// tests/e2e/helpers/platform.ts
+export const isWindows = process.platform === 'win32';
+export const isMacOS = process.platform === 'darwin';
+export const isLinux = process.platform === 'linux';
+export const hasDocker = /* check docker availability */;
+
+// Usage in tests:
+describe('Serial Port Tests', () =&gt; {
+  it('should enumerate COM ports', function () {
+    if (!isWindows) this.skip();
+    // Windows-specific test
+  });
+
+  it('should enumerate /dev/tty* ports', function () {
+    if (isWindows) this.skip();
+    // Unix-specific test
+  });
+});
+</code></pre>
+<h3 id="5-release-verification-issue-template">5. Release Verification Issue Template</h3>
+<p>Create <code>.github/ISSUE_TEMPLATE/release-verification.yml</code>:</p>
+<pre><code class="language-yaml">name: Release Platform Verification
+description: Checklist for verifying a release across all platforms
+title: &quot;Release vX.Y.Z — Platform Verification&quot;
+labels: [&quot;release&quot;, &quot;testing&quot;]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Platform Verification Checklist
+        Complete all items on each platform before approving the release.
+
+  - type: checkboxes
+    id: windows
+    attributes:
+      label: Windows
+      options:
+        - label: &quot;Automated tests pass (unit + E2E)&quot;
+        - label: &quot;Shell detection: PowerShell, cmd, Git Bash, WSL&quot;
+        - label: &quot;Serial ports: COM* enumeration&quot;
+        - label: &quot;SSH key auth with Ed25519&quot;
+        - label: &quot;WSL file browser path conversion&quot;
+        - label: &quot;Nerd Font / Powerline rendering&quot;
+        # ... more items
+
+  - type: checkboxes
+    id: macos
+    attributes:
+      label: macOS
+      options:
+        - label: &quot;Automated tests pass (unit)&quot;
+        - label: &quot;Key repeat works (no accent picker)&quot;
+        - label: &quot;No doubled terminal text&quot;
+        - label: &quot;X11 forwarding via XQuartz&quot;
+        # ... more items
+
+  - type: checkboxes
+    id: linux
+    attributes:
+      label: Linux
+      options:
+        - label: &quot;Automated tests pass (unit + E2E)&quot;
+        - label: &quot;System tests pass (./scripts/test-system.sh)&quot;
+        - label: &quot;Serial ports: /dev/tty* enumeration&quot;
+        - label: &quot;X11 forwarding with native X server&quot;
+        # ... more items
+</code></pre>
+<h3 id="6-test-reporting-and-tracking">6. Test Reporting and Tracking</h3>
+<h4 id="pr-labels-for-platform-testing">PR Labels for Platform Testing</h4>
+<p>Introduce GitHub labels to track which platforms a PR has been tested on:</p>
+<ul>
+<li><code>tested-windows</code> — PR verified on Windows</li>
+<li><code>tested-macos</code> — PR verified on macOS</li>
+<li><code>tested-linux</code> — PR verified on Linux</li>
+<li><code>needs-platform-testing</code> — PR touches platform-specific code but hasn't been verified on all affected platforms</li>
+</ul>
+<p>A CI check or GitHub Action can automatically apply <code>needs-platform-testing</code> when a PR modifies files containing <code>#[cfg(windows)]</code>, <code>#[cfg(unix)]</code>, or <code>#[cfg(target_os =</code> patterns.</p>
+<h4 id="platform-test-coverage-tracking">Platform Test Coverage Tracking</h4>
+<p>Add a section to <code>docs/manual-testing.md</code> that tracks the last verified date per platform for each feature area. This can be maintained manually or generated from closed release verification issues:</p>
+<pre><code class="language-markdown">## Platform Verification Status
+
+| Feature         | Windows | macOS  | Linux  | Last Release |
+| --------------- | ------- | ------ | ------ | ------------ |
+| Shell detection | v0.4.0  | v0.4.0 | v0.4.0 | v0.4.0       |
+| Serial ports    | v0.3.0  | v0.3.0 | v0.4.0 | v0.4.0       |
+| X11 forwarding  | N/A     | v0.4.0 | v0.4.0 | v0.4.0       |
+| WSL integration | v0.4.0  | N/A    | N/A    | v0.4.0       |
+</code></pre>
+<h3 id="7-implementation-roadmap">7. Implementation Roadmap</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    subgraph "PR 1: Expand Manual Tests"
+        A1[Add XPLAT-WIN tests]
+        A2[Add XPLAT-MAC tests]
+        A3[Add XPLAT-LIN tests]
+    end
+
+    subgraph "PR 2: Platform Unit Tests"
+        B1[Platform test helpers]
+        B2[Windows-specific tests]
+        B3[macOS-specific tests]
+        B4[Unix-specific tests]
+    end
+
+    subgraph "PR 3: CI E2E on Windows"
+        C1[Add Windows E2E job]
+        C2[Fix wdio.conf.js paths]
+        C3[Platform test summary job]
+    end
+
+    subgraph "PR 4: Release Process"
+        D1[Issue template for verification]
+        D2[Platform PR labels]
+        D3[Auto-label CI check]
+    end
+
+    A1 --&gt; B1
+    A2 --&gt; B1
+    A3 --&gt; B1
+    B1 --&gt; C1
+    C1 --&gt; D1
+
+    style A1 fill:#2d2d2d,stroke:#007acc,color:#fff
+    style D1 fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<h3 id="file-changes-summary">File Changes Summary</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph "New Files"
+        N1[".github/ISSUE_TEMPLATE/release-verification.yml"]
+        N2["src-tauri/src/utils/platform_tests.rs"]
+        N3["tests/e2e/helpers/platform.ts"]
+    end
+
+    subgraph "Modified Files"
+        M1["docs/manual-testing.md — expanded XPLAT tests"]
+        M2[".github/workflows/code-quality.yml — E2E on Windows"]
+        M3["wdio.conf.js — platform-aware binary paths"]
+        M4["src-tauri/src/utils/mod.rs — register platform_tests"]
+        M5["docs/testing.md — updated strategy section"]
+    end
+
+    subgraph "Unchanged (Reference)"
+        U1["scripts/test-system.sh"]
+        U2["src-tauri/src/utils/shell_detect.rs"]
+        U3["src-tauri/src/files/local.rs"]
+        U4["src-tauri/src/terminal/x11_forward.rs"]
+    end
+
+    style N1 fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style N2 fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style N3 fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style M1 fill:#3a2e1e,stroke:#cca700,color:#fff
+    style M2 fill:#3a2e1e,stroke:#cca700,color:#fff
+    style M3 fill:#3a2e1e,stroke:#cca700,color:#fff
+    style M4 fill:#3a2e1e,stroke:#cca700,color:#fff
+    style M5 fill:#3a2e1e,stroke:#cca700,color:#fff
+    style U1 fill:#2d2d2d,stroke:#555,color:#999
+    style U2 fill:#2d2d2d,stroke:#555,color:#999
+    style U3 fill:#2d2d2d,stroke:#555,color:#999
+    style U4 fill:#2d2d2d,stroke:#555,color:#999
+</pre>
+</div>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

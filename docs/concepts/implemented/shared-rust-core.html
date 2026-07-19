@@ -1,0 +1,1408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shared Rust Core Library (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Shared Rust Core Library</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/277">#277</a></span>
+          <span><code>docs/concepts/implemented/shared-rust-core.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub currently maintains two independent Rust crates:</p>
+<ul>
+<li><strong><code>src-tauri/</code></strong> (package <code>termihub</code>, 13,622 LOC) — the Tauri desktop backend</li>
+<li><strong><code>agent/</code></strong> (package <code>termihub-agent</code>, 11,032 LOC) — the remote agent</li>
+</ul>
+<p>Both crates do <strong>fundamentally the same thing</strong>: manage terminal sessions (shell, serial, Docker, SSH), browse files, and monitor systems. The only difference is <em>where they run</em> and <em>how they deliver output</em>:</p>
+<ul>
+<li>Desktop: runs locally, delivers output via Tauri events</li>
+<li>Agent: runs remotely, delivers output via JSON-RPC notifications over SSH</li>
+</ul>
+<p>This has led to deep duplication — not just of types and utility functions, but of <strong>the entire backend logic</strong>. Every connection type follows the identical lifecycle in both crates:</p>
+<pre><code class="language-text">[config] → [validate] → [build command] → [spawn process] → [manage PTY/port I/O] → [deliver output]
+</code></pre>
+<p>Everything up to "deliver output" is the same logic. The transport mechanism (Tauri events vs JSON-RPC) is the only real difference.</p>
+<h3 id="the-problem-two-implementations-of-one-system">The Problem: Two Implementations of One System</h3>
+<p>The previous version of this concept identified ~945 lines of surface duplication (utility functions, types, parsers) and proposed a ~700 LOC utility crate. That analysis was too narrow. The real problem is that the desktop and agent are <strong>two complete implementations of the same backend engine</strong>, separated only by a transport layer.</p>
+<p>Consider what happens when you fix a bug:</p>
+<ul>
+<li>A WSL startup edge case in the local shell? Fixed in <code>src-tauri/src/terminal/local_shell.rs</code> but the agent's <code>shell/backend.rs</code> doesn't benefit.</li>
+<li>A Docker <code>--init</code> timing issue? Fixed in one <code>docker_shell.rs</code> or <code>docker/backend.rs</code>, not the other.</li>
+<li>A serial flow control parsing bug? Both <code>serial.rs</code> files have byte-for-byte identical match blocks — you must remember to fix both.</li>
+<li>Output coalescing improvements? Desktop has 32 KB coalescing with screen-clear detection. Agent has 65 KB chunking. Neither benefits from the other's optimizations.</li>
+</ul>
+<p>The agent hasn't been tested as extensively as the desktop. Bug fixes and edge case handling that exist in the desktop code today don't reach the agent, and vice versa. The agent has features (ring buffer, session persistence, reconnect) that the desktop doesn't benefit from.</p>
+<h3 id="motivation">Motivation</h3>
+<ol>
+<li><strong>Duplicated backend engine</strong> — The entire session lifecycle (config parsing, command building, process spawning, I/O management, output delivery) is implemented twice with near-identical logic</li>
+<li><strong>Bug fix isolation</strong> — Edge case fixes in one crate never reach the other. The desktop has workarounds (OSC7 injection, screen-clear detection, 200ms startup delay) that the agent lacks.</li>
+<li><strong>Feature asymmetry</strong> — The agent has capabilities (ring buffer, attach/detach, session recovery) that would benefit the desktop but can't be shared</li>
+<li><strong>Duplicated types and utilities</strong> — <code>FileEntry</code>, <code>SystemStats</code>, <code>CpuCounters</code>, config structs, JSON-RPC types, serial/docker/file/monitoring logic all exist in both crates</li>
+<li><strong>Testing burden</strong> — Every feature and fix must be tested in both crates independently</li>
+</ol>
+<h3 id="duplication-analysis-beyond-utilities">Duplication Analysis: Beyond Utilities</h3>
+<h4 id="what-the-previous-analysis-found-945-loc">What the Previous Analysis Found (~945 LOC)</h4>
+<p>Surface-level duplications: serial config match blocks, Docker arg vectors, <code>FileEntry</code> structs, monitoring parsers, <code>chrono_from_epoch</code>, <code>format_permissions</code>, protocol types. This is real duplication, but it's the tip of the iceberg.</p>
+<h4 id="what-the-previous-analysis-missed">What the Previous Analysis Missed</h4>
+<p>The entire session management layer is duplicated at the <strong>architectural level</strong>. Both sides follow the same pattern for every connection type:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Connection Type</th>
+<th>Desktop Implementation</th>
+<th>Agent Implementation</th>
+<th>What's Actually Different</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Shell</strong></td>
+<td><code>LocalShell::new()</code> → portable-pty → reader thread → mpsc channel</td>
+<td><code>ShellBackend::new()</code> → daemon → nix openpty → poll loop → Unix socket</td>
+<td>Only the PTY provider and transport</td>
+</tr>
+<tr>
+<td><strong>Docker</strong></td>
+<td><code>DockerShell::new()</code> → build args → portable-pty → reader thread</td>
+<td><code>DockerBackend::new()</code> → build args → <code>docker run -d</code> → daemon → <code>docker exec</code></td>
+<td>Only the container lifecycle strategy and transport</td>
+</tr>
+<tr>
+<td><strong>SSH</strong></td>
+<td><code>SshConnection::new()</code> → ssh2 channel → blocking mode juggling → reader thread</td>
+<td><code>SshBackend::new()</code> → build <code>ssh -tt</code> args → daemon → PTY</td>
+<td>Only the SSH implementation strategy and transport</td>
+</tr>
+<tr>
+<td><strong>Serial</strong></td>
+<td><code>SerialConnection::new()</code> → parse config → open port → reader thread</td>
+<td><code>SerialBackend::new()</code> → parse config → open port → reader thread + ring buffer</td>
+<td>Nearly identical; agent adds ring buffer</td>
+</tr>
+<tr>
+<td><strong>File listing</strong></td>
+<td><code>list_dir()</code> → iterate entries → skip <code>.</code>/<code>..</code> → build <code>FileEntry</code></td>
+<td><code>list_dir_sync()</code> → iterate entries → skip <code>.</code>/<code>..</code> → build <code>FileEntry</code></td>
+<td>Only error types</td>
+</tr>
+<tr>
+<td><strong>Monitoring</strong></td>
+<td><code>parse_stats()</code> → <code>CpuCounters</code> → delta calculation</td>
+<td><code>parse_stats()</code> → <code>CpuCounters</code> → delta calculation</td>
+<td>Explicitly documented copy</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The <em>logic</em> is the same. The <em>transport</em> differs. The current architecture forces implementing and maintaining the logic twice because it's entangled with transport concerns.</p>
+<h4 id="concrete-bug-fix-examples">Concrete Bug Fix Examples</h4>
+<p>Desktop-only edge cases that the agent doesn't have:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Edge Case</th>
+<th>Desktop Code</th>
+<th>Agent Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OSC7 working directory tracking injection</td>
+<td><code>manager.rs:78-95</code> — injects OSC7 setup for WSL/SSH shells</td>
+<td>Missing — agent shells don't get CWD tracking</td>
+</tr>
+<tr>
+<td>Screen-clear detection for clean startup</td>
+<td><code>manager.rs:293-330</code> — waits for ANSI <code>ESC[2J ESC[H</code> before emitting</td>
+<td>Missing — agent may flash startup noise</td>
+</tr>
+<tr>
+<td>Initial command delay (200ms)</td>
+<td><code>manager.rs:188-200</code> — separate thread sleeps then sends</td>
+<td>Missing — agent doesn't delay initial commands</td>
+</tr>
+<tr>
+<td>SSH blocking mode coordination</td>
+<td><code>ssh.rs:132-156</code> — toggles blocking for write/resize to prevent reader deadlock</td>
+<td>Not applicable (agent uses daemon) but shows the kind of workaround that accumulates</td>
+</tr>
+<tr>
+<td>Serial timeout handling</td>
+<td><code>serial.rs:76</code> — explicitly catches <code>TimedOut</code> and continues</td>
+<td><code>serial/backend.rs:248</code> — also handles <code>TimedOut</code> but with different error handling path</td>
+</tr>
+<tr>
+<td>Output coalescing (32 KB batching)</td>
+<td><code>manager.rs:335-340</code> — coalesces pending chunks into single event</td>
+<td>Agent has 65 KB chunking, different logic — neither benefits from improvements to the other</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Agent-only features that the desktop doesn't benefit from:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Agent Code</th>
+<th>Desktop Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ring buffer (1 MiB) for output replay</td>
+<td><code>buffer/ring_buffer.rs</code> — circular buffer for serial + daemon</td>
+<td>Missing — desktop serial has no replay capability</td>
+</tr>
+<tr>
+<td>Session persistence across restarts</td>
+<td><code>session/manager.rs:451-647</code> — state.json + daemon socket recovery</td>
+<td>Missing — desktop loses all sessions on restart</td>
+</tr>
+<tr>
+<td>Attach/detach semantics</td>
+<td><code>daemon/client.rs</code> — disconnect without killing, reconnect with replay</td>
+<td>Missing — desktop close = kill</td>
+</tr>
+<tr>
+<td>Serial auto-reconnect</td>
+<td><code>serial/backend.rs:313-346</code> — retries every 3s when device disconnects</td>
+<td>Missing — desktop serial just dies on disconnect</td>
+</tr>
+<tr>
+<td>Docker container persistence</td>
+<td><code>docker/backend.rs:71-87</code> — <code>docker run -d</code> keeps container alive</td>
+<td>Missing — desktop uses <code>docker run -it --rm</code> which dies on close</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="vision">Vision</h3>
+<p><code>termihub-core</code> should not be a ~700 LOC utility crate. It should be <strong>the actual backend engine</strong> — owning the session lifecycle, I/O management, file operations, and monitoring logic. The desktop and agent become thin transport adapters that inject their specific delivery mechanism into the shared core.</p>
+<p>A bug fix in the core fixes it everywhere. A new feature in the core is available everywhere.</p>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<p>This is an internal infrastructure change with no user-facing UI impact. The "interface" is the <strong>developer experience</strong> — how contributors interact with the workspace.</p>
+<h3 id="developer-workflow-changes">Developer Workflow Changes</h3>
+<p><strong>Before (current):</strong></p>
+<pre><code class="language-bash"># Build desktop
+cd src-tauri &amp;&amp; cargo build
+
+# Build agent
+cd agent &amp;&amp; cargo build
+
+# Run all tests (two separate invocations)
+cd src-tauri &amp;&amp; cargo test
+cd agent &amp;&amp; cargo test
+</code></pre>
+<p><strong>After (proposed workspace):</strong></p>
+<pre><code class="language-bash"># Build everything from repo root
+cargo build --workspace
+
+# Test everything from repo root
+cargo test --workspace
+
+# Build only desktop
+cargo build -p termihub
+
+# Build only agent
+cargo build -p termihub-agent
+
+# Build only shared core
+cargo build -p termihub-core
+</code></pre>
+<h3 id="import-pattern-developer-perspective">Import Pattern (Developer Perspective)</h3>
+<p>In both <code>src-tauri/</code> and <code>agent/</code>:</p>
+<pre><code class="language-rust">// Session management — the core engine
+use termihub_core::session::{SessionBackend, SessionConfig, SessionEvent};
+use termihub_core::session::shell::ShellSession;
+use termihub_core::session::docker::DockerSession;
+use termihub_core::session::serial::SerialSession;
+use termihub_core::session::ssh::SshCommandBuilder;
+
+// File operations
+use termihub_core::files::{FileBackend, FileEntry, LocalFileBackend};
+use termihub_core::files::utils::{chrono_from_epoch, format_permissions};
+
+// Monitoring
+use termihub_core::monitoring::{SystemStats, CpuCounters, parse_stats, StatsCollector};
+
+// Ring buffer — shared between serial, daemon, and potentially desktop
+use termihub_core::buffer::RingBuffer;
+
+// Config types
+use termihub_core::config::{ShellConfig, SerialConfig, DockerConfig, SshConfig, EnvVar, VolumeMount};
+
+// Protocol types
+use termihub_core::protocol::{JsonRpcRequest, JsonRpcNotification, errors};
+</code></pre>
+<h3 id="script-impact">Script Impact</h3>
+<p>The existing <code>scripts/</code> would need minor updates:</p>
+<ul>
+<li><code>test.sh</code> could use <code>cargo test --workspace</code> instead of running three separate commands</li>
+<li><code>check.sh</code> could use <code>cargo clippy --workspace</code> and <code>cargo fmt --all</code></li>
+<li><code>build.sh</code> and <code>dev.sh</code> unchanged (they target specific packages)</li>
+</ul>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="architecture-the-core-as-backend-engine">Architecture: The Core as Backend Engine</h3>
+<p>The key insight driving this rewrite: both crates follow the <strong>same session lifecycle</strong> for every connection type. The only variation is the transport layer — how output reaches the user and how processes are spawned.</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    subgraph "termihub-core (shared backend engine)"
+        direction TB
+
+        subgraph "Session Layer"
+            ST[SessionBackend trait&lt;br/&gt;write_input, resize, close, is_alive]
+            SHELL[shell/&lt;br/&gt;ShellSession — config validation,&lt;br/&gt;command building, env setup,&lt;br/&gt;CWD detection, OSC7 injection]
+            DOCKER[docker/&lt;br/&gt;DockerSession — arg building,&lt;br/&gt;container lifecycle,&lt;br/&gt;env vars, volumes, workdir]
+            SERIAL[serial/&lt;br/&gt;SerialSession — config parsing,&lt;br/&gt;port management, reconnect logic]
+            SSH_B[ssh/&lt;br/&gt;SshCommandBuilder — arg building,&lt;br/&gt;auth method handling,&lt;br/&gt;key path resolution]
+        end
+
+        subgraph "I/O Layer"
+            BUF[buffer/&lt;br/&gt;RingBuffer — 1 MiB circular,&lt;br/&gt;replay on attach]
+            COAL[output/&lt;br/&gt;OutputCoalescer — batching,&lt;br/&gt;screen-clear detection]
+            IOLOOP[io/&lt;br/&gt;ReaderLoop — configurable&lt;br/&gt;buffer size, timeout handling,&lt;br/&gt;alive flag management]
+        end
+
+        subgraph "File Layer"
+            FB[FileBackend trait&lt;br/&gt;list, read, write, delete,&lt;br/&gt;rename, stat]
+            LF[files/local.rs&lt;br/&gt;list_dir_sync, path normalization]
+            FU[files/utils.rs&lt;br/&gt;FileEntry, chrono_from_epoch,&lt;br/&gt;format_permissions]
+        end
+
+        subgraph "Monitoring Layer"
+            MC[StatsCollector trait&lt;br/&gt;collect → SystemStats]
+            MP[monitoring/parser.rs&lt;br/&gt;parse_stats, parse_cpu_line,&lt;br/&gt;cpu_percent_from_delta,&lt;br/&gt;parse_meminfo_value]
+            MT[monitoring/types.rs&lt;br/&gt;SystemStats, CpuCounters]
+        end
+
+        subgraph "Config &amp; Protocol"
+            CFG[config/&lt;br/&gt;ShellConfig, SerialConfig,&lt;br/&gt;DockerConfig, SshConfig,&lt;br/&gt;EnvVar, VolumeMount]
+            PROTO[protocol/&lt;br/&gt;JSON-RPC types + error codes]
+        end
+    end
+
+    subgraph "termihub (desktop) — thin transport adapter"
+        DTM[TerminalManager&lt;br/&gt;Tauri event emission,&lt;br/&gt;session routing]
+        DPTY[PtyProvider&lt;br/&gt;portable-pty spawning,&lt;br/&gt;cross-platform PTY]
+        DCMD[commands/&lt;br/&gt;Tauri IPC handlers]
+        DSFTP[files/sftp.rs&lt;br/&gt;SFTP session pooling]
+        DSSH[ssh.rs&lt;br/&gt;ssh2 channel management,&lt;br/&gt;X11 forwarding]
+        DMON[monitoring/&lt;br/&gt;MonitoringManager — SSH exec]
+    end
+
+    subgraph "termihub-agent (agent) — thin transport adapter"
+        ASM[SessionManager&lt;br/&gt;JSON-RPC dispatch,&lt;br/&gt;state persistence]
+        ADMN[daemon/&lt;br/&gt;Daemon process spawning,&lt;br/&gt;binary frame protocol,&lt;br/&gt;Unix socket IPC]
+        AH[handler/&lt;br/&gt;JSON-RPC method routing]
+        AFSSH[files/ssh.rs&lt;br/&gt;SFTP relay]
+        AFDKR[files/docker.rs&lt;br/&gt;docker exec file ops]
+        AMON[monitoring/&lt;br/&gt;LocalCollector — /proc,&lt;br/&gt;SshCollector — SSH exec]
+    end
+
+    DTM --&gt; ST
+    DTM --&gt; COAL
+    DPTY --&gt; SHELL
+    DPTY --&gt; DOCKER
+    DSSH --&gt; SSH_B
+    DCMD --&gt; CFG
+    DCMD --&gt; PROTO
+    DSFTP --&gt; FB
+    DMON --&gt; MC
+    DMON --&gt; MP
+
+    ASM --&gt; ST
+    ADMN --&gt; SHELL
+    ADMN --&gt; DOCKER
+    ADMN --&gt; SSH_B
+    ADMN --&gt; BUF
+    AH --&gt; CFG
+    AH --&gt; PROTO
+    AFSSH --&gt; FB
+    AFDKR --&gt; FB
+    AMON --&gt; MC
+    AMON --&gt; MP
+</pre>
+</div>
+<h3 id="the-transport-injection-pattern">The Transport Injection Pattern</h3>
+<p>The core defines <strong>what</strong> to do. Consumers define <strong>how</strong> to deliver it.</p>
+<pre><code class="language-rust">/// Core defines the output sink trait — consumers inject their transport.
+pub trait OutputSink: Send + 'static {
+    fn send_output(&amp;self, session_id: &amp;str, data: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;
+    fn send_exit(&amp;self, session_id: &amp;str, exit_code: Option&lt;i32&gt;) -&gt; Result&lt;()&gt;;
+    fn send_error(&amp;self, session_id: &amp;str, message: &amp;str) -&gt; Result&lt;()&gt;;
+}
+
+/// Core defines the process spawner trait — consumers inject their PTY/daemon mechanism.
+pub trait ProcessSpawner: Send + Sync {
+    type Handle: ProcessHandle;
+
+    fn spawn_shell(
+        &amp;self,
+        command: &amp;ShellCommand,
+        pty_size: PtySize,
+        env: &amp;HashMap&lt;String, String&gt;,
+        cwd: Option&lt;&amp;Path&gt;,
+    ) -&gt; Result&lt;Self::Handle&gt;;
+
+    fn spawn_command(
+        &amp;self,
+        program: &amp;str,
+        args: &amp;[String],
+        pty_size: PtySize,
+        env: &amp;HashMap&lt;String, String&gt;,
+    ) -&gt; Result&lt;Self::Handle&gt;;
+}
+
+/// Handle to a spawned process — abstracts over portable-pty vs daemon.
+pub trait ProcessHandle: Send {
+    fn write_input(&amp;self, data: &amp;[u8]) -&gt; Result&lt;()&gt;;
+    fn resize(&amp;self, cols: u16, rows: u16) -&gt; Result&lt;()&gt;;
+    fn close(&amp;self) -&gt; Result&lt;()&gt;;
+    fn is_alive(&amp;self) -&gt; bool;
+}
+</code></pre>
+<p><strong>Desktop provides:</strong></p>
+<pre><code class="language-rust">/// Uses portable-pty for cross-platform PTY management.
+struct PtySpawner;
+
+impl ProcessSpawner for PtySpawner {
+    type Handle = PtyHandle;
+
+    fn spawn_shell(&amp;self, command: &amp;ShellCommand, ...) -&gt; Result&lt;PtyHandle&gt; {
+        let pty_system = portable_pty::native_pty_system();
+        let pair = pty_system.openpty(size)?;
+        let child = pair.slave.spawn_command(cmd)?;
+        // ... reader thread, writer handle
+        Ok(PtyHandle { master, writer, child, alive })
+    }
+}
+
+/// Emits output via Tauri events.
+struct TauriOutputSink { app_handle: AppHandle }
+
+impl OutputSink for TauriOutputSink {
+    fn send_output(&amp;self, session_id: &amp;str, data: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+        self.app_handle.emit(&quot;terminal-output&quot;, TerminalOutputEvent { session_id, data })?;
+        Ok(())
+    }
+}
+</code></pre>
+<p><strong>Agent provides:</strong></p>
+<pre><code class="language-rust">/// Uses daemon processes for PTY persistence.
+struct DaemonSpawner { socket_dir: PathBuf }
+
+impl ProcessSpawner for DaemonSpawner {
+    type Handle = DaemonClient;
+
+    fn spawn_shell(&amp;self, command: &amp;ShellCommand, ...) -&gt; Result&lt;DaemonClient&gt; {
+        let socket_path = self.socket_dir.join(format!(&quot;session-{}.sock&quot;, session_id));
+        // Spawn termihub-agent --daemon with env vars
+        // Wait for socket, connect via DaemonClient
+        Ok(client)
+    }
+}
+
+/// Emits output via JSON-RPC notifications.
+struct JsonRpcOutputSink { notification_tx: NotificationSender }
+
+impl OutputSink for JsonRpcOutputSink {
+    fn send_output(&amp;self, session_id: &amp;str, data: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+        let encoded = base64::encode(&amp;data);
+        self.notification_tx.send(JsonRpcNotification {
+            method: &quot;session.output&quot;,
+            params: json!({ &quot;session_id&quot;: session_id, &quot;data&quot;: encoded }),
+        })?;
+        Ok(())
+    }
+}
+</code></pre>
+<h3 id="what-goes-in-the-shared-core">What Goes in the Shared Core</h3>
+<h4 id="1-session-session-backend-engine-the-biggest-win">1. <code>session/</code> — Session Backend Engine (the biggest win)</h4>
+<p>This is the core of the concept. The session module owns the <strong>entire lifecycle</strong> of each connection type, parameterized over transport.</p>
+<pre><code class="language-rust">// termihub-core/src/session/mod.rs
+
+/// A running terminal session, parameterized over transport.
+pub struct Session&lt;S: OutputSink, P: ProcessHandle&gt; {
+    pub id: String,
+    pub session_type: SessionType,
+    handle: P,
+    output_sink: S,
+    ring_buffer: Option&lt;Arc&lt;Mutex&lt;RingBuffer&gt;&gt;&gt;,
+    alive: Arc&lt;AtomicBool&gt;,
+}
+
+impl&lt;S: OutputSink, P: ProcessHandle&gt; Session&lt;S, P&gt; {
+    pub fn write_input(&amp;self, data: &amp;[u8]) -&gt; Result&lt;()&gt;;
+    pub fn resize(&amp;self, cols: u16, rows: u16) -&gt; Result&lt;()&gt;;
+    pub fn close(&amp;self) -&gt; Result&lt;()&gt;;
+    pub fn is_alive(&amp;self) -&gt; bool;
+    pub fn attach(&amp;self) -&gt; Result&lt;()&gt;;    // replay ring buffer, start forwarding
+    pub fn detach(&amp;self) -&gt; Result&lt;()&gt;;    // stop forwarding, keep alive
+}
+</code></pre>
+<p><strong>Shell session logic</strong> (currently duplicated in <code>local_shell.rs</code> + <code>shell/backend.rs</code>):</p>
+<pre><code class="language-rust">// termihub-core/src/session/shell.rs
+
+/// Build a shell command from config — pure logic, no I/O.
+pub struct ShellCommand {
+    pub program: String,
+    pub args: Vec&lt;String&gt;,
+    pub env: HashMap&lt;String, String&gt;,
+    pub cwd: Option&lt;PathBuf&gt;,
+    pub pty_size: PtySize,
+}
+
+/// Resolve shell config into a concrete command.
+/// Handles: shell detection, TERM/COLORTERM env, CWD fallback,
+/// OSC7 injection for CWD tracking.
+pub fn build_shell_command(config: &amp;ShellConfig) -&gt; Result&lt;ShellCommand&gt; {
+    let program = config.shell.clone()
+        .unwrap_or_else(|| detect_default_shell());
+    let mut env = config.env.clone();
+    env.insert(&quot;TERM&quot;.into(), &quot;xterm-256color&quot;.into());
+    env.insert(&quot;COLORTERM&quot;.into(), &quot;truecolor&quot;.into());
+
+    let cwd = config.starting_directory.as_ref()
+        .map(PathBuf::from)
+        .or_else(|| home_directory());  // platform-aware HOME/USERPROFILE
+
+    Ok(ShellCommand { program, args: vec![], env, cwd, pty_size: config.pty_size() })
+}
+
+/// Generate an OSC7 setup command for CWD tracking.
+/// Currently only exists in the desktop manager — would benefit both sides.
+pub fn osc7_setup_command(shell_type: &amp;str) -&gt; Option&lt;String&gt; { ... }
+
+/// Determine initial command delay strategy.
+/// Desktop uses 200ms delay; should be a core concern.
+pub fn initial_command_strategy(
+    initial_command: Option&lt;&amp;str&gt;,
+    wait_for_clear: bool,
+) -&gt; InitialCommandStrategy { ... }
+</code></pre>
+<p><strong>Docker session logic</strong> (currently duplicated in <code>docker_shell.rs</code> + <code>docker/backend.rs</code>):</p>
+<pre><code class="language-rust">// termihub-core/src/session/docker.rs
+
+/// Build docker run arguments from config — pure logic, no I/O.
+/// Handles: env vars, volume mounts, working directory, shell selection.
+pub fn build_docker_run_args(config: &amp;DockerConfig) -&gt; Vec&lt;String&gt; { ... }
+
+/// Build docker exec arguments for attaching to an existing container.
+pub fn build_docker_exec_args(container: &amp;str, shell: &amp;str) -&gt; Vec&lt;String&gt; { ... }
+
+/// Validate Docker config before attempting to create a session.
+pub fn validate_docker_config(config: &amp;DockerConfig) -&gt; Result&lt;()&gt; { ... }
+
+/// Docker container lifecycle management.
+pub struct DockerContainer {
+    pub name: String,
+    pub image: String,
+    pub remove_on_exit: bool,
+}
+
+impl DockerContainer {
+    /// Check if container is still running.
+    pub fn is_running(&amp;self) -&gt; Result&lt;bool&gt; { ... }
+
+    /// Stop and optionally remove the container.
+    pub fn cleanup(&amp;self) -&gt; Result&lt;()&gt; { ... }
+}
+</code></pre>
+<p><strong>Serial session logic</strong> (currently duplicated in <code>serial.rs</code> + <code>serial/backend.rs</code>):</p>
+<pre><code class="language-rust">// termihub-core/src/session/serial.rs
+
+/// Parsed serial port settings — converted from string config.
+pub struct ParsedSerialConfig {
+    pub port: String,
+    pub baud_rate: u32,
+    pub data_bits: serialport::DataBits,
+    pub stop_bits: serialport::StopBits,
+    pub parity: serialport::Parity,
+    pub flow_control: serialport::FlowControl,
+}
+
+/// Parse string-based config into serialport crate enums.
+/// Currently byte-for-byte identical in both crates.
+pub fn parse_serial_config(config: &amp;SerialConfig) -&gt; ParsedSerialConfig { ... }
+
+/// Serial port reader loop — handles timeouts, reconnection, ring buffer.
+/// Currently the agent has reconnect logic that the desktop lacks.
+/// In core, both sides benefit from reconnect.
+pub fn serial_reader_loop&lt;S: OutputSink&gt;(
+    port: Box&lt;dyn SerialPort&gt;,
+    config: &amp;SerialConfig,
+    ring_buffer: Arc&lt;Mutex&lt;RingBuffer&gt;&gt;,
+    output_sink: S,
+    alive: Arc&lt;AtomicBool&gt;,
+    attached: Arc&lt;AtomicBool&gt;,
+) { ... }
+
+/// List available serial ports — pure utility.
+pub fn list_serial_ports() -&gt; Vec&lt;String&gt; { ... }
+</code></pre>
+<p><strong>SSH command building</strong> (currently split between <code>ssh.rs</code> using ssh2 API and <code>ssh/backend.rs</code> building CLI args):</p>
+<pre><code class="language-rust">// termihub-core/src/session/ssh.rs
+
+/// Build SSH command-line arguments from config.
+/// Used by agent's daemon approach. Desktop could also use this
+/// as a fallback when ssh2 channel approach fails.
+pub fn build_ssh_args(config: &amp;SshConfig) -&gt; Vec&lt;String&gt; {
+    let mut args = vec![&quot;-tt&quot;.into()];
+    args.extend_from_slice(&amp;[
+        &quot;-o&quot;.into(), &quot;ServerAliveInterval=30&quot;.into(),
+        &quot;-o&quot;.into(), &quot;ServerAliveCountMax=3&quot;.into(),
+    ]);
+    if let Some(port) = config.port {
+        args.extend_from_slice(&amp;[&quot;-p&quot;.into(), port.to_string()]);
+    }
+    if config.auth_method == &quot;key&quot; {
+        if let Some(ref key_path) = config.key_path {
+            args.extend_from_slice(&amp;[&quot;-i&quot;.into(), key_path.clone()]);
+        }
+    }
+    args.push(format!(&quot;{}@{}&quot;, config.username, config.host));
+    if let Some(ref shell) = config.shell {
+        args.push(shell.clone());
+    }
+    args
+}
+
+/// Validate SSH config before attempting connection.
+pub fn validate_ssh_config(config: &amp;SshConfig) -&gt; Result&lt;()&gt; { ... }
+</code></pre>
+<h4 id="2-buffer-ring-buffer-shared-infrastructure">2. <code>buffer/</code> — Ring Buffer (shared infrastructure)</h4>
+<p>The ring buffer is currently agent-only but would benefit the desktop for reconnect scenarios and serial replay:</p>
+<pre><code class="language-rust">// termihub-core/src/buffer/ring_buffer.rs
+
+/// Circular byte buffer with configurable capacity.
+/// Used by: serial sessions (24/7 capture), daemon PTY (output replay),
+/// and potentially desktop sessions (reconnect replay).
+pub struct RingBuffer {
+    data: Vec&lt;u8&gt;,
+    capacity: usize,
+    write_pos: usize,
+    len: usize,
+}
+
+impl RingBuffer {
+    pub fn new(capacity: usize) -&gt; Self;
+    pub fn write(&amp;mut self, data: &amp;[u8]);
+    pub fn read_all(&amp;self) -&gt; Vec&lt;u8&gt;;
+    pub fn len(&amp;self) -&gt; usize;
+    pub fn clear(&amp;mut self);
+}
+</code></pre>
+<h4 id="3-output-output-processing-currently-desktop-only-should-be-shared">3. <code>output/</code> — Output Processing (currently desktop-only, should be shared)</h4>
+<p>The desktop has sophisticated output handling that the agent lacks:</p>
+<pre><code class="language-rust">// termihub-core/src/output/coalescer.rs
+
+/// Coalesces output chunks into larger batches for efficient delivery.
+/// Desktop currently does this (32 KB max); agent does 65 KB chunking differently.
+/// Unified in core with configurable parameters.
+pub struct OutputCoalescer {
+    max_batch_bytes: usize,
+    pending: Vec&lt;u8&gt;,
+}
+
+impl OutputCoalescer {
+    pub fn new(max_batch_bytes: usize) -&gt; Self;
+    pub fn push(&amp;mut self, data: &amp;[u8]);
+    pub fn flush(&amp;mut self) -&gt; Option&lt;Vec&lt;u8&gt;&gt;;
+    pub fn try_coalesce(&amp;mut self) -&gt; Option&lt;Vec&lt;u8&gt;&gt;;
+}
+
+// termihub-core/src/output/screen_clear.rs
+
+/// Detect ANSI screen-clear sequences for clean terminal startup.
+/// Currently desktop-only (manager.rs:293-330). Should apply to agent too.
+pub fn contains_screen_clear(data: &amp;[u8]) -&gt; bool {
+    // Look for ESC[2J ESC[H (erase display + cursor home)
+    contains_seq(data, b&quot;\x1b[2J\x1b[H&quot;)
+}
+</code></pre>
+<h4 id="4-files-file-backend-trait-and-local-implementation">4. <code>files/</code> — File Backend Trait and Local Implementation</h4>
+<pre><code class="language-rust">// termihub-core/src/files/mod.rs
+
+/// Unified file entry — identical structure in both crates today.
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size: u64,
+    pub modified: String,
+    pub permissions: Option&lt;String&gt;,
+}
+
+/// File backend trait — async-friendly.
+/// Desktop wraps sync calls; agent uses natively.
+#[async_trait]
+pub trait FileBackend: Send + Sync {
+    async fn list(&amp;self, path: &amp;str) -&gt; Result&lt;Vec&lt;FileEntry&gt;, FileError&gt;;
+    async fn read(&amp;self, path: &amp;str) -&gt; Result&lt;Vec&lt;u8&gt;, FileError&gt;;
+    async fn write(&amp;self, path: &amp;str, data: &amp;[u8]) -&gt; Result&lt;(), FileError&gt;;
+    async fn delete(&amp;self, path: &amp;str, is_directory: bool) -&gt; Result&lt;(), FileError&gt;;
+    async fn rename(&amp;self, old_path: &amp;str, new_path: &amp;str) -&gt; Result&lt;(), FileError&gt;;
+    async fn stat(&amp;self, path: &amp;str) -&gt; Result&lt;FileEntry, FileError&gt;;
+}
+
+// termihub-core/src/files/local.rs
+
+/// Local filesystem backend — pure std::fs, wrapped in spawn_blocking.
+pub struct LocalFileBackend;
+
+/// Synchronous directory listing — core logic, no async, no transport.
+pub fn list_dir_sync(path: &amp;str) -&gt; Result&lt;Vec&lt;FileEntry&gt;, std::io::Error&gt; { ... }
+
+// termihub-core/src/files/utils.rs
+
+pub fn chrono_from_epoch(secs: u64) -&gt; String { ... }
+pub fn format_permissions(perm: u32) -&gt; String { ... }
+pub fn normalize_path_separators(path: &amp;str) -&gt; String { ... }  // Windows backslash → forward slash
+</code></pre>
+<h4 id="5-monitoring-stats-parsing-and-collection">5. <code>monitoring/</code> — Stats Parsing and Collection</h4>
+<pre><code class="language-rust">// termihub-core/src/monitoring/types.rs
+
+pub struct SystemStats {
+    pub hostname: String,
+    pub uptime_seconds: f64,
+    pub load_average: [f64; 3],
+    pub cpu_usage_percent: f64,
+    pub memory_total_kb: u64,
+    pub memory_available_kb: u64,
+    pub memory_used_percent: f64,
+    pub disk_total_kb: u64,
+    pub disk_used_kb: u64,
+    pub disk_used_percent: f64,
+    pub os_info: String,
+}
+
+pub struct CpuCounters {
+    pub user: u64, pub nice: u64, pub system: u64, pub idle: u64,
+    pub iowait: u64, pub irq: u64, pub softirq: u64, pub steal: u64,
+}
+
+// termihub-core/src/monitoring/parser.rs
+
+/// Parse compound monitoring output (hostname + loadavg + stat + meminfo + uptime + df + uname).
+pub fn parse_stats(output: &amp;str) -&gt; Result&lt;(SystemStats, CpuCounters)&gt; { ... }
+pub fn parse_cpu_line(line: &amp;str) -&gt; CpuCounters { ... }
+pub fn cpu_percent_from_delta(prev: &amp;CpuCounters, curr: &amp;CpuCounters) -&gt; f64 { ... }
+pub fn parse_meminfo_value(line: &amp;str) -&gt; u64 { ... }
+pub fn parse_df_output(output: &amp;str) -&gt; (u64, u64, f64) { ... }
+
+/// The compound command that collects all stats in one SSH round-trip.
+pub const MONITORING_COMMAND: &amp;str =
+    &quot;hostname &amp;&amp; cat /proc/loadavg &amp;&amp; head -1 /proc/stat &amp;&amp; cat /proc/meminfo \
+     &amp;&amp; cat /proc/uptime &amp;&amp; df -Pk / &amp;&amp; uname -sr&quot;;
+
+/// StatsCollector trait — sync collection, both sides wrap as needed.
+pub trait StatsCollector: Send {
+    fn collect(&amp;mut self, host_label: &amp;str) -&gt; Result&lt;SystemStats&gt;;
+}
+</code></pre>
+<h4 id="6-config-unified-configuration-types">6. <code>config/</code> — Unified Configuration Types</h4>
+<pre><code class="language-rust">// termihub-core/src/config/mod.rs
+
+/// Shell session configuration.
+pub struct ShellConfig {
+    pub shell: Option&lt;String&gt;,
+    pub cols: u16,                        // default: 80
+    pub rows: u16,                        // default: 24
+    pub starting_directory: Option&lt;String&gt;,
+    pub initial_command: Option&lt;String&gt;,
+    pub env: HashMap&lt;String, String&gt;,
+}
+
+/// Serial port configuration.
+pub struct SerialConfig {
+    pub port: String,
+    pub baud_rate: u32,                   // default: 115200
+    pub data_bits: u8,                    // default: 8
+    pub stop_bits: u8,                    // default: 1
+    pub parity: String,                   // default: &quot;none&quot;
+    pub flow_control: String,             // default: &quot;none&quot;
+}
+
+/// Docker container configuration.
+pub struct DockerConfig {
+    pub image: String,
+    pub shell: Option&lt;String&gt;,
+    pub cols: u16,
+    pub rows: u16,
+    pub env_vars: Vec&lt;EnvVar&gt;,
+    pub volumes: Vec&lt;VolumeMount&gt;,
+    pub working_directory: Option&lt;String&gt;,
+    pub remove_on_exit: bool,
+    pub env: HashMap&lt;String, String&gt;,
+}
+
+/// SSH session configuration.
+pub struct SshConfig {
+    pub host: String,
+    pub port: Option&lt;u16&gt;,
+    pub username: String,
+    pub auth_method: String,              // &quot;key&quot; or &quot;password&quot;
+    pub key_path: Option&lt;String&gt;,
+    pub shell: Option&lt;String&gt;,
+    pub enable_monitoring: bool,
+    pub enable_x11_forwarding: bool,
+}
+
+pub struct EnvVar { pub key: String, pub value: String }
+pub struct VolumeMount { pub host_path: String, pub container_path: String, pub read_only: bool }
+pub struct PtySize { pub cols: u16, pub rows: u16 }
+
+/// Config expansion — replace ${VAR} placeholders, expand ~ to home.
+pub fn expand_config_value(value: &amp;str) -&gt; String { ... }
+</code></pre>
+<h4 id="7-protocol-json-rpc-20-types-and-error-codes">7. <code>protocol/</code> — JSON-RPC 2.0 Types and Error Codes</h4>
+<pre><code class="language-rust">// termihub-core/src/protocol/messages.rs
+pub struct JsonRpcRequest { pub jsonrpc: String, pub method: String, pub params: Value, pub id: Value }
+pub struct JsonRpcResponse { pub jsonrpc: &amp;'static str, pub result: Value, pub id: Value }
+pub struct JsonRpcErrorResponse { pub jsonrpc: &amp;'static str, pub error: JsonRpcErrorData, pub id: Value }
+pub struct JsonRpcNotification { pub jsonrpc: &amp;'static str, pub method: String, pub params: Value }
+
+// termihub-core/src/protocol/errors.rs
+pub const SESSION_NOT_FOUND: i64 = -32001;
+pub const FILE_NOT_FOUND: i64 = -32010;
+pub const PERMISSION_DENIED: i64 = -32011;
+pub const FILE_OPERATION_FAILED: i64 = -32012;
+pub const MONITORING_ERROR: i64 = -32014;
+// ... etc
+</code></pre>
+<h3 id="what-stays-in-each-consumer">What Stays in Each Consumer</h3>
+<p><strong>Desktop-only (stays in <code>src-tauri/</code>):</strong></p>
+<ul>
+<li><code>TauriOutputSink</code> — emits <code>terminal-output</code> and <code>terminal-exit</code> events</li>
+<li><code>PtySpawner</code> — <code>portable-pty</code> integration (cross-platform PTY: ConPTY on Windows, forkpty on Unix)</li>
+<li><code>TerminalManager</code> — session routing, Tauri AppHandle, output reader thread orchestration</li>
+<li><code>ConnectionConfig</code> tagged enum (includes <code>Local</code>, <code>Telnet</code>, <code>RemoteSession</code> — desktop-only concepts)</li>
+<li><code>TelnetConnection</code> — raw TCP with IAC filtering (desktop-only, not used in agent)</li>
+<li><code>RemoteBackend</code> — proxy to agent via JSON-RPC over SSH</li>
+<li><code>AgentConnectionManager</code> — agent lifecycle (deploy, version check, shutdown)</li>
+<li><code>SftpManager</code> — SFTP session pooling via ssh2 (desktop manages SFTP directly)</li>
+<li>SSH auth utilities, key conversion, X11 forwarding</li>
+<li>Tauri commands and event handlers</li>
+<li>Credential store integration</li>
+<li>Shell detection, Docker detection, VS Code detection</li>
+</ul>
+<p><strong>Agent-only (stays in <code>agent/</code>):</strong></p>
+<ul>
+<li><code>JsonRpcOutputSink</code> — emits JSON-RPC notifications</li>
+<li><code>DaemonSpawner</code> — daemon process management, binary frame protocol, Unix socket IPC</li>
+<li><code>SessionManager</code> — attach/detach/recover semantics, state.json persistence</li>
+<li><code>DaemonClient</code> — async Unix socket client, buffer replay handshake</li>
+<li><code>daemon/process.rs</code> — the actual daemon binary (PTY via nix, poll-based event loop)</li>
+<li><code>FileBackend</code> implementations for Docker exec and SFTP relay</li>
+<li><code>StatsCollector</code> implementations (local <code>/proc</code> + macOS sysctl, SSH exec)</li>
+<li><code>ConnectionStore</code> — agent's own persistence format</li>
+<li>JSON-RPC dispatcher and transport layers (stdio, TCP)</li>
+<li><code>io/</code> — transport layer (stdio for production SSH, TCP for development)</li>
+</ul>
+<h3 id="how-features-become-shared">How Features Become Shared</h3>
+<p>The biggest value isn't just deduplication — it's that features developed for one side automatically become available to the other.</p>
+<h4 id="example-serial-reconnect-currently-agent-only">Example: Serial Reconnect (Currently Agent-Only)</h4>
+<p>Today the agent has <code>serial/backend.rs:313-346</code> with a retry loop that reopens the serial port every 3 seconds when the device disconnects. The desktop's <code>serial.rs</code> just dies on disconnect — the reader thread exits, and the session is dead.</p>
+<p>With the core owning <code>serial_reader_loop()</code>, both sides get reconnect for free:</p>
+<div class="diagram">
+  <pre class="mermaid">
+graph LR
+    subgraph "Current: agent-only reconnect"
+        A_SER["Agent serial/backend.rs&lt;br/&gt;Has reconnect_loop()"]
+        D_SER["Desktop serial.rs&lt;br/&gt;No reconnect — dies on disconnect"]
+    end
+
+    subgraph "Proposed: core reconnect"
+        CORE_SER["Core serial/reader.rs&lt;br/&gt;serial_reader_loop() with reconnect"]
+        A_USE["Agent: uses core loop"]
+        D_USE["Desktop: uses core loop&lt;br/&gt;(now has reconnect!)"]
+    end
+
+    CORE_SER --&gt; A_USE
+    CORE_SER --&gt; D_USE
+
+    style D_SER fill:#ff6b6b,color:#fff
+    style CORE_SER fill:#50c878,color:#fff
+</pre>
+</div>
+<h4 id="example-output-coalescing-currently-desktop-only">Example: Output Coalescing (Currently Desktop-Only)</h4>
+<p>Today the desktop's <code>manager.rs:335-340</code> coalesces pending output chunks into 32 KB batches and detects screen-clear sequences for clean startup. The agent has 65 KB chunking but no coalescing or screen-clear detection.</p>
+<p>With <code>OutputCoalescer</code> and <code>contains_screen_clear()</code> in the core, the agent gets clean startup behavior too.</p>
+<h4 id="example-ring-buffer-replay-currently-agent-only">Example: Ring Buffer Replay (Currently Agent-Only)</h4>
+<p>Today the agent's daemon uses a 1 MiB ring buffer for output replay on reconnect. The desktop has no replay capability — if the output reader falls behind or reconnects, data is lost.</p>
+<p>With <code>RingBuffer</code> in core, the desktop could optionally buffer output for tab recovery scenarios.</p>
+<h3 id="edge-cases-and-considerations">Edge Cases and Considerations</h3>
+<p><strong>Sync vs. async:</strong> The core should be <strong>sync-first</strong> for maximum compatibility. The <code>ProcessHandle</code> and <code>OutputSink</code> traits are sync. Consumers that need async (the agent) wrap with <code>tokio::task::spawn_blocking</code> or use async channels internally. This matches the current desktop pattern (sync backends, async Tauri commands).</p>
+<p><strong>Platform-specific PTY:</strong> The <code>ProcessSpawner</code> trait abstracts over <code>portable-pty</code> (desktop, cross-platform) and <code>nix::pty::openpty</code> (agent daemon, Unix-only). The core doesn't own the PTY implementation — it defines the interface and the session logic that runs on top.</p>
+<p><strong>Error types:</strong> The core defines its own error types (<code>CoreError</code>, <code>FileError</code>, <code>SessionError</code>). The desktop maps to <code>TerminalError</code> for Tauri; the agent maps to <code>anyhow::Error</code> or JSON-RPC error responses. This is a thin translation layer, not a fundamental mismatch.</p>
+<p><strong>Config serde conventions:</strong> The desktop uses <code>camelCase</code> serde; the agent uses <code>snake_case</code>. The core config types use <code>snake_case</code> (Rust convention). Each consumer applies its own serde rename attributes at the protocol boundary.</p>
+<p><strong><code>serialport</code> dependency:</strong> Made optional via feature flag (<code>serial = ["dep:serialport"]</code>), same as before. The core avoids heavy dependencies.</p>
+<p><strong><code>async-trait</code> dependency:</strong> The <code>FileBackend</code> and <code>StatsCollector</code> traits use <code>#[async_trait]</code>. This is a lightweight dependency. The <code>ProcessHandle</code> and <code>OutputSink</code> traits remain sync to avoid forcing async on the desktop.</p>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="current-architecture-two-independent-engines">Current Architecture (Two Independent Engines)</h3>
+<div class="diagram">
+  <pre class="mermaid">
+graph LR
+    subgraph "Independent Implementations"
+        A["termihub&lt;br/&gt;(src-tauri/)&lt;br/&gt;13,622 LOC&lt;br/&gt;&lt;br/&gt;Shell engine&lt;br/&gt;Docker engine&lt;br/&gt;SSH engine&lt;br/&gt;Serial engine&lt;br/&gt;File engine&lt;br/&gt;Monitoring engine"]
+        B["termihub-agent&lt;br/&gt;(agent/)&lt;br/&gt;11,032 LOC&lt;br/&gt;&lt;br/&gt;Shell engine&lt;br/&gt;Docker engine&lt;br/&gt;SSH engine&lt;br/&gt;Serial engine&lt;br/&gt;File engine&lt;br/&gt;Monitoring engine"]
+    end
+
+    A -. "duplicated engines,&lt;br/&gt;types, logic, tests&lt;br/&gt;~5,000-7,000 overlapping LOC" .-&gt; B
+
+    style A fill:#4a9eff,color:#fff
+    style B fill:#ff6b6b,color:#fff
+</pre>
+</div>
+<h3 id="proposed-architecture-shared-backend-engine">Proposed Architecture (Shared Backend Engine)</h3>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    C["termihub-core&lt;br/&gt;(core/)&lt;br/&gt;~4,000-6,000 LOC&lt;br/&gt;&lt;br/&gt;Session engine (shell, docker, serial, ssh)&lt;br/&gt;File backend + local impl&lt;br/&gt;Monitoring parser + collector trait&lt;br/&gt;Ring buffer, output coalescer&lt;br/&gt;Config types, protocol types"]
+
+    A["termihub&lt;br/&gt;(src-tauri/)&lt;br/&gt;~8,000-10,000 LOC&lt;br/&gt;&lt;br/&gt;Tauri transport adapter&lt;br/&gt;portable-pty provider&lt;br/&gt;TerminalManager (routing)&lt;br/&gt;SFTP, X11, credential store&lt;br/&gt;Telnet, RemoteBackend&lt;br/&gt;Desktop-only UI commands"]
+
+    B["termihub-agent&lt;br/&gt;(agent/)&lt;br/&gt;~5,000-7,000 LOC&lt;br/&gt;&lt;br/&gt;JSON-RPC transport adapter&lt;br/&gt;Daemon process + binary protocol&lt;br/&gt;SessionManager (persistence)&lt;br/&gt;Docker/SSH file backends&lt;br/&gt;Local/SSH collectors&lt;br/&gt;State persistence"]
+
+    A --&gt; C
+    B --&gt; C
+
+    style C fill:#50c878,color:#fff
+    style A fill:#4a9eff,color:#fff
+    style B fill:#ff6b6b,color:#fff
+</pre>
+</div>
+<h3 id="how-a-shell-session-works-today-vs-proposed">How a Shell Session Works Today vs Proposed</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Desktop as Desktop (src-tauri)
+    participant Agent as Agent
+
+    Note over Desktop: CURRENT: Desktop implements shell lifecycle
+    User-&gt;&gt;Desktop: Create local shell session
+    Desktop-&gt;&gt;Desktop: LocalShell::new()&lt;br/&gt;- detect shell (duplicated)&lt;br/&gt;- set TERM/COLORTERM (duplicated)&lt;br/&gt;- detect CWD (duplicated)&lt;br/&gt;- spawn via portable-pty&lt;br/&gt;- start reader thread (duplicated pattern)&lt;br/&gt;- OSC7 injection (desktop-only!)&lt;br/&gt;- screen-clear wait (desktop-only!)&lt;br/&gt;- 200ms initial delay (desktop-only!)
+    Desktop-&gt;&gt;User: Terminal output via Tauri events
+
+    Note over Agent: CURRENT: Agent implements shell lifecycle
+    User-&gt;&gt;Agent: Create shell session (via JSON-RPC)
+    Agent-&gt;&gt;Agent: ShellBackend::new()&lt;br/&gt;- detect shell (duplicated)&lt;br/&gt;- set env vars (duplicated)&lt;br/&gt;- spawn daemon → PTY&lt;br/&gt;- ring buffer (agent-only!)&lt;br/&gt;- NO OSC7 injection&lt;br/&gt;- NO screen-clear detection&lt;br/&gt;- NO initial command delay
+    Agent-&gt;&gt;User: Terminal output via JSON-RPC
+</pre>
+</div>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Desktop as Desktop (src-tauri)
+    participant Core as Core (shared)
+    participant Agent as Agent
+
+    Note over Desktop,Agent: PROPOSED: Core owns the logic, both sides benefit
+    User-&gt;&gt;Desktop: Create local shell session
+    Desktop-&gt;&gt;Core: build_shell_command(config)
+    Core--&gt;&gt;Desktop: ShellCommand (program, args, env with TERM, CWD)
+    Desktop-&gt;&gt;Core: osc7_setup_command(shell_type)
+    Core--&gt;&gt;Desktop: Optional initial command
+    Desktop-&gt;&gt;Desktop: PtySpawner.spawn_shell(command)
+    Desktop-&gt;&gt;Core: OutputCoalescer.wait_for_clear()
+    Core--&gt;&gt;Desktop: Clean output (no startup flash)
+    Desktop-&gt;&gt;User: Terminal output via TauriOutputSink
+
+    User-&gt;&gt;Agent: Create shell session (via JSON-RPC)
+    Agent-&gt;&gt;Core: build_shell_command(config)
+    Core--&gt;&gt;Agent: ShellCommand (same program, args, env, CWD)
+    Agent-&gt;&gt;Core: osc7_setup_command(shell_type)
+    Core--&gt;&gt;Agent: Optional initial command (now agent gets OSC7 too!)
+    Agent-&gt;&gt;Agent: DaemonSpawner.spawn_shell(command)
+    Agent-&gt;&gt;Core: OutputCoalescer.wait_for_clear()
+    Core--&gt;&gt;Agent: Clean output (now agent gets screen-clear too!)
+    Agent-&gt;&gt;User: Terminal output via JsonRpcOutputSink
+</pre>
+</div>
+<h3 id="how-a-docker-session-works-today-vs-proposed">How a Docker Session Works Today vs Proposed</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Desktop as Desktop (src-tauri)
+    participant Core as Core (shared)
+    participant Agent as Agent
+
+    Note over Desktop,Agent: PROPOSED: Core builds args, consumers spawn
+    User-&gt;&gt;Desktop: Create Docker session
+    Desktop-&gt;&gt;Core: validate_docker_config(config)
+    Desktop-&gt;&gt;Core: build_docker_run_args(config)
+    Core--&gt;&gt;Desktop: Vec of shared args (env, volumes, workdir)
+    Desktop-&gt;&gt;Desktop: Add -it --rm flags
+    Desktop-&gt;&gt;Desktop: PtySpawner.spawn_command("docker", args)
+    Desktop-&gt;&gt;User: Terminal output via TauriOutputSink
+
+    User-&gt;&gt;Agent: Create Docker session
+    Agent-&gt;&gt;Core: validate_docker_config(config)
+    Agent-&gt;&gt;Core: build_docker_run_args(config)
+    Core--&gt;&gt;Agent: Vec of shared args (same logic!)
+    Agent-&gt;&gt;Agent: Add -d --init --name flags (detached mode)
+    Agent-&gt;&gt;Agent: DaemonSpawner.spawn_command("docker", exec_args)
+    Agent-&gt;&gt;User: Terminal output via JsonRpcOutputSink
+</pre>
+</div>
+<h3 id="how-serial-reconnect-becomes-shared">How Serial Reconnect Becomes Shared</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Opening: parse_serial_config()
+    Opening --&gt; Connected: Port opened successfully
+    Opening --&gt; Error: Open failed
+
+    Connected --&gt; Reading: serial_reader_loop()
+    Reading --&gt; Reading: Data received → ring buffer + output sink
+    Reading --&gt; Reading: Timeout → continue (expected)
+    Reading --&gt; Disconnected: I/O error / EOF
+
+    Disconnected --&gt; Reconnecting: Start reconnect loop
+    Reconnecting --&gt; Reconnecting: Retry every 3s
+    Reconnecting --&gt; Connected: Port reopened
+    Reconnecting --&gt; Closed: close() called
+
+    Reading --&gt; Closed: close() called
+    Connected --&gt; Closed: close() called
+    Error --&gt; [*]
+    Closed --&gt; [*]
+
+    note right of Reconnecting
+        Currently agent-only.
+        In core, desktop gets it too.
+    end note
+</pre>
+</div>
+<h3 id="build-dependency-flow">Build Dependency Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+graph TD
+    subgraph "Cargo Workspace"
+        CORE["termihub-core&lt;br/&gt;Dependencies: serde, serde_json,&lt;br/&gt;thiserror, serialport (optional),&lt;br/&gt;async-trait"]
+        DESKTOP["termihub&lt;br/&gt;Dependencies: tauri, ssh2,&lt;br/&gt;portable-pty, tokio, ..."]
+        AGENT["termihub-agent&lt;br/&gt;Dependencies: tokio, ssh2,&lt;br/&gt;nix, async-trait, ..."]
+    end
+
+    DESKTOP --&gt;|"path dependency"| CORE
+    AGENT --&gt;|"path dependency"| CORE
+
+    subgraph "Shared Dependencies (compiled once)"
+        SD[serde + serde_json]
+        SP[serialport]
+        AT[async-trait]
+    end
+
+    CORE --&gt; SD
+    CORE -.-&gt;|"feature: serial"| SP
+    CORE --&gt; AT
+    DESKTOP --&gt; SD
+    AGENT --&gt; SD
+</pre>
+</div>
+<h3 id="migration-sequence">Migration Sequence</h3>
+<p>The migration is significantly larger than the previous concept proposed, because we're moving backend logic, not just utilities. It should be done in phases, each resulting in a working system.</p>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant Dev as Developer
+    participant WS as Workspace Setup
+    participant Core as termihub-core
+    participant Desktop as src-tauri
+    participant Agent as agent
+    participant CI as CI Pipeline
+
+    Dev-&gt;&gt;WS: 1. Create root Cargo.toml workspace
+    Dev-&gt;&gt;Core: 2. Create core/ crate with module stubs
+
+    Note over Core,Desktop: Phase 1: Config types + protocol (foundation)
+    Dev-&gt;&gt;Core: 3. Move all config structs, EnvVar, VolumeMount,&lt;br/&gt;PtySize, expand_config_value to core
+    Dev-&gt;&gt;Core: 4. Move JSON-RPC types + error codes to core
+    Dev-&gt;&gt;Desktop: 5. Import config + protocol from core
+    Dev-&gt;&gt;Agent: 6. Import config + protocol from core
+    Dev-&gt;&gt;CI: 7. Verify all tests pass
+
+    Note over Core,Desktop: Phase 2: Utility layer (pure functions)
+    Dev-&gt;&gt;Core: 8. Move FileEntry, chrono_from_epoch,&lt;br/&gt;format_permissions, list_dir_sync,&lt;br/&gt;normalize_path_separators to core
+    Dev-&gt;&gt;Core: 9. Move SystemStats, CpuCounters,&lt;br/&gt;parse_stats, all parsing functions to core
+    Dev-&gt;&gt;Core: 10. Move RingBuffer to core
+    Dev-&gt;&gt;Desktop: 11. Import file + monitoring + buffer from core
+    Dev-&gt;&gt;Agent: 12. Delete monitoring/parser.rs,&lt;br/&gt;import from core
+    Dev-&gt;&gt;CI: 13. Verify all tests pass
+
+    Note over Core,Desktop: Phase 3: Session helpers (command building)
+    Dev-&gt;&gt;Core: 14. Move build_docker_run_args,&lt;br/&gt;build_docker_exec_args,&lt;br/&gt;validate_docker_config to core
+    Dev-&gt;&gt;Core: 15. Move parse_serial_config,&lt;br/&gt;list_serial_ports,&lt;br/&gt;serial_reader_loop to core
+    Dev-&gt;&gt;Core: 16. Move build_ssh_args,&lt;br/&gt;validate_ssh_config to core
+    Dev-&gt;&gt;Core: 17. Move build_shell_command,&lt;br/&gt;osc7_setup_command,&lt;br/&gt;initial_command_strategy to core
+    Dev-&gt;&gt;Desktop: 18. Refactor backends to use core session helpers
+    Dev-&gt;&gt;Agent: 19. Refactor backends to use core session helpers
+    Dev-&gt;&gt;CI: 20. Verify all tests pass
+
+    Note over Core,Desktop: Phase 4: Traits + output processing
+    Dev-&gt;&gt;Core: 21. Define OutputSink, ProcessSpawner,&lt;br/&gt;ProcessHandle traits in core
+    Dev-&gt;&gt;Core: 22. Move OutputCoalescer,&lt;br/&gt;screen-clear detection to core
+    Dev-&gt;&gt;Core: 23. Define FileBackend trait,&lt;br/&gt;implement LocalFileBackend in core
+    Dev-&gt;&gt;Core: 24. Define StatsCollector trait in core
+    Dev-&gt;&gt;Desktop: 25. Implement TauriOutputSink, PtySpawner
+    Dev-&gt;&gt;Agent: 26. Implement JsonRpcOutputSink, DaemonSpawner
+    Dev-&gt;&gt;CI: 27. Final verification — all tests, clippy, fmt
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<h3 id="directory-structure">Directory Structure</h3>
+<pre><code>Cargo.toml                    # NEW — workspace root
+core/                         # NEW — shared backend engine
+  Cargo.toml
+  src/
+    lib.rs                    # Re-exports all modules
+    config/
+      mod.rs                  # ShellConfig, SerialConfig, DockerConfig, SshConfig,
+                              # expand_config_value (${VAR}, ~) — backed by shellexpand
+    session/
+      mod.rs                  # OutputSink, ProcessSpawner, ProcessHandle traits
+      shell.rs                # ShellCommand builder, OSC7, initial command strategy
+      docker.rs               # Docker arg building, container lifecycle, validation
+      serial.rs               # Serial config parsing, reader loop, reconnect, port listing
+      ssh.rs                  # SSH arg building, validation
+    buffer/
+      mod.rs                  # RingBuffer (circular 1 MiB)
+    output/
+      mod.rs                  # OutputCoalescer
+      screen_clear.rs         # ANSI screen-clear detection
+    files/
+      mod.rs                  # FileBackend trait, FileEntry, FileError
+      local.rs                # LocalFileBackend, list_dir_sync
+      utils.rs                # chrono_from_epoch, format_permissions, path normalization
+    monitoring/
+      mod.rs                  # StatsCollector trait
+      types.rs                # SystemStats, CpuCounters
+      parser.rs               # parse_stats, parse_cpu_line, cpu_percent_from_delta, etc.
+    protocol/
+      mod.rs
+      messages.rs             # JsonRpcRequest, Response, ErrorResponse, Notification
+      errors.rs               # Error code constants
+    errors.rs                 # CoreError, SessionError, FileError
+src-tauri/                    # MODIFIED — thin Tauri transport adapter
+  Cargo.toml                  # Add: termihub-core = { path = &quot;../core&quot; }
+  src/
+    terminal/
+      backend.rs              # TerminalBackend trait (desktop-specific, wraps core traits)
+      manager.rs              # TerminalManager (Tauri event emission, session routing)
+      local_shell.rs          # PtySpawner + TauriOutputSink integration
+      docker_shell.rs         # PtySpawner + core Docker arg building
+      ssh.rs                  # ssh2 channel management (desktop-specific approach)
+      serial.rs               # Wraps core serial_reader_loop with PtySpawner
+      telnet.rs               # Desktop-only — raw TCP + IAC filtering
+      remote_session.rs       # Desktop-only — proxy to remote agent
+      ...
+    files/
+      sftp.rs                 # SFTP session pooling (desktop-specific)
+      ...
+    monitoring/
+      session.rs              # MonitoringManager — SSH exec, calls core parsers
+    ...
+agent/                        # MODIFIED — thin JSON-RPC transport adapter
+  Cargo.toml                  # Add: termihub-core = { path = &quot;../core&quot; }
+  src/
+    daemon/                   # Agent-only — daemon process, binary frame protocol
+    session/
+      manager.rs              # SessionManager — state persistence, attach/detach/recover
+    shell/backend.rs          # DaemonSpawner + core ShellCommand
+    docker/backend.rs         # DaemonSpawner + core Docker args
+    ssh/backend.rs            # DaemonSpawner + core SSH args
+    serial/backend.rs         # Wraps core serial_reader_loop with JsonRpcOutputSink
+    files/
+      ssh.rs                  # SFTP relay (agent-specific)
+      docker.rs               # Docker exec file ops (agent-specific)
+    monitoring/
+      collector.rs            # LocalCollector, SshCollector (implement core trait)
+    ...
+</code></pre>
+<h3 id="root-cargotoml">Root <code>Cargo.toml</code></h3>
+<pre><code class="language-toml">[workspace]
+members = [&quot;core&quot;, &quot;src-tauri&quot;, &quot;agent&quot;]
+resolver = &quot;2&quot;
+
+[workspace.dependencies]
+serde = { version = &quot;1&quot;, features = [&quot;derive&quot;] }
+serde_json = &quot;1&quot;
+thiserror = &quot;2&quot;
+serialport = &quot;4&quot;
+async-trait = &quot;0.1&quot;
+</code></pre>
+<h3 id="core-cargotoml">Core <code>Cargo.toml</code></h3>
+<pre><code class="language-toml">[package]
+name = &quot;termihub-core&quot;
+version = &quot;0.1.0&quot;
+edition = &quot;2021&quot;
+
+[features]
+default = [&quot;serial&quot;]
+serial = [&quot;dep:serialport&quot;]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+serialport = { workspace = true, optional = true }
+</code></pre>
+<p>The core crate depends primarily on <code>serde</code>, <code>serde_json</code>, <code>thiserror</code>, and <code>async-trait</code>. No async runtime (no tokio), no framework dependencies (no Tauri). The <code>serialport</code> crate is optional behind a feature flag.</p>
+<h3 id="impact-analysis">Impact Analysis</h3>
+<p><strong>Lines moved to core (backend engine):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Estimated LOC</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config/</code> — all config types + expansion</td>
+<td>~300</td>
+<td>Both crates' config definitions</td>
+</tr>
+<tr>
+<td><code>session/shell.rs</code> — command building, OSC7, startup</td>
+<td>~150</td>
+<td><code>local_shell.rs</code> + <code>shell/backend.rs</code></td>
+</tr>
+<tr>
+<td><code>session/docker.rs</code> — arg building, validation, container lifecycle</td>
+<td>~200</td>
+<td><code>docker_shell.rs</code> + <code>docker/backend.rs</code></td>
+</tr>
+<tr>
+<td><code>session/serial.rs</code> — config parsing, reader loop, reconnect</td>
+<td>~250</td>
+<td><code>serial.rs</code> + <code>serial/backend.rs</code></td>
+</tr>
+<tr>
+<td><code>session/ssh.rs</code> — arg building, validation</td>
+<td>~100</td>
+<td><code>ssh.rs</code> + <code>ssh/backend.rs</code></td>
+</tr>
+<tr>
+<td><code>buffer/</code> — ring buffer</td>
+<td>~170</td>
+<td><code>agent/src/buffer/ring_buffer.rs</code></td>
+</tr>
+<tr>
+<td><code>output/</code> — coalescer, screen-clear detection</td>
+<td>~100</td>
+<td><code>manager.rs</code> output reader logic</td>
+</tr>
+<tr>
+<td><code>files/</code> — trait, local backend, utils</td>
+<td>~300</td>
+<td>Both crates' <code>files/</code> modules</td>
+</tr>
+<tr>
+<td><code>monitoring/</code> — types, parser, collector trait</td>
+<td>~400</td>
+<td>Both crates' <code>monitoring/</code> modules</td>
+</tr>
+<tr>
+<td><code>protocol/</code> — JSON-RPC types, error codes</td>
+<td>~150</td>
+<td>Both crates' protocol definitions</td>
+</tr>
+<tr>
+<td><code>errors.rs</code> — core error types</td>
+<td>~80</td>
+<td>New (replaces duplicated error enums)</td>
+</tr>
+<tr>
+<td><strong>Total core</strong></td>
+<td><strong>~2,200</strong></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Lines removed from desktop + agent (duplication eliminated):</strong></p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Estimated Removed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Config types (both crates)</td>
+<td>~300</td>
+</tr>
+<tr>
+<td>Session logic (command building, validation)</td>
+<td>~500</td>
+</tr>
+<tr>
+<td>Serial config parsing + reader loop (both crates)</td>
+<td>~300</td>
+</tr>
+<tr>
+<td>File listing + utils (both crates)</td>
+<td>~250</td>
+</tr>
+<tr>
+<td>Monitoring types + parsing (both crates)</td>
+<td>~600</td>
+</tr>
+<tr>
+<td>Protocol types (both crates)</td>
+<td>~200</td>
+</tr>
+<tr>
+<td>Duplicated tests</td>
+<td>~400</td>
+</tr>
+<tr>
+<td><strong>Total removed</strong></td>
+<td><strong>~2,550</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Net change:</strong></p>
+<ul>
+<li>Core adds ~2,200 LOC (moved from both crates, consolidated)</li>
+<li>Desktop + agent lose ~2,550 LOC (duplicated code removed)</li>
+<li><strong>Net reduction: ~350 LOC</strong> — but that's not the point</li>
+</ul>
+<p><strong>The real impact:</strong></p>
+<ul>
+<li>Desktop shrinks from ~13,600 to ~8,000-10,000 LOC (transport adapter + desktop-only features)</li>
+<li>Agent shrinks from ~11,000 to ~5,000-7,000 LOC (transport adapter + agent-only features)</li>
+<li>Core holds ~2,200 LOC of tested, unified backend logic</li>
+<li><strong>Every bug fix in core instantly applies to both sides</strong></li>
+<li><strong>The agent inherits all desktop edge case handling</strong> (OSC7, screen-clear, startup delay, output coalescing)</li>
+<li><strong>The desktop can adopt agent features</strong> (ring buffer, serial reconnect) when desired</li>
+</ul>
+<p><strong>Build time impact:</strong></p>
+<ul>
+<li>Workspace builds compile shared dependencies once (serde, serde_json compiled once instead of twice)</li>
+<li>Core crate is moderate size (~2,200 LOC) and compiles fast (no async runtime, no framework)</li>
+<li>Incremental builds benefit: changes in desktop don't trigger agent rebuilds and vice versa</li>
+<li>Changes in core trigger rebuilds of both consumers — this is correct and desired</li>
+</ul>
+<p><strong>CI impact:</strong></p>
+<ul>
+<li><code>cargo test --workspace</code> replaces three separate test commands</li>
+<li><code>cargo clippy --workspace</code> replaces three separate clippy runs</li>
+<li><code>cargo fmt --all -- --check</code> already works with workspaces</li>
+<li>CI matrix unchanged (still builds on Linux, macOS, Windows)</li>
+<li>Core tests run on all platforms — catches cross-platform issues early</li>
+</ul>
+<h3 id="risks-and-mitigations">Risks and Mitigations</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Large migration scope — more files touched than utility extraction</td>
+<td>Phased approach (4 phases), each results in a working system. Ship incrementally.</td>
+</tr>
+<tr>
+<td>Trait-based abstraction adds indirection</td>
+<td>Traits are simple (OutputSink: 3 methods, ProcessSpawner: 2 methods). No dynamic dispatch in hot paths — generics monomorphize at compile time.</td>
+</tr>
+<tr>
+<td>Core changes affect both consumers</td>
+<td>This is the feature, not a bug. CI catches breakage in both.</td>
+</tr>
+<tr>
+<td>Desktop sync model vs agent async model</td>
+<td>Core is sync-first. Agent wraps with <code>spawn_blocking</code> where needed (already does this).</td>
+</tr>
+<tr>
+<td>Config serde differences (camelCase vs snake_case)</td>
+<td>Core uses snake_case. Each consumer applies serde rename at protocol boundary (thin layer).</td>
+</tr>
+<tr>
+<td><code>serialport</code> dependency in core</td>
+<td>Feature flag: <code>serial = ["dep:serialport"]</code>, same approach as before.</td>
+</tr>
+<tr>
+<td>Migration temporarily breaks things</td>
+<td>Each phase is independently shippable. Phase 1 (config + protocol) is zero-risk. Later phases can be rolled back independently.</td>
+</tr>
+<tr>
+<td>Risk of over-abstraction</td>
+<td>Core traits model what already exists in both crates. No speculative abstractions — only patterns already proven in production.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="recommendation">Recommendation</h3>
+<p><strong>Proceed with the shared core as a backend engine, not a utility crate.</strong> The previous analysis was too conservative — it identified ~945 lines of utility duplication and proposed a ~700 LOC helper crate. The actual overlap is much deeper:</p>
+<ol>
+<li><strong>The entire session lifecycle</strong> (config → command → spawn → I/O → output) is implemented twice with the same logic</li>
+<li><strong>Bug fixes don't propagate</strong> — the desktop has edge case handling (OSC7, screen-clear, startup delay) that the agent lacks</li>
+<li><strong>Features don't propagate</strong> — the agent has capabilities (ring buffer, reconnect, session persistence) that the desktop can't use</li>
+<li><strong>The transport difference is thin</strong> — ~3-5 methods on two traits separate the core logic from delivery</li>
+</ol>
+<p>The migration is larger (4 phases vs the previous 4 phases, but each phase does more) and the resulting core is bigger (~2,200 LOC vs ~700 LOC). But the payoff is proportionally larger:</p>
+<ul>
+<li><strong>Single source of truth</strong> for all backend logic — not just utilities, but the actual engine</li>
+<li><strong>Bug fixes apply everywhere</strong> — fix a WSL edge case once, both sides benefit</li>
+<li><strong>Features compose</strong> — ring buffer, reconnect, and output coalescing become available to all consumers</li>
+<li><strong>Easier new backends</strong> — adding a new connection type means implementing it once in core</li>
+<li><strong>Halved testing surface</strong> — test the session logic once, in core, with mocked transport</li>
+</ul>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

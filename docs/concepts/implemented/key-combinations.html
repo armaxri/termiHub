@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Key Combinations (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Key Combinations</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/418">#418</a></span>
+          <span><code>docs/concepts/implemented/key-combinations.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#motivation">Motivation</a></li>
+          <li><a href="#goals">Goals</a></li>
+          <li><a href="#non-goals">Non-Goals</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>termiHub currently handles keyboard shortcuts through a single React hook (<code>useKeyboardShortcuts</code>) with hard-coded bindings and relies on xterm.js defaults for terminal-level key handling. This leads to problems — most notably Ctrl+V not pasting on Windows — because the interaction between the browser/webview layer, xterm.js, the application-level shortcuts, and the OS-native expectations is not clearly defined or consistently handled.</p>
+<p>This concept defines a structured approach to key combination handling that works correctly across Windows, macOS, and Linux, covering application shortcuts, terminal input, clipboard operations, and future user customization.</p>
+<h2 id="motivation">Motivation</h2>
+<ul>
+<li><strong>Ctrl+V doesn't paste on Windows</strong>: xterm.js intercepts Ctrl+V and sends it as a raw control character (<code>\x16</code>) to the terminal backend instead of pasting from the clipboard. This is the correct VT100 behavior but violates user expectations on Windows.</li>
+<li><strong>Platform inconsistency</strong>: macOS users expect Cmd-based shortcuts (Cmd+C, Cmd+V), while Windows/Linux users expect Ctrl-based ones. The current code uses <code>e.metaKey || e.ctrlKey</code> everywhere, which doesn't distinguish between "app shortcut modifier" and "terminal control character."</li>
+<li><strong>No clipboard keyboard shortcuts</strong>: Copy and paste are only available via the right-click context menu — there are no keyboard shortcuts for these operations.</li>
+<li><strong>Hard-coded shortcuts</strong>: All bindings are in <code>useKeyboardShortcuts.ts</code> with no way for users to view, change, or extend them.</li>
+<li><strong>No conflict resolution</strong>: When both the application and xterm.js want to handle the same key combination, there is no clear priority system.</li>
+</ul>
+<h2 id="goals">Goals</h2>
+<ul>
+<li>Define correct clipboard shortcuts (copy/paste) that work on all platforms</li>
+<li>Establish a clear priority model for key event routing (application vs. terminal)</li>
+<li>Document all default key bindings and their platform-specific behavior</li>
+<li>Design an architecture for user-customizable key bindings</li>
+<li>Ensure terminal control characters (Ctrl+C for SIGINT, etc.) remain functional</li>
+</ul>
+<h2 id="non-goals">Non-Goals</h2>
+<ul>
+<li>Implementing vim/emacs modal keybinding schemes</li>
+<li>System-wide (OS-level) global hotkeys outside the application window</li>
+<li>Input Method Editor (IME) composition handling (separate concern)</li>
+<li>Macro recording and playback</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="keyboard-shortcut-reference">Keyboard Shortcut Reference</h3>
+<p>Users can view all active keyboard shortcuts via a quick-reference overlay, opened with <code>Ctrl+K Ctrl+S</code> (Windows/Linux) or <code>Cmd+K Cmd+S</code> (macOS) — matching VS Code's convention:</p>
+<pre><code>┌──────────────────────────────────────────────────────────┐
+│  Keyboard Shortcuts                              [×]     │
+├──────────────────────────────────────────────────────────┤
+│  🔍 Search shortcuts...                                  │
+│                                                          │
+│  ── General ─────────────────────────────────────────    │
+│  Toggle Sidebar          Ctrl+B          Cmd+B           │
+│  Open Settings           Ctrl+,          Cmd+,           │
+│  Keyboard Shortcuts      Ctrl+K Ctrl+S   Cmd+K Cmd+S    │
+│                                                          │
+│  ── Terminal ────────────────────────────────────────    │
+│  New Terminal            Ctrl+Shift+`    Cmd+Shift+`     │
+│  Close Tab               Ctrl+W          Cmd+W           │
+│  Next Tab                Ctrl+Tab        Ctrl+Tab        │
+│  Previous Tab            Ctrl+Shift+Tab  Ctrl+Shift+Tab  │
+│  Copy Selection          Ctrl+Shift+C    Cmd+C           │
+│  Paste                   Ctrl+Shift+V    Cmd+V           │
+│  Clear Terminal          Ctrl+Shift+K    Cmd+K           │
+│  Find in Terminal        Ctrl+Shift+F    Cmd+F           │
+│                                                          │
+│  ── Split View ──────────────────────────────────────    │
+│  Split Right             Ctrl+\          Cmd+\           │
+│  Focus Next Panel        Ctrl+Alt+→      Cmd+Alt+→      │
+│  Focus Previous Panel    Ctrl+Alt+←      Cmd+Alt+←      │
+│                                                          │
+│  Win/Linux column      macOS column                      │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<p>The overlay shows two columns — one for Windows/Linux bindings, one for macOS — so users always see the relevant shortcut for their OS (with the current OS column highlighted).</p>
+<h3 id="settings-ui-keyboard-section">Settings UI: Keyboard Section</h3>
+<p>A "Keyboard" section in the existing Settings panel allows users to rebind shortcuts:</p>
+<pre><code>┌──────────────────────────────────────────────────────────┐
+│  Settings &gt; Keyboard                                     │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  🔍 Search shortcuts...                                  │
+│                                                          │
+│  Action               Binding              [Reset]       │
+│  ─────────────────────────────────────────────────────   │
+│  Toggle Sidebar       [ Ctrl+B           ]  [  ↺  ]     │
+│  New Terminal          [ Ctrl+Shift+`     ]  [  ↺  ]     │
+│  Close Tab            [ Ctrl+W           ]  [  ↺  ]     │
+│  Copy Selection       [ Ctrl+Shift+C     ]  [  ↺  ]     │
+│  Paste                [ Ctrl+Shift+V     ]  [  ↺  ]     │
+│  Clear Terminal       [ Ctrl+Shift+K     ]  [  ↺  ]     │
+│  ...                                                     │
+│                                                          │
+│  Click a binding to record a new key combination.        │
+│  Press Escape to cancel. Press Backspace to unbind.      │
+│                                                          │
+│  [Reset All to Defaults]                                 │
+│                                                          │
+│  ⚠ Conflict: &quot;Ctrl+Shift+C&quot; is already bound to         │
+│    &quot;Copy Selection&quot;. Saving will unbind the previous     │
+│    action.                                               │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<p>When the user clicks a binding field, it enters recording mode — the next key combination pressed is captured and displayed. Conflicts are shown inline with a warning.</p>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="platform-aware-modifier-key-strategy">Platform-Aware Modifier Key Strategy</h3>
+<p>The fundamental problem is that Ctrl has dual meaning:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Context</th>
+<th>Ctrl on Windows/Linux</th>
+<th>Cmd on macOS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Application shortcuts</td>
+<td>Ctrl+B (toggle sidebar)</td>
+<td>Cmd+B (toggle sidebar)</td>
+</tr>
+<tr>
+<td>Clipboard operations</td>
+<td>Ctrl+C (copy) — <strong>conflicts with SIGINT</strong></td>
+<td>Cmd+C (copy) — no conflict</td>
+</tr>
+<tr>
+<td>Terminal control chars</td>
+<td>Ctrl+C → <code>\x03</code> (SIGINT)</td>
+<td>Ctrl+C → <code>\x03</code> (SIGINT)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Resolution strategy by platform:</strong></p>
+<p><strong>macOS:</strong></p>
+<ul>
+<li><code>Cmd</code> = application/clipboard modifier (no conflict with terminal)</li>
+<li><code>Ctrl</code> = terminal control characters (always forwarded to PTY)</li>
+<li>Clipboard: <code>Cmd+C</code> = copy, <code>Cmd+V</code> = paste (standard macOS behavior)</li>
+<li>This is straightforward — Cmd and Ctrl are distinct keys with distinct roles</li>
+</ul>
+<p><strong>Windows / Linux:</strong></p>
+<ul>
+<li><code>Ctrl</code> = both application modifier AND terminal control character source → conflict</li>
+<li>Resolution: use <code>Ctrl+Shift</code> for clipboard operations in the terminal context</li>
+<li><code>Ctrl+Shift+C</code> = copy selection (matches GNOME Terminal, Windows Terminal, VS Code)</li>
+<li><code>Ctrl+Shift+V</code> = paste (matches GNOME Terminal, Windows Terminal, VS Code)</li>
+<li><code>Ctrl+C</code> (without Shift) = SIGINT (forwarded to terminal as <code>\x03</code>)</li>
+<li><code>Ctrl+V</code> (without Shift) = literal <code>\x16</code> (forwarded to terminal)</li>
+</ul>
+<p>This follows the established convention used by Windows Terminal, GNOME Terminal, Konsole, and VS Code's integrated terminal.</p>
+<h3 id="key-event-routing-model">Key Event Routing Model</h3>
+<p>Key events flow through multiple layers. The routing priority determines which layer handles a given key combination:</p>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[User presses key combination] --&gt; B{Is it a registered\napplication shortcut?}
+    B --&gt;|Yes| C{Is terminal focused?}
+    B --&gt;|No| G[Forward to focused\nUI element / xterm.js]
+
+    C --&gt;|No| D[Execute app action\ne.g. toggle sidebar]
+    C --&gt;|Yes| E{Is it a terminal-safe\napp shortcut?}
+
+    E --&gt;|Yes - e.g. Ctrl+B,\nCtrl+W, tab switching| D
+    E --&gt;|No - e.g. Ctrl+C\non Win/Linux| F{Does the shortcut\nhave a Shift variant?}
+
+    F --&gt;|Yes| H[Require Shift\ne.g. Ctrl+Shift+C for copy]
+    F --&gt;|No| G
+
+    G --&gt; I[xterm.js processes\nkey event]
+    I --&gt; J[onData fires →\nsendInput to backend]
+
+    style D fill:#4a9,stroke:#333,color:#fff
+    style H fill:#4a9,stroke:#333,color:#fff
+    style J fill:#49a,stroke:#333,color:#fff
+</pre>
+</div>
+<h3 id="shortcut-categories">Shortcut Categories</h3>
+<p>Shortcuts are classified into categories that determine their routing behavior:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Description</th>
+<th>Examples</th>
+<th>Routing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Global</strong></td>
+<td>Always handled by the app, never forwarded to terminal</td>
+<td>Toggle sidebar, tab switching, open settings</td>
+<td>App intercepts at <code>window</code> level</td>
+</tr>
+<tr>
+<td><strong>Clipboard</strong></td>
+<td>Platform-dependent, use Shift on Win/Linux when terminal focused</td>
+<td>Copy, Paste</td>
+<td>App intercepts; uses Ctrl+Shift on Win/Linux in terminal</td>
+</tr>
+<tr>
+<td><strong>Terminal</strong></td>
+<td>Always forwarded to the terminal backend</td>
+<td>Ctrl+C (SIGINT), Ctrl+D (EOF), Ctrl+Z (SUSPEND)</td>
+<td>xterm.js default handler</td>
+</tr>
+<tr>
+<td><strong>Navigation</strong></td>
+<td>Handled by app when terminal is not capturing</td>
+<td>Arrow keys, Page Up/Down in UI contexts</td>
+<td>Conditional routing</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="default-key-bindings">Default Key Bindings</h3>
+<p>Complete default binding table:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Windows / Linux</th>
+<th>macOS</th>
+<th>Category</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Toggle Sidebar</td>
+<td><code>Ctrl+B</code></td>
+<td><code>Cmd+B</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>New Terminal</td>
+<td><code>Ctrl+Shift+``   |</code>Cmd+Shift+``</td>
+<td>Global</td>
+<td></td>
+</tr>
+<tr>
+<td>Close Tab</td>
+<td><code>Ctrl+W</code></td>
+<td><code>Cmd+W</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Next Tab</td>
+<td><code>Ctrl+Tab</code></td>
+<td><code>Ctrl+Tab</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Previous Tab</td>
+<td><code>Ctrl+Shift+Tab</code></td>
+<td><code>Ctrl+Shift+Tab</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Copy Selection</td>
+<td><code>Ctrl+Shift+C</code></td>
+<td><code>Cmd+C</code></td>
+<td>Clipboard</td>
+</tr>
+<tr>
+<td>Paste</td>
+<td><code>Ctrl+Shift+V</code></td>
+<td><code>Cmd+V</code></td>
+<td>Clipboard</td>
+</tr>
+<tr>
+<td>Select All</td>
+<td><code>Ctrl+Shift+A</code></td>
+<td><code>Cmd+A</code></td>
+<td>Clipboard</td>
+</tr>
+<tr>
+<td>Clear Terminal</td>
+<td><code>Ctrl+Shift+K</code></td>
+<td><code>Cmd+K</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Find in Terminal</td>
+<td><code>Ctrl+Shift+F</code></td>
+<td><code>Cmd+F</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Open Settings</td>
+<td><code>Ctrl+,</code></td>
+<td><code>Cmd+,</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Keyboard Shortcuts</td>
+<td><code>Ctrl+K Ctrl+S</code></td>
+<td><code>Cmd+K Cmd+S</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Split Right</td>
+<td><code>Ctrl+\</code></td>
+<td><code>Cmd+\</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Focus Next Panel</td>
+<td><code>Ctrl+Alt+→</code></td>
+<td><code>Cmd+Alt+→</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Focus Previous Panel</td>
+<td><code>Ctrl+Alt+←</code></td>
+<td><code>Cmd+Alt+←</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Zoom In</td>
+<td><code>Ctrl+=</code></td>
+<td><code>Cmd+=</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Zoom Out</td>
+<td><code>Ctrl+-</code></td>
+<td><code>Cmd+-</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>Reset Zoom</td>
+<td><code>Ctrl+0</code></td>
+<td><code>Cmd+0</code></td>
+<td>Global</td>
+</tr>
+<tr>
+<td>SIGINT</td>
+<td><code>Ctrl+C</code></td>
+<td><code>Ctrl+C</code></td>
+<td>Terminal</td>
+</tr>
+<tr>
+<td>EOF</td>
+<td><code>Ctrl+D</code></td>
+<td><code>Ctrl+D</code></td>
+<td>Terminal</td>
+</tr>
+<tr>
+<td>Suspend</td>
+<td><code>Ctrl+Z</code></td>
+<td><code>Ctrl+Z</code></td>
+<td>Terminal</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="chord-multi-key-shortcuts">Chord (Multi-Key) Shortcuts</h3>
+<p>Some shortcuts use a chord pattern (press a sequence of key combinations). For example, <code>Ctrl+K Ctrl+S</code> means: press Ctrl+K, release, then press Ctrl+S.</p>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle
+    Idle --&gt; ChordPending: Ctrl+K pressed\n(start chord timer)
+    ChordPending --&gt; ExecuteAction: Ctrl+S pressed\n(within timeout)
+    ChordPending --&gt; Idle: Timeout (1500ms)\nor non-chord key pressed
+    ExecuteAction --&gt; Idle: Action executed
+</pre>
+</div>
+<p>The chord system:</p>
+<ol>
+<li>First key in chord is detected → enter "chord pending" state</li>
+<li>A status bar indicator shows the pending chord (e.g., <code>(Ctrl+K) was pressed. Waiting for second key...</code>)</li>
+<li>If the second key arrives within 1500ms → execute the bound action</li>
+<li>If timeout or unrelated key → cancel chord, forward original key to terminal if applicable</li>
+</ol>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>Focus not on terminal</strong>: When focus is on a text input (e.g., settings, connection editor, rename dialog), standard browser Ctrl+C/V/X behavior is preserved. Application shortcuts that conflict with text editing are suppressed in these contexts.</li>
+<li><strong>Modal dialogs</strong>: When a modal is open, only Escape and dialog-specific shortcuts are active. All other shortcuts are suppressed.</li>
+<li><strong>Multiple terminals</strong>: Clipboard operations always target the active (focused) terminal panel.</li>
+<li><strong>Empty clipboard</strong>: Paste is a no-op when clipboard is empty — no error shown.</li>
+<li><strong>Large paste</strong>: When pasting text exceeding 5,000 characters, show a confirmation dialog: "You are about to paste N characters. Proceed?" This prevents accidental paste of large content into a shell.</li>
+<li><strong>Bracketed paste</strong>: When the terminal has bracketed paste mode enabled (modern shells), wrap pasted text in <code>\x1b[200~...\x1b[201~</code> escape sequences so the shell can distinguish pasted text from typed input.</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="key-event-processing-sequence">Key Event Processing Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Window as Window (keydown)
+    participant Router as ShortcutRouter
+    participant XTerm as xterm.js
+    participant Backend as Rust Backend
+
+    User-&gt;&gt;Window: Presses Ctrl+Shift+V
+    Window-&gt;&gt;Router: KeyboardEvent
+    Router-&gt;&gt;Router: Check platform (Windows)
+    Router-&gt;&gt;Router: Match: "paste" action
+    Router-&gt;&gt;Router: Read clipboard
+    Router-&gt;&gt;Backend: sendInput(sessionId, clipboardText)
+    Note over Router: preventDefault() — xterm never sees this key
+
+    User-&gt;&gt;Window: Presses Ctrl+C
+    Window-&gt;&gt;Router: KeyboardEvent
+    Router-&gt;&gt;Router: Check: is terminal focused?
+    Router-&gt;&gt;Router: Category: "Terminal" — forward to xterm
+    Note over Router: Do NOT preventDefault()
+    Window-&gt;&gt;XTerm: KeyboardEvent (bubbles)
+    XTerm-&gt;&gt;XTerm: onData → "\x03"
+    XTerm-&gt;&gt;Backend: sendInput(sessionId, "\x03")
+</pre>
+</div>
+<h3 id="shortcut-customization-sequence">Shortcut Customization Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant Settings as Settings UI
+    participant Store as KeybindingStore
+    participant Storage as LocalStorage / File
+
+    User-&gt;&gt;Settings: Opens Keyboard settings
+    Settings-&gt;&gt;Store: Load current bindings
+    Store-&gt;&gt;Storage: Read persisted overrides
+    Storage--&gt;&gt;Store: User overrides (if any)
+    Store--&gt;&gt;Settings: Merged defaults + overrides
+
+    User-&gt;&gt;Settings: Clicks "Copy Selection" binding
+    Settings-&gt;&gt;Settings: Enter recording mode
+    User-&gt;&gt;Settings: Presses Ctrl+C
+    Settings-&gt;&gt;Settings: Display "Ctrl+C"
+    Settings-&gt;&gt;Store: Check conflicts
+    Store--&gt;&gt;Settings: ⚠ Conflicts with "SIGINT (terminal)"
+    Settings-&gt;&gt;Settings: Show conflict warning
+    User-&gt;&gt;Settings: Presses Ctrl+Shift+C instead
+    Settings-&gt;&gt;Store: Check conflicts → none
+    Settings-&gt;&gt;Store: Save binding
+    Store-&gt;&gt;Storage: Persist override
+    Store-&gt;&gt;Settings: Update UI
+</pre>
+</div>
+<h3 id="shortcut-resolution-state-machine">Shortcut Resolution State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle
+
+    Idle --&gt; Processing: keydown event
+
+    Processing --&gt; AppShortcut: Matches global/clipboard shortcut
+    Processing --&gt; ChordPending: Matches chord prefix
+    Processing --&gt; TerminalForward: No app match\nand terminal focused
+    Processing --&gt; UIForward: No app match\nand UI element focused
+
+    AppShortcut --&gt; ExecuteAction: preventDefault()\nexecute bound action
+    ChordPending --&gt; ChordComplete: Second key within timeout
+    ChordPending --&gt; Idle: Timeout / wrong key
+    ChordComplete --&gt; ExecuteAction: Execute chord action
+    TerminalForward --&gt; XTermProcess: Let xterm.js handle
+    UIForward --&gt; BrowserDefault: Let browser handle
+
+    XTermProcess --&gt; Idle: onData → sendInput
+    BrowserDefault --&gt; Idle: Standard behavior
+    ExecuteAction --&gt; Idle: Action complete
+</pre>
+</div>
+<h3 id="clipboard-operation-flow">Clipboard Operation Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    subgraph "Copy (Ctrl+Shift+C / Cmd+C)"
+        C1[Key combination detected] --&gt; C2{Has selection\nin active terminal?}
+        C2 --&gt;|Yes| C3[xterm.getSelection]
+        C2 --&gt;|No| C4[No-op]
+        C3 --&gt; C5[navigator.clipboard.writeText]
+    end
+
+    subgraph "Paste (Ctrl+Shift+V / Cmd+V)"
+        P1[Key combination detected] --&gt; P2[navigator.clipboard.readText]
+        P2 --&gt; P3{Text length &gt; 5000?}
+        P3 --&gt;|Yes| P4[Show confirmation dialog]
+        P3 --&gt;|No| P5{Bracketed paste\nmode active?}
+        P4 --&gt;|Confirmed| P5
+        P4 --&gt;|Cancelled| P6[No-op]
+        P5 --&gt;|Yes| P7["Wrap: ESC[200~ text ESC[201~"]
+        P5 --&gt;|No| P8[Send raw text]
+        P7 --&gt; P9[sendInput to backend]
+        P8 --&gt; P9
+    end
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<p>Based on the current project architecture, here is the planned implementation approach.</p>
+<h3 id="architecture-overview">Architecture Overview</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    subgraph Frontend
+        KS[KeybindingService] --&gt; SR[ShortcutRouter]
+        SR --&gt; Hook[useKeyboardShortcuts]
+        SR --&gt; XH[xterm.js handler]
+        KS --&gt; Settings[Settings UI]
+        KS --&gt; Overlay[Shortcuts Overlay]
+    end
+
+    subgraph Store
+        ZS[Zustand Store] --&gt; KS
+        ZS --&gt; LS[LocalStorage]
+    end
+
+    style KS fill:#49a,stroke:#333,color:#fff
+    style SR fill:#4a9,stroke:#333,color:#fff
+</pre>
+</div>
+<h3 id="new-and-modified-files">New and Modified Files</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/services/keybindings.ts</code></td>
+<td><strong>New</strong> — KeybindingService: default bindings, platform detection, conflict checking, serialization</td>
+</tr>
+<tr>
+<td><code>src/hooks/useKeyboardShortcuts.ts</code></td>
+<td><strong>Modify</strong> — Refactor to consume KeybindingService instead of hard-coded bindings</td>
+</tr>
+<tr>
+<td><code>src/components/Terminal/Terminal.tsx</code></td>
+<td><strong>Modify</strong> — Add <code>attachCustomKeyEventHandler</code> to intercept clipboard shortcuts before xterm processes them</td>
+</tr>
+<tr>
+<td><code>src/components/Terminal/TerminalRegistry.tsx</code></td>
+<td><strong>Modify</strong> — Extend with clipboard keyboard shortcut support (copy/paste via keyboard)</td>
+</tr>
+<tr>
+<td><code>src/components/Settings/KeyboardSettings.tsx</code></td>
+<td><strong>New</strong> — Settings panel for viewing and rebinding shortcuts</td>
+</tr>
+<tr>
+<td><code>src/components/KeyboardShortcuts/ShortcutsOverlay.tsx</code></td>
+<td><strong>New</strong> — Quick-reference overlay component</td>
+</tr>
+<tr>
+<td><code>src/store/appStore.ts</code></td>
+<td><strong>Modify</strong> — Add keybinding state (user overrides, chord state)</td>
+</tr>
+<tr>
+<td><code>src/types/keybindings.ts</code></td>
+<td><strong>New</strong> — Type definitions for shortcuts, bindings, categories</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="keybindingservice-design">KeybindingService Design</h3>
+<pre><code class="language-typescript">// src/types/keybindings.ts
+
+interface KeyBinding {
+  /** Unique action identifier */
+  action: string;
+  /** Human-readable label */
+  label: string;
+  /** Category for grouping and routing */
+  category: &quot;global&quot; | &quot;clipboard&quot; | &quot;terminal&quot; | &quot;navigation&quot;;
+  /** Platform-specific key combinations */
+  keys: {
+    windows: string; // e.g. &quot;Ctrl+Shift+C&quot;
+    macos: string; // e.g. &quot;Cmd+C&quot;
+    linux: string; // e.g. &quot;Ctrl+Shift+C&quot;
+  };
+  /** Whether this can be rebound by the user */
+  configurable: boolean;
+}
+
+interface KeybindingOverride {
+  action: string;
+  key: string; // Platform-specific override
+}
+</code></pre>
+<h3 id="xtermjs-integration-attachcustomkeyeventhandler">xterm.js Integration: <code>attachCustomKeyEventHandler</code></h3>
+<p>The key to fixing the Ctrl+V problem is xterm.js's <code>attachCustomKeyEventHandler</code>. This callback is invoked <strong>before</strong> xterm processes a key event, and returning <code>false</code> prevents xterm from handling it (allowing the application to handle it instead).</p>
+<pre><code class="language-typescript">// In Terminal.tsx, after creating the xterm instance:
+xterm.attachCustomKeyEventHandler((event: KeyboardEvent): boolean =&gt; {
+  // Let the application's ShortcutRouter handle clipboard shortcuts
+  // On Windows/Linux: intercept Ctrl+Shift+C, Ctrl+Shift+V
+  // On macOS: intercept Cmd+C, Cmd+V
+  if (keybindingService.isAppShortcut(event)) {
+    return false; // Prevent xterm from processing — app will handle
+  }
+  return true; // Let xterm process normally (terminal control chars, etc.)
+});
+</code></pre>
+<p>This is the critical mechanism: it lets clipboard shortcuts bypass xterm without affecting terminal control characters.</p>
+<h3 id="persistence">Persistence</h3>
+<p>User keybinding overrides are stored in the Zustand store and persisted to <code>localStorage</code> (matching the existing pattern for other settings like theme, sidebar state, etc.). The data model is minimal — only overrides are stored, not the full binding set:</p>
+<pre><code class="language-json">{
+  &quot;keybindingOverrides&quot;: [{ &quot;action&quot;: &quot;copy-selection&quot;, &quot;key&quot;: &quot;Ctrl+Shift+X&quot; }]
+}
+</code></pre>
+<p>On load, the KeybindingService merges defaults with overrides. Resetting a binding removes it from the overrides array, reverting to the default.</p>
+<h3 id="platform-detection">Platform Detection</h3>
+<pre><code class="language-typescript">function getPlatform(): &quot;windows&quot; | &quot;macos&quot; | &quot;linux&quot; {
+  const ua = navigator.userAgent;
+  if (ua.includes(&quot;Mac&quot;)) return &quot;macos&quot;;
+  if (ua.includes(&quot;Win&quot;)) return &quot;windows&quot;;
+  return &quot;linux&quot;;
+}
+</code></pre>
+<p>This is already effectively done in the codebase via <code>e.metaKey || e.ctrlKey</code>, but should be formalized into a utility so platform-specific binding lookup is consistent and testable.</p>
+<h3 id="bracketed-paste-mode">Bracketed Paste Mode</h3>
+<p>xterm.js tracks whether the terminal has enabled bracketed paste mode (via <code>\x1b[?2004h</code>). When active, pasted text must be wrapped in bracket sequences. The xterm.js API provides <code>xterm.modes.bracketedPasteMode</code> (with <code>allowProposedApi: true</code>, which is already enabled in the codebase) to check this state.</p>
+<h3 id="implementation-order">Implementation Order</h3>
+<ol>
+<li><strong>Phase 1 — Fix Ctrl+V paste (immediate fix)</strong>: Add <code>attachCustomKeyEventHandler</code> to Terminal.tsx to intercept Ctrl+Shift+V (Win/Linux) and Cmd+V (macOS), trigger paste via <code>TerminalRegistry.pasteToTerminal</code>. Similarly handle Ctrl+Shift+C / Cmd+C for copy. This alone resolves issue #418's core problem.</li>
+<li><strong>Phase 2 — KeybindingService</strong>: Extract hard-coded shortcuts into a data-driven service with platform-aware defaults.</li>
+<li><strong>Phase 3 — Settings UI</strong>: Add the Keyboard section to Settings for viewing and rebinding shortcuts.</li>
+<li><strong>Phase 4 — Shortcuts Overlay</strong>: Add the quick-reference overlay with search.</li>
+<li><strong>Phase 5 — Chord support and advanced features</strong>: Implement multi-key chord sequences, large-paste confirmation, bracketed paste.</li>
+</ol>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

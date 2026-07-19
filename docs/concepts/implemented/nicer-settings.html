@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nicer Settings (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Nicer Settings</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/191">#191</a></span>
+          <span><code>docs/concepts/implemented/nicer-settings.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>The current Settings tab in termiHub is a single flat page that only manages external connection files. There is no central place for general application settings (default user, default SSH key, appearance preferences, terminal defaults, etc.), and the existing layout — a top-to-bottom list — does not scale as settings grow.</p>
+<p>This concept redesigns the settings experience with a <strong>categorized two-panel layout</strong> inspired by VS Code's settings UI. A navigation sidebar on the left lets users jump between categories, while the right panel displays the settings for the selected category in a scrollable, well-grouped form. A search bar at the top enables quick filtering across all settings.</p>
+<h3 id="goals">Goals</h3>
+<ul>
+<li>Provide a scalable structure that accommodates current and future settings</li>
+<li>Group related settings into discoverable categories</li>
+<li>Maintain the VS Code-inspired dark aesthetic already used throughout termiHub</li>
+<li>Keep the settings tab lightweight — no full page reload, instant category switching</li>
+<li>Introduce useful general settings that are currently missing (default user, default SSH key, appearance, etc.)</li>
+</ul>
+<hr>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="overall-layout">Overall Layout</h3>
+<p>The settings tab replaces the current flat <code>SettingsPanel</code> with a two-panel layout inside the same tab area:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  🔍 Search settings...                                       │
+├──────────────┬───────────────────────────────────────────────┤
+│              │                                               │
+│  Categories  │  Settings Content                             │
+│              │                                               │
+│  ● General   │  ┌─ General ──────────────────────────────┐   │
+│  ○ Appearance│  │                                        │   │
+│  ○ Terminal  │  │  DEFAULT USER                          │   │
+│  ○ External  │  │  [________________________]            │   │
+│    Files     │  │                                        │   │
+│              │  │  DEFAULT SSH KEY                       │   │
+│              │  │  [/home/user/.ssh/id_rsa] [Browse]     │   │
+│              │  │                                        │   │
+│              │  │  DEFAULT SHELL                         │   │
+│              │  │  [bash ▾]                              │   │
+│              │  │                                        │   │
+│              │  └────────────────────────────────────────┘   │
+│              │                                               │
+├──────────────┴───────────────────────────────────────────────┤
+│  termiHub v1.2.3                                             │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="search-bar">Search Bar</h3>
+<ul>
+<li>Positioned at the top, spanning the full width of the settings tab</li>
+<li>Placeholder text: "Search settings..."</li>
+<li>As the user types, all categories are scanned and only matching settings are shown</li>
+<li>Matching is case-insensitive against setting labels, descriptions, and category names</li>
+<li>When a search is active, the category sidebar highlights categories that contain matches and the content panel shows a flat filtered list grouped by category</li>
+<li>Clearing the search restores the normal category view</li>
+</ul>
+<h3 id="category-sidebar">Category Sidebar</h3>
+<p>A narrow left panel (~180 px) listing all setting categories as clickable items:</p>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Icon</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>General</strong></td>
+<td><code>Settings2</code></td>
+<td>Default user, default SSH key, default shell</td>
+</tr>
+<tr>
+<td><strong>Appearance</strong></td>
+<td><code>Palette</code></td>
+<td>Theme, font family, font size</td>
+</tr>
+<tr>
+<td><strong>Terminal</strong></td>
+<td><code>TerminalSquare</code></td>
+<td>Default terminal behavior (scrolling, scrollback buffer)</td>
+</tr>
+<tr>
+<td><strong>External Files</strong></td>
+<td><code>FileJson</code></td>
+<td>External connection file management (current SettingsPanel content)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li>The active category is highlighted with the accent color left-border indicator (similar to VS Code's activity bar active indicator)</li>
+<li>Clicking a category instantly switches the right panel content (no page transition)</li>
+<li>Keyboard navigation: <code>↑</code>/<code>↓</code> arrows move between categories, <code>Enter</code> selects</li>
+</ul>
+<h3 id="settings-content-panel">Settings Content Panel</h3>
+<p>The right panel shows the settings for the currently selected category. Each category is rendered as a scrollable section with the following structure:</p>
+<h4 id="general">General</h4>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Control</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Default User</td>
+<td>Text input</td>
+<td><em>(empty)</em></td>
+<td>Pre-filled as username when creating new SSH/Telnet connections</td>
+</tr>
+<tr>
+<td>Default SSH Key</td>
+<td>File path + Browse button</td>
+<td><em>(empty)</em></td>
+<td>Pre-filled as key path when creating new SSH connections with key auth</td>
+</tr>
+<tr>
+<td>Default Shell</td>
+<td>Dropdown (auto-detected shells)</td>
+<td>System default</td>
+<td>Shell used for new local terminal tabs</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4 id="appearance">Appearance</h4>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Control</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Theme</td>
+<td>Dropdown: Dark / Light / System</td>
+<td>Dark</td>
+<td>Application color theme</td>
+</tr>
+<tr>
+<td>Font Family</td>
+<td>Text input</td>
+<td><code>monospace</code></td>
+<td>Terminal font family</td>
+</tr>
+<tr>
+<td>Font Size</td>
+<td>Number input (8–32)</td>
+<td>14</td>
+<td>Terminal font size in pixels</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4 id="terminal">Terminal</h4>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Control</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Default Horizontal Scrolling</td>
+<td>Toggle</td>
+<td>Off</td>
+<td>Default for new terminals (can be overridden per-connection)</td>
+</tr>
+<tr>
+<td>Scrollback Buffer</td>
+<td>Number input (100–100000)</td>
+<td>5000</td>
+<td>Lines of terminal scrollback history</td>
+</tr>
+<tr>
+<td>Cursor Style</td>
+<td>Dropdown: Block / Underline / Bar</td>
+<td>Block</td>
+<td>Terminal cursor appearance</td>
+</tr>
+<tr>
+<td>Cursor Blink</td>
+<td>Toggle</td>
+<td>On</td>
+<td>Whether the cursor blinks</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4 id="external-files">External Files</h4>
+<p>This is the existing external connection file management, moved into its own settings category. The UI remains largely the same (file list with toggles, add/create/reload buttons), but is now presented within the categorized layout rather than being the entire settings page.</p>
+<h3 id="footer">Footer</h3>
+<p>A small footer at the bottom of the settings panel shows the application version string (e.g., "termiHub v1.2.3"). This is purely informational — gives users a quick way to check their version.</p>
+<h3 id="responsive-behavior">Responsive Behavior</h3>
+<ul>
+<li>When the settings tab area is narrower than <strong>480 px</strong>, the category sidebar collapses into a horizontal tab bar at the top of the settings panel (similar to a mobile-responsive nav pattern)</li>
+<li>The content panel takes the full width below the tab bar</li>
+<li>Settings forms already have <code>max-width: 640px</code> so they remain readable at any width</li>
+</ul>
+<pre><code>Narrow layout (&lt; 480px):
+┌──────────────────────────────────┐
+│  🔍 Search settings...           │
+├──────────────────────────────────┤
+│ General│Appear│Terminal│External  │
+├──────────────────────────────────┤
+│                                  │
+│  Settings Content                │
+│  (full width)                    │
+│                                  │
+└──────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="opening-settings">Opening Settings</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant AB as Activity Bar
+    participant Store as App Store
+    participant SP as Settings Panel
+
+    User-&gt;&gt;AB: Click Settings gear icon
+    AB-&gt;&gt;AB: Show dropdown menu
+    User-&gt;&gt;AB: Click "Settings"
+    AB-&gt;&gt;Store: openSettingsTab()
+    Store-&gt;&gt;Store: Find or create settings tab
+    Store-&gt;&gt;SP: Render SettingsPanel
+    SP-&gt;&gt;SP: Load last active category (or "General")
+</pre>
+</div>
+<h3 id="category-navigation">Category Navigation</h3>
+<ol>
+<li>User clicks a category in the sidebar</li>
+<li>The selected category is stored in component state (and optionally persisted to <code>localStorage</code> so the last-viewed category is remembered)</li>
+<li>The content panel renders the corresponding settings form</li>
+<li>No data is lost — all settings changes are applied immediately (auto-save pattern, no explicit "Save" button needed for simple settings)</li>
+</ol>
+<h3 id="settings-persistence">Settings Persistence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[User changes a setting] --&gt; B{Setting type?}
+    B --&gt;|Simple value| C[Debounce 300ms]
+    C --&gt; D[Update Zustand store]
+    D --&gt; E[Persist to backend via Tauri command]
+    B --&gt;|External files| F[Immediate save]
+    F --&gt; D
+    E --&gt; G[Backend writes to config file]
+    G --&gt; H[Setting applied]
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+    style H fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+<ul>
+<li>Simple value settings (text, dropdowns, toggles) use a <strong>debounced auto-save</strong> — changes are applied after 300 ms of inactivity</li>
+<li>External file operations (add, remove, toggle, create) persist immediately as they do today</li>
+<li>A subtle "Saved" indicator flashes briefly near the setting that was changed, confirming persistence</li>
+<li>If persistence fails, a warning icon appears next to the setting with a tooltip explaining the error</li>
+</ul>
+<h3 id="search-workflow">Search Workflow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[User types in search bar] --&gt; B[Debounce 150ms]
+    B --&gt; C[Filter all settings by query]
+    C --&gt; D{Any matches?}
+    D --&gt;|Yes| E[Show filtered results grouped by category]
+    D --&gt;|No| F[Show 'No matching settings' empty state]
+    E --&gt; G[Highlight matching categories in sidebar]
+    F --&gt; H[Suggest clearing search]
+
+    style A fill:#2d2d2d,stroke:#007acc,color:#fff
+</pre>
+</div>
+<ul>
+<li>Each setting has metadata: <code>label</code>, <code>description</code>, <code>category</code>, and <code>keywords</code> (optional extra terms for searchability)</li>
+<li>The search index is built statically from the settings registry — no backend call needed</li>
+<li>When search is active, clicking a result scrolls to and highlights the setting within its category</li>
+</ul>
+<h3 id="edge-cases">Edge Cases</h3>
+<ul>
+<li><strong>No default shell detected</strong>: The "Default Shell" dropdown shows a text input fallback, same as the current ConnectionSettings behavior</li>
+<li><strong>File browse cancelled</strong>: No change is made, the setting retains its previous value</li>
+<li><strong>Backend unreachable</strong>: Settings changes are queued in memory and retried when the backend becomes available again. A warning banner appears at the top of the settings panel: "Settings changes could not be saved. They will be retried automatically."</li>
+<li><strong>Concurrent settings tabs</strong>: Only one settings tab can exist at a time (existing behavior). <code>openSettingsTab()</code> reuses the existing tab if one is already open.</li>
+<li><strong>Unknown settings in config file</strong>: Ignored on load, preserved on save (forward compatibility)</li>
+</ul>
+<hr>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="settings-panel-state-machine">Settings Panel State Machine</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Loading: openSettingsTab()
+
+    Loading --&gt; CategoryView: Settings loaded
+    Loading --&gt; Error: Load failed
+
+    Error --&gt; Loading: Retry
+
+    CategoryView --&gt; CategoryView: Switch category
+    CategoryView --&gt; SearchView: Type in search bar
+    CategoryView --&gt; Saving: Change a setting
+
+    SearchView --&gt; CategoryView: Clear search
+    SearchView --&gt; SearchView: Update search query
+    SearchView --&gt; Saving: Change a filtered setting
+
+    Saving --&gt; CategoryView: Save success
+    Saving --&gt; SaveError: Save failed
+
+    SaveError --&gt; CategoryView: Dismiss / auto-retry succeeds
+</pre>
+</div>
+<h3 id="category-navigation-state">Category Navigation State</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; General: Default / first visit
+
+    General --&gt; Appearance: Click Appearance
+    General --&gt; Terminal: Click Terminal
+    General --&gt; ExternalFiles: Click External Files
+
+    Appearance --&gt; General: Click General
+    Appearance --&gt; Terminal: Click Terminal
+    Appearance --&gt; ExternalFiles: Click External Files
+
+    Terminal --&gt; General: Click General
+    Terminal --&gt; Appearance: Click Appearance
+    Terminal --&gt; ExternalFiles: Click External Files
+
+    ExternalFiles --&gt; General: Click General
+    ExternalFiles --&gt; Appearance: Click Appearance
+    ExternalFiles --&gt; Terminal: Click Terminal
+
+    note right of General: Remembered via localStorage
+</pre>
+</div>
+<h3 id="settings-save-sequence">Settings Save Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant UI as Settings Form
+    participant Store as Zustand Store
+    participant API as Tauri Backend
+    participant Disk as Config File
+
+    User-&gt;&gt;UI: Change setting value
+    UI-&gt;&gt;UI: Debounce 300ms
+    UI-&gt;&gt;Store: updateSettings(newSettings)
+    Store-&gt;&gt;Store: Update in-memory state
+    Store-&gt;&gt;API: save_settings(newSettings)
+    API-&gt;&gt;Disk: Write config JSON
+    Disk--&gt;&gt;API: OK
+    API--&gt;&gt;Store: Success
+    Store--&gt;&gt;UI: Show "Saved" indicator
+</pre>
+</div>
+<h3 id="search-interaction-flow">Search Interaction Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant Search as Search Bar
+    participant Registry as Settings Registry
+    participant Sidebar as Category Nav
+    participant Content as Content Panel
+
+    User-&gt;&gt;Search: Type "font"
+    Search-&gt;&gt;Search: Debounce 150ms
+    Search-&gt;&gt;Registry: filterSettings("font")
+    Registry--&gt;&gt;Search: [Font Family, Font Size]
+    Search-&gt;&gt;Sidebar: Highlight "Appearance" category
+    Search-&gt;&gt;Content: Show filtered results
+    Content-&gt;&gt;Content: Render matching settings with highlight
+
+    User-&gt;&gt;Search: Clear search (Esc or ×)
+    Search-&gt;&gt;Sidebar: Remove highlights
+    Search-&gt;&gt;Content: Restore normal category view
+</pre>
+</div>
+<hr>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation.</p>
+<h3 id="file-changes-overview">File Changes Overview</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart LR
+    subgraph New Files
+        A[SettingsNav.tsx]
+        B[SettingsNav.css]
+        C[GeneralSettings.tsx]
+        D[AppearanceSettings.tsx]
+        E[TerminalSettings.tsx]
+        F[SettingsSearch.tsx]
+        G[settingsRegistry.ts]
+    end
+
+    subgraph Modified Files
+        H[SettingsPanel.tsx]
+        I[SettingsPanel.css]
+        J[appStore.ts]
+        K[connection.ts types]
+        L[api.ts]
+    end
+
+    subgraph Backend
+        M[settings commands]
+        N[config storage]
+    end
+
+    H --&gt; A
+    H --&gt; F
+    A --&gt; C
+    A --&gt; D
+    A --&gt; E
+    G --&gt; F
+
+    style New Files fill:#1e3a1e,stroke:#4ec9b0,color:#fff
+    style Modified Files fill:#3a2e1e,stroke:#cca700,color:#fff
+    style Backend fill:#1e2a3a,stroke:#007acc,color:#fff
+</pre>
+</div>
+<h3 id="1-expand-appsettings-type">1. Expand <code>AppSettings</code> Type</h3>
+<p>The <code>AppSettings</code> interface in <code>src/types/connection.ts</code> needs new fields:</p>
+<pre><code class="language-typescript">interface AppSettings {
+  version: string;
+  externalConnectionFiles: ExternalFileConfig[];
+  // New fields:
+  defaultUser?: string;
+  defaultSshKeyPath?: string;
+  defaultShell?: string;
+  theme?: &quot;dark&quot; | &quot;light&quot; | &quot;system&quot;;
+  fontFamily?: string;
+  fontSize?: number;
+  defaultHorizontalScrolling?: boolean;
+  scrollbackBuffer?: number;
+  cursorStyle?: &quot;block&quot; | &quot;underline&quot; | &quot;bar&quot;;
+  cursorBlink?: boolean;
+}
+</code></pre>
+<p>All new fields are optional with sensible defaults to maintain backward compatibility with existing config files.</p>
+<h3 id="2-restructure-settingspaneltsx">2. Restructure <code>SettingsPanel.tsx</code></h3>
+<p>Transform the current single-section panel into the two-panel layout:</p>
+<ul>
+<li>Add <code>activeCategory</code> state (default: <code>"general"</code>, persisted to <code>localStorage</code>)</li>
+<li>Render <code>&lt;SettingsNav&gt;</code> sidebar + content area</li>
+<li>Move external files UI into a dedicated <code>&lt;ExternalFilesSettings&gt;</code> sub-component (extracted from current <code>SettingsPanel</code>)</li>
+<li>Add <code>&lt;GeneralSettings&gt;</code>, <code>&lt;AppearanceSettings&gt;</code>, <code>&lt;TerminalSettings&gt;</code> components</li>
+</ul>
+<h3 id="3-new-components">3. New Components</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Location</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SettingsNav</code></td>
+<td><code>src/components/Settings/SettingsNav.tsx</code></td>
+<td>Category sidebar with icons and active indicator</td>
+</tr>
+<tr>
+<td><code>SettingsSearch</code></td>
+<td><code>src/components/Settings/SettingsSearch.tsx</code></td>
+<td>Search bar with filtering logic</td>
+</tr>
+<tr>
+<td><code>GeneralSettings</code></td>
+<td><code>src/components/Settings/GeneralSettings.tsx</code></td>
+<td>Default user, SSH key, shell settings</td>
+</tr>
+<tr>
+<td><code>AppearanceSettings</code></td>
+<td><code>src/components/Settings/AppearanceSettings.tsx</code></td>
+<td>Theme, font family, font size</td>
+</tr>
+<tr>
+<td><code>TerminalSettings</code></td>
+<td><code>src/components/Settings/TerminalSettings.tsx</code></td>
+<td>Scrolling, scrollback, cursor settings</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Each settings component follows the existing pattern: receives settings via props, calls <code>onChange</code> for updates.</p>
+<h3 id="4-settings-registry-for-search">4. Settings Registry for Search</h3>
+<p>Create <code>src/components/Settings/settingsRegistry.ts</code>:</p>
+<pre><code class="language-typescript">interface SettingDefinition {
+  id: string;
+  label: string;
+  description: string;
+  category: SettingsCategory;
+  keywords: string[];
+}
+</code></pre>
+<p>A flat array of all setting definitions enables the search bar to filter across categories without each component needing to implement search logic.</p>
+<h3 id="5-backend-changes">5. Backend Changes</h3>
+<p>The Rust backend already persists <code>AppSettings</code> via JSON. Since all new fields are optional, no migration is needed — the existing <code>get_settings</code> / <code>save_settings</code> Tauri commands work as-is. The backend just needs to pass through the new fields.</p>
+<p>If specific settings require backend behavior (e.g., applying font size to xterm.js, changing theme), those are handled on the frontend side by reading from the store. No new Tauri commands are needed for the initial implementation.</p>
+<h3 id="6-css-approach">6. CSS Approach</h3>
+<p>Continue using the existing BEM + CSS variables approach:</p>
+<ul>
+<li><code>SettingsPanel.css</code> gets the two-panel layout styles</li>
+<li><code>SettingsNav.css</code> for the sidebar</li>
+<li>Each new settings component reuses the existing <code>.settings-form</code> classes from <code>ConnectionEditor.css</code></li>
+<li>Responsive breakpoint at 480 px handled via <code>@media</code> query or <code>ResizeObserver</code> (preferred, since the panel width depends on split-view, not viewport)</li>
+</ul>
+<h3 id="7-migration-path">7. Migration Path</h3>
+<ol>
+<li>First PR: Restructure <code>SettingsPanel</code> into two-panel layout, extract <code>ExternalFilesSettings</code>, add <code>SettingsNav</code> — no new settings, just the layout change</li>
+<li>Second PR: Add <code>GeneralSettings</code> with default user, SSH key, shell</li>
+<li>Third PR: Add <code>AppearanceSettings</code> with theme, font settings</li>
+<li>Fourth PR: Add <code>TerminalSettings</code> with cursor and scrollback settings</li>
+<li>Fifth PR: Add search functionality</li>
+</ol>
+<p>This incremental approach keeps PRs reviewable and allows each step to be tested independently.</p>
+<h3 id="component-hierarchy">Component Hierarchy</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    SP[SettingsPanel] --&gt; SS[SettingsSearch]
+    SP --&gt; SN[SettingsNav]
+    SP --&gt; CC{Active Category}
+
+    CC --&gt;|general| GS[GeneralSettings]
+    CC --&gt;|appearance| AS[AppearanceSettings]
+    CC --&gt;|terminal| TS[TerminalSettings]
+    CC --&gt;|external-files| EFS[ExternalFilesSettings]
+
+    GS --&gt; SF[".settings-form classes"]
+    AS --&gt; SF
+    TS --&gt; SF
+    EFS --&gt; SF
+
+    style SP fill:#2d2d2d,stroke:#007acc,color:#fff
+    style CC fill:#2d2d2d,stroke:#cca700,color:#fff
+    style SF fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+</pre>
+</div>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>

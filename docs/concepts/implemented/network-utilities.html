@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Built-in Network Diagnostic Utilities (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Built-in Network Diagnostic Utilities</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Implemented</span>
+          <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/525">#525</a></span>
+          <span><code>docs/concepts/implemented/network-utilities.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+        </ol>
+      </nav>
+
+<h2 id="overview">Overview</h2>
+<p>Add built-in network diagnostic tools to termiHub — port scanning, open ports viewer, ping/traceroute, HTTP monitoring, bandwidth testing, DNS lookup, and Wake-on-LAN — accessible from the UI without requiring external CLI tools.</p>
+<p><strong>Motivation</strong>: Terminal applications like MobaXterm bundle network utilities (TCPCapture, MobaListPorts, httping, iperf) that let users troubleshoot network issues without switching tools. termiHub already has SSH system monitoring; network diagnostics complement this with connection-level and host-level troubleshooting.</p>
+<p><strong>Key goals</strong>:</p>
+<ul>
+<li><strong>Zero-install diagnostics</strong>: Run common network checks directly from the UI without installing external tools</li>
+<li><strong>Visual output</strong>: Latency graphs, color-coded status, real-time streaming results — not just raw text</li>
+<li><strong>Context-aware</strong>: Launch diagnostics pre-filled with hosts/ports from existing connections</li>
+<li><strong>Cross-platform</strong>: All tools work on Windows, macOS, and Linux using Rust's networking APIs</li>
+<li><strong>Privilege-aware</strong>: Gracefully handle tools that need elevated permissions (e.g., raw sockets for ICMP)</li>
+</ul>
+<h3 id="tool-priority">Tool Priority</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Priority</th>
+<th>Tool</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0</td>
+<td>Port Scanner</td>
+<td>TCP connect scan on specific host:port ranges</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Open Ports Viewer</td>
+<td>List listening ports on the local machine</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Ping</td>
+<td>ICMP echo with latency graph over time</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>DNS Lookup</td>
+<td>Resolve hostnames, show A/AAAA/MX/CNAME records</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>HTTP Monitor</td>
+<td>Periodic HTTP requests with response time and status tracking</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Traceroute</td>
+<td>Hop-by-hop path with latency per hop</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Wake-on-LAN</td>
+<td>Send magic packets to wake remote machines</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Bandwidth Test</td>
+<td>iperf-like client/server for throughput measurement</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="ui-interface">UI Interface</h2>
+<h3 id="activity-bar-sidebar">Activity Bar &amp; Sidebar</h3>
+<p>A new <strong>Network Tools</strong> entry appears in the Activity Bar with a <code>Stethoscope</code> (or <code>Activity</code>) icon. Clicking it opens the Network Tools sidebar.</p>
+<pre><code>┌─────────────────────────────────┐
+│ NETWORK TOOLS                   │
+│                                 │
+│ ─── Quick Actions ───           │
+│  ▶ Ping Host...                 │
+│  ▶ Scan Ports...                │
+│  ▶ DNS Lookup...                │
+│  ▶ Wake-on-LAN...               │
+│                                 │
+│ ─── Monitors ───                │
+│  ● HTTP Monitor: api.example    │
+│    200 OK — 142ms (running)     │
+│  ○ HTTP Monitor: staging        │
+│    (stopped)                    │
+│                                 │
+│ ─── Local ───                   │
+│  ▶ View Open Ports              │
+│                                 │
+│ [+ New Monitor]                 │
+└─────────────────────────────────┘
+</code></pre>
+<p>The sidebar has three sections:</p>
+<ol>
+<li><strong>Quick Actions</strong> — one-click launchers that open a diagnostic tab with a form</li>
+<li><strong>Monitors</strong> — persistent HTTP monitors showing live status with start/stop controls</li>
+<li><strong>Local</strong> — local machine utilities (open ports viewer)</li>
+</ol>
+<p>Right-clicking a connection in the Connections sidebar adds a context menu entry <strong>"Network Diagnostics ▸"</strong> with sub-items:</p>
+<ul>
+<li>Ping <code>&lt;host&gt;</code></li>
+<li>Scan Ports on <code>&lt;host&gt;</code></li>
+<li>DNS Lookup <code>&lt;host&gt;</code></li>
+</ul>
+<p>These open the corresponding tool tab pre-filled with the connection's host.</p>
+<h3 id="diagnostic-tabs">Diagnostic Tabs</h3>
+<p>Each diagnostic tool opens as a <strong>tab</strong> (new <code>TabContentType: "network-diagnostic"</code>), similar to the Settings or Log Viewer tabs. Multiple diagnostic tabs can be open simultaneously.</p>
+<h4 id="common-tab-layout">Common Tab Layout</h4>
+<p>Every diagnostic tab follows a consistent layout:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ 🔍 Port Scanner                                    [▶ Run] │
+│─────────────────────────────────────────────────────────────│
+│ Host: [192.168.1.1        ]  Ports: [22,80,443,8080  ]     │
+│ Timeout: [2000ms ▾]          Threads: [100 ▾]              │
+│─────────────────────────────────────────────────────────────│
+│ Results                                          [Export ↓] │
+│                                                             │
+│  PORT    STATE     SERVICE    LATENCY                       │
+│  22      ● Open    ssh        12ms                          │
+│  80      ● Open    http       8ms                           │
+│  443     ● Open    https      9ms                           │
+│  8080    ○ Closed  —          —                             │
+│                                                             │
+│  Scanned 4 ports in 2.1s — 3 open, 1 closed                │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Structure: <strong>header</strong> (tool name + run button) → <strong>input form</strong> (tool-specific parameters) → <strong>results area</strong> (streaming output with export).</p>
+<h4 id="ping-tab">Ping Tab</h4>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ 📶 Ping                                   [▶ Start] [Stop] │
+│─────────────────────────────────────────────────────────────│
+│ Host: [example.com       ]  Count: [∞ ▾]  Interval: [1s ▾] │
+│─────────────────────────────────────────────────────────────│
+│ Latency Graph                                               │
+│  50ms ┤                                                     │
+│  40ms ┤          ╭─╮                                        │
+│  30ms ┤    ╭─╮╭──╯ ╰──╮                                    │
+│  20ms ┤╭───╯ ╰╯       ╰──╮     ╭──╮                        │
+│  10ms ┤╯                  ╰─────╯  ╰──                      │
+│   0ms ┤─────────────────────────────────                    │
+│       └──────────────────────────────── time →              │
+│                                                             │
+│ Statistics: sent=24 recv=24 loss=0%                          │
+│ RTT: min=11ms avg=23ms max=47ms jitter=8ms                  │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Features:</p>
+<ul>
+<li>Real-time latency line chart (last 60 seconds visible, scrollable)</li>
+<li>Running statistics below the chart</li>
+<li>Continuous mode (infinite) or fixed count</li>
+<li>Color-coded: green for normal latency, yellow for high, red for packet loss</li>
+</ul>
+<h4 id="open-ports-viewer-tab">Open Ports Viewer Tab</h4>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ 🖥 Open Ports                              [↻ Refresh]      │
+│─────────────────────────────────────────────────────────────│
+│ Filter: [          ] Protocol: [All ▾] State: [Listening ▾] │
+│─────────────────────────────────────────────────────────────│
+│  PROTO  LOCAL ADDRESS       PID     PROCESS                 │
+│  TCP    0.0.0.0:22          1234    sshd                    │
+│  TCP    127.0.0.1:5432      5678    postgres                │
+│  TCP    0.0.0.0:8080        9012    node                    │
+│  UDP    0.0.0.0:5353        345     mDNSResponder           │
+│  TCP    :::443              6789    nginx                   │
+│                                                             │
+│  5 listening ports                                          │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h4 id="dns-lookup-tab">DNS Lookup Tab</h4>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ 🔤 DNS Lookup                                      [▶ Run] │
+│─────────────────────────────────────────────────────────────│
+│ Hostname: [example.com     ]  Type: [A ▾]  Server: [auto ] │
+│─────────────────────────────────────────────────────────────│
+│ Results                                     Query time: 12ms│
+│                                                             │
+│  TYPE   NAME              VALUE              TTL            │
+│  A      example.com       93.184.216.34      3600           │
+│  A      example.com       93.184.216.35      3600           │
+│  AAAA   example.com       2606:2800:220:1::  3600           │
+│                                                             │
+│ ─── Additional Records ───                                  │
+│  NS     example.com       a.iana-servers.net 172800         │
+│  NS     example.com       b.iana-servers.net 172800         │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Record type selector: A, AAAA, MX, CNAME, NS, TXT, SRV, SOA, PTR, ANY.</p>
+<h4 id="http-monitor-tab">HTTP Monitor Tab</h4>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ 🌐 HTTP Monitor                            [▶ Start] [Stop]│
+│─────────────────────────────────────────────────────────────│
+│ URL: [https://api.example.com/health]  Interval: [30s ▾]   │
+│ Method: [GET ▾]  Expected Status: [200]  Timeout: [5s ▾]   │
+│─────────────────────────────────────────────────────────────│
+│ Status: ● UP (200 OK)             Uptime: 99.7% (24h)      │
+│                                                             │
+│ Response Time Graph                                         │
+│ 500ms ┤                                                     │
+│ 400ms ┤                                                     │
+│ 300ms ┤      ╭╮                                             │
+│ 200ms ┤  ╭╮╭─╯╰╮    ╭╮                                     │
+│ 100ms ┤──╯╰╯   ╰────╯╰───────                              │
+│   0ms ┤─────────────────────────                            │
+│       └─────────────────────────── time →                   │
+│                                                             │
+│ History (last 10)                                           │
+│  12:30:00  200 OK     142ms                                 │
+│  12:29:30  200 OK     138ms                                 │
+│  12:29:00  200 OK     312ms  ⚠ slow                        │
+│  12:28:30  503 Error  —      ✗ down                         │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h4 id="traceroute-tab">Traceroute Tab</h4>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ 🗺 Traceroute                                      [▶ Run] │
+│─────────────────────────────────────────────────────────────│
+│ Host: [example.com       ]  Max Hops: [30 ▾]               │
+│─────────────────────────────────────────────────────────────│
+│  HOP  HOST                    RTT1    RTT2    RTT3          │
+│  1    router.local            1ms     1ms     1ms           │
+│  2    isp-gw.example.net      8ms     9ms     8ms           │
+│  3    core-rtr.isp.net        15ms    14ms    16ms          │
+│  4    * * *                   —       —       —             │
+│  5    peer.cdn.net            22ms    23ms    22ms          │
+│  6    93.184.216.34           28ms    27ms    29ms          │
+│                                                             │
+│  Trace complete: 6 hops, avg 28ms                           │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h4 id="wake-on-lan-tab">Wake-on-LAN Tab</h4>
+<pre><code>┌─────────────────────────────────────────────────────────────┐
+│ ⏻ Wake-on-LAN                                     [▶ Send] │
+│─────────────────────────────────────────────────────────────│
+│ MAC Address: [AA:BB:CC:DD:EE:FF]                            │
+│ Broadcast:   [255.255.255.255  ]  Port: [9   ]             │
+│                                                             │
+│ ─── Saved Devices ───                                       │
+│  Dev Server    AA:BB:CC:DD:EE:FF    [Wake] [Edit] [Delete] │
+│  NAS           11:22:33:44:55:66    [Wake] [Edit] [Delete] │
+│                                                             │
+│ [+ Save Current]                                            │
+│                                                             │
+│ History:                                                    │
+│  12:30:15  Sent magic packet to AA:BB:CC:DD:EE:FF           │
+│  12:25:00  Sent magic packet to 11:22:33:44:55:66           │
+└─────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="theme-integration">Theme Integration</h3>
+<p>All diagnostic tabs use the existing theme system (CSS variables). Charts use theme-aware colors:</p>
+<ul>
+<li><code>--vscode-charts-green</code> for success/open</li>
+<li><code>--vscode-charts-red</code> for failure/closed</li>
+<li><code>--vscode-charts-yellow</code> for warnings/slow</li>
+<li><code>--vscode-editor-foreground</code> for text and axes</li>
+</ul>
+<h2 id="general-handling">General Handling</h2>
+<h3 id="user-journeys">User Journeys</h3>
+<h4 id="quick-diagnostic-from-sidebar">Quick Diagnostic from Sidebar</h4>
+<ol>
+<li>User clicks <strong>Network Tools</strong> in the Activity Bar</li>
+<li>Clicks <strong>"Ping Host..."</strong> in Quick Actions</li>
+<li>A new Ping tab opens in the main area</li>
+<li>User types hostname, clicks <strong>Start</strong></li>
+<li>Real-time latency graph streams results</li>
+<li>User clicks <strong>Stop</strong> when done, or closes the tab</li>
+</ol>
+<h4 id="context-aware-diagnostic-from-connection">Context-Aware Diagnostic from Connection</h4>
+<ol>
+<li>User right-clicks an SSH connection in the Connections sidebar</li>
+<li>Selects <strong>"Network Diagnostics" → "Scan Ports on dev-server.example.com"</strong></li>
+<li>A Port Scanner tab opens pre-filled with <code>dev-server.example.com</code></li>
+<li>User adjusts port range if needed, clicks <strong>Run</strong></li>
+<li>Results stream in as ports are scanned</li>
+</ol>
+<h4 id="persistent-http-monitoring">Persistent HTTP Monitoring</h4>
+<ol>
+<li>User opens Network Tools sidebar, clicks <strong>"+ New Monitor"</strong></li>
+<li>Fills in URL, interval, expected status</li>
+<li>Clicks <strong>Start</strong> — the monitor appears in the sidebar's Monitors section with live status</li>
+<li>Monitor persists across tab switches (runs in the backend)</li>
+<li>If the status changes (e.g., 200 → 503), a notification appears</li>
+<li>User can click the monitor entry to open its detail tab</li>
+</ol>
+<h4 id="remote-diagnostics-via-agent">Remote Diagnostics via Agent</h4>
+<ol>
+<li>User has an SSH connection with the remote agent deployed</li>
+<li>Right-clicks the connection → "Network Diagnostics" → "View Open Ports"</li>
+<li>The Open Ports Viewer tab opens, showing ports on the <strong>remote</strong> machine</li>
+<li>Backend routes the request through the agent's JSON-RPC protocol</li>
+</ol>
+<h3 id="edge-cases-error-handling">Edge Cases &amp; Error Handling</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Handling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ICMP requires root/admin</strong></td>
+<td>Fall back to TCP ping (connect to port 80/443). Show info banner: "Using TCP ping — ICMP requires elevated privileges"</td>
+</tr>
+<tr>
+<td><strong>Host unreachable</strong></td>
+<td>Show clear error with suggestion: "Host unreachable. Check hostname and network connectivity."</td>
+</tr>
+<tr>
+<td><strong>Scan canceled mid-run</strong></td>
+<td>Stop immediately, show partial results with "(scan canceled)" footer</td>
+</tr>
+<tr>
+<td><strong>Very large port range</strong></td>
+<td>Warn before starting: "Scanning 65535 ports may take several minutes. Continue?"</td>
+</tr>
+<tr>
+<td><strong>No network connection</strong></td>
+<td>Detect offline state, show "No network connection" banner on all tools</td>
+</tr>
+<tr>
+<td><strong>Remote agent not available</strong></td>
+<td>Fall back to desktop-side execution where possible; show "Agent required" for remote-only tools</td>
+</tr>
+<tr>
+<td><strong>Firewall blocks results</strong></td>
+<td>Results show as "filtered" rather than "closed" when connection times out vs refused</td>
+</tr>
+<tr>
+<td><strong>HTTP monitor target down</strong></td>
+<td>Visual indicator changes (red dot), optional desktop notification</td>
+</tr>
+<tr>
+<td><strong>Rate limiting</strong></td>
+<td>Configurable concurrent connections for port scanner (default: 100)</td>
+</tr>
+<tr>
+<td><strong>IPv6 support</strong></td>
+<td>All tools support both IPv4 and IPv6 addresses</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="export-sharing">Export &amp; Sharing</h3>
+<p>All diagnostic results can be exported:</p>
+<ul>
+<li><strong>Copy to clipboard</strong> — plain text summary</li>
+<li><strong>Export as CSV</strong> — tabular results (port scan, DNS, open ports)</li>
+<li><strong>Export as JSON</strong> — structured data for scripting</li>
+<li><strong>Screenshot</strong> — for graphs (ping, HTTP monitor) via canvas-to-image</li>
+</ul>
+<h2 id="states-sequences">States &amp; Sequences</h2>
+<h3 id="diagnostic-tool-lifecycle">Diagnostic Tool Lifecycle</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Idle: Tab opened
+
+    Idle --&gt; Configuring: User edits parameters
+    Configuring --&gt; Idle: Parameters cleared
+
+    Idle --&gt; Running: Click Run/Start
+    Configuring --&gt; Running: Click Run/Start
+
+    Running --&gt; Streaming: Results arriving
+    Streaming --&gt; Streaming: More results
+    Streaming --&gt; Completed: All results received
+    Streaming --&gt; Canceled: User clicks Stop
+    Streaming --&gt; Error: Network/system error
+
+    Completed --&gt; Idle: Clear results
+    Completed --&gt; Running: Click Run again
+    Canceled --&gt; Idle: Clear results
+    Canceled --&gt; Running: Click Run again
+    Error --&gt; Idle: Dismiss error
+    Error --&gt; Running: Retry
+
+    Completed --&gt; [*]: Close tab
+    Idle --&gt; [*]: Close tab
+</pre>
+</div>
+<h3 id="port-scan-sequence">Port Scan Sequence</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant F as Frontend (React)
+    participant S as Store (Zustand)
+    participant B as Backend (Rust)
+    participant N as Network
+
+    U-&gt;&gt;F: Click "Run" on Port Scanner
+    F-&gt;&gt;S: dispatch startScan(host, ports)
+    S-&gt;&gt;B: invoke("network_port_scan", {host, ports, timeout, concurrency})
+    B-&gt;&gt;B: Spawn async scan task
+
+    loop For each port (batched by concurrency)
+        B-&gt;&gt;N: TcpStream::connect_timeout(host:port)
+        alt Port open
+            N--&gt;&gt;B: Connection established
+            B--&gt;&gt;F: emit("network-scan-result", {port, state: "open", latency})
+        else Port closed
+            N--&gt;&gt;B: Connection refused
+            B--&gt;&gt;F: emit("network-scan-result", {port, state: "closed"})
+        else Timeout
+            N--&gt;&gt;B: Timeout
+            B--&gt;&gt;F: emit("network-scan-result", {port, state: "filtered"})
+        end
+        F-&gt;&gt;S: appendScanResult(result)
+        S-&gt;&gt;F: Re-render results table
+    end
+
+    B--&gt;&gt;F: emit("network-scan-complete", {summary})
+    F-&gt;&gt;S: setScanState("completed")
+</pre>
+</div>
+<h3 id="http-monitor-lifecycle">HTTP Monitor Lifecycle</h3>
+<div class="diagram">
+  <pre class="mermaid">
+stateDiagram-v2
+    [*] --&gt; Configured: User sets URL &amp; interval
+
+    Configured --&gt; Running: Click Start
+    Running --&gt; Checking: Interval timer fires
+
+    Checking --&gt; Up: HTTP 2xx received
+    Checking --&gt; Degraded: HTTP 2xx but slow (&gt;threshold)
+    Checking --&gt; Down: HTTP error or timeout
+
+    Up --&gt; Checking: Next interval
+    Degraded --&gt; Checking: Next interval
+    Down --&gt; Checking: Next interval
+
+    Up --&gt; Stopped: Click Stop
+    Degraded --&gt; Stopped: Click Stop
+    Down --&gt; Stopped: Click Stop
+    Checking --&gt; Stopped: Click Stop
+
+    Stopped --&gt; Running: Click Start
+    Stopped --&gt; [*]: Close/Delete monitor
+
+    state Running {
+        [*] --&gt; WaitingForInterval
+        WaitingForInterval --&gt; Checking: Timer fires
+        Checking --&gt; WaitingForInterval: Check complete
+    }
+</pre>
+</div>
+<h3 id="ping-continuous-flow">Ping Continuous Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant F as Frontend
+    participant B as Backend (Rust)
+    participant N as Network
+
+    U-&gt;&gt;F: Click "Start" on Ping
+    F-&gt;&gt;B: invoke("network_ping_start", {host, interval, count})
+    B-&gt;&gt;B: Spawn ping task (tokio)
+
+    loop Until count reached or stopped
+        B-&gt;&gt;N: Send ICMP echo (or TCP connect fallback)
+        alt Success
+            N--&gt;&gt;B: Reply received
+            B--&gt;&gt;F: emit("network-ping-result", {seq, latency, ttl})
+        else Timeout
+            B--&gt;&gt;F: emit("network-ping-result", {seq, timeout: true})
+        end
+        F-&gt;&gt;F: Update chart &amp; statistics
+        B-&gt;&gt;B: Wait interval
+    end
+
+    B--&gt;&gt;F: emit("network-ping-complete", {stats})
+
+    Note over U,F: User can click Stop at any time
+    U-&gt;&gt;F: Click "Stop"
+    F-&gt;&gt;B: invoke("network_ping_stop", {taskId})
+    B-&gt;&gt;B: Cancel tokio task
+    B--&gt;&gt;F: emit("network-ping-complete", {stats, canceled: true})
+</pre>
+</div>
+<h3 id="remote-diagnostics-via-agent_1">Remote Diagnostics via Agent</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant F as Frontend
+    participant D as Desktop Backend
+    participant A as Remote Agent
+    participant N as Remote Network
+
+    U-&gt;&gt;F: Right-click connection → "Scan Ports on remote-host"
+    F-&gt;&gt;D: invoke("network_port_scan", {host, ports, viaAgent: sessionId})
+    D-&gt;&gt;A: JSON-RPC: network.portScan({host, ports})
+
+    loop For each port batch
+        A-&gt;&gt;N: TcpStream::connect(host:port)
+        N--&gt;&gt;A: Result
+        A--&gt;&gt;D: JSON-RPC notification: network.scanResult
+        D--&gt;&gt;F: emit("network-scan-result", {port, state, latency})
+        F-&gt;&gt;F: Update results table
+    end
+
+    A--&gt;&gt;D: JSON-RPC response: scan complete
+    D--&gt;&gt;F: emit("network-scan-complete", {summary})
+</pre>
+</div>
+<h3 id="wake-on-lan-flow">Wake-on-LAN Flow</h3>
+<div class="diagram">
+  <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant F as Frontend
+    participant B as Backend (Rust)
+    participant N as Network (UDP)
+
+    U-&gt;&gt;F: Enter MAC address, click "Send"
+    F-&gt;&gt;B: invoke("network_wol_send", {mac, broadcast, port})
+    B-&gt;&gt;B: Build magic packet (6x 0xFF + 16x MAC)
+    B-&gt;&gt;N: UDP broadcast to broadcast:port
+    N--&gt;&gt;B: Packet sent (no acknowledgment)
+    B--&gt;&gt;F: Ok(()) — "Magic packet sent"
+    F-&gt;&gt;F: Add to history log
+
+    Note over U,N: WoL is fire-and-forget.&lt;br/&gt;No way to confirm the target woke up.
+</pre>
+</div>
+<h3 id="tab-sidebar-interaction">Tab &amp; Sidebar Interaction</h3>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[User opens Network Tools sidebar] --&gt; B{Which action?}
+
+    B --&gt;|Quick Action| C[Open new diagnostic tab]
+    B --&gt;|Click existing monitor| D[Open/focus monitor detail tab]
+    B --&gt;|New Monitor| E[Open HTTP Monitor tab in config mode]
+    B --&gt;|View Open Ports| F[Open Open Ports tab]
+
+    C --&gt; G[User configures &amp; runs tool]
+    G --&gt; H[Results stream in real-time]
+    H --&gt; I{Done?}
+    I --&gt;|Yes| J[Results displayed, export available]
+    I --&gt;|Run again| G
+
+    D --&gt; K[Show monitor history &amp; graph]
+    E --&gt; L[User configures URL &amp; interval]
+    L --&gt; M[Start monitor — appears in sidebar]
+    M --&gt; N[Background checking continues]
+</pre>
+</div>
+<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+<blockquote>
+<p>Based on the current project architecture as of the time of concept creation. The codebase may evolve before implementation.</p>
+</blockquote>
+<h3 id="backend-rust">Backend (Rust)</h3>
+<h4 id="new-module-src-taurisrcnetwork">New Module: <code>src-tauri/src/network/</code></h4>
+<pre><code>src-tauri/src/network/
+  mod.rs           # NetworkManager — holds active tasks, monitors
+  port_scan.rs     # TCP connect scanner with configurable concurrency
+  ping.rs          # ICMP ping (via `surge-ping` crate) with TCP fallback
+  dns.rs           # DNS resolver (via `trust-dns-resolver` / `hickory-resolver`)
+  http_monitor.rs  # Periodic HTTP checker with history
+  traceroute.rs    # TTL-based traceroute
+  wol.rs           # Wake-on-LAN magic packet sender
+  open_ports.rs    # Local listening ports (platform-specific)
+</code></pre>
+<h4 id="key-crate-dependencies">Key Crate Dependencies</h4>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Crate</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>surge-ping</code></td>
+<td>Cross-platform ICMP ping (raw sockets)</td>
+</tr>
+<tr>
+<td><code>hickory-resolver</code> (formerly trust-dns)</td>
+<td>Async DNS resolution with record types</td>
+</tr>
+<tr>
+<td><code>reqwest</code></td>
+<td>HTTP client for HTTP monitor (already in workspace)</td>
+</tr>
+<tr>
+<td><code>tokio</code></td>
+<td>Async runtime for concurrent operations (already in workspace)</td>
+</tr>
+<tr>
+<td><code>netstat2</code> or platform APIs</td>
+<td>List local open ports with process info</td>
+</tr>
+<tr>
+<td><code>socket2</code></td>
+<td>Low-level socket operations for WoL, traceroute</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h4 id="tauri-commands-src-taurisrccommandsnetworkrs">Tauri Commands (<code>src-tauri/src/commands/network.rs</code>)</h4>
+<pre><code class="language-rust">// Port scanning
+#[tauri::command] fn network_port_scan(host, ports, timeout, concurrency, manager) -&gt; Result&lt;String&gt;  // returns task_id
+#[tauri::command] fn network_port_scan_cancel(task_id, manager) -&gt; Result&lt;()&gt;
+
+// Ping
+#[tauri::command] fn network_ping_start(host, interval, count, manager) -&gt; Result&lt;String&gt;  // returns task_id
+#[tauri::command] fn network_ping_stop(task_id, manager) -&gt; Result&lt;()&gt;
+
+// DNS
+#[tauri::command] fn network_dns_lookup(hostname, record_type, server, manager) -&gt; Result&lt;DnsResult&gt;
+
+// HTTP Monitor
+#[tauri::command] fn network_http_monitor_start(url, interval, method, expected_status, manager) -&gt; Result&lt;String&gt;
+#[tauri::command] fn network_http_monitor_stop(monitor_id, manager) -&gt; Result&lt;()&gt;
+#[tauri::command] fn network_http_monitor_list(manager) -&gt; Result&lt;Vec&lt;HttpMonitorState&gt;&gt;
+
+// Traceroute
+#[tauri::command] fn network_traceroute(host, max_hops, manager) -&gt; Result&lt;String&gt;  // returns task_id
+#[tauri::command] fn network_traceroute_cancel(task_id, manager) -&gt; Result&lt;()&gt;
+
+// Wake-on-LAN
+#[tauri::command] fn network_wol_send(mac, broadcast, port) -&gt; Result&lt;()&gt;
+#[tauri::command] fn network_wol_devices_list(manager) -&gt; Result&lt;Vec&lt;WolDevice&gt;&gt;
+#[tauri::command] fn network_wol_device_save(device, manager) -&gt; Result&lt;()&gt;
+#[tauri::command] fn network_wol_device_delete(device_id, manager) -&gt; Result&lt;()&gt;
+
+// Open Ports
+#[tauri::command] fn network_open_ports(manager) -&gt; Result&lt;Vec&lt;OpenPort&gt;&gt;
+</code></pre>
+<h4 id="event-based-streaming">Event-Based Streaming</h4>
+<p>Long-running tools (port scan, ping, traceroute, HTTP monitor) use Tauri events to stream results to the frontend, following the same pattern as terminal output:</p>
+<ul>
+<li><code>network-scan-result</code> — individual port result</li>
+<li><code>network-scan-complete</code> — scan finished</li>
+<li><code>network-ping-result</code> — individual ping response</li>
+<li><code>network-ping-complete</code> — ping session ended</li>
+<li><code>network-traceroute-hop</code> — individual hop result</li>
+<li><code>network-traceroute-complete</code> — trace finished</li>
+<li><code>network-http-monitor-check</code> — individual check result</li>
+</ul>
+<h4 id="networkmanager-state">NetworkManager State</h4>
+<pre><code class="language-rust">pub struct NetworkManager {
+    active_tasks: HashMap&lt;String, JoinHandle&lt;()&gt;&gt;,
+    http_monitors: HashMap&lt;String, HttpMonitorHandle&gt;,
+    wol_devices: Vec&lt;WolDevice&gt;,  // persisted to disk
+    app_handle: AppHandle,        // for emitting events
+}
+</code></pre>
+<p>Registered as Tauri managed state alongside existing managers (ConnectionManager, MonitoringManager, TunnelManager).</p>
+<h4 id="icmp-privilege-handling">ICMP Privilege Handling</h4>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[Ping requested] --&gt; B{Try ICMP raw socket}
+    B --&gt;|Success| C[Use ICMP ping]
+    B --&gt;|Permission denied| D[Fall back to TCP ping]
+    D --&gt; E[Connect to port 80 or 443]
+    E --&gt; F[Measure connect time as latency]
+    C --&gt; G[Return results]
+    F --&gt; G
+</pre>
+</div>
+<p>On macOS, <code>surge-ping</code> works without root for unprivileged ICMP. On Linux, it requires <code>CAP_NET_RAW</code> or <code>sysctl net.ipv4.ping_group_range</code>. On Windows, ICMP is available via <code>IcmpSendEcho</code> without admin. The backend attempts ICMP first and transparently falls back to TCP connect-based ping.</p>
+<h4 id="open-ports-platform-abstraction">Open Ports: Platform Abstraction</h4>
+<div class="diagram">
+  <pre class="mermaid">
+flowchart TD
+    A[network_open_ports called] --&gt; B{Platform?}
+    B --&gt;|macOS| C["Parse `lsof -iTCP -sTCP:LISTEN -P -n`"]
+    B --&gt;|Linux| D["Parse /proc/net/tcp + /proc/net/udp"]
+    B --&gt;|Windows| E["Use GetExtendedTcpTable / GetExtendedUdpTable via windows-sys"]
+    C --&gt; F[Return Vec of OpenPort]
+    D --&gt; F
+    E --&gt; F
+</pre>
+</div>
+<h4 id="remote-agent-extension">Remote Agent Extension</h4>
+<p>For remote diagnostics, extend the agent's JSON-RPC protocol (<code>agent/src/protocol/methods.rs</code>) with a <code>network.*</code> namespace:</p>
+<ul>
+<li><code>network.portScan</code> — scan ports from the agent's perspective</li>
+<li><code>network.ping</code> — ping from the remote machine</li>
+<li><code>network.openPorts</code> — list open ports on the remote machine</li>
+<li><code>network.dnsLookup</code> — resolve DNS from the remote machine</li>
+</ul>
+<p>The desktop backend proxies these requests through the existing agent session when <code>viaAgent: sessionId</code> is specified.</p>
+<h3 id="frontend-reacttypescript">Frontend (React/TypeScript)</h3>
+<h4 id="new-components">New Components</h4>
+<pre><code>src/components/NetworkTools/
+  NetworkToolsSidebar.tsx    # Sidebar panel (Quick Actions, Monitors, Local)
+  PortScannerPanel.tsx       # Port scanner tab content
+  PingPanel.tsx              # Ping tab content with chart
+  DnsLookupPanel.tsx         # DNS lookup tab content
+  HttpMonitorPanel.tsx       # HTTP monitor tab content with chart
+  TraceroutePanel.tsx        # Traceroute tab content
+  WolPanel.tsx               # Wake-on-LAN tab content
+  OpenPortsPanel.tsx         # Open ports viewer tab content
+  LatencyChart.tsx           # Reusable latency line chart component
+  DiagnosticResultsTable.tsx # Reusable results table with export
+</code></pre>
+<h4 id="store-extensions-srcstoreappstorets">Store Extensions (<code>src/store/appStore.ts</code>)</h4>
+<ul>
+<li>Add <code>"network-tools"</code> to <code>SidebarView</code> type</li>
+<li>Add <code>openNetworkDiagnosticTab(tool, meta?)</code> action following the <code>openSettingsTab</code> pattern</li>
+<li>Add HTTP monitor state slice: <code>httpMonitors: HttpMonitorState[]</code></li>
+</ul>
+<h4 id="types-srctypesnetworkts">Types (<code>src/types/network.ts</code>)</h4>
+<p>New type file for network diagnostic types:</p>
+<ul>
+<li><code>NetworkTool</code> — union type: <code>"port-scanner" | "ping" | "dns-lookup" | "http-monitor" | "traceroute" | "wol" | "open-ports"</code></li>
+<li><code>PortScanResult</code>, <code>PingResult</code>, <code>DnsResult</code>, <code>HttpCheckResult</code>, <code>TracerouteHop</code>, <code>OpenPort</code>, <code>WolDevice</code></li>
+<li><code>NetworkDiagnosticMeta</code> — tab metadata: <code>{ tool: NetworkTool, host?: string, connectionId?: string }</code></li>
+</ul>
+<h4 id="tab-content-type">Tab Content Type</h4>
+<p>Extend <code>TabContentType</code> with <code>"network-diagnostic"</code>. Extend <code>TerminalTab</code> with <code>networkDiagnosticMeta?: NetworkDiagnosticMeta</code>. Add rendering branch in <code>SplitView.tsx</code>:</p>
+<pre><code class="language-typescript">tab.contentType === &quot;network-diagnostic&quot; &amp;&amp; tab.networkDiagnosticMeta ? (
+  &lt;NetworkDiagnosticPanel
+    key={tab.id}
+    meta={tab.networkDiagnosticMeta}
+    isVisible={tab.id === panel.activeTabId}
+  /&gt;
+)
+</code></pre>
+<p><code>NetworkDiagnosticPanel</code> is a router component that renders the appropriate tool panel based on <code>meta.tool</code>.</p>
+<h4 id="api-layer-srcservicesapits">API Layer (<code>src/services/api.ts</code>)</h4>
+<p>Add wrapper functions for all <code>network_*</code> Tauri commands following existing patterns. Add event listeners for streaming results via <code>listen()</code> from <code>@tauri-apps/api/event</code>.</p>
+<h4 id="charting">Charting</h4>
+<p>Use a lightweight chart library for latency graphs. Candidates:</p>
+<ul>
+<li><strong>uPlot</strong> — minimal, fast, good for real-time time-series (preferred for performance)</li>
+<li><strong>Chart.js</strong> — well-known, more features but heavier</li>
+<li>Canvas-based custom chart — maximum control, no dependency</li>
+</ul>
+<p>The chart component (<code>LatencyChart.tsx</code>) should support:</p>
+<ul>
+<li>Real-time append of new data points</li>
+<li>Auto-scrolling time axis</li>
+<li>Threshold lines (e.g., "acceptable latency" marker)</li>
+<li>Theme-aware colors from CSS variables</li>
+</ul>
+<h3 id="data-persistence">Data Persistence</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Data</th>
+<th>Storage</th>
+<th>Location</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>WoL saved devices</td>
+<td>JSON file</td>
+<td><code>~/.termihub/wol-devices.json</code></td>
+</tr>
+<tr>
+<td>HTTP monitor configs</td>
+<td>JSON file</td>
+<td><code>~/.termihub/http-monitors.json</code></td>
+</tr>
+<tr>
+<td>Diagnostic results</td>
+<td>Not persisted</td>
+<td>In-memory only (tab lifetime)</td>
+</tr>
+<tr>
+<td>Export files</td>
+<td>User-chosen path</td>
+<td>Via Tauri save dialog</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h3 id="implementation-phases">Implementation Phases</h3>
+<div class="diagram">
+  <pre class="mermaid">
+gantt
+    title Network Utilities Implementation Phases
+    dateFormat X
+    axisFormat %s
+
+    section Phase 1 — Core
+    Backend NetworkManager &amp; infrastructure :a1, 0, 2
+    Port Scanner (backend + frontend)      :a2, 2, 3
+    Open Ports Viewer                      :a3, 3, 2
+    Ping with TCP fallback                 :a4, 3, 3
+
+    section Phase 2 — Extended
+    DNS Lookup                             :b1, 6, 2
+    HTTP Monitor                           :b2, 6, 3
+    Sidebar &amp; Activity Bar integration     :b3, 8, 2
+
+    section Phase 3 — Advanced
+    Traceroute                             :c1, 10, 2
+    Wake-on-LAN                            :c2, 10, 2
+    Latency charting (uPlot)               :c3, 10, 3
+    Export functionality                   :c4, 12, 1
+
+    section Phase 4 — Remote
+    Agent protocol extension               :d1, 13, 2
+    Remote diagnostics via agent           :d2, 15, 3
+    Context menu integration               :d3, 15, 2
+</pre>
+</div>
+<h3 id="security-considerations">Security Considerations</h3>
+<ul>
+<li><strong>Port scanning</strong>: Only TCP connect scans — no SYN/stealth scans that require raw sockets. Users are responsible for ensuring they have permission to scan target hosts.</li>
+<li><strong>No packet capture</strong>: Excluded from scope. Packet capture requires elevated privileges and complex platform-specific implementations (libpcap/npcap). Better left to dedicated tools like Wireshark.</li>
+<li><strong>Input validation</strong>: Validate all host/IP inputs before passing to network operations. Reject obviously invalid inputs (empty strings, local file paths, etc.).</li>
+<li><strong>Rate limiting</strong>: Port scanner defaults to 100 concurrent connections. HTTP monitor minimum interval is 5 seconds. These prevent accidental DoS.</li>
+<li><strong>Timeout enforcement</strong>: All network operations have configurable timeouts with sensible defaults (2s for port scan, 5s for HTTP, 10s for DNS).</li>
+</ul>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
