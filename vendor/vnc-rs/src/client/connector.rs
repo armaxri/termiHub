@@ -1,9 +1,9 @@
+#[cfg(feature = "vencrypt")]
+use super::vencrypt::{self, VencryptConfig};
 use super::{
     auth::{AuthHelper, AuthResult, SecurityType},
     connection::VncClient,
 };
-#[cfg(feature = "vencrypt")]
-use super::vencrypt::{self, VencryptConfig};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};

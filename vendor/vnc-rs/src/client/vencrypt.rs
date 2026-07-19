@@ -118,10 +118,7 @@ fn select_subtype(offered: &[u32], have_username: bool) -> Option<u32> {
     } else {
         &[X509_VNC, X509_PLAIN, X509_NONE, PLAIN]
     };
-    preference
-        .iter()
-        .copied()
-        .find(|t| offered.contains(t))
+    preference.iter().copied().find(|t| offered.contains(t))
 }
 
 /// Drive the VeNCrypt handshake to a connected [`VncClient`].
@@ -404,7 +401,9 @@ mod tests {
     #[test]
     fn only_plain_skips_tls() {
         assert!(!needs_tls(PLAIN));
-        for t in [TLS_NONE, TLS_VNC, TLS_PLAIN, X509_NONE, X509_VNC, X509_PLAIN] {
+        for t in [
+            TLS_NONE, TLS_VNC, TLS_PLAIN, X509_NONE, X509_VNC, X509_PLAIN,
+        ] {
             assert!(needs_tls(t), "{t} should use TLS");
         }
     }

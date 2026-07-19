@@ -244,7 +244,9 @@ async fn build_vencrypt_config(cfg: &VncConfig) -> Result<VencryptConfig, Sessio
                     )
                 })?;
             let pem = tokio::fs::read(path).await.map_err(|e| {
-                SessionError::InvalidConfig(format!("failed to read VNC TLS CA bundle '{path}': {e}"))
+                SessionError::InvalidConfig(format!(
+                    "failed to read VNC TLS CA bundle '{path}': {e}"
+                ))
             })?;
             TlsVerify::CaPem(pem)
         }

@@ -285,8 +285,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                 supports_env_expansion: true,
                 placeholder: Some("~/.vnc/ca.pem".to_string()),
                 description: Some(
-                    "PEM CA bundle used to verify the VeNCrypt TLS certificate."
-                        .to_string(),
+                    "PEM CA bundle used to verify the VeNCrypt TLS certificate.".to_string(),
                 ),
                 visible_when: when_tls_ca(),
                 ..field(
