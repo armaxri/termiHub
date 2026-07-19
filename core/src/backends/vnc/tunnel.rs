@@ -22,7 +22,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::backends::ssh::auth::connect_and_authenticate;
-use crate::config::SshConfig;
 use crate::errors::SessionError;
 
 use super::config::VncConfig;
@@ -49,16 +48,10 @@ impl SshTunnel {
         vnc_host: String,
         vnc_port: u16,
     ) -> Result<Self, SessionError> {
-        let ssh_config = SshConfig {
-            host: cfg.ssh_host.clone(),
-            port: cfg.ssh_port,
-            username: cfg.ssh_username.clone(),
-            // The editor's SSH-tunnel group only exposes password auth; richer
-            // auth (keys/agent) is a follow-up.
-            auth_method: "password".to_string(),
-            password: Some(cfg.ssh_password.clone()),
-            ..SshConfig::default()
-        };
+        // Reuse the SSH backend's auth machinery: password, key file (with an
+        // optional passphrase), or ssh-agent — chosen by the editor's SSH-tunnel
+        // "SSH Auth Method" field (#1714).
+        let ssh_config = cfg.tunnel_ssh_config();
 
         if ssh_config.host.is_empty() {
             return Err(SessionError::InvalidConfig(

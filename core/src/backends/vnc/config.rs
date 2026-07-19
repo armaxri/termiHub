@@ -8,7 +8,10 @@
 
 use serde::Deserialize;
 
-use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
+use crate::config::SshConfig;
+use crate::connection::schema::{
+    Condition, FieldType, FilePathKind, SelectOption, SettingsField, SettingsGroup,
+};
 use crate::connection::{shared_field_base, SettingsSchema};
 
 /// Default RFB display 0 → port 5900.
@@ -43,7 +46,15 @@ pub struct VncConfig {
     pub ssh_port: u16,
     /// SSH gateway username.
     pub ssh_username: String,
-    /// SSH gateway password.
+    /// SSH gateway authentication method: `"password"`, `"key"`, or `"agent"`.
+    /// Empty is treated as `"password"` for backward compatibility with
+    /// connections saved before key/agent auth existed.
+    pub ssh_auth_method: String,
+    /// Path to the private key file when [`ssh_auth_method`](Self::ssh_auth_method)
+    /// is `"key"`.
+    pub ssh_key_path: Option<String>,
+    /// SSH gateway password. Doubles as the private-key passphrase when the auth
+    /// method is `"key"`; ignored for `"agent"`.
     pub ssh_password: String,
 }
 
@@ -61,6 +72,8 @@ impl Default for VncConfig {
             ssh_host: String::new(),
             ssh_port: 22,
             ssh_username: String::new(),
+            ssh_auth_method: "password".to_string(),
+            ssh_key_path: None,
             ssh_password: String::new(),
         }
     }
@@ -82,6 +95,45 @@ impl VncConfig {
     /// Whether the raw (uncompressed) encoding was requested in preference to ZRLE.
     pub fn prefers_raw(&self) -> bool {
         self.preferred_encoding.eq_ignore_ascii_case("raw")
+    }
+
+    /// The effective SSH-tunnel auth method, defaulting to `"password"` when unset
+    /// so connections saved before key/agent auth existed still authenticate.
+    pub fn ssh_auth_method(&self) -> &str {
+        if self.ssh_auth_method.trim().is_empty() {
+            "password"
+        } else {
+            self.ssh_auth_method.as_str()
+        }
+    }
+
+    /// Build the [`SshConfig`] for the SSH-tunnel gateway from the VNC settings.
+    ///
+    /// Reuses the SSH backend's own auth machinery: `"password"`, `"key"` (with
+    /// [`ssh_key_path`](Self::ssh_key_path) and an optional passphrase carried in
+    /// [`ssh_password`](Self::ssh_password)), or `"agent"` (ssh-agent). Empty
+    /// password / key-path values map to `None` so an unencrypted key isn't
+    /// mistaken for a passphrase-protected one, and an empty method falls back to
+    /// `"password"`.
+    pub fn tunnel_ssh_config(&self) -> SshConfig {
+        let password = if self.ssh_password.is_empty() {
+            None
+        } else {
+            Some(self.ssh_password.clone())
+        };
+        let key_path = self
+            .ssh_key_path
+            .clone()
+            .filter(|p| !p.trim().is_empty());
+        SshConfig {
+            host: self.ssh_host.clone(),
+            port: self.ssh_port,
+            username: self.ssh_username.clone(),
+            auth_method: self.ssh_auth_method().to_string(),
+            password,
+            key_path,
+            ..SshConfig::default()
+        }
     }
 }
 
@@ -106,6 +158,16 @@ fn when_tunnel_enabled() -> Option<Condition> {
     Some(Condition {
         field: "useSshTunnel".to_string(),
         equals: serde_json::json!(true),
+    })
+}
+
+/// Only shown when the SSH-tunnel auth method equals `method`. The auth-method
+/// select is itself gated on the tunnel being enabled, so these fields stay
+/// hidden until the user opts into a tunnel and picks the matching method.
+fn when_ssh_auth_is(method: &str) -> Option<Condition> {
+    Some(Condition {
+        field: "sshAuthMethod".to_string(),
+        equals: serde_json::json!(method),
     })
 }
 
@@ -191,6 +253,52 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                 ..field("sshUsername", "SSH Username", FieldType::Text)
             },
             SettingsField {
+                default: Some(serde_json::json!("password")),
+                description: Some(
+                    "How to authenticate to the SSH gateway: a password, a private \
+                     key file, or the local ssh-agent."
+                        .to_string(),
+                ),
+                visible_when: when_tunnel_enabled(),
+                ..field(
+                    "sshAuthMethod",
+                    "SSH Auth Method",
+                    FieldType::Select {
+                        options: vec![
+                            SelectOption {
+                                value: "password".to_string(),
+                                label: "Password".to_string(),
+                            },
+                            SelectOption {
+                                value: "key".to_string(),
+                                label: "Key File".to_string(),
+                            },
+                            SelectOption {
+                                value: "agent".to_string(),
+                                label: "SSH Agent".to_string(),
+                            },
+                        ],
+                    },
+                )
+            },
+            SettingsField {
+                supports_tilde_expansion: true,
+                supports_env_expansion: true,
+                placeholder: Some("~/.ssh/id_ed25519".to_string()),
+                description: Some("Private key used to authenticate the SSH tunnel.".to_string()),
+                visible_when: when_ssh_auth_is("key"),
+                ..field(
+                    "sshKeyPath",
+                    "SSH Key Path",
+                    FieldType::FilePath {
+                        kind: FilePathKind::File,
+                    },
+                )
+            },
+            SettingsField {
+                description: Some(
+                    "SSH gateway password, or the passphrase for the selected key file.".to_string(),
+                ),
                 visible_when: when_tunnel_enabled(),
                 ..field("sshPassword", "SSH Password", FieldType::Password)
             },
