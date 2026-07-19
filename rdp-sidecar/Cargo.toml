@@ -65,6 +65,13 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Server-certificate trust gate (#1758): fingerprint the server's public key so
+# an untrusted certificate can be rejected with an actionable message instead of
+# being silently accepted. Both already resolve in this graph (IronRDP's CredSSP
+# crypto pulls them in), so this adds no new locked dependency.
+sha2 = "0.11"
+hex = "0.4"
+
 [dev-dependencies]
 # Temp directories back the drive-redirection filesystem tests (#1757), which
 # exercise the RDPDR backend against a real folder without a live RDP server.
