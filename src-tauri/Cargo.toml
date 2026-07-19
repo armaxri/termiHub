@@ -21,6 +21,14 @@ mock-remote-desktop = ["termihub-core/mock-remote-desktop"]
 # is `#[cfg(feature = "vnc")]`. Ships experimental — hidden unless the user
 # enables experimental features (#1705).
 vnc = ["termihub-core/vnc"]
+# RDP graphical remote-desktop backend via the IronRDP sidecar (#1747). Gated so
+# the registration is `#[cfg(feature = "rdp-sidecar")]`. NOT in `default` yet:
+# the `termihub-rdp-helper` binary must be built and bundled next to the app
+# (scripts/build-rdp-sidecar.sh) for a connect to succeed, and the Tauri
+# externalBin / release-CI cross-build wiring is a sequenced follow-up. CI still
+# exercises this path via `--all-features`. Ships experimental — hidden unless
+# the user enables experimental features (#1705).
+rdp-sidecar = ["termihub-core/rdp-sidecar"]
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
