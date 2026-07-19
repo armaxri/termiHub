@@ -226,12 +226,17 @@ impl DriveRedirectBackend {
 
         let exists = path.exists();
         let existing_is_dir = exists && path.is_dir();
-        let wants_directory = req
+        let directory_intent = req
             .create_options
-            .contains(CreateOptions::FILE_DIRECTORY_FILE)
-            || existing_is_dir;
+            .contains(CreateOptions::FILE_DIRECTORY_FILE);
+        // A directory open of an existing non-directory (or a file open of an
+        // existing directory) is a type mismatch the server must be told about,
+        // rather than silently mis-registering the handle.
+        if exists && directory_intent && !existing_is_dir {
+            return create_error(io, NtStatus::NOT_A_DIRECTORY);
+        }
 
-        if wants_directory {
+        if directory_intent || existing_is_dir {
             self.create_directory(io, path, exists, req.create_disposition)
         } else {
             self.create_file(io, path, exists, &req)
@@ -1091,6 +1096,19 @@ mod tests {
             CreateOptions::empty(),
         ));
         assert_eq!(create_status(&pdu), NtStatus::NO_SUCH_FILE);
+        assert!(backend.open_files.is_empty());
+    }
+
+    #[test]
+    fn opening_a_file_as_a_directory_is_rejected() {
+        let (mut backend, dir) = backend_with_root();
+        fs::write(dir.path().join("plain.txt"), b"x").unwrap();
+        let pdu = backend.handle_create(create_request(
+            "plain.txt",
+            CreateDisposition::FILE_OPEN,
+            CreateOptions::FILE_DIRECTORY_FILE,
+        ));
+        assert_eq!(create_status(&pdu), NtStatus::NOT_A_DIRECTORY);
         assert!(backend.open_files.is_empty());
     }
 
