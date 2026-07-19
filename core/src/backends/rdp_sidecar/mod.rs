@@ -30,8 +30,8 @@
 //! ## v1 scope
 //!
 //! Connect (TLS/NLA) → decode frames → keyboard/pointer/wheel input → server
-//! cursor. Dynamic resize, CLIPRDR clipboard, drive redirection and audio are
-//! sequenced follow-ups (see #1747 / the PR).
+//! cursor → Display-Control dynamic resize (#1755). CLIPRDR clipboard, drive
+//! redirection and audio are sequenced follow-ups (see #1747 / the PR).
 
 pub mod config;
 pub mod protocol;
@@ -421,9 +421,9 @@ impl GraphicalBackend for SidecarRdp {
             // RDP authenticates with username+password, negotiating NLA (CredSSP)
             // when available.
             auth_kinds: vec![AuthKind::UsernamePassword, AuthKind::Nla],
-            // Display-Control dynamic resize is a follow-up; the frontend scales
-            // the canvas meanwhile.
-            supports_dynamic_resize: false,
+            // Dynamic resize renegotiates the remote resolution over the Display
+            // Control channel in the sidecar (#1755).
+            supports_dynamic_resize: true,
             // CLIPRDR clipboard bridging is a follow-up.
             supports_clipboard: false,
             view_only_capable: true,
@@ -467,9 +467,8 @@ impl GraphicalBackend for SidecarRdp {
         let Some(rt) = &self.runtime else {
             return Err(SessionError::NotRunning("rdp not connected".to_string()));
         };
-        // Dynamic resize is a follow-up; the request is forwarded so the seam is
-        // in place, and the sidecar currently keeps its negotiated resolution
-        // while the shared frontend scales.
+        // The sidecar renegotiates the remote resolution over the Display
+        // Control channel and emits a resized framebuffer (#1755).
         let _ = rt
             .to_sidecar
             .send(HostMessage::Resize {
@@ -538,7 +537,7 @@ mod tests {
         assert!(caps.auth_kinds.contains(&AuthKind::UsernamePassword));
         assert!(caps.auth_kinds.contains(&AuthKind::Nla));
         assert!(caps.view_only_capable);
-        assert!(!caps.supports_dynamic_resize);
+        assert!(caps.supports_dynamic_resize);
         assert!(!caps.supports_clipboard);
     }
 
@@ -705,6 +704,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(got, HostMessage::Input(ev));
+
+        cancel.cancel();
+        let _ = writer.await;
+    }
+
+    /// A pixel resize must cross the boundary to the sidecar's stdin as a
+    /// `HostMessage::Resize` — the seam that carries #1755's Display Control
+    /// resize request, proven over a loopback pipe without the real helper.
+    #[tokio::test]
+    async fn writer_forwards_resize_to_sidecar_stdin() {
+        let (host_write, mut sidecar_stdin) = tokio::io::duplex(1024 * 1024);
+        let (tx, rx) = mpsc::channel(CHANNEL_DEPTH);
+        let cancel = CancellationToken::new();
+        let writer = tokio::spawn(run_writer(host_write, rx, cancel.clone()));
+
+        tx.send(HostMessage::Resize {
+            width: 1600,
+            height: 900,
+        })
+        .await
+        .unwrap();
+
+        let got = read_message::<_, HostMessage>(&mut sidecar_stdin)
+            .await
+            .unwrap();
+        assert_eq!(
+            got,
+            HostMessage::Resize {
+                width: 1600,
+                height: 900,
+            }
+        );
 
         cancel.cancel();
         let _ = writer.await;

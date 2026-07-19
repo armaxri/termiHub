@@ -26,6 +26,12 @@ ironrdp = { version = "0.17", default-features = false, features = [
     "session",
     "graphics",
     "pdu",
+    "core",
+    # Display Control Virtual Channel (MS-RDPEDISP) for dynamic resize (#1755):
+    # `dvc` provides the drdynvc static channel that carries DVCs, and
+    # `displaycontrol` the monitor-layout resize processor that rides it.
+    "dvc",
+    "displaycontrol",
 ] }
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 ironrdp-tls = { version = "0.2", default-features = false, features = [

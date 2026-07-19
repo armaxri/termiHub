@@ -60,8 +60,8 @@ pub enum HostMessage {
     Connect(Box<RdpConfig>),
     /// A protocol-agnostic input event to forward to the remote.
     Input(InputEvent),
-    /// Request a new session resolution in pixels (dynamic resize is a
-    /// follow-up; the sidecar currently acknowledges and keeps its resolution).
+    /// Request a new session resolution in pixels. The sidecar renegotiates the
+    /// remote resolution over the Display Control channel (#1755).
     Resize {
         /// Requested width in pixels.
         width: u16,

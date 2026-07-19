@@ -14,10 +14,17 @@
 //! active stage, `select!`-ing between server PDUs and host input events.
 
 use anyhow::{anyhow, Context, Result};
+use ironrdp::connector::connection_activation::{
+    ConnectionActivationSequence, ConnectionActivationState,
+};
 use ironrdp::connector::{
     BitmapConfig, ClientConnector, Config as ConnectorConfig, ConnectionResult, Credentials,
     DesktopSize, ServerName,
 };
+use ironrdp::core::WriteBuf;
+use ironrdp::displaycontrol::client::DisplayControlClient;
+use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
+use ironrdp::dvc::DrdynvcClient;
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::input::fast_path::FastPathInputEvent;
@@ -125,9 +132,13 @@ pub fn is_auth_error(msg: &str) -> bool {
 }
 
 /// Run the IronRDP connect sequence to an active session: TCP → X.224 → TLS →
-/// CredSSP/NLA → capability exchange. Returns the negotiated result and the
-/// framed transport for the driver to take over.
-async fn connect_session(cfg: &RdpConfig) -> Result<(ConnectionResult, RdpFramed)> {
+/// CredSSP/NLA → capability exchange. Returns the negotiated result, the framed
+/// transport for the driver to take over, and the connector [`Config`] (needed
+/// verbatim to drive the Deactivation-Reactivation Sequence on dynamic resize,
+/// #1755).
+async fn connect_session(
+    cfg: &RdpConfig,
+) -> Result<(ConnectionResult, RdpFramed, ConnectorConfig)> {
     let host = cfg.host.clone();
     let port = cfg.effective_port();
 
@@ -137,7 +148,15 @@ async fn connect_session(cfg: &RdpConfig) -> Result<(ConnectionResult, RdpFramed
     let client_addr = tcp.local_addr().context("RDP local address failed")?;
 
     let connector_config = build_connector_config(cfg)?;
-    let mut connector = ClientConnector::new(connector_config, client_addr);
+    // Register the Display Control Virtual Channel (MS-RDPEDISP) so the session
+    // can request dynamic resolution changes (#1755). It rides the drdynvc
+    // static channel; the capabilities callback needs to send nothing, the
+    // channel just has to be ready before we encode a resize.
+    let mut connector = ClientConnector::new(connector_config.clone(), client_addr)
+        .with_static_channel(
+            DrdynvcClient::new()
+                .with_dynamic_channel(DisplayControlClient::new(|_caps| Ok(Vec::new()))),
+        );
 
     // 1) X.224 negotiation up to the security-upgrade point.
     let mut framed = TokioFramed::new(tcp);
@@ -173,7 +192,7 @@ async fn connect_session(cfg: &RdpConfig) -> Result<(ConnectionResult, RdpFramed
     .await
     .context("RDP CredSSP / capability exchange failed")?;
 
-    Ok((result, framed))
+    Ok((result, framed, connector_config))
 }
 
 /// Crop the tightly-packed RGBA pixels of an inclusive rectangle out of the
@@ -215,6 +234,9 @@ fn crop_rect(
 enum Flow {
     Continue,
     Stop,
+    /// The server sent a Deactivate All PDU (typically after a Display Control
+    /// resize): the driver must run the Deactivation-Reactivation Sequence.
+    Reactivate,
 }
 
 /// Handle the outputs of one `process` / `process_fastpath_input` call: write
@@ -292,6 +314,13 @@ where
                 debug!(%reason, "rdp session terminated by server");
                 return Flow::Stop;
             }
+            ActiveStageOutput::DeactivateAll => {
+                // The server tears the capability set down and rebuilds it — the
+                // mechanism by which a Display Control resize takes effect. The
+                // driver owns both transport halves, so it runs the sequence.
+                debug!("rdp server sent deactivate-all; reactivating");
+                return Flow::Reactivate;
+            }
             other => {
                 debug!(?other, "rdp output ignored");
             }
@@ -362,7 +391,7 @@ where
     .await
     .context("failed to write state")?;
 
-    let (result, framed) = match connect_session(&cfg).await {
+    let (result, framed, connector_config) = match connect_session(&cfg).await {
         Ok(v) => v,
         Err(e) => {
             let state = if is_auth_error(&format!("{e:#}")) {
@@ -379,7 +408,15 @@ where
         .await
         .context("failed to write state")?;
 
-    drive(result, framed, cfg.view_only, ipc_in, ipc_out).await;
+    drive(
+        result,
+        framed,
+        connector_config,
+        cfg.view_only,
+        ipc_in,
+        ipc_out,
+    )
+    .await;
 
     let _ = write_message(
         ipc_out,
@@ -394,6 +431,7 @@ where
 async fn drive<R, W>(
     result: ConnectionResult,
     framed: RdpFramed,
+    connector_config: ConnectorConfig,
     view_only: bool,
     ipc_in: &mut R,
     ipc_out: &mut W,
@@ -402,6 +440,10 @@ async fn drive<R, W>(
     W: AsyncWrite + Unpin,
 {
     let size = result.desktop_size;
+    // The MCS channel IDs are negotiated once and stay invariant across a
+    // Deactivation-Reactivation Sequence, so they seed a fresh reactivation.
+    let io_channel_id = result.io_channel_id;
+    let user_channel_id = result.user_channel_id;
     let mut image = DecodedImage::new(PixelFormat::RgbA32, size.width, size.height);
     let mut stage = ActiveStageBuilder {
         static_channels: result.static_channels,
@@ -466,9 +508,33 @@ async fn drive<R, W>(
                             break;
                         }
                     }
+                    HostMessage::Resize { width, height } => {
+                        // Ask the server for a new resolution over the Display
+                        // Control channel (#1755). The server applies it via a
+                        // Deactivation-Reactivation Sequence, handled below.
+                        // Dimensions must be clamped to the MS-RDPEDISP range
+                        // (200..=8192, even width) before encoding.
+                        let (w, h) = MonitorLayoutEntry::adjust_display_size(
+                            u32::from(width),
+                            u32::from(height),
+                        );
+                        match stage.encode_resize(w, h, None, None) {
+                            Some(Ok(frame)) => {
+                                if writer.write_all(&frame).await.is_err() {
+                                    break;
+                                }
+                                debug!(width = w, height = h, "requested display-control resize");
+                            }
+                            Some(Err(e)) => {
+                                warn!(error = %e, "failed to encode display-control resize")
+                            }
+                            None => debug!(
+                                "display control channel not ready; resize request dropped"
+                            ),
+                        }
+                    }
                     HostMessage::Disconnect => break,
-                    // Dynamic resize / clipboard are follow-ups; a duplicate
-                    // Connect is ignored. All logged and skipped.
+                    // Clipboard is a follow-up; a duplicate Connect is ignored.
                     other => debug!(?other, "rdp sidecar ignored host message"),
                 }
             }
@@ -487,14 +553,112 @@ async fn drive<R, W>(
                         break;
                     }
                 };
-                if let Flow::Stop =
-                    handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await
-                {
-                    break;
+                match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
+                    Flow::Continue => {}
+                    Flow::Stop => break,
+                    Flow::Reactivate => {
+                        // Reunite the split halves — the reactivation sequence is a
+                        // synchronous request/response that owns the whole transport
+                        // — run it, then re-split for the concurrent read/write loop.
+                        let framed = ironrdp_tokio::unsplit_tokio_framed(reader, writer);
+                        match reactivate(
+                            framed,
+                            connector_config.clone(),
+                            &mut stage,
+                            &mut image,
+                            io_channel_id,
+                            user_channel_id,
+                        )
+                        .await
+                        {
+                            Ok(new_framed) => {
+                                let (r, w) = ironrdp_tokio::split_tokio_framed(new_framed);
+                                reader = r;
+                                writer = w;
+                                // The canvas is now a different size; tell the host so
+                                // it can resize before the server repaints.
+                                if write_message(
+                                    ipc_out,
+                                    &SidecarMessage::Frame(FrameUpdate {
+                                        width: image.width() as u32,
+                                        height: image.height() as u32,
+                                        rects: Vec::new(),
+                                    }),
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "rdp deactivation-reactivation failed");
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/// Run the [Deactivation-Reactivation Sequence] after a server Deactivate All
+/// PDU (the mechanism by which a Display Control resize takes effect): re-run the
+/// capability exchange, then re-point the active stage and decoded image at the
+/// new desktop size. Returns the reunited transport for the driver to re-split.
+///
+/// [Deactivation-Reactivation Sequence]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/dfc234ce-481a-4674-9a5d-2a7bafb14432
+async fn reactivate(
+    mut framed: RdpFramed,
+    connector_config: ConnectorConfig,
+    stage: &mut ActiveStage,
+    image: &mut DecodedImage,
+    io_channel_id: u16,
+    user_channel_id: u16,
+) -> Result<RdpFramed> {
+    let mut activation =
+        ConnectionActivationSequence::new(connector_config, io_channel_id, user_channel_id);
+    let mut buf = WriteBuf::new();
+    loop {
+        ironrdp_tokio::single_sequence_step(&mut framed, &mut activation, &mut buf)
+            .await
+            .context("RDP reactivation sequence step failed")?;
+        if let ConnectionActivationState::Finalized {
+            desktop_size,
+            share_id,
+            enable_server_pointer,
+            pointer_software_rendering,
+        } = activation.connection_activation_state()
+        {
+            *image =
+                DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
+            // The server may reassign the share id and pointer settings; rebuild
+            // the fast-path processor and re-sync the x224 processor to match.
+            // Bulk stream compression is never negotiated (connector config sets
+            // no compression), so the decompressor stays absent.
+            stage.set_share_id(share_id);
+            stage.set_fastpath_processor(
+                ironrdp::session::fast_path::ProcessorBuilder {
+                    io_channel_id,
+                    user_channel_id,
+                    share_id,
+                    enable_server_pointer,
+                    pointer_software_rendering,
+                    bulk_decompressor: None,
+                }
+                .build(),
+            );
+            stage.set_enable_server_pointer(enable_server_pointer);
+            debug!(
+                width = desktop_size.width,
+                height = desktop_size.height,
+                "rdp reactivation complete"
+            );
+            break;
+        }
+    }
+    Ok(framed)
 }
 
 #[cfg(test)]
@@ -545,6 +709,31 @@ mod tests {
         let conn = build_connector_config(&cfg).unwrap();
         assert_eq!(conn.bitmap.as_ref().unwrap().color_depth, 32);
         assert!(conn.domain.is_none());
+    }
+
+    #[test]
+    fn resize_dimensions_are_clamped_to_displaycontrol_range() {
+        // The resize handler runs requested pixels through
+        // `adjust_display_size` before encoding a Display Control monitor
+        // layout. MS-RDPEDISP requires an even width and both dimensions within
+        // 200..=8192; an out-of-range or odd value would make the server reject
+        // the resize, so this guards the exact values we put on the wire.
+        assert_eq!(
+            MonitorLayoutEntry::adjust_display_size(1920, 1080),
+            (1920, 1080)
+        );
+        // Odd width rounds down to even.
+        assert_eq!(
+            MonitorLayoutEntry::adjust_display_size(1367, 769),
+            (1366, 769)
+        );
+        // Below the minimum clamps up to 200.
+        assert_eq!(MonitorLayoutEntry::adjust_display_size(10, 10), (200, 200));
+        // Above the maximum clamps down to 8192.
+        assert_eq!(
+            MonitorLayoutEntry::adjust_display_size(10000, 9000),
+            (8192, 8192)
+        );
     }
 
     #[test]
