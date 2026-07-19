@@ -14,8 +14,10 @@ import {
   Check,
   ArrowUpCircle,
   Monitor,
+  Highlighter,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
+import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { summarizeAgentUpdates } from "@/utils/agentVersion";
@@ -119,6 +121,7 @@ export function StatusBar() {
         )}
       </div>
       <div className="status-bar__section status-bar__section--right">
+        <HighlightingIndicator />
         <UpdateIndicator />
         {editorStatus && (
           <>
@@ -261,6 +264,67 @@ function RemoteDesktopStatus() {
       <Monitor size={13} />
       {label}
     </span>
+  );
+}
+
+/**
+ * Terminal output syntax-highlighting indicator + quick toggle (epic #1696,
+ * child #1704).
+ *
+ * For the active terminal session it shows "Highlighting: ON/OFF" reflecting
+ * the resolved state — the global config folded with the per-connection
+ * override ({@link resolveHighlightingConfig}) — plus the runtime per-session
+ * toggle. Clicking flips the non-persisted per-session toggle
+ * (`setSessionHighlighting`) that the terminal engine reacts to (#1700), so a
+ * reconnect/reopen (new session id) returns to the resolved default.
+ *
+ * Stays hidden unless the feature is globally enabled or already effectively on
+ * for this session, keeping the status bar uncluttered until highlighting is in
+ * use.
+ */
+function HighlightingIndicator() {
+  const activeTab = useAppStore((s) => {
+    const tab = getActiveTab(s);
+    return tab?.contentType === "terminal" ? tab : null;
+  });
+  const tabId = activeTab?.id ?? null;
+  const sessionId = activeTab?.sessionId ?? null;
+  const globalConfig = useAppStore((s) => s.settings.syntaxHighlighting);
+  const perConnection = useAppStore((s) =>
+    tabId ? s.tabTerminalOptions[tabId]?.syntaxHighlighting : undefined
+  );
+  const sessionOverride = useAppStore((s) =>
+    sessionId ? s.sessionHighlighting[sessionId] : undefined
+  );
+  const setSessionHighlighting = useAppStore((s) => s.setSessionHighlighting);
+
+  if (!activeTab || !sessionId) return null;
+
+  const resolved = resolveHighlightingConfig(globalConfig, perConnection);
+  const effective = sessionOverride ?? resolved.enabled;
+  const globalEnabled = globalConfig?.enabled ?? false;
+
+  // Stay hidden until the feature is in play: globally enabled, or already
+  // effectively on for this session via a per-connection/-session override.
+  if (!globalEnabled && !effective) return null;
+
+  const tooltip = effective
+    ? "Syntax highlighting is on for this session — click to turn off"
+    : "Syntax highlighting is off for this session — click to turn on";
+
+  return (
+    <Tooltip content={tooltip} side="top">
+      <button
+        className="status-bar__item status-bar__item--interactive"
+        aria-label={tooltip}
+        aria-pressed={effective}
+        data-testid="status-bar-highlighting"
+        onClick={() => setSessionHighlighting(sessionId, !effective)}
+      >
+        <Highlighter size={12} />
+        Highlighting: {effective ? "ON" : "OFF"}
+      </button>
+    </Tooltip>
   );
 }
 

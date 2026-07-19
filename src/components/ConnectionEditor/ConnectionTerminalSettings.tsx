@@ -1,5 +1,6 @@
 import { useAppStore } from "@/store/appStore";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
+import type { ConnectionHighlightingOverride } from "@/types/syntaxHighlighting";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
 import { Input, NumberInput, Select, Toggle } from "@/components/ui";
 
@@ -15,6 +16,27 @@ interface ConnectionTerminalSettingsProps {
  */
 const GLOBAL_DEFAULT = "__global__";
 
+/**
+ * Compute the next {@link TerminalOptions} when the per-connection syntax
+ * highlighting override changes (epic #1696, child #1704).
+ *
+ * Any connection-specific additional rules are preserved across override
+ * changes — they can only be edited elsewhere (#1703). Choosing "global" with
+ * no additional rules clears the whole `syntaxHighlighting` override back to
+ * `undefined` so the connection cleanly inherits the global setting (and does
+ * not count as a persisted terminal override).
+ */
+export function applyHighlightingOverride(
+  options: TerminalOptions,
+  override: ConnectionHighlightingOverride
+): TerminalOptions {
+  const additionalRules = options.syntaxHighlighting?.additionalRules ?? [];
+  if (override === "global" && additionalRules.length === 0) {
+    return { ...options, syntaxHighlighting: undefined };
+  }
+  return { ...options, syntaxHighlighting: { override, additionalRules } };
+}
+
 export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerminalSettingsProps) {
   const globalSettings = useAppStore((s) => s.settings);
 
@@ -26,6 +48,8 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
   const globalCursorBlink = globalSettings.cursorBlink ?? true;
   const globalHorizontalScrolling = globalSettings.defaultHorizontalScrolling ?? false;
   const globalLineEnding = globalSettings.defaultLineEnding ?? DEFAULT_LINE_ENDING;
+  const globalHighlightingEnabled = globalSettings.syntaxHighlighting?.enabled ?? false;
+  const highlightingOverride = options.syntaxHighlighting?.override ?? "global";
 
   return (
     <div className="settings-panel__category">
@@ -156,6 +180,31 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           )}
         </span>
       </div>
+
+      <label className="settings-form__field">
+        <span className="settings-form__label">Syntax Highlighting</span>
+        <Select
+          value={highlightingOverride}
+          onChange={(v) =>
+            onChange(applyHighlightingOverride(options, v as ConnectionHighlightingOverride))
+          }
+          options={[
+            {
+              value: "global",
+              label: `Use global default (${globalHighlightingEnabled ? "on" : "off"})`,
+            },
+            { value: "always-on", label: "Always on" },
+            { value: "always-off", label: "Always off" },
+          ]}
+          aria-label="Syntax Highlighting"
+          data-testid="connection-syntax-highlighting"
+        />
+        <span className="settings-form__hint">
+          Override terminal output syntax highlighting for this connection. &ldquo;Use global
+          default&rdquo; follows the global setting; &ldquo;Always on/off&rdquo; forces it for this
+          connection regardless of the global switch.
+        </span>
+      </label>
     </div>
   );
 }

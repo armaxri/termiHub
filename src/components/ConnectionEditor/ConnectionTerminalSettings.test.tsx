@@ -2,8 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
+import {
+  ConnectionTerminalSettings,
+  applyHighlightingOverride,
+} from "./ConnectionTerminalSettings";
 import type { TerminalOptions } from "@/types/terminal";
+import type { HighlightRule } from "@/types/syntaxHighlighting";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -199,5 +203,111 @@ describe("ConnectionTerminalSettings — font size", () => {
     const onChange = renderWith({ ...emptyOptions, fontSize: 16 });
     setValue(fieldInput("Font Size"), "");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: undefined }));
+  });
+});
+
+describe("ConnectionTerminalSettings — syntax highlighting override", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  const trigger = () =>
+    container.querySelector('[data-testid="connection-syntax-highlighting"]') as HTMLElement;
+
+  it("renders the syntax-highlighting override select", () => {
+    renderWith(emptyOptions);
+    expect(trigger()).not.toBeNull();
+  });
+
+  it("defaults to 'global' when no per-connection override is set", () => {
+    renderWith(emptyOptions);
+    expect(trigger().getAttribute("data-value")).toBe("global");
+  });
+
+  it("reflects a stored 'always-off' override", () => {
+    renderWith({
+      ...emptyOptions,
+      syntaxHighlighting: { override: "always-off", additionalRules: [] },
+    });
+    expect(trigger().getAttribute("data-value")).toBe("always-off");
+  });
+
+  it("reflects a stored 'always-on' override", () => {
+    renderWith({
+      ...emptyOptions,
+      syntaxHighlighting: { override: "always-on", additionalRules: [] },
+    });
+    expect(trigger().getAttribute("data-value")).toBe("always-on");
+  });
+
+  it("global-default hint reflects the global on/off state", () => {
+    useAppStore.setState({
+      settings: {
+        ...useAppStore.getState().settings,
+        syntaxHighlighting: { enabled: true, builtinRules: {}, customRules: [] },
+      },
+    });
+    renderWith(emptyOptions);
+    const label = Array.from(container.querySelectorAll(".settings-form__label")).find(
+      (l) => l.textContent === "Syntax Highlighting"
+    );
+    const field = label?.closest(".settings-form__field");
+    expect(field?.textContent?.toLowerCase()).toContain("on");
+  });
+});
+
+describe("applyHighlightingOverride", () => {
+  const rule: HighlightRule = {
+    id: "custom-1",
+    name: "custom",
+    pattern: "foo",
+    style: { color: "#ff0000" },
+    enabled: true,
+    priority: 5,
+    builtin: false,
+  };
+
+  it("clears the override entirely when 'global' is chosen with no additional rules", () => {
+    const next = applyHighlightingOverride(
+      { fontSize: 14, syntaxHighlighting: { override: "always-on", additionalRules: [] } },
+      "global"
+    );
+    expect(next.syntaxHighlighting).toBeUndefined();
+    expect(next.fontSize).toBe(14);
+  });
+
+  it("stores 'always-on' with an empty additional-rules list", () => {
+    const next = applyHighlightingOverride({}, "always-on");
+    expect(next.syntaxHighlighting).toEqual({ override: "always-on", additionalRules: [] });
+  });
+
+  it("stores 'always-off'", () => {
+    const next = applyHighlightingOverride({}, "always-off");
+    expect(next.syntaxHighlighting).toEqual({ override: "always-off", additionalRules: [] });
+  });
+
+  it("preserves connection-specific additional rules when changing the override", () => {
+    const next = applyHighlightingOverride(
+      { syntaxHighlighting: { override: "global", additionalRules: [rule] } },
+      "always-on"
+    );
+    expect(next.syntaxHighlighting).toEqual({ override: "always-on", additionalRules: [rule] });
+  });
+
+  it("keeps the override object when 'global' is chosen but additional rules exist", () => {
+    const next = applyHighlightingOverride(
+      { syntaxHighlighting: { override: "always-off", additionalRules: [rule] } },
+      "global"
+    );
+    expect(next.syntaxHighlighting).toEqual({ override: "global", additionalRules: [rule] });
   });
 });
