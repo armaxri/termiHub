@@ -1,7 +1,7 @@
 # Concept Assets
 
 Shared assets for the **AI-driven concept workflow**. See the concept itself:
-[`implemented/ai-driven-concept-workflow.md`](../implemented/ai-driven-concept-workflow.md).
+[`implemented/ai-driven-concept-workflow.html`](../implemented/ai-driven-concept-workflow.html).
 
 A concept with a visual surface is **one self-contained HTML file**
 (`docs/concepts/<status>/<name>.html`) that links the shared assets below and holds prose, Mermaid
