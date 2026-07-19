@@ -910,6 +910,48 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### VNC VeNCrypt / TLS authentication (#1714)
+
+The VNC backend auto-negotiates **VeNCrypt** (RFB security type 19) when the
+server offers it. The negotiation framing, sub-type selection, and the
+non-TLS `Plain` path are covered by unit tests (`vnc-rs` `vencrypt` module —
+including a full in-memory `Plain` handshake), but the live TLS/X509 path needs a
+real VeNCrypt server and is not exercised by the existing `vnc` compose fixture
+(that server is plain VncAuth). Verify manually against a TigerVNC server:
+
+1. Generate a self-signed certificate and start a TigerVNC X509 server (Linux
+   host or container):
+
+   ```bash
+   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+     -keyout key.pem -out cert.pem -subj "/CN=localhost"
+   printf 'secret\nsecret\n' | vncpasswd -f > /tmp/vncpasswd   # or `vncpasswd`
+   Xvnc :9 -SecurityTypes VeNCrypt,X509Vnc \
+     -X509Cert cert.pem -X509Key key.pem -rfbauth /tmp/vncpasswd -geometry 800x600
+   # attach something to draw: DISPLAY=:9 xterm &
+   ```
+
+2. In the connection editor create a **VNC** connection: host `localhost`,
+   port `5909` (display 9), Password `secret`. Under **VNC Options** set **TLS
+   Certificate Verification** to **Accept self-signed (insecure)**.
+3. Connect. **Expected:** the session comes up over TLS and paints the remote
+   desktop — the VeNCrypt X509Vnc path (TLS handshake + VNC-password second
+   stage) succeeded. The state dot goes connecting → active.
+4. Certificate modes: with **System trust store** selected, the same self-signed
+   server must be **rejected** with a TLS error (the cert is not chained to a
+   public CA). Selecting **Custom CA bundle** and pointing **TLS CA Bundle** at
+   `cert.pem` must connect again (the cert verifies against itself).
+5. X509Plain: restart the server with `-SecurityTypes VeNCrypt,X509Plain` and set
+   the connection's **Username** + **Password**. **Expected:** connects using the
+   Plain second stage over TLS.
+6. Fallback: a server offering only classic `VncAuth` (the existing `vnc`
+   fixture) must still connect exactly as before — VeNCrypt is preferred only
+   when actually offered.
+
+> The anonymous-TLS sub-types (`TLSNone`/`TLSVnc`/`TLSPlain`, 257–259) are **not**
+> supported — rustls has no anonymous-cipher support — so an `x11vnc -ssl` server
+> (anon-TLS) will not connect via VeNCrypt. Tracked as a follow-up.
+
 ### RDP via the IronRDP sidecar (#1747)
 
 The RDP backend decodes through the separately-built `termihub-rdp-helper`

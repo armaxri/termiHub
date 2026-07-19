@@ -30,8 +30,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use vnc::{
-    ClientKeyEvent, ClientMouseEvent, PixelFormat, VncConnector, VncEncoding, VncError, VncEvent,
-    VncVersion, X11Event,
+    ClientKeyEvent, ClientMouseEvent, PixelFormat, TlsVerify, VencryptConfig, VncConnector,
+    VncEncoding, VncError, VncEvent, VncVersion, X11Event,
 };
 
 use crate::connection::{
@@ -220,6 +220,43 @@ impl Vnc {
         }
         Ok(())
     }
+}
+
+/// Build the [`VencryptConfig`] the connector uses when the server offers
+/// VeNCrypt (security type 19), resolving the TLS verification mode from `cfg`.
+///
+/// For the `"ca"` mode the PEM bundle is read from disk here so a bad path fails
+/// with an actionable [`SessionError`] before the connection is attempted.
+async fn build_vencrypt_config(cfg: &VncConfig) -> Result<VencryptConfig, SessionError> {
+    let verify = match cfg.tls_verify_mode() {
+        "insecure" => TlsVerify::Insecure,
+        "ca" => {
+            let path = cfg
+                .tls_ca_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .ok_or_else(|| {
+                    SessionError::InvalidConfig(
+                        "VNC TLS verification is set to a custom CA but no CA bundle path was \
+                         provided"
+                            .to_string(),
+                    )
+                })?;
+            let pem = tokio::fs::read(path).await.map_err(|e| {
+                SessionError::InvalidConfig(format!(
+                    "failed to read VNC TLS CA bundle '{path}': {e}"
+                ))
+            })?;
+            TlsVerify::CaPem(pem)
+        }
+        _ => TlsVerify::Roots,
+    };
+    Ok(VencryptConfig {
+        username: cfg.username.clone(),
+        server_name: cfg.host.clone(),
+        verify,
+    })
 }
 
 /// Map a `vnc-rs` error to a [`SessionError`], distinguishing auth rejection so
@@ -505,13 +542,18 @@ impl ConnectionType for Vnc {
         // Establish transport (direct TCP or SSH tunnel).
         let (stream, tunnel) = tunnel::connect_transport(&cfg).await?;
 
+        // Resolve VeNCrypt TLS verification (auto-negotiated when the server
+        // offers security type 19; falls back to VncAuth/None otherwise).
+        let vencrypt = build_vencrypt_config(&cfg).await?;
+
         // Negotiate RFB, decoding into RGBA so the shared canvas blits directly.
         let password = cfg.password.clone();
         let client = VncConnector::new(stream)
             .set_version(VncVersion::RFB38)
             .set_auth_method(async move { Ok::<_, VncError>(password) })
             .set_pixel_format(PixelFormat::rgba())
-            .allow_shared(true);
+            .allow_shared(true)
+            .set_vencrypt(vencrypt);
         let client = encodings_for(&cfg)
             .into_iter()
             .fold(client, |c, enc| c.add_encoding(enc));
@@ -609,7 +651,13 @@ impl ConnectionType for Vnc {
 impl GraphicalBackend for Vnc {
     fn graphical_capabilities(&self) -> GraphicalCapabilities {
         GraphicalCapabilities {
-            auth_kinds: vec![AuthKind::None, AuthKind::Password],
+            // VeNCrypt adds username+password (Plain sub-auth); the connector
+            // negotiates it automatically when the server offers security type 19.
+            auth_kinds: vec![
+                AuthKind::None,
+                AuthKind::Password,
+                AuthKind::UsernamePassword,
+            ],
             // vnc-rs offers no client-initiated SetDesktopSize; the frontend
             // scales the canvas instead.
             supports_dynamic_resize: false,
@@ -825,8 +873,55 @@ mod tests {
         let caps = Vnc::new().graphical_capabilities();
         assert!(caps.auth_kinds.contains(&AuthKind::Password));
         assert!(caps.auth_kinds.contains(&AuthKind::None));
+        // VeNCrypt Plain (#1714) surfaces as username+password.
+        assert!(caps.auth_kinds.contains(&AuthKind::UsernamePassword));
         assert!(caps.supports_clipboard);
         assert!(caps.view_only_capable);
         assert!(!caps.supports_dynamic_resize);
+    }
+
+    // --- VeNCrypt config resolution (#1714) ---
+
+    #[tokio::test]
+    async fn vencrypt_config_defaults_to_system_roots() {
+        let cfg = VncConfig {
+            host: "vnc.example.com".to_string(),
+            username: "bob".to_string(),
+            ..VncConfig::default()
+        };
+        let ve = build_vencrypt_config(&cfg).await.unwrap();
+        assert_eq!(ve.username, "bob");
+        assert_eq!(ve.server_name, "vnc.example.com");
+    }
+
+    #[tokio::test]
+    async fn vencrypt_config_insecure_ok() {
+        let cfg = VncConfig {
+            tls_verify: "insecure".to_string(),
+            ..VncConfig::default()
+        };
+        assert!(build_vencrypt_config(&cfg).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn vencrypt_config_ca_without_path_errors() {
+        let cfg = VncConfig {
+            tls_verify: "ca".to_string(),
+            tls_ca_path: None,
+            ..VncConfig::default()
+        };
+        let err = build_vencrypt_config(&cfg).await.unwrap_err();
+        assert!(matches!(err, SessionError::InvalidConfig(_)));
+    }
+
+    #[tokio::test]
+    async fn vencrypt_config_ca_missing_file_errors() {
+        let cfg = VncConfig {
+            tls_verify: "ca".to_string(),
+            tls_ca_path: Some("/nonexistent/path/to/ca.pem".to_string()),
+            ..VncConfig::default()
+        };
+        let err = build_vencrypt_config(&cfg).await.unwrap_err();
+        assert!(matches!(err, SessionError::InvalidConfig(_)));
     }
 }
