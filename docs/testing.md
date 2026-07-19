@@ -940,8 +940,28 @@ the app at it.
    the helper before connecting surfaces an actionable "failed to launch RDP
    helper" error that names `scripts/build-rdp-sidecar.sh` / `TERMIHUB_RDP_HELPER`.
 
-Dynamic resize, clipboard (CLIPRDR), drive redirection, and audio are follow-ups
-and are expected to be inert in this slice.
+#### Drive redirection (RDPDR, #1757)
+
+Drive redirection is off by default and opt-in per connection. The RDPDR
+filesystem backend is covered by unit tests against a temp directory
+(`rdp-sidecar` `drive` module), but the live mount needs a real server:
+
+1. In the RDP connection editor, enable **Redirect a Local Drive**, set **Shared
+   Folder** to a local directory that has a few files/subfolders, and optionally
+   a **Drive Name** (defaults to `termiHub`).
+2. Connect to a Windows RDP host and open File Explorer on the remote.
+   **Expected:** a redirected drive appears under "This PC" as
+   "`<Drive Name>` on termiHub".
+3. Browse into it — the shared folder's files and subfolders list correctly.
+   Open a file (read), create/edit/save a file (write), rename and delete a file.
+   All changes are reflected in the local shared folder.
+4. Security: confirm only the selected folder is exposed — you cannot navigate
+   above it, and nothing outside it is reachable from the remote.
+5. Leave **Redirect a Local Drive** off and reconnect. **Expected:** no drive
+   appears in the remote session.
+
+Audio (rdpsnd, #1764) and CLIPRDR file transfer (#1765) are follow-ups and are
+expected to be inert in this slice.
 
 ### Deferred agent update (apply on last disconnect) (#1352)
 
