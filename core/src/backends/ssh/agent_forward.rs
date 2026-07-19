@@ -36,7 +36,8 @@ async fn connect_local_agent() -> std::io::Result<tokio::net::UnixStream> {
 
 /// Connect a raw byte stream to the local SSH agent (Windows OpenSSH named pipe).
 #[cfg(windows)]
-async fn connect_local_agent() -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+async fn connect_local_agent() -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient>
+{
     tokio::net::windows::named_pipe::ClientOptions::new().open(r"\\.\pipe\openssh-ssh-agent")
 }
 
@@ -85,9 +86,9 @@ pub(crate) fn spawn_forwarded_agent_bridge(channel: Channel<Msg>) {
         };
         let mut stream = channel.into_stream();
         match tokio::io::copy_bidirectional(&mut stream, &mut agent).await {
-            Ok((to_agent, to_server)) => debug!(
-                to_agent, to_server, "forwarded SSH agent channel closed"
-            ),
+            Ok((to_agent, to_server)) => {
+                debug!(to_agent, to_server, "forwarded SSH agent channel closed")
+            }
             Err(e) => debug!("forwarded SSH agent bridge ended: {e}"),
         }
     });
@@ -109,7 +110,10 @@ mod tests {
         if let Some(val) = orig {
             unsafe { std::env::set_var("SSH_AUTH_SOCK", val) };
         }
-        assert!(!available, "no agent should be reachable without SSH_AUTH_SOCK");
+        assert!(
+            !available,
+            "no agent should be reachable without SSH_AUTH_SOCK"
+        );
     }
 
     /// A pointer to a non-existent socket path is likewise unavailable rather than
@@ -125,6 +129,9 @@ mod tests {
             Some(val) => unsafe { std::env::set_var("SSH_AUTH_SOCK", val) },
             None => unsafe { std::env::remove_var("SSH_AUTH_SOCK") },
         }
-        assert!(!available, "a dangling SSH_AUTH_SOCK path is not a live agent");
+        assert!(
+            !available,
+            "a dangling SSH_AUTH_SOCK path is not a live agent"
+        );
     }
 }

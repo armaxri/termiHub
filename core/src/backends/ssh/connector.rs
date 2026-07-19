@@ -234,7 +234,9 @@ impl SshConnector for RusshSshConnector {
         if config.forward_agent {
             if super::agent_forward::local_agent_available().await {
                 match channel.agent_forward(false).await {
-                    Ok(()) => tracing::debug!(host = %config.host, "requested SSH agent forwarding"),
+                    Ok(()) => {
+                        tracing::debug!(host = %config.host, "requested SSH agent forwarding")
+                    }
                     Err(e) => tracing::warn!("SSH agent forwarding request failed: {e}"),
                 }
             } else {

@@ -1933,6 +1933,43 @@ To verify SSH tunnels actually work on macOS, do this manually against the tunne
 4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
 5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
 
+### SSH agent forwarding (#1699)
+
+SSH **agent forwarding** (OpenSSH `ForwardAgent`) makes the operator's local
+`ssh-agent` keys reachable on the target host — and, because the forwarded-agent
+channel rides the jump-host tunnel, end to end through a `ProxyJump` chain — so
+onward SSH (or git over a bastion) works without copying private keys onto the
+hosts. The **Forward SSH agent** toggle in the connection editor's SSH section
+drives it (per-connection `forwardAgent`). The config (de)serialization, the
+settings→`SshConfig` mapping, the handler-side opt-in gate, and the
+no-agent-available no-op are covered by **Rust unit tests**
+(`core/src/config/mod.rs`, `core/src/backends/ssh/{mod,handler,agent_forward}.rs`)
+and the toggle by **Vitest/RTL** (`ConnectionEditor.test.tsx`). The forwarding
+itself needs a **live agent + real SSH server**, which per-PR CI does not run
+(integration lane only), so verify it manually:
+
+1. Ensure a local agent has a key: `ssh-add -l` lists at least one identity
+   (add one with `ssh-add` if needed).
+2. Start an SSH fixture, e.g.
+   `docker compose -f tests/docker/docker-compose.yml up -d ssh-jumphost-target ssh-jumphost-bastion`.
+3. **Direct target:** create a key-auth SSH connection to the target, enable
+   **Forward SSH agent**, and connect. On the target run `ssh-add -l` — it must
+   list your local keys, and an onward `ssh` from the target using an agent key
+   must succeed.
+4. **Through a jump chain:** add the bastion as a `ProxyJump` hop to the same
+   connection and reconnect. `ssh-add -l` on the final target must still list the
+   local keys (forwarding survives the multi-hop tunnel).
+5. **No agent:** stop the agent (unset `SSH_AUTH_SOCK` / stop the Windows OpenSSH
+   agent) and connect with the toggle still on — the connection must **succeed**
+   with forwarding silently skipped (a debug log line notes the skip); `ssh-add -l`
+   on the target reports no agent.
+
+Note: intermediate jump hosts are pure transport (termiHub opens no interactive
+shell on a bastion), so the agent is not separately exposed as `$SSH_AUTH_SOCK`
+on a hop — it is reachable on the **final target** through the chain. Genuine
+per-bastion shell agent access would require opening a session on the hop and is
+tracked separately if ever needed.
+
 ### X11 / GUI forwarding
 
 SSH **X11 forwarding** lets a remote GUI app (`xeyes`, `xclock`, a graphical IDE)
