@@ -72,3 +72,7 @@ tests/system/testid-catalog.md
 
 # RDP sidecar (#1747) is an excluded crate with its own target dir
 /rdp-sidecar/target/
+
+# RDP sidecar binaries staged for Tauri `externalBin` bundling (#1754). Built by
+# scripts/build-rdp-sidecar.sh --tauri-externalbin; never checked in.
+/src-tauri/binaries/

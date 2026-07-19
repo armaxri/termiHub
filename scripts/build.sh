@@ -12,6 +12,13 @@ if [ ! -d node_modules ]; then
     echo ""
 fi
 
+# The RDP sidecar (#1747) ships next to the desktop binary via Tauri
+# `externalBin` (#1754), so it must be built and staged BEFORE `tauri build` —
+# the bundle step fails if the declared externalBin is missing. Host-native
+# build; release cross-targets are staged per-target in CI (release.yml).
+echo "=== Building RDP sidecar for bundling ==="
+"$(dirname "$0")/build-rdp-sidecar.sh" --release --tauri-externalbin
+
 echo "Building termiHub for production..."
 pnpm tauri build
 

@@ -139,6 +139,15 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # The RDP sidecar (#1747) is a workspace-excluded crate with its own
+      # Cargo.lock. It ships next to the desktop binary via Tauri `externalBin`
+      # (#1754), so it must be cross-built for this matrix target and staged into
+      # src-tauri/binaries/ BEFORE tauri-action runs — the bundle step fails if
+      # the declared externalBin is missing. Run through Git Bash on all runners.
+      - name: Build RDP sidecar for bundling
+        shell: bash
+        run: ./scripts/build-rdp-sidecar.sh --release --target ${{ matrix.rust_target }} --tauri-externalbin
+
       - name: Build Tauri app for release
         uses: tauri-apps/tauri-action@v0
         env:
