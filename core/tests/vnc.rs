@@ -1,5 +1,5 @@
 #![cfg(feature = "vnc")]
-//! VNC (RFB) Integration Tests (VNC-01 through VNC-04).
+//! VNC (RFB) Integration Tests (VNC-01 through VNC-07).
 //!
 //! Exercises termiHub's `vnc` graphical backend against a real VNC server — the
 //! live negotiate -> authenticate -> decode path (#1681/#1715) that only exists
@@ -7,18 +7,28 @@
 //! brings up Docker, so this path is otherwise uncovered; these tests are the
 //! `require_docker!`-gated coverage that a *local* container run verifies.
 //!
-//! Container: `vnc-server` on port 2501 (base; per-checkout offset applied).
-//! It serves a static four-quadrant test pattern (TL red, TR green, BL blue,
-//! BR white) at 1024x768 over classic RFB VncAuth, password `testpass`.
+//! Two fixtures, both under the `vnc` compose profile:
 //!
-//! Requires: `cd tests/docker && docker compose up -d vnc-server`
-//! (or `docker compose --profile vnc up -d`). Skips gracefully otherwise.
+//! * `vnc-server` on port 2501 (x11vnc + Xvfb) — classic RFB VncAuth, password
+//!   `testpass`. Covers VNC-01..05.
+//! * `vnc-vencrypt-server` on port 2502 (TigerVNC Xvnc) — VeNCrypt (RFB security
+//!   type 19, X509Vnc sub-type): a TLS handshake then the VNC-password stage.
+//!   Covers VNC-06 (`tlsVerify=insecure`) and VNC-07 (`tlsVerify=ca`), the
+//!   VeNCrypt/TLS path added in #1714.
+//!
+//! Both serve the same static four-quadrant test pattern (TL red, TR green,
+//! BL blue, BR white) at 1024x768, so a decoded framebuffer asserts exactly.
+//!
+//! Requires: `cd tests/docker && docker compose --profile vnc up -d`
+//! (brings up both fixtures). Skips gracefully otherwise. Ports via
+//! `TERMIHUB_TEST_VNC_PORT` / `TERMIHUB_TEST_VNC_VENCRYPT_PORT` (per-checkout
+//! offset applied).
 
 mod common;
 
 use std::time::Duration;
 
-use common::{port_vnc, require_docker};
+use common::{port_vnc, port_vnc_vencrypt, require_docker};
 use termihub_core::backends::vnc::Vnc;
 use termihub_core::connection::{ConnectionType, FrameUpdate, InputEvent};
 
@@ -39,6 +49,37 @@ fn vnc_settings(port: u16) -> serde_json::Value {
         "port": port,
         "password": VNC_PASSWORD,
     })
+}
+
+/// Path to the VeNCrypt fixture's committed CA certificate
+/// (`tests/docker/vnc-vencrypt-server/certs/ca.crt`), used by the `tlsVerify=ca`
+/// test to trust the fixture's self-signed leaf.
+fn vencrypt_ca_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("core crate should be in workspace root")
+        .join("tests")
+        .join("docker")
+        .join("vnc-vencrypt-server")
+        .join("certs")
+        .join("ca.crt")
+}
+
+/// Settings JSON for the VeNCrypt X509 fixture. The backend auto-negotiates
+/// VeNCrypt (security type 19) when the server offers it, then runs the VNC
+/// password (X509Vnc) second stage. `tls_verify` picks the certificate policy:
+/// `"insecure"` accepts the self-signed leaf, `"ca"` trusts `ca_path`.
+fn vencrypt_settings(port: u16, tls_verify: &str, ca_path: Option<&str>) -> serde_json::Value {
+    let mut settings = serde_json::json!({
+        "host": "127.0.0.1",
+        "port": port,
+        "password": VNC_PASSWORD,
+        "tlsVerify": tls_verify,
+    });
+    if let Some(path) = ca_path {
+        settings["tlsCaPath"] = serde_json::Value::String(path.to_string());
+    }
+    settings
 }
 
 /// A reconstructed RGBA framebuffer, assembled from decoded dirty rects.
@@ -118,39 +159,15 @@ impl Framebuffer {
     }
 }
 
-// ── VNC-01: Connect and authenticate ────────────────────────────────
-
-#[tokio::test]
-async fn vnc_01_connect_and_authenticate() {
-    require_docker!(port_vnc());
-
-    let mut vnc = Vnc::new();
-    vnc.connect(vnc_settings(port_vnc()))
-        .await
-        .expect("VNC-01: connect + VncAuth should succeed against the fixture");
-
-    assert!(vnc.is_connected(), "VNC-01: session should be connected");
-    assert!(
-        vnc.graphical().is_some(),
-        "VNC-01: a connected VNC session exposes the graphical backend"
-    );
-
-    vnc.disconnect().await.expect("disconnect should succeed");
-    assert!(!vnc.is_connected(), "VNC-01: disconnect clears the session");
-}
-
-// ── VNC-02: Decode a real framebuffer end to end ────────────────────
-
-#[tokio::test]
-async fn vnc_02_decode_frame() {
-    require_docker!(port_vnc());
-
-    let mut vnc = Vnc::new();
-    vnc.connect(vnc_settings(port_vnc()))
-        .await
-        .expect("VNC-02: connect should succeed");
-
-    let graphical = vnc.graphical().expect("VNC-02: graphical backend present");
+/// Subscribe to an already-connected session's frames, accumulate decoded dirty
+/// rects until the whole four-quadrant pattern is painted, and assert every
+/// quadrant decoded to its known solid colour. Shared by the plain VncAuth
+/// decode test and the VeNCrypt (TLS) decode tests — the decode path is identical
+/// once the session is connected, only the auth/transport differs.
+async fn assert_pattern_decodes(vnc: &Vnc, label: &str) {
+    let graphical = vnc
+        .graphical()
+        .unwrap_or_else(|| panic!("{label}: graphical backend present"));
     let mut frames = graphical.subscribe_frames();
 
     // Quadrant sample points and their expected colours (see the fixture).
@@ -185,18 +202,15 @@ async fn vnc_02_decode_frame() {
         }
     };
 
-    assert!(
-        frame_count > 0,
-        "VNC-02: at least one FrameUpdate must arrive"
-    );
+    assert!(frame_count > 0, "{label}: at least one FrameUpdate must arrive");
     assert_eq!(
         (fb.width, fb.height),
         (FB_WIDTH, FB_HEIGHT),
-        "VNC-02: decoded framebuffer geometry should match the fixture"
+        "{label}: decoded framebuffer geometry should match the fixture"
     );
     assert!(
         all_painted,
-        "VNC-02: timed out before the full test pattern decoded ({frame_count} frames)"
+        "{label}: timed out before the full test pattern decoded ({frame_count} frames)"
     );
 
     // Every quadrant must decode to its known solid colour. Solid regions carry
@@ -212,9 +226,44 @@ async fn vnc_02_decode_frame() {
         };
         assert!(
             ok,
-            "VNC-02: quadrant at ({x},{y}) expected {expected}, decoded rgba=({r},{g},{b},{a})"
+            "{label}: quadrant at ({x},{y}) expected {expected}, decoded rgba=({r},{g},{b},{a})"
         );
     }
+}
+
+// ── VNC-01: Connect and authenticate ────────────────────────────────
+
+#[tokio::test]
+async fn vnc_01_connect_and_authenticate() {
+    require_docker!(port_vnc());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vnc_settings(port_vnc()))
+        .await
+        .expect("VNC-01: connect + VncAuth should succeed against the fixture");
+
+    assert!(vnc.is_connected(), "VNC-01: session should be connected");
+    assert!(
+        vnc.graphical().is_some(),
+        "VNC-01: a connected VNC session exposes the graphical backend"
+    );
+
+    vnc.disconnect().await.expect("disconnect should succeed");
+    assert!(!vnc.is_connected(), "VNC-01: disconnect clears the session");
+}
+
+// ── VNC-02: Decode a real framebuffer end to end ────────────────────
+
+#[tokio::test]
+async fn vnc_02_decode_frame() {
+    require_docker!(port_vnc());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vnc_settings(port_vnc()))
+        .await
+        .expect("VNC-02: connect should succeed");
+
+    assert_pattern_decodes(&vnc, "VNC-02").await;
 
     vnc.disconnect().await.expect("disconnect should succeed");
 }
@@ -334,4 +383,49 @@ async fn vnc_04_wrong_password_rejected() {
         !vnc.is_connected(),
         "VNC-04: a rejected auth leaves the session disconnected"
     );
+}
+
+// ── VNC-06: VeNCrypt X509 (insecure), connect + decode ──────────────
+
+/// Connect to the VeNCrypt fixture accepting its self-signed leaf
+/// (`tlsVerify=insecure`) and decode the pattern end to end. Proves the vendored
+/// `vnc-rs` fork's VeNCrypt X509 negotiation + TLS handshake + VNC-password
+/// second stage works against a real server — not just the loopback unit tests.
+#[tokio::test]
+async fn vnc_06_vencrypt_insecure_connect_and_decode() {
+    require_docker!(port_vnc_vencrypt());
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vencrypt_settings(port_vnc_vencrypt(), "insecure", None))
+        .await
+        .expect("VNC-06: VeNCrypt X509 connect (insecure) should succeed against the fixture");
+
+    assert!(vnc.is_connected(), "VNC-06: session should be connected");
+    assert_pattern_decodes(&vnc, "VNC-06").await;
+
+    vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── VNC-07: VeNCrypt X509 (custom CA), connect + decode ─────────────
+
+/// Connect to the VeNCrypt fixture verifying its leaf against the committed CA
+/// (`tlsVerify=ca`, `tlsCaPath` -> the fixture's `ca.crt`) and decode the
+/// pattern. Proves the `TlsVerify::CaPem` path: the client builds a trust anchor
+/// from the fixture CA and the leaf validates (IP SAN `127.0.0.1`) end to end.
+#[tokio::test]
+async fn vnc_07_vencrypt_custom_ca_connect_and_decode() {
+    require_docker!(port_vnc_vencrypt());
+
+    let ca_path = vencrypt_ca_path();
+    let ca_path = ca_path.to_str().expect("CA path is valid UTF-8");
+
+    let mut vnc = Vnc::new();
+    vnc.connect(vencrypt_settings(port_vnc_vencrypt(), "ca", Some(ca_path)))
+        .await
+        .expect("VNC-07: VeNCrypt X509 connect (custom CA) should succeed against the fixture");
+
+    assert!(vnc.is_connected(), "VNC-07: session should be connected");
+    assert_pattern_decodes(&vnc, "VNC-07").await;
+
+    vnc.disconnect().await.expect("disconnect should succeed");
 }
