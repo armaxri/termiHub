@@ -343,6 +343,14 @@ pub struct SshConfig {
     /// connection. Accepts the legacy `jumpHosts` key for forward compatibility.
     #[serde(default, alias = "jumpHosts", skip_serializing_if = "Vec::is_empty")]
     pub proxy_jump: Vec<JumpHostConfig>,
+    /// Forward the local `ssh-agent` to the target (OpenSSH `ForwardAgent`, #1699).
+    /// When `true`, agent forwarding is requested on the session channel so the
+    /// user's local agent keys are reachable on the final host — and, because the
+    /// forwarded-agent channel rides the jump-host tunnel, end to end through the
+    /// `proxy_jump` chain. Serde-defaults to `false` and is omitted when false so
+    /// existing saved connections stay byte-stable, mirroring `proxy_jump` above.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub forward_agent: bool,
 }
 
 impl SshConfig {
@@ -374,6 +382,7 @@ impl Default for SshConfig {
             save_password: None,
             connect_timeout_secs: None,
             proxy_jump: Vec::new(),
+            forward_agent: false,
         }
     }
 }
@@ -670,6 +679,12 @@ fn default_remove_on_exit() -> bool {
 
 fn default_ssh_port() -> u16 {
     22
+}
+
+/// `skip_serializing_if` predicate for `bool` fields that default to `false`
+/// (e.g. `SshConfig::forward_agent`), so an unset flag is omitted from the JSON.
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn default_telnet_port() -> u16 {
@@ -1128,6 +1143,7 @@ mod tests {
             save_password: None,
             connect_timeout_secs: Some(15),
             proxy_jump: Vec::new(),
+            forward_agent: true,
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: SshConfig = serde_json::from_str(&json).unwrap();
@@ -1145,6 +1161,38 @@ mod tests {
         assert_eq!(back.enable_file_browser, Some(false));
         assert!(back.save_password.is_none());
         assert_eq!(back.connect_timeout_secs, Some(15));
+        assert!(back.forward_agent);
+    }
+
+    // --- agent forwarding (ForwardAgent) tests (#1699) ---
+
+    #[test]
+    fn ssh_config_forward_agent_roundtrip() {
+        let cfg = SshConfig {
+            forward_agent: true,
+            ..SshConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        // Serializes camelCase and true.
+        assert!(json.contains("\"forwardAgent\":true"), "got: {json}");
+        let back: SshConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.forward_agent);
+    }
+
+    #[test]
+    fn ssh_config_forward_agent_defaults_false_and_is_omitted() {
+        // Default (false) is never written, keeping existing saved JSON byte-stable.
+        let json = serde_json::to_string(&SshConfig::default()).unwrap();
+        assert!(!json.contains("forwardAgent"), "got: {json}");
+    }
+
+    #[test]
+    fn ssh_config_forward_agent_absent_deserializes_false() {
+        // A saved connection from before this field existed must still load, and
+        // behave exactly as before (no forwarding).
+        let json = r#"{ "host": "h", "username": "u", "authMethod": "agent" }"#;
+        let cfg: SshConfig = serde_json::from_str(json).unwrap();
+        assert!(!cfg.forward_agent);
     }
 
     // --- jump host (ProxyJump) tests ---
