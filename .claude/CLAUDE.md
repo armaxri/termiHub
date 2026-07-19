@@ -49,7 +49,7 @@ self-contained HTML file** — `docs/concepts/<status>/<name>.html` — instead 
 file holds everything: prose (the standard concept sections), Mermaid diagrams, the mockups, and
 the sync ledger. This is a **design-first loop**: the file is both the human discussion medium
 (opened in a browser) and Claude Code's implementation target. Full design:
-[`docs/concepts/ai-driven-concept-workflow.md`](../docs/concepts/implemented/ai-driven-concept-workflow.md).
+[`docs/concepts/implemented/ai-driven-concept-workflow.html`](../docs/concepts/implemented/ai-driven-concept-workflow.html).
 (Concepts with **no** visual surface stay a single `.md` — see the Concept Issues section above.)
 
 **Three fixed rules:**

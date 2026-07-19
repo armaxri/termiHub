@@ -6,7 +6,7 @@ description: Reconcile a single-file HTML concept (docs/concepts/<status>/<name>
 # Sync Concept
 
 This skill is the **human-triggered sync step** of termiHub's AI-driven concept workflow
-(see `docs/concepts/implemented/ai-driven-concept-workflow.md`). It compares a concept's design
+(see `docs/concepts/implemented/ai-driven-concept-workflow.html`). It compares a concept's design
 artifacts against the actual implementation and reconciles them.
 
 **Source-of-truth rule (non-negotiable): the concept is authoritative.** When the artifacts and

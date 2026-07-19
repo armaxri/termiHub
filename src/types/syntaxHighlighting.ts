@@ -2,7 +2,7 @@
  * Type definitions for terminal output syntax highlighting.
  *
  * These describe the rule/config data model for the client-side highlighting
- * feature (see `docs/concepts/partial/terminal-syntax-highlighting.md`). The
+ * feature (see `docs/concepts/partial/terminal-syntax-highlighting.html`). The
  * engine (`src/services/syntaxHighlighting.ts`) consumes {@link HighlightRule}s
  * and produces xterm.js decorations; the built-in rule set lives in
  * `src/services/syntaxHighlightingRules.ts`.
