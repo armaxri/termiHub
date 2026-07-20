@@ -1,0 +1,785 @@
+<!doctype html>
+<!--
+  Concept: Multi-window support (detachable / movable tabs across windows).
+  Tracking issue #1806. This is STEP 1 (technical concept + limitations) of a
+  two-step concept. STEP 2 (UX designer) fills in the inline mockups where the
+  MOCKUPS placeholder appears in the UI Interface section.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Multi-Window Support (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (only the symbols referenced below). -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Multi-Window Support</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/1806">#1806</a></span
+          >
+          <span><code>docs/concepts/backlog/multi-window.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Two-step concept.</strong> This document is <strong>step 1</strong> — the
+          <em>technical</em> concept and honest limitations, authored by an engineer against the real
+          codebase. <strong>Step 2</strong> (a UX designer) adds the interaction design and inline
+          mockups where the <code>MOCKUPS</code> placeholder appears in
+          <a href="#ui">UI Interface</a>. Nothing here is an implementation commitment.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview &amp; Goals</a></li>
+          <li><a href="#asis">Current Architecture (as-is)</a></li>
+          <li><a href="#ui">UI Interface (mockups → step 2)</a></li>
+          <li><a href="#approach">Proposed Approach — the three capabilities</a></li>
+          <li><a href="#reparent">Session Re-parenting Mechanism</a></li>
+          <li><a href="#state">State Ownership &amp; Event Retargeting</a></li>
+          <li><a href="#matrix">Per-Session-Type Feasibility Matrix</a></li>
+          <li><a href="#platform">Per-Platform Constraints</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#limits">Limitations · Non-Goals · Open Questions</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview &amp; Goals <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          termiHub today runs as a <strong>single application window</strong> that hosts every session
+          tab, split, and tab group. Users on multi-monitor setups repeatedly ask to spread work
+          across screens — a build tailing on one monitor, an SSH session on another. This concept
+          assesses whether termiHub can host <strong>multiple native windows</strong> and move live
+          session tabs between them <strong>without tearing down the underlying backend session</strong>.
+        </p>
+        <p>
+          <strong>The verdict is: feasible, with real caveats.</strong> The architecture is unusually
+          well-suited to it in one dimension and awkward in another. Session <em>state</em> already
+          lives in the Rust backend, keyed by session id and completely independent of any window, and
+          the backend already supports the exact primitive multi-window needs — <em>detach a view and
+          re-attach it later with scrollback replay</em> (built for persistent/agent sessions and tab
+          groups). That makes re-parenting a session tab a <em>view</em> operation, not a teardown. The
+          awkward dimension is the front end: separate native windows are separate JavaScript contexts
+          with no shared memory, and the current tab drag-and-drop stack (<code>@dnd-kit</code>) cannot
+          cross a native window boundary. So the hard limits cluster on <em>gesture and coordination</em>,
+          not on session survival.
+        </p>
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            <strong>Tear out</strong> a session tab into a brand-new window (drag-out or a
+            "Move to New Window" command).
+          </li>
+          <li><strong>Create</strong> additional windows (empty, or seeded from a tab group).</li>
+          <li>
+            <strong>Move tabs between</strong> existing windows without restarting the backend session
+            (its PTY / SSH channel / serial port / RDP connection keeps running).
+          </li>
+          <li>Preserve scrollback on move to the extent the backend replay buffer allows.</li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Sharing <em>one</em> live session's terminal view across two windows simultaneously
+            (mirrored view). Out of scope — a tab lives in exactly one window at a time.
+          </li>
+          <li>Multi-window support for non-session tabs (Settings, Log Viewer) — see the matrix.</li>
+          <li>Detachable <em>sidebar</em> panels (connection tree, network tools) into their own windows.</li>
+          <li>Multi-<em>process</em> windows. Windows are additional webviews in the one Tauri process.</li>
+        </ul>
+      </section>
+
+      <!-- ── Current architecture ───────────────────────────────────── -->
+      <section>
+        <h2 id="asis">Current Architecture (as-is) <a class="anchor" href="#asis">#</a></h2>
+        <p>
+          Every claim below is grounded in the current tree. The picture that matters: the backend is
+          the authoritative, window-independent owner of session state; the frontend holds only view
+          state; and events are already delivered app-wide by broadcast.
+        </p>
+
+        <h3>One window today</h3>
+        <ul>
+          <li>
+            Tauri <strong>v2</strong> (<code>src-tauri/Cargo.toml</code>:
+            <code>tauri = { version = "2", … }</code>; config schema <code>config/2</code>).
+          </li>
+          <li>
+            Exactly one window is declared — <code>tauri.conf.json</code> → <code>app.windows[]</code>
+            has a single entry titled <code>termiHub</code>. Its runtime label is <code>"main"</code>.
+          </li>
+          <li>
+            Nothing creates a second window. The only window lookups are
+            <code>app.get_webview_window("main")</code> (<code>src-tauri/src/lib.rs:262</code>,
+            <code>src-tauri/src/spawn/handler.rs:275</code>). No
+            <code>WebviewWindowBuilder</code> / <code>WindowBuilder</code> exists in production code.
+            The frontend only ever calls <code>getCurrentWindow()</code>
+            (<code>src/App.tsx:39,209</code>) — never <code>new WebviewWindow(...)</code>.
+          </li>
+        </ul>
+
+        <h3>Session state lives in the Rust backend, keyed by id</h3>
+        <ul>
+          <li>
+            <code>SessionManager</code> (<code>src-tauri/src/session/manager.rs</code>) holds a
+            <code>sessions</code> map keyed by <code>session_id</code>. A session is a backend process
+            (PTY, SSH channel, serial port, agent proxy) — it has <strong>no notion of which window,
+            tab, or even tab group is displaying it</strong>. This is the single most important fact for
+            this feature: <em>a session already survives independently of any view</em>.
+          </li>
+          <li>
+            Graphical (RDP/VNC) sessions are owned by a separate
+            <code>GraphicalSessionManager</code> (built at <code>src-tauri/src/lib.rs:429</code>), keyed
+            by connection type id, also window-independent.
+          </li>
+          <li>
+            The backend keeps a <strong>replayable scrollback buffer</strong>: a 1&nbsp;MiB
+            <code>RingBuffer</code> (<code>core/src/buffer/mod.rs</code>, doc'd for "serial 24/7 capture,
+            daemon PTY output replay, and reconnect replay"), plus persistent/agent
+            session scrollback replay and <code>RemoteProxy::reconnect_existing</code>
+            (<code>manager.rs</code> ~L920, ~L1195, ~L2854). <strong>This is the re-parenting enabler.</strong>
+          </li>
+        </ul>
+
+        <h3>Events are a global broadcast; input is an id-keyed IPC call</h3>
+        <ul>
+          <li>
+            Output is emitted with <code>AppHandle::emit("terminal-output", event)</code> — a
+            <strong>global broadcast to every webview</strong> (<code>manager.rs:114–125</code>). Same
+            for <code>terminal-exit</code>, <code>persistent-session-state-changed</code>, and every
+            graphical stream: <code>remote-desktop-frame</code> / <code>-cursor</code> /
+            <code>-clipboard</code> / <code>-state</code> / <code>-cert-prompt</code>
+            (<code>graphical_manager.rs:115–127</code>).
+          </li>
+          <li>
+            The frontend registers <strong>one</strong> global listener per stream and fans out by
+            <code>session_id</code> — <code>SessionEventDispatcher</code> in
+            <code>src/services/events.ts</code>. Consequence for multi-window: because output is
+            already broadcast to all windows, a second window that subscribes and filters by the same
+            <code>session_id</code> <em>automatically</em> receives that session's output. No
+            <code>emit_to</code> retargeting is <em>required</em> for correctness — only as an efficiency
+            improvement (see <a href="#state">State &amp; Retargeting</a>).
+          </li>
+          <li>
+            Input / control (write, resize, close) are Tauri command calls keyed by
+            <code>session_id</code>, so they work identically from whichever window currently owns the tab.
+          </li>
+        </ul>
+
+        <h3>Frontend view state — the Zustand store</h3>
+        <ul>
+          <li>
+            <code>src/store/appStore.ts</code> (~6.4k lines) holds
+            <code>tabGroups: TabGroup[]</code>, <code>activeTabGroupId</code>, and the live
+            <code>rootPanel: PanelNode</code> (a recursive split/leaf tree —
+            <code>src/types/terminal.ts</code>). A tab (<code>TerminalTab</code>) carries a
+            <code>sessionId</code>, a <code>contentType</code>, and its config — the <em>view</em> of a
+            backend session, not the session itself.
+          </li>
+          <li>
+            <strong>Tab groups are the closest existing analog to windows.</strong> Each group is an
+            "independent panel tree that stays alive when hidden" (implemented concept
+            <code>tab-groups.html</code>): the active group uses the live <code>rootPanel</code>, every
+            other group keeps its own <code>rootPanel</code> in <code>tabGroups[]</code>. Multi-window is
+            essentially "let a tab group (or a subset of tabs) live in its own OS window" — <em>except</em>
+            groups today all share one JS context and one store; windows do not.
+          </li>
+          <li>
+            Cross-panel and cross-group tab movement already exists —
+            <code>moveTab</code>, <code>moveTabToGroup</code>, <code>addTabGroupWithTab</code>,
+            <code>splitPanelWithTab</code> in the store. These are the natural seams to extend to
+            cross-<em>window</em> movement.
+          </li>
+        </ul>
+
+        <h3>Tab drag-and-drop uses @dnd-kit (single-document)</h3>
+        <ul>
+          <li>
+            Tab drag/reorder/tear-to-split is built on <strong><code>@dnd-kit</code></strong>
+            (<code>src/components/SplitView/SplitView.tsx</code>, <code>PanelDropZone.tsx</code>): pointer
+            sensors, <code>DndContext</code>, <code>DragOverlay</code>. It uses <em>no</em> native
+            HTML5 <code>dataTransfer</code>. <strong>@dnd-kit is fundamentally single-document</strong> — its
+            pointer tracking and drag overlay live entirely inside one webview's DOM and cannot follow the
+            cursor across a native window boundary. This is the crux of the drag limitation below.
+          </li>
+          <li>
+            The one place termiHub <em>does</em> use OS-level drag is Tauri's
+            <code>onDragDropEvent</code> for external <strong>file</strong> drops into the file browser —
+            a different, OS→webview channel, not webview→webview tab drag.
+          </li>
+        </ul>
+
+        <h3>Persistence &amp; lifecycle have no window dimension</h3>
+        <ul>
+          <li>
+            Workspaces (<code>src/types/workspace.ts</code>, <code>WorkspaceDefinition</code>) capture
+            <code>tabGroups[]</code> with a layout tree — but there is <strong>no window field
+            anywhere</strong>. A restored workspace has nowhere to record "this group is in window 2."
+            Same for last-session restore.
+          </li>
+          <li>
+            Lifecycle is handled in <code>src-tauri/src/lib.rs</code> via
+            <code>RunEvent::WindowEvent { CloseRequested / Destroyed }</code> and
+            <code>RunEvent::ExitRequested</code> (~L918–930). With one window, "window closed" ≈ "app
+            quit." Multi-window breaks that identity and needs an explicit policy.
+          </li>
+          <li>
+            No single-instance plugin is used. Portable mode and the CLI workspace launch
+            (<code>tauri.conf.json</code> → <code>plugins.cli</code>) are orthogonal — multi-window is
+            multi-<em>webview-in-one-process</em>, not multi-process.
+          </li>
+        </ul>
+
+        <div class="diagram">
+          <span class="diagram__caption">As-is: one window, backend owns the session</span>
+          <pre class="mermaid">
+flowchart TB
+  subgraph BE["Rust backend (one process, window-independent)"]
+    SM["SessionManager<br/>sessions keyed by session_id"]
+    GM["GraphicalSessionManager<br/>keyed by type id"]
+    RB["RingBuffer / scrollback replay"]
+  end
+  subgraph W["Window 'main' (single webview / JS context)"]
+    ST["Zustand store<br/>tabGroups[], rootPanel"]
+    XT["xterm.js instances<br/>canvas surfaces"]
+  end
+  SM -- "emit terminal-output (broadcast)" --> ST
+  GM -- "emit remote-desktop-frame (broadcast)" --> XT
+  ST -- "write/resize/close by session_id (IPC)" --> SM
+  RB -. "replay on (re)attach" .-> ST
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── UI Interface (mockups deferred to step 2) ──────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The interaction design — the drag-to-tear gesture and its command fallback, the drag-between-windows
+          affordance, the "New Window" entry points, the empty-window state, and every edge-case surface — is
+          <strong>step 2</strong>. The technical constraints those mockups must respect are: (a) native
+          drag cannot cross windows with today's stack, so a command/menu path is mandatory and a drag gesture
+          is at best an enhancement; (b) graphical tabs may need a "moving…" placeholder while the framebuffer
+          repaints; (c) an empty window is a real state (a window can exist with zero tabs). See
+          <a href="#limits">Limitations</a> for the full list the UX must design around.
+        </p>
+        <!-- MOCKUPS: to be authored by UX step (see #1806).
+             Build inline <section class="mockup-section"> blocks here using the real
+             mockup.css classes (.app, .tab, .terminal-view__toolbar, .menu, .status-bar,
+             .activity-bar__item, …) + lucide icons. Suggested screens:
+               1. Tab context menu / toolbar overflow → "Move to New Window", "Move to Window ▸ N".
+               2. Two windows side by side, a tab mid-move (source ghost + destination insertion point).
+               3. Empty-window state (no tabs) with a call to action.
+               4. Graphical (RDP/VNC) tab move: "reconnecting view…" placeholder over the canvas.
+               5. Close-window-with-live-tabs confirmation (detach vs. close). -->
+        <div class="mockup-note">
+          Placeholder — no mockups in step 1. The UX designer slots them into the block above.
+        </div>
+      </section>
+
+      <!-- ── Proposed approach ──────────────────────────────────────── -->
+      <section>
+        <h2 id="approach">Proposed Approach — the three capabilities <a class="anchor" href="#approach">#</a></h2>
+        <p>
+          All three capabilities reduce to the same core move: <strong>detach a tab's view from window A
+          and re-attach it in window B</strong>, while the backend session keeps running untouched. They
+          differ only in whether window B already exists.
+        </p>
+
+        <h3>(a) Tear a tab out into a new window</h3>
+        <ol>
+          <li>User invokes "Move to New Window" (command / tab context menu; a drag-out gesture is a
+            later enhancement — see limits).</li>
+          <li>Backend creates a new <code>WebviewWindow</code> (label e.g. <code>win-2</code>) loading the
+            same frontend bundle. It boots a fresh, empty store.</li>
+          <li>A <strong>hand-off record</strong> for the moved tab (its <code>TerminalTab</code> view-model +
+            desired placement) is passed to the new window (via an init argument or a backend-brokered
+            claim — see <a href="#state">State &amp; Retargeting</a>).</li>
+          <li>Window B builds a leaf panel, creates a fresh xterm.js instance, subscribes to the global
+            output stream filtered by <code>session_id</code>, and requests a
+            <strong>scrollback replay</strong> to repaint history.</li>
+          <li>Window A removes the tab from its store and disposes its xterm instance. The backend session
+            never restarted.</li>
+        </ol>
+
+        <h3>(b) Create additional windows</h3>
+        <p>
+          A "New Window" command opens an empty window (empty store, no tabs) — or seeds it from a chosen
+          tab group. Mechanically identical to (a) minus the hand-off; the empty-window state is a first-class
+          UI state the UX must design.
+        </p>
+
+        <h3>(c) Move a tab between two existing windows</h3>
+        <p>
+          Same hand-off as (a) but window B already exists, so the flow is just: window B claims the tab,
+          attaches + replays; window A releases it. The only genuinely new problem is the <em>gesture</em> —
+          dragging a tab from A's tab bar onto B's tab bar is not expressible with <code>@dnd-kit</code>
+          across native windows, so the shipping mechanism is a command ("Move to Window ▸ &lt;name&gt;"),
+          with drag as a research item (<a href="#limits">open question</a>).
+        </p>
+      </section>
+
+      <!-- ── Re-parenting mechanism ─────────────────────────────────── -->
+      <section>
+        <h2 id="reparent">Session Re-parenting Mechanism <a class="anchor" href="#reparent">#</a></h2>
+        <p>
+          Re-parenting a tab is <strong>a pure view operation</strong>. The backend session is keyed by
+          <code>session_id</code> and knows nothing about windows, so "moving" a tab never touches it. In
+          one paragraph: window B instantiates a new xterm.js (or canvas) surface, begins listening to the
+          already-broadcast output stream for that <code>session_id</code>, and asks the backend to replay
+          the ring-buffered scrollback so the fresh surface repaints history; window A then drops its view
+          and disposes its surface. Input keeps flowing because <code>write</code>/<code>resize</code> are
+          id-keyed IPC calls issued from whichever window holds the tab. termiHub already does exactly this
+          when a persistent/agent tab is closed and later re-attached — multi-window reuses that machinery
+          across a window boundary instead of across time.
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption">Re-parenting a live terminal tab from window A to window B</span>
+          <pre class="mermaid">
+sequenceDiagram
+  participant A as Window A (store + xterm)
+  participant BE as Backend SessionManager
+  participant B as Window B (store + xterm)
+  A->>BE: request move(sessionId → win-2)
+  BE->>B: hand-off record (TerminalTab view-model)
+  B->>B: create leaf + fresh xterm instance
+  B->>BE: subscribe/replay scrollback(sessionId)
+  BE-->>B: buffered output (RingBuffer replay)
+  Note over BE: terminal-output keeps broadcasting to all windows
+  BE-->>B: live output (filtered by sessionId)
+  A->>A: remove tab, dispose xterm
+  Note over A,B: backend PTY/SSH/serial never restarts
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── State ownership & event retargeting ────────────────────── -->
+      <section>
+        <h2 id="state">State Ownership &amp; Event Retargeting <a class="anchor" href="#state">#</a></h2>
+        <p>
+          <strong>This boundary is the whole feature.</strong> Separate webviews are separate JavaScript
+          contexts — no shared DOM, no shared module memory, no shared Zustand store. What is authoritative
+          in the backend moves cleanly; what is in-memory per-window must be rebuilt on the far side.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Where it lives today</th>
+                <th>On move</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Backend session (PTY/SSH/serial/RDP, process, channel)</td>
+                <td>Rust <code>SessionManager</code>/<code>GraphicalSessionManager</code>, keyed by id</td>
+                <td><strong>Authoritative — untouched.</strong> Survives the move entirely.</td>
+              </tr>
+              <tr>
+                <td>Scrollback (replayable)</td>
+                <td>Backend <code>RingBuffer</code> (1 MiB) + agent/persistent replay</td>
+                <td>Replayed into window B's fresh xterm — <strong>bounded by buffer size</strong>.</td>
+              </tr>
+              <tr>
+                <td>xterm.js instance, rendered scrollback, viewport, selection</td>
+                <td>In window A's JS memory / DOM</td>
+                <td><strong>Discarded.</strong> Rebuilt in B from replay; anything beyond the buffer is lost.</td>
+              </tr>
+              <tr>
+                <td>Tab view-model (<code>TerminalTab</code>: title, config, badges, placement)</td>
+                <td>Window A's Zustand store</td>
+                <td>Serialized into the hand-off record; re-hydrated in B; removed from A.</td>
+              </tr>
+              <tr>
+                <td>Graphical framebuffer (RDP/VNC canvas pixels)</td>
+                <td>Window A's <code>&lt;canvas&gt;</code> memory</td>
+                <td><strong>Discarded; repaint on next full frame.</strong> Possible blank flash — see matrix.</td>
+              </tr>
+              <tr>
+                <td>Tab ↔ window ownership (who shows which session)</td>
+                <td>Implicit — one window, so unambiguous today</td>
+                <td><strong>New:</strong> needs an explicit coordinator so a tab is shown in exactly one window.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Event retargeting — needed for hygiene, not correctness</h3>
+        <p>
+          Because output is a <strong>global broadcast</strong> (<code>AppHandle::emit</code>), the moment
+          window B subscribes to <code>terminal-output</code> and filters for the session's id, output
+          "follows" the tab with zero backend change — this is a genuine gift of the current design. Two
+          non-blocking concerns remain:
+        </p>
+        <ul>
+          <li>
+            <strong>Efficiency.</strong> Every window deserializes every session's bytes even for tabs it
+            does not own. At a handful of windows this is fine; at scale it argues for switching hot streams
+            to <code>emit_to(window_label, …)</code> and having the backend track a
+            <code>session_id → owning_window</code> map, updated on each move. That map is also the natural
+            <strong>ownership coordinator</strong> above.
+          </li>
+          <li>
+            <strong>Ownership coordination.</strong> Two windows must never simultaneously render the same
+            live tab (double input, fighting resizes). The cleanest home for the authoritative
+            <code>session → window</code> assignment is the backend (it already holds the session); windows
+            claim/release through it. A pure-frontend broadcast-channel scheme is possible but more fragile
+            across crashes.
+          </li>
+        </ul>
+        <p>
+          <strong>Resize is a real subtlety:</strong> a PTY has one size. When a tab moves to a differently
+          sized window, exactly one window must own the <code>resize</code> for that session — the one
+          currently displaying it — and the backend must apply the new dimensions once, not race two windows.
+        </p>
+      </section>
+
+      <!-- ── Feasibility matrix ─────────────────────────────────────── -->
+      <section>
+        <h2 id="matrix">Per-Session-Type Feasibility Matrix <a class="anchor" href="#matrix">#</a></h2>
+        <p>
+          "Moves cleanly" = backend session survives and only the view re-attaches. The
+          <code>contentType</code> values are from <code>src/types/terminal.ts</code>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Session / tab type</th>
+                <th>Move difficulty</th>
+                <th>Why</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Local shell / PTY (+ xterm.js)</td>
+                <td><strong>Easy</strong></td>
+                <td>Backend PTY survives; fresh xterm + RingBuffer replay. Scrollback beyond 1 MiB is lost.</td>
+              </tr>
+              <tr>
+                <td>SSH (local or agent-mediated)</td>
+                <td><strong>Easy</strong></td>
+                <td>Same stream model. Agent/persistent sessions already support detach + re-attach with replay — the exact primitive.</td>
+              </tr>
+              <tr>
+                <td>Serial</td>
+                <td><strong>Easy</strong></td>
+                <td>24/7 RingBuffer capture already exists; re-attach replays. Port stays open in backend.</td>
+              </tr>
+              <tr>
+                <td>Telnet / Docker / WSL</td>
+                <td><strong>Easy</strong></td>
+                <td>Identical PTY/stream + id-keyed IPC model.</td>
+              </tr>
+              <tr>
+                <td>Agent sessions (remote daemon)</td>
+                <td><strong>Easy</strong></td>
+                <td>Detach/adopt/attach is already built (<code>adopt_persistent_session</code>, scrollback fetch). Best-supported case.</td>
+              </tr>
+              <tr>
+                <td>File browser / SFTP / FTP (<code>file-browser</code>, terminal-less)</td>
+                <td><strong>Medium</strong></td>
+                <td>Backend SFTP session (keyed in <code>SftpManager</code>) survives, but current dir / selection are frontend-only and must serialize. In-flight transfers use a <strong>shared Transfer Queue</strong> (<code>src/components/TransferQueue</code>) — a move must not abort them; the queue is app-scoped, so its ownership across windows is an open question.</td>
+              </tr>
+              <tr>
+                <td>RDP / VNC graphical (<code>remote-desktop</code>, <code>&lt;canvas&gt;</code>)</td>
+                <td><strong>Hard (command-only)</strong></td>
+                <td>Backend graphical session survives (frames broadcast on <code>remote-desktop-frame</code>), but the framebuffer is canvas memory in window A. Window B repaints only on the next <em>full</em> frame — there is no on-demand keyframe today — so expect a blank/stale flash. Cursor/clipboard/cert-prompt state is per-webview. <strong>Recommend command-based move with a "reconnecting view…" placeholder; a backend "request full frame on attach" hook would materially improve this.</strong></td>
+              </tr>
+              <tr>
+                <td>Editor (<code>editor</code>, Monaco)</td>
+                <td><strong>Medium</strong></td>
+                <td>Unsaved buffer + cursor live in window A's Monaco. Moving means re-opening the file in B and transferring dirty state — non-trivial; may restrict to saved files in v1.</td>
+              </tr>
+              <tr>
+                <td>Non-session tabs: Settings, Log Viewer, Connection/Tunnel/Workspace editors, Network Diagnostic</td>
+                <td><strong>N/A / restrict</strong></td>
+                <td>No backend session; some are effectively singletons (Settings, Log Viewer). Moving is pure view transfer but often meaningless. Likely non-goal — restrict to session-bearing tabs, or allow but forbid duplicates.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Platform constraints ───────────────────────────────────── -->
+      <section>
+        <h2 id="platform">Per-Platform Constraints <a class="anchor" href="#platform">#</a></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Platform</th><th>Constraint</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>macOS (WKWebView)</td>
+                <td>Closing the <em>last</em> window conventionally does <strong>not</strong> quit the app (stays in Dock) — needs an explicit policy vs. Windows/Linux. Also: <code>tauri-driver</code> has no macOS WKWebView driver (ADR-5), so multi-window <strong>E2E cannot be automated on macOS</strong> — verification is manual there.</td>
+              </tr>
+              <tr>
+                <td>Windows (WebView2) / Linux (WebKitGTK)</td>
+                <td>Last-window-close typically quits. Each new window is a full webview → real RAM cost (another React app + xterm instances). No cross-window native tab drag on any platform with the current stack.</td>
+              </tr>
+              <tr>
+                <td>All platforms</td>
+                <td>Cross-window webview→webview drag is not provided by Tauri; <code>@dnd-kit</code> is single-document. Tab-tear/inter-window drag must fall back to commands. Each window re-runs the full frontend bundle (memory + startup cost per window).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+        <div class="diagram">
+          <span class="diagram__caption">Window lifecycle with owned tabs</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> MainWindow
+    MainWindow --> MultiWindow: New Window / Move to New Window
+    MultiWindow --> MultiWindow: move tab A↔B (session survives)
+    MultiWindow --> CloseWithTabs: close a window holding live tabs
+    CloseWithTabs --> Detach: persistent/agent → detach (process lives)
+    CloseWithTabs --> Prompt: non-persistent live → confirm close/close-sessions
+    Detach --> MultiWindow
+    Prompt --> MultiWindow
+    MultiWindow --> MainWindow: down to one window
+    MainWindow --> [*]: last window closed → quit policy (per-OS)
+          </pre>
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">Ownership handshake (prevents a tab living in two windows)</span>
+          <pre class="mermaid">
+sequenceDiagram
+  participant A as Window A
+  participant C as Backend coordinator (session→window map)
+  participant B as Window B
+  A->>C: release(sessionId)
+  C->>B: grant(sessionId)
+  B->>C: attach + replay
+  Note over C: map now says sessionId → win-B; only B renders it
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Limitations / Non-goals / Open questions ───────────────── -->
+      <section>
+        <h2 id="limits">Limitations · Non-Goals · Open Questions <a class="anchor" href="#limits">#</a></h2>
+
+        <h3>Hard limitations (these shape the UX)</h3>
+        <ol>
+          <li>
+            <strong>No cross-window native drag.</strong> The tab DnD stack (<code>@dnd-kit</code>,
+            <code>SplitView.tsx</code>) is single-document and cannot follow the cursor across a native
+            window boundary; Tauri exposes no webview→webview drag. <strong>Tear-out and drag-between-windows
+            must ship as commands / context-menu items</strong> ("Move to New Window", "Move to Window ▸ N");
+            a drag gesture is at best a future enhancement, not the v1 mechanism.
+          </li>
+          <li>
+            <strong>Graphical (RDP/VNC) tabs move via command only, with a repaint flash.</strong> The
+            framebuffer is canvas memory in the source window; the destination repaints only on the next
+            full frame (no on-demand keyframe today), so the canvas may be blank/stale briefly. Live drag is
+            especially unsuitable here.
+          </li>
+          <li>
+            <strong>Scrollback fidelity is bounded by the backend replay buffer (1 MiB RingBuffer).</strong>
+            The source window's fully-rendered xterm scrollback is discarded (separate JS context — DOM/memory
+            cannot transfer); the destination shows only what the backend can replay. Very long histories are
+            truncated on move.
+          </li>
+          <li>
+            <strong>Separate JS contexts — no shared store.</strong> Each window is its own React/Zustand
+            instance. Cross-window features (tab counts, "move to" menus listing other windows, ownership)
+            require a coordination channel (backend-brokered is recommended over a frontend broadcast channel).
+          </li>
+          <li>
+            <strong>No window dimension in persistence.</strong> <code>WorkspaceDefinition</code> and
+            last-session restore have no field for window assignment. Saving/restoring a multi-window layout
+            needs a schema addition (a window id per tab group / per tab) and new multi-window restore
+            lifecycle.
+          </li>
+          <li>
+            <strong>Window-close policy is new.</strong> Closing a window with live tabs must choose
+            detach-vs-terminate (persistent/agent sessions should detach, not die); "last window closed →
+            quit" differs by OS (macOS keeps the app alive).
+          </li>
+          <li>
+            <strong>Resize ownership.</strong> A PTY has one size; exactly one window may own a session's
+            <code>resize</code> at a time, and the backend must apply it without racing two windows.
+          </li>
+          <li>
+            <strong>Per-window memory cost.</strong> Each window re-runs the full frontend bundle and its own
+            xterm/canvas instances — a real RAM multiplier, relevant to the app's resource footprint.
+          </li>
+          <li>
+            <strong>Automated-test gap on macOS.</strong> <code>tauri-driver</code> has no macOS driver
+            (ADR-5), and the Python bridge harness would need multi-window awareness. Multi-window behavior on
+            macOS is manual-test-only.
+          </li>
+        </ol>
+
+        <h3>Non-goals</h3>
+        <ul>
+          <li>Mirroring one live session into two windows at once.</li>
+          <li>Detaching sidebar panels (connection tree, network tools) into windows.</li>
+          <li>Moving non-session/singleton tabs (Settings, Log Viewer) — likely restricted.</li>
+          <li>Multi-process windows — these are additional webviews in one Tauri process.</li>
+        </ul>
+
+        <h3>Open questions (need the human or the UX step)</h3>
+        <ul>
+          <li>
+            <strong>Do windows map onto tab groups?</strong> Tab groups are already independent panel trees.
+            The cleanest model may be "a window owns one or more tab groups," reusing that substrate — but
+            that couples the two features. Product decision.
+          </li>
+          <li>
+            <strong>Is a drag-out gesture worth prototyping</strong> given @dnd-kit can't cross windows? (An
+            OS-drag-image + drop-detection hack is conceivable but unproven in Tauri — research item.)
+          </li>
+          <li><strong>Detach-vs-terminate default</strong> when closing a window with non-persistent live tabs.</li>
+          <li><strong>Are graphical tabs allowed to move at all in v1</strong>, or deferred until a "request full frame on attach" backend hook exists?</li>
+          <li><strong>Transfer-queue ownership</strong> when an SFTP/FTP tab with in-flight transfers moves windows.</li>
+          <li><strong>Should the Open Connections panel and workspace save/restore become window-aware</strong>, or stay window-agnostic in v1?</li>
+        </ul>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>Based on the architecture at concept-creation time. Directional, not a build plan.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Area</th><th>Change</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src-tauri/src/lib.rs</code> / new <code>window</code> module</td>
+                <td><strong>New</strong> — <code>WebviewWindowBuilder</code> to create labelled windows (<code>win-N</code>); a backend <em>session→window ownership map</em> + claim/release commands; window-aware close/quit policy in the <code>RunEvent</code> handler.</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/session/manager.rs</code></td>
+                <td>Add an on-demand <em>scrollback replay for a specific window</em> path (reuse the existing persistent/agent replay) and, later, optional <code>emit_to(window_label, …)</code> targeting instead of global broadcast for hot streams.</td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/session/graphical_manager.rs</code></td>
+                <td>Add a "request full frame on (re)attach" hook so a moved RDP/VNC tab repaints immediately rather than waiting for the next full frame.</td>
+              </tr>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>Extend the existing <code>moveTab</code>/<code>moveTabToGroup</code> seam with <code>moveTabToWindow</code>; serialize a <code>TerminalTab</code> hand-off record; hydrate a tab into a fresh store on window boot; dispose on release.</td>
+              </tr>
+              <tr>
+                <td><code>src/services/events.ts</code></td>
+                <td><code>SessionEventDispatcher</code> already filters by <code>session_id</code> — extend so a window only subscribes for sessions it owns (feeds the efficiency/<code>emit_to</code> path).</td>
+              </tr>
+              <tr>
+                <td><code>src/types/workspace.ts</code>, workspace + last-session backend</td>
+                <td><strong>New</strong> — an optional window-assignment dimension so multi-window layouts save/restore.</td>
+              </tr>
+              <tr>
+                <td>Tab context menu / command palette (<code>SplitView</code>, <code>TabBar</code>)</td>
+                <td><strong>New</strong> — "Move to New Window" / "Move to Window ▸ N" commands (the primary mechanism; drag is a later enhancement).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept &lt;name&gt;</code>. Records the last commit at which the
+            concept and code were reconciled, plus open divergences. The concept is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged (by design — concept only)
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Multiple application windows</td>
+                <td>Single <code>"main"</code> window; no <code>WebviewWindowBuilder</code> in production</td>
+                <td>Missing</td>
+                <td>Implement per this concept, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Cross-window tab move (session survives)</td>
+                <td>Backend session survival + detach/re-attach replay already exist; no cross-window plumbing</td>
+                <td>Partial substrate</td>
+                <td>Reuse existing replay/adopt path; add window ownership + hand-off</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Drag a tab between windows</td>
+                <td><code>@dnd-kit</code> single-document; no cross-window drag</td>
+                <td>Constraint</td>
+                <td>Ship as command; drag gesture is an open research item</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Window layout persists across restart</td>
+                <td>No window field in <code>WorkspaceDefinition</code> / last-session</td>
+                <td>Missing</td>
+                <td>Add window-assignment dimension to persistence schema</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
