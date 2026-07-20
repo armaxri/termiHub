@@ -14,6 +14,7 @@ import type {
   RemoteDesktopCursorPayload,
   RemoteDesktopClipboardPayload,
   RemoteDesktopStatePayload,
+  RemoteDesktopCertPromptPayload,
 } from "@/types/remoteDesktop";
 
 interface TerminalOutputPayload {
@@ -81,6 +82,19 @@ export async function onRemoteDesktopState(
   callback: (payload: RemoteDesktopStatePayload) => void
 ): Promise<UnlistenFn> {
   return await listen<RemoteDesktopStatePayload>("remote-desktop-state", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to interactive server-certificate trust prompts (#1767). Fires when
+ * an RDP host presents an untrusted (unknown or changed) certificate; the caller
+ * filters by `payload.session_id` and shows the accept/reject dialog.
+ */
+export async function onRemoteDesktopCertPrompt(
+  callback: (payload: RemoteDesktopCertPromptPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteDesktopCertPromptPayload>("remote-desktop-cert-prompt", (event) => {
     callback(event.payload);
   });
 }

@@ -414,9 +414,21 @@ pub fn run() {
 
             // Graphical (remote-desktop) session manager. Uses its own copy of
             // the same registry so it can create graphical connections by
-            // type_id, independently of the terminal SessionManager.
+            // type_id, independently of the terminal SessionManager. Its RDP
+            // certificate trust store (#1767) is persisted in the config dir
+            // (portable-aware); a failure to resolve it degrades to in-memory.
+            let rdp_trust_store = std::sync::Arc::new(
+                match crate::utils::config_paths::resolve_config_dir(Some(app.handle())) {
+                    Ok(dir) => crate::session::rdp_trust_store::RdpTrustStore::open(dir),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "could not resolve config dir for RDP trust store; using in-memory");
+                        crate::session::rdp_trust_store::RdpTrustStore::in_memory()
+                    }
+                },
+            );
             let graphical_manager = crate::session::graphical_manager::GraphicalSessionManager::new(
                 std::sync::Arc::new(build_desktop_registry()),
+                rdp_trust_store,
             );
             app.manage(graphical_manager);
 
@@ -656,6 +668,7 @@ pub fn run() {
             commands::remote_desktop::remote_desktop_send_input,
             commands::remote_desktop::remote_desktop_send_clipboard,
             commands::remote_desktop::remote_desktop_get_clipboard,
+            commands::remote_desktop::remote_desktop_cert_decision,
             commands::remote_desktop::remote_desktop_disconnect,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,

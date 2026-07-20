@@ -71,6 +71,17 @@ pub enum HostMessage {
     /// Push local clipboard text to the remote over the sidecar's CLIPRDR
     /// channel (#1756).
     SetClipboard(String),
+    /// The host's verdict on a [`SidecarMessage::CertPrompt`] (#1767): whether to
+    /// proceed with the untrusted server certificate. `remember` is consumed on
+    /// the host side (it owns the persisted trust store); the sidecar only acts
+    /// on `accept` — proceeding with the connection or aborting it.
+    CertDecision {
+        /// Proceed with the connection when `true`; abort it when `false`.
+        accept: bool,
+        /// Whether the host persisted the fingerprint for this host. Informational
+        /// to the sidecar, which does not persist anything itself.
+        remember: bool,
+    },
     /// Ask the sidecar to tear the session down and exit.
     Disconnect,
 }
@@ -87,6 +98,20 @@ pub enum SidecarMessage {
     Cursor(CursorUpdate),
     /// Remote clipboard text, decoded from the sidecar's CLIPRDR channel (#1756).
     Clipboard(String),
+    /// The server presented an untrusted certificate and the sidecar needs an
+    /// interactive trust decision (#1767). The sidecar blocks the connect until
+    /// the host replies with [`HostMessage::CertDecision`] (or a timeout aborts
+    /// it). `subject`/`issuer` are best-effort context for the prompt; the
+    /// `fingerprint` (SHA-256 of the server public key) is the identity the host
+    /// keys its trust store on.
+    CertPrompt {
+        /// SHA-256 fingerprint of the server public key (`sha256:AB:CD:…`).
+        fingerprint: String,
+        /// Certificate subject, when available.
+        subject: Option<String>,
+        /// Certificate issuer, when available.
+        issuer: Option<String>,
+    },
     /// A fatal error; the sidecar exits after sending it.
     Error(String),
 }
@@ -279,6 +304,31 @@ mod tests {
         // Pipe drained → EOF.
         let eof = read_message::<_, SidecarMessage>(&mut r).await;
         assert_eq!(eof.unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn cert_prompt_and_decision_round_trip() {
+        // The interactive cert-trust handshake (#1767) must survive the framed
+        // codec in both directions.
+        let prompt = SidecarMessage::CertPrompt {
+            fingerprint: "sha256:AB:CD:EF".to_string(),
+            subject: Some("CN=host.example".to_string()),
+            issuer: None,
+        };
+        assert_eq!(round_trip_sidecar(prompt.clone()).await, prompt);
+
+        for decision in [
+            HostMessage::CertDecision {
+                accept: true,
+                remember: true,
+            },
+            HostMessage::CertDecision {
+                accept: false,
+                remember: false,
+            },
+        ] {
+            assert_eq!(round_trip_host(decision.clone()).await, decision);
+        }
     }
 
     #[tokio::test]

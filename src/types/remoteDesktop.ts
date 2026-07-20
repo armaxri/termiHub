@@ -98,6 +98,22 @@ export interface RemoteDesktopStatePayload {
   message?: string;
 }
 
+/**
+ * `remote-desktop-cert-prompt` event payload (#1767): the server presented an
+ * untrusted certificate and needs an interactive trust decision. `changed`
+ * distinguishes first contact (`false`) from a *changed* fingerprint for a
+ * previously-trusted host (`true`) — the possible-MITM case the dialog warns
+ * about prominently.
+ */
+export interface RemoteDesktopCertPromptPayload {
+  session_id: string;
+  host: string;
+  fingerprint: string;
+  subject?: string;
+  issuer?: string;
+  changed: boolean;
+}
+
 /** Whether a state means the session is painting (or about to). */
 export function isLiveState(state: GraphicalSessionState): boolean {
   return state === "active" || state === "resizing";

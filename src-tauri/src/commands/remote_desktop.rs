@@ -67,6 +67,19 @@ pub async fn remote_desktop_get_clipboard(
     manager.get_clipboard(&session_id).await
 }
 
+/// Deliver the user's verdict for an interactive certificate-trust prompt
+/// (#1767): `accept` proceeds with the untrusted server certificate, `remember`
+/// persists its fingerprint so the host is trusted on future connects.
+#[tauri::command]
+pub async fn remote_desktop_cert_decision(
+    session_id: String,
+    accept: bool,
+    remember: bool,
+    manager: State<'_, GraphicalSessionManager>,
+) -> Result<(), TerminalError> {
+    manager.cert_decision(&session_id, accept, remember).await
+}
+
 /// Disconnect a graphical session and release its resources.
 #[tauri::command]
 pub async fn remote_desktop_disconnect(

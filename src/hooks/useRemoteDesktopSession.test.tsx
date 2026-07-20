@@ -16,12 +16,17 @@ import {
   remoteDesktopResize,
   remoteDesktopSendInput,
   remoteDesktopSendClipboard,
+  remoteDesktopCertDecision,
 } from "@/services/api";
-import type { RemoteDesktopStatePayload } from "@/types/remoteDesktop";
+import type {
+  RemoteDesktopStatePayload,
+  RemoteDesktopCertPromptPayload,
+} from "@/types/remoteDesktop";
 
 const hoisted = vi.hoisted(() => ({
   stateCbs: [] as Array<(p: unknown) => void>,
   clipCbs: [] as Array<(p: unknown) => void>,
+  certCbs: [] as Array<(p: unknown) => void>,
 }));
 
 vi.mock("@/services/api", () => ({
@@ -31,6 +36,7 @@ vi.mock("@/services/api", () => ({
   remoteDesktopSendInput: vi.fn(() => Promise.resolve()),
   remoteDesktopSendClipboard: vi.fn(() => Promise.resolve()),
   remoteDesktopGetClipboard: vi.fn(() => Promise.resolve(null)),
+  remoteDesktopCertDecision: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/services/events", () => ({
@@ -42,6 +48,10 @@ vi.mock("@/services/events", () => ({
     hoisted.clipCbs.push(cb);
     return Promise.resolve(() => {});
   },
+  onRemoteDesktopCertPrompt: (cb: (p: unknown) => void) => {
+    hoisted.certCbs.push(cb);
+    return Promise.resolve(() => {});
+  },
 }));
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
@@ -51,6 +61,7 @@ const mockedDisconnect = vi.mocked(remoteDesktopDisconnect);
 const mockedResize = vi.mocked(remoteDesktopResize);
 const mockedSendInput = vi.mocked(remoteDesktopSendInput);
 const mockedSendClipboard = vi.mocked(remoteDesktopSendClipboard);
+const mockedCertDecision = vi.mocked(remoteDesktopCertDecision);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -63,6 +74,7 @@ beforeEach(() => {
   mockedConnect.mockResolvedValue("rd-1");
   hoisted.stateCbs.length = 0;
   hoisted.clipCbs.length = 0;
+  hoisted.certCbs.length = 0;
   useAppStore.setState(useAppStore.getInitialState());
 });
 
@@ -189,6 +201,44 @@ describe("useRemoteDesktopSession", () => {
 
     act(() => hoisted.clipCbs.forEach((cb) => cb({ session_id: "rd-1", text: "from-remote" })));
     expect(h.get().remoteClipboard).toBe("from-remote");
+  });
+
+  it("surfaces a cert prompt and routes the accept-for-host verdict (#1767)", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    const prompt: RemoteDesktopCertPromptPayload = {
+      session_id: "rd-1",
+      host: "mock.local:3389",
+      fingerprint: "sha256:AA:BB:CC",
+      changed: false,
+    };
+    act(() => hoisted.certCbs.forEach((cb) => cb(prompt)));
+    expect(h.get().certPrompt).toEqual(prompt);
+
+    act(() => h.get().respondCert(true, true));
+    // Dialog clears optimistically and the verdict is routed to the backend.
+    expect(h.get().certPrompt).toBeNull();
+    expect(mockedCertDecision).toHaveBeenCalledWith("rd-1", true, true);
+  });
+
+  it("ignores a cert prompt for a different session", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    act(() =>
+      hoisted.certCbs.forEach((cb) =>
+        cb({
+          session_id: "other-session",
+          host: "elsewhere",
+          fingerprint: "sha256:ZZ",
+          changed: true,
+        })
+      )
+    );
+    expect(h.get().certPrompt).toBeNull();
   });
 
   it("reconnects: tears down the old session and connects again", async () => {

@@ -57,8 +57,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::connection::{
-    AuthKind, Capabilities, ConnectionType, CursorReceiver, FrameReceiver, GraphicalBackend,
-    GraphicalCapabilities, InputEvent, OutputReceiver, SettingsSchema,
+    AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ConnectionType, CursorReceiver,
+    FrameReceiver, GraphicalBackend, GraphicalCapabilities, InputEvent, OutputReceiver,
+    SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -141,6 +142,7 @@ pub struct SidecarRdp {
     runtime: Option<Arc<SidecarRuntime>>,
     frame_rx: StdMutex<Option<FrameReceiver>>,
     cursor_rx: StdMutex<Option<CursorReceiver>>,
+    cert_prompt_rx: StdMutex<Option<CertPromptReceiver>>,
     tasks: Vec<JoinHandle<()>>,
 }
 
@@ -151,6 +153,7 @@ impl SidecarRdp {
             runtime: None,
             frame_rx: StdMutex::new(None),
             cursor_rx: StdMutex::new(None),
+            cert_prompt_rx: StdMutex::new(None),
             tasks: Vec::new(),
         }
     }
@@ -164,6 +167,7 @@ impl SidecarRdp {
         }
         self.frame_rx = StdMutex::new(None);
         self.cursor_rx = StdMutex::new(None);
+        self.cert_prompt_rx = StdMutex::new(None);
     }
 }
 
@@ -190,6 +194,7 @@ async fn run_reader<R>(
     mut reader: R,
     frame_tx: mpsc::Sender<crate::connection::FrameUpdate>,
     cursor_tx: mpsc::Sender<crate::connection::CursorUpdate>,
+    cert_prompt_tx: mpsc::Sender<CertPrompt>,
     shared: Arc<SidecarShared>,
     cancel: CancellationToken,
 ) where
@@ -212,6 +217,26 @@ async fn run_reader<R>(
                     }
                     Ok(SidecarMessage::Clipboard(text)) => {
                         *shared.clipboard.lock().await = text;
+                    }
+                    Ok(SidecarMessage::CertPrompt {
+                        fingerprint,
+                        subject,
+                        issuer,
+                    }) => {
+                        // Forward the untrusted-cert prompt up to the manager,
+                        // which owns the trust store + user dialog (#1767). If the
+                        // receiver is gone the session is tearing down anyway.
+                        if cert_prompt_tx
+                            .send(CertPrompt {
+                                fingerprint,
+                                subject,
+                                issuer,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                     Ok(SidecarMessage::State(state)) => {
                         debug!(?state, "rdp sidecar state");
@@ -378,12 +403,14 @@ impl ConnectionType for SidecarRdp {
         let cancel = CancellationToken::new();
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_prompt_tx, cert_prompt_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (to_sidecar, sidecar_rx) = mpsc::channel(CHANNEL_DEPTH);
 
         let reader_task = tokio::spawn(run_reader(
             stdout,
             frame_tx,
             cursor_tx,
+            cert_prompt_tx,
             shared.clone(),
             cancel.clone(),
         ));
@@ -392,6 +419,7 @@ impl ConnectionType for SidecarRdp {
 
         self.frame_rx = StdMutex::new(Some(frame_rx));
         self.cursor_rx = StdMutex::new(Some(cursor_rx));
+        self.cert_prompt_rx = StdMutex::new(Some(cert_prompt_rx));
         self.tasks = vec![reader_task, writer_task, supervisor_task];
         self.runtime = Some(Arc::new(SidecarRuntime {
             to_sidecar,
@@ -535,6 +563,23 @@ impl GraphicalBackend for SidecarRdp {
         let _ = rt.to_sidecar.send(HostMessage::SetClipboard(text)).await;
         Ok(())
     }
+
+    fn subscribe_cert_prompts(&self) -> Option<CertPromptReceiver> {
+        self.cert_prompt_rx.lock().ok().and_then(|mut g| g.take())
+    }
+
+    async fn send_cert_decision(&self, accept: bool, remember: bool) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("rdp not connected".to_string()));
+        };
+        // Route the verdict down to the sidecar, which is blocking its connect on
+        // it (#1767). `remember` is informational here — the host already
+        // persisted (or not) before calling.
+        rt.to_sidecar
+            .send(HostMessage::CertDecision { accept, remember })
+            .await
+            .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -641,11 +686,13 @@ mod tests {
         let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
         let (frame_tx, mut frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, _cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(
             host_read,
             frame_tx,
             cursor_tx,
+            cert_tx,
             test_shared(),
             cancel.clone(),
         ));
@@ -680,12 +727,14 @@ mod tests {
         let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
         let (frame_tx, _frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, mut cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
         let shared = test_shared();
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(
             host_read,
             frame_tx,
             cursor_tx,
+            cert_tx,
             shared.clone(),
             cancel.clone(),
         ));
@@ -775,16 +824,60 @@ mod tests {
         let _ = writer.await;
     }
 
+    /// An untrusted-cert prompt written by the sidecar must surface on the
+    /// cert-prompt receiver the manager subscribes to (#1767) — the loopback
+    /// that proves the prompt reaches the trust-decision layer without a live RDP
+    /// server or an untrusted certificate.
     #[tokio::test]
-    async fn reader_stops_on_fatal_error_message() {
+    async fn reader_forwards_cert_prompt() {
         let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
         let (frame_tx, _frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, _cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, mut cert_rx) = mpsc::channel(CHANNEL_DEPTH);
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(
             host_read,
             frame_tx,
             cursor_tx,
+            cert_tx,
+            test_shared(),
+            cancel.clone(),
+        ));
+
+        write_message(
+            &mut sidecar_stdout,
+            &SidecarMessage::CertPrompt {
+                fingerprint: "sha256:AB:CD".to_string(),
+                subject: Some("CN=host".to_string()),
+                issuer: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let prompt = cert_rx
+            .recv()
+            .await
+            .expect("cert prompt must reach the manager");
+        assert_eq!(prompt.fingerprint, "sha256:AB:CD");
+        assert_eq!(prompt.subject.as_deref(), Some("CN=host"));
+
+        cancel.cancel();
+        let _ = reader.await;
+    }
+
+    #[tokio::test]
+    async fn reader_stops_on_fatal_error_message() {
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _frame_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
             test_shared(),
             cancel.clone(),
         ));
