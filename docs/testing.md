@@ -1026,8 +1026,31 @@ but audible playback needs a real server and a host audio device, and is
 6. On a host with no audio device (or headless), confirm the session still
    connects and runs normally, just without sound.
 
-CLIPRDR file transfer (#1765) is a follow-up and is expected to be inert in this
-slice.
+#### Clipboard file transfer (CLIPRDR, #1765 receive / #1778 serve)
+
+Clipboard file transfer is off by default and opt-in per connection ("Receive
+Clipboard Files"), and reuses the drive-redirection shared folder (#1757) — no
+new local access. The pure logic (sandboxing, size/range serving, name
+dedup/skip rules) is covered by unit tests in the `rdp-sidecar` `clipboard`
+module, but the live PDU exchange needs a real server:
+
+1. Build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above); in the RDP
+   connection editor enable **Redirect a Local Drive** (with a **Shared Folder**)
+   and **Receive Clipboard Files**, then connect to a Windows RDP host.
+2. **Receive (#1765):** copy one or more files in the remote session (Explorer →
+   Ctrl+C). **Expected:** the files appear in the local shared folder. Oversized
+   files are skipped; colliding names are deduplicated (`file (1).txt`).
+3. **Serve (#1778):** place a file in the local shared folder, then in the remote
+   session paste into a folder (Ctrl+V). **Expected:** the file's contents arrive
+   on the remote intact. Only files directly in the shared folder are offered
+   (subfolders are not yet recursed).
+4. **Security:** confirm nothing outside the shared folder is ever served — the
+   remote can only paste files that are in that one folder.
+5. **View-only:** reconnect with **View Only** enabled and a file in the shared
+   folder. **Expected:** the remote sees no local files to paste (nothing is
+   advertised or served).
+6. Leave **Receive Clipboard Files** off and reconnect. **Expected:** no file
+   formats are advertised in either direction; text clipboard still works.
 
 ### Deferred agent update (apply on last disconnect) (#1352)
 
