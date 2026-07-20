@@ -72,6 +72,16 @@ termihub-core = { path = "../core", default-features = false, features = [
 ] }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "net", "sync", "time"] }
+
+# Cross-platform filesystem watcher (inotify on Linux, FSEvents on macOS,
+# ReadDirectoryChangesW on Windows) so files added to / removed from / renamed in
+# the shared folder after connect are re-advertised over CLIPRDR without a
+# reconnect (#1788). `default-features = false` drops the optional
+# crossbeam-channel event bus we do not use — the watcher forwards events into a
+# tokio channel from its callback — while `macos_fsevent` keeps the native macOS
+# backend. notify already target-gates its own platform deps (inotify/fsevent-sys/
+# windows-sys), so no per-platform gating is needed here.
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
