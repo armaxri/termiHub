@@ -106,6 +106,54 @@ impl RdpTrustStore {
         self.persist();
     }
 
+    /// Snapshot every remembered host and its trusted fingerprints, for the
+    /// trust-management settings UI (#1784). Cloned so callers never hold the
+    /// lock; the store is tiny.
+    pub fn entries(&self) -> BTreeMap<String, Vec<String>> {
+        self.entries
+            .lock()
+            .expect("trust store mutex poisoned")
+            .clone()
+    }
+
+    /// Forget a single `fingerprint` for `host`, persisting immediately (#1784).
+    ///
+    /// When the host's last fingerprint is removed the host entry is dropped
+    /// entirely, so a subsequent connect is treated as first contact (prompt)
+    /// rather than a changed key. Returns `true` when something was removed.
+    pub fn forget_fingerprint(&self, host: &str, fingerprint: &str) -> bool {
+        let removed = {
+            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            let Some(fps) = entries.get_mut(host) else {
+                return false;
+            };
+            let before = fps.len();
+            fps.retain(|f| f != fingerprint);
+            let removed = fps.len() != before;
+            if fps.is_empty() {
+                entries.remove(host);
+            }
+            removed
+        };
+        if removed {
+            self.persist();
+        }
+        removed
+    }
+
+    /// Forget every fingerprint remembered for `host`, persisting immediately
+    /// (#1784). Returns `true` when the host had remembered entries.
+    pub fn forget_host(&self, host: &str) -> bool {
+        let removed = {
+            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            entries.remove(host).is_some()
+        };
+        if removed {
+            self.persist();
+        }
+        removed
+    }
+
     /// Write the current entries to disk (no-op for an in-memory store).
     fn persist(&self) {
         let Some(path) = &self.path else { return };
