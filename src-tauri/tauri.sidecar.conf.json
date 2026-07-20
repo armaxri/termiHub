@@ -1,6 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
-    "externalBin": ["binaries/termihub-rdp-helper"]
+    "externalBin": ["binaries/termihub-rdp-helper"],
+    "linux": {
+      "deb": {
+        "depends": ["libasound2t64 | libasound2"]
+      },
+      "rpm": {
+        "depends": ["alsa-lib"]
+      }
+    }
   }
 }
