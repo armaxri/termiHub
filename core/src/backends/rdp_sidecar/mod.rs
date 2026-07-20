@@ -44,7 +44,7 @@ pub mod config;
 pub mod integrity;
 pub mod protocol;
 
-pub use config::rdp_settings_schema;
+pub use config::{host_supports_clipboard_delayed_render, rdp_settings_schema};
 
 use std::collections::HashMap;
 use std::path::PathBuf;

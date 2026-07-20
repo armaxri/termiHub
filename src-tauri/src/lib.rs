@@ -10,6 +10,10 @@ pub mod files;
 /// Services-menu entry (#1409). macOS-only.
 #[cfg(target_os = "macos")]
 mod macos_services;
+/// Native macOS `NSPasteboard` binding for pasting remote-copied RDP clipboard
+/// files into local apps with delayed rendering (#1804). macOS-only.
+#[cfg(target_os = "macos")]
+mod macos_clipboard;
 mod macros;
 mod network;
 mod session;
@@ -668,6 +672,8 @@ pub fn run() {
             commands::remote_desktop::remote_desktop_send_input,
             commands::remote_desktop::remote_desktop_send_clipboard,
             commands::remote_desktop::remote_desktop_get_clipboard,
+            commands::remote_desktop::remote_desktop_remote_clipboard_files,
+            commands::remote_desktop::remote_desktop_bind_clipboard_files,
             commands::remote_desktop::remote_desktop_cert_decision,
             commands::remote_desktop::remote_desktop_disconnect,
             commands::remote_desktop::rdp_trust_list,

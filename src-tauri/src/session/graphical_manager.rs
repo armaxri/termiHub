@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
     CertPrompt, CertPromptReceiver, ConnectionType, ConnectionTypeRegistry, CursorUpdate,
-    FrameUpdate, GraphicalState, InputEvent, SessionStateMachine,
+    FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine,
 };
 
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
@@ -448,6 +448,47 @@ impl GraphicalSessionManager {
         Ok(backend.get_clipboard().await)
     }
 
+    /// The files the remote most recently copied to its clipboard, surfaced for a
+    /// local paste with delayed rendering (#1793/#1804).
+    ///
+    /// Empty unless the backend supports remote→host file transfer, the host
+    /// advertised delayed rendering (a platform capability, see
+    /// [`host_supports_clipboard_delayed_render`](termihub_core::backends::rdp_sidecar::host_supports_clipboard_delayed_render)),
+    /// and the remote actually copied files. The bytes are **not** fetched here —
+    /// that is deferred to [`Self::fetch_remote_clipboard_file`], invoked on the
+    /// real paste gesture.
+    pub async fn remote_clipboard_files(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<RemoteClipboardFile>, TerminalError> {
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        Ok(backend.remote_clipboard_files().await)
+    }
+
+    /// Fetch one surfaced remote-clipboard file's bytes on demand (delayed
+    /// rendering, #1793/#1804), staging them into a sanitized, bounded temp file
+    /// and returning its path. `index` must be one a prior
+    /// [`Self::remote_clipboard_files`] surfaced.
+    pub async fn fetch_remote_clipboard_file(
+        &self,
+        session_id: &str,
+        index: u32,
+    ) -> Result<std::path::PathBuf, TerminalError> {
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        backend
+            .fetch_remote_clipboard_file(index)
+            .await
+            .map_err(|e| TerminalError::InternalError(e.to_string()))
+    }
+
     /// Disconnect and clean up a graphical session.
     pub async fn disconnect(
         &self,
@@ -737,6 +778,38 @@ mod tests {
             mgr.get_clipboard(&sid).await.expect("get"),
             Some("hello".to_string())
         );
+
+        mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    #[tokio::test]
+    async fn remote_clipboard_files_default_empty_and_fetch_errors() {
+        // The mock backend keeps the seam's default impls: no remote clipboard
+        // files, and a fetch is unsupported. This exercises the manager
+        // pass-throughs (#1804) end to end without a real RDP sidecar.
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect("mock-remote-desktop", serde_json::json!({}), sink.clone())
+            .await
+            .expect("connect");
+
+        assert!(mgr
+            .remote_clipboard_files(&sid)
+            .await
+            .expect("list")
+            .is_empty());
+        let err = mgr
+            .fetch_remote_clipboard_file(&sid, 0)
+            .await
+            .expect_err("fetch unsupported on the mock backend");
+        assert!(matches!(err, TerminalError::InternalError(_)));
+
+        // Unknown sessions are reported, not silently empty.
+        assert!(matches!(
+            mgr.remote_clipboard_files("nope").await,
+            Err(TerminalError::SessionNotFound(_))
+        ));
 
         mgr.disconnect(&sid, sink).await.expect("disconnect");
     }
