@@ -565,12 +565,25 @@ where
         .await
         .context("failed to write state")?;
 
+    // Watch the shared folder so files added/removed/renamed after connect are
+    // re-advertised over CLIPRDR without a reconnect (#1788). Only meaningful when
+    // we actually serve local files: file transfer opted in and not view-only.
+    // Failure to start the watcher is non-fatal — the session keeps its
+    // connect-time offer.
+    let readvertise = if cfg.view_only {
+        None
+    } else {
+        cfg.clipboard_download_dir()
+            .and_then(crate::folder_watch::watch_shared_folder)
+    };
+
     drive(
         result,
         framed,
         connector_config,
         clipboard_rx,
         cfg.view_only,
+        readvertise,
         ipc_in,
         ipc_out,
     )
@@ -585,13 +598,19 @@ where
 }
 
 /// The driver loop: owns the transport, decoded image and active stage;
-/// `select!`s between decoding server PDUs and applying host input events.
+/// `select!`s between decoding server PDUs, applying host input events, and
+/// re-advertising the local file list on a shared-folder change (#1788).
+// Each argument is a distinct capability the loop owns (transport halves, config,
+// the CLIPRDR event channel, the folder-watch ticks, the IPC endpoints); bundling
+// them into a struct would only rename them without reducing coupling.
+#[allow(clippy::too_many_arguments)]
 async fn drive<R, W>(
     result: ConnectionResult,
     framed: RdpFramed,
     connector_config: ConnectorConfig,
     clipboard_rx: std::sync::mpsc::Receiver<ClipboardEvent>,
     view_only: bool,
+    mut readvertise: Option<crate::folder_watch::FolderWatch>,
     ipc_in: &mut R,
     ipc_out: &mut W,
 ) where
@@ -794,6 +813,47 @@ async fn drive<R, W>(
                             }
                         }
                     }
+                }
+            }
+            // The shared folder changed while connected: re-enumerate and
+            // re-advertise the local file list so the remote sees the current
+            // contents without reconnecting (#1788). The tick is already debounced
+            // and rate-bounded by the watcher. When no watcher is running (text- or
+            // view-only session), this arm never fires.
+            tick = async {
+                match readvertise.as_mut() {
+                    Some(w) => w.ticks.recv().await,
+                    None => std::future::pending::<Option<()>>().await,
+                }
+            } => {
+                match tick {
+                    Some(()) => {
+                        // Drive the re-advertise through the backend so its
+                        // offered-file index map is refreshed in lockstep with what
+                        // it emits (a stale map would misserve a later paste).
+                        if let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() {
+                            if let Some(backend) =
+                                cliprdr.downcast_backend_mut::<SidecarClipboardBackend>()
+                            {
+                                backend.readvertise_local_files();
+                            }
+                        }
+                        if drain_clipboard_events(
+                            &clipboard_rx,
+                            &mut stage,
+                            &mut writer,
+                            ipc_out,
+                            local_clipboard.as_deref(),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    // The watcher task ended (folder gone / watcher dropped); stop
+                    // polling it but keep the session alive.
+                    None => readvertise = None,
                 }
             }
         }

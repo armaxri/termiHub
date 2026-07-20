@@ -17,6 +17,7 @@ mod audio;
 mod cert;
 mod clipboard;
 mod drive;
+mod folder_watch;
 mod host_clipboard;
 mod input;
 mod keymap;

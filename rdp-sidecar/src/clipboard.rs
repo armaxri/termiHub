@@ -421,6 +421,27 @@ impl SidecarClipboardBackend {
         Some(descriptors)
     }
 
+    /// Re-advertise the local file offer after the shared folder's contents
+    /// changed while the session is connected (#1788). Reuses the exact
+    /// [`Self::build_local_file_offer`] pipeline as [`Self::on_request_format_list`],
+    /// so the refreshed [`Self::offered_files`] index map stays consistent with
+    /// what a later `FileContentsRequest` serves, and the re-enumeration stays
+    /// inside the sandbox root via [`collect_offerable_files`] exactly as the
+    /// initial offer does. The same opt-in + view-only gate applies: a view-only
+    /// or text-only session never offered local files, so a folder change emits
+    /// nothing here. When the folder — and the host clipboard — went empty, a text
+    /// advertisement replaces the stale file list (a `FormatList` wholly replaces
+    /// the previous one) so the remote stops offering files that are gone.
+    pub fn readvertise_local_files(&mut self) {
+        if !self.serves_local_files() {
+            return;
+        }
+        match self.build_local_file_offer() {
+            Some(files) => self.emit(ClipboardEvent::AdvertiseFiles(files)),
+            None => self.emit(ClipboardEvent::AdvertiseLocal),
+        }
+    }
+
     fn emit(&self, event: ClipboardEvent) {
         if self.tx.send(event).is_err() {
             debug!("clipboard event receiver dropped; sidecar shutting down");
@@ -1818,6 +1839,88 @@ mod tests {
         backend.on_request_format_list();
         // View-only must never push local files; it falls back to text (empty).
         assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+    }
+
+    // --- Re-advertise on shared-folder change (#1788) ---
+
+    #[test]
+    fn readvertise_offers_a_file_added_after_connect() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        std::fs::write(dir.path().join("first.txt"), b"1").unwrap();
+        // Initial offer at connect.
+        backend.on_request_format_list();
+        match next_event(&rx) {
+            ClipboardEvent::AdvertiseFiles(files) => assert_eq!(files.len(), 1),
+            other => panic!("expected AdvertiseFiles, got {other:?}"),
+        }
+        // A file dropped in *after* connecting is picked up on the next
+        // re-advertise, so the remote sees it without reconnecting (#1788).
+        std::fs::write(dir.path().join("second.txt"), b"2").unwrap();
+        backend.readvertise_local_files();
+        match next_event(&rx) {
+            ClipboardEvent::AdvertiseFiles(files) => {
+                let names: Vec<_> = files.iter().map(|f| f.name.clone()).collect();
+                assert_eq!(
+                    names,
+                    vec!["first.txt".to_string(), "second.txt".to_string()]
+                );
+            }
+            other => panic!("expected AdvertiseFiles, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn readvertise_falls_back_to_text_when_the_share_empties() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        std::fs::write(dir.path().join("gone.txt"), b"x").unwrap();
+        backend.on_request_format_list();
+        let _ = next_event(&rx); // consume the initial AdvertiseFiles
+        std::fs::remove_file(dir.path().join("gone.txt")).unwrap();
+        backend.readvertise_local_files();
+        // The stale file list is replaced by a (text) advertisement so the remote
+        // no longer offers the removed file.
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+    }
+
+    #[test]
+    fn view_only_never_readvertises_local_files() {
+        let (mut backend, rx, dir) = backend_serving(true);
+        std::fs::write(dir.path().join("secret.txt"), b"nope").unwrap();
+        backend.readvertise_local_files();
+        // View-only offered nothing to begin with, so a change emits nothing at
+        // all — not even a text advertisement.
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn text_only_bridge_never_readvertises() {
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
+        backend.readvertise_local_files();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn readvertise_skips_a_symlink_escaping_the_sandbox() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), b"s").unwrap();
+        // A symlink inside the share pointing outside the sandbox must never be
+        // offered on re-enumeration.
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("link.txt"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("real.txt"), b"r").unwrap();
+        backend.readvertise_local_files();
+        match next_event(&rx) {
+            ClipboardEvent::AdvertiseFiles(files) => {
+                let names: Vec<_> = files.iter().map(|f| f.name.clone()).collect();
+                assert_eq!(names, vec!["real.txt".to_string()]);
+            }
+            other => panic!("expected AdvertiseFiles, got {other:?}"),
+        }
     }
 
     #[test]
