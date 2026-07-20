@@ -16,9 +16,12 @@ import {
   remoteDesktopResize,
   remoteDesktopSendInput,
   remoteDesktopSendClipboard,
+  remoteDesktopRemoteClipboardFiles,
+  remoteDesktopBindClipboardFiles,
   remoteDesktopCertDecision,
 } from "@/services/api";
 import type {
+  RemoteClipboardFile,
   RemoteDesktopStatePayload,
   RemoteDesktopCertPromptPayload,
 } from "@/types/remoteDesktop";
@@ -36,6 +39,8 @@ vi.mock("@/services/api", () => ({
   remoteDesktopSendInput: vi.fn(() => Promise.resolve()),
   remoteDesktopSendClipboard: vi.fn(() => Promise.resolve()),
   remoteDesktopGetClipboard: vi.fn(() => Promise.resolve(null)),
+  remoteDesktopRemoteClipboardFiles: vi.fn(() => Promise.resolve([])),
+  remoteDesktopBindClipboardFiles: vi.fn(() => Promise.resolve(0)),
   remoteDesktopCertDecision: vi.fn(() => Promise.resolve()),
 }));
 
@@ -61,6 +66,8 @@ const mockedDisconnect = vi.mocked(remoteDesktopDisconnect);
 const mockedResize = vi.mocked(remoteDesktopResize);
 const mockedSendInput = vi.mocked(remoteDesktopSendInput);
 const mockedSendClipboard = vi.mocked(remoteDesktopSendClipboard);
+const mockedRemoteClipboardFiles = vi.mocked(remoteDesktopRemoteClipboardFiles);
+const mockedBindClipboardFiles = vi.mocked(remoteDesktopBindClipboardFiles);
 const mockedCertDecision = vi.mocked(remoteDesktopCertDecision);
 
 let container: HTMLDivElement;
@@ -201,6 +208,40 @@ describe("useRemoteDesktopSession", () => {
 
     act(() => hoisted.clipCbs.forEach((cb) => cb({ session_id: "rd-1", text: "from-remote" })));
     expect(h.get().remoteClipboard).toBe("from-remote");
+  });
+
+  it("lists surfaced remote clipboard files and binds them to the host on paste (#1804)", async () => {
+    const files: RemoteClipboardFile[] = [
+      { name: "a.txt", relativePath: null, size: 3, isDir: false, index: 0 },
+      { name: "docs", relativePath: null, size: null, isDir: true, index: 1 },
+    ];
+    mockedRemoteClipboardFiles.mockResolvedValue(files);
+    mockedBindClipboardFiles.mockResolvedValue(1);
+
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    await act(async () => {
+      expect(await h.get().remoteClipboardFiles()).toEqual(files);
+    });
+    expect(mockedRemoteClipboardFiles).toHaveBeenCalledWith("rd-1");
+
+    await act(async () => {
+      expect(await h.get().bindClipboardFiles()).toBe(1);
+    });
+    expect(mockedBindClipboardFiles).toHaveBeenCalledWith("rd-1");
+  });
+
+  it("swallows a remote-clipboard-file listing error and returns none (#1804)", async () => {
+    mockedRemoteClipboardFiles.mockRejectedValue(new Error("not connected"));
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    await act(async () => {
+      expect(await h.get().remoteClipboardFiles()).toEqual([]);
+    });
   });
 
   it("surfaces a cert prompt and routes the accept-for-host verdict (#1767)", async () => {

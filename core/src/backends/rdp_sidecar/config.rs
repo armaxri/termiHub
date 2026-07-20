@@ -156,6 +156,22 @@ impl Default for RdpConfig {
     }
 }
 
+/// Whether this host build can bind remote-copied clipboard files onto the OS
+/// clipboard for a delayed-render local paste (#1804).
+///
+/// Only **macOS** currently has the native `NSPasteboard` promised-data binding
+/// (`src-tauri/src/macos_clipboard.rs`), so it is the only platform where the
+/// sidecar should surface the file list for delayed rendering; every other
+/// platform keeps the eager shared-folder download (#1765) as the fallback. The
+/// host process stamps [`RdpConfig::clipboard_delayed_render`] from this at
+/// connect time — it reflects a platform capability, not a user preference, so
+/// it is deliberately absent from [`rdp_settings_schema`]. Windows
+/// (`CF_HDROP`/`WM_RENDERFORMAT`) and Linux (X11/Wayland `text/uri-list`)
+/// bindings are tracked as follow-ups; wiring one here is a single-line change.
+pub const fn host_supports_clipboard_delayed_render() -> bool {
+    cfg!(target_os = "macos")
+}
+
 impl RdpConfig {
     /// The effective TCP port to reach the RDP server on.
     pub fn effective_port(&self) -> u16 {
@@ -651,6 +667,16 @@ mod tests {
         assert!(!no_transfer.clipboard_delayed_render_enabled());
         // Default is off.
         assert!(!RdpConfig::default().clipboard_delayed_render_enabled());
+    }
+
+    #[test]
+    fn host_capability_flag_matches_the_build_platform() {
+        // Delayed rendering is bound to the OS clipboard only on macOS today
+        // (#1804); every other platform keeps the eager shared-folder download.
+        assert_eq!(
+            host_supports_clipboard_delayed_render(),
+            cfg!(target_os = "macos")
+        );
     }
 
     #[test]

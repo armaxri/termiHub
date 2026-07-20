@@ -6,6 +6,10 @@ mod embedded_servers;
 /// subsystem (public so integration tests can drive `SftpSession` /
 /// `TransferRegistry` directly — issue #1245).
 pub mod files;
+/// Native macOS `NSPasteboard` binding for pasting remote-copied RDP clipboard
+/// files into local apps with delayed rendering (#1804). macOS-only.
+#[cfg(target_os = "macos")]
+mod macos_clipboard;
 /// Native macOS Services provider wiring the app-level "Open in termiHub"
 /// Services-menu entry (#1409). macOS-only.
 #[cfg(target_os = "macos")]
@@ -668,6 +672,8 @@ pub fn run() {
             commands::remote_desktop::remote_desktop_send_input,
             commands::remote_desktop::remote_desktop_send_clipboard,
             commands::remote_desktop::remote_desktop_get_clipboard,
+            commands::remote_desktop::remote_desktop_remote_clipboard_files,
+            commands::remote_desktop::remote_desktop_bind_clipboard_files,
             commands::remote_desktop::remote_desktop_cert_decision,
             commands::remote_desktop::remote_desktop_disconnect,
             commands::remote_desktop::rdp_trust_list,

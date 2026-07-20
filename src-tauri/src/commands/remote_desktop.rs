@@ -9,7 +9,7 @@
 use serde_json::Value;
 use tauri::State;
 
-use termihub_core::connection::InputEvent;
+use termihub_core::connection::{InputEvent, RemoteClipboardFile};
 
 use crate::session::graphical_manager::GraphicalSessionManager;
 use crate::utils::errors::TerminalError;
@@ -65,6 +65,75 @@ pub async fn remote_desktop_get_clipboard(
     manager: State<'_, GraphicalSessionManager>,
 ) -> Result<Option<String>, TerminalError> {
     manager.get_clipboard(&session_id).await
+}
+
+/// List the files the remote most recently copied to its clipboard, surfaced for
+/// a local paste with delayed rendering (#1804).
+///
+/// Empty on any platform without an OS-clipboard delayed-render binding (the
+/// sidecar keeps eagerly downloading into the shared folder there), or when the
+/// remote copied text/an image/nothing. The bytes are fetched later, only when
+/// the user actually pastes — see [`remote_desktop_bind_clipboard_files`].
+#[tauri::command]
+pub async fn remote_desktop_remote_clipboard_files(
+    session_id: String,
+    manager: State<'_, GraphicalSessionManager>,
+) -> Result<Vec<RemoteClipboardFile>, TerminalError> {
+    manager.remote_clipboard_files(&session_id).await
+}
+
+/// Bind the remote-copied clipboard files onto the host OS clipboard so they can
+/// be pasted into any local app (#1804). Returns the number of files bound.
+///
+/// The bytes are **not** fetched here: this installs a delayed-render promise on
+/// the OS clipboard, and each file's bytes are streamed from the remote via
+/// [`GraphicalSessionManager::fetch_remote_clipboard_file`] only when the user
+/// actually pastes (on macOS, the `NSPasteboard` `provideDataForType:` callback).
+/// Returns `0` when the remote copied no pasteable files, and errors on a
+/// platform without a native binding.
+#[tauri::command]
+pub async fn remote_desktop_bind_clipboard_files(
+    session_id: String,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, GraphicalSessionManager>,
+) -> Result<usize, TerminalError> {
+    // Only regular files carry bytes to fetch; directories are surfaced only so a
+    // copied tree can be rebuilt and are not offered to the OS clipboard here.
+    let files: Vec<RemoteClipboardFile> = manager
+        .remote_clipboard_files(&session_id)
+        .await?
+        .into_iter()
+        .filter(|f| !f.is_dir)
+        .collect();
+    if files.is_empty() {
+        return Ok(0);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let count = files.len();
+        crate::macos_clipboard::bind_remote_clipboard_files(
+            &app_handle,
+            (*manager).clone(),
+            session_id,
+            files,
+        )
+        .map_err(|e| TerminalError::InternalError(e.to_string()))?;
+        Ok(count)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // No native OS-clipboard binding on this platform: with delayed rendering
+        // off, `remote_clipboard_files` is already empty and we returned above, so
+        // reaching here means a caller invoked the command anyway. Report rather
+        // than silently succeed. (`app_handle`/`session_id` are macOS-only inputs.)
+        let _ = (&app_handle, &session_id);
+        Err(TerminalError::InternalError(
+            "pasting remote clipboard files to the host OS clipboard is not supported on this \
+             platform yet"
+                .to_string(),
+        ))
+    }
 }
 
 /// Deliver the user's verdict for an interactive certificate-trust prompt

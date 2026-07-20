@@ -90,6 +90,25 @@ export interface RemoteDesktopClipboardPayload {
   text: string;
 }
 
+/**
+ * One file the remote copied to its clipboard, surfaced to the host for a local
+ * paste with delayed rendering (#1793/#1804). Mirrors the Rust
+ * `RemoteClipboardFile` (camelCase). The bytes are not present — they are fetched
+ * from the remote only on the actual paste gesture, keyed by {@link index}.
+ */
+export interface RemoteClipboardFile {
+  /** Sanitized basename (no path separators). */
+  name: string;
+  /** Sanitized `/`-separated directory portion within the copied collection, or null for a top-level entry. */
+  relativePath: string | null;
+  /** File size when the remote advertised it; null means "resolve on fetch". */
+  size: number | null;
+  /** Whether this entry is a directory (no bytes to fetch). */
+  isDir: boolean;
+  /** Position in the remote's advertised file list — the opaque fetch token. */
+  index: number;
+}
+
 /** `remote-desktop-state` event payload. */
 export interface RemoteDesktopStatePayload {
   session_id: string;

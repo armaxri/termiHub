@@ -44,7 +44,7 @@ pub mod config;
 pub mod integrity;
 pub mod protocol;
 
-pub use config::rdp_settings_schema;
+pub use config::{host_supports_clipboard_delayed_render, rdp_settings_schema};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -417,13 +417,20 @@ async fn supervise(mut child: tokio::process::Child, cancel: CancellationToken) 
 impl SidecarRdp {
     /// Map a settings JSON value to a validated [`RdpConfig`].
     fn parse_config(settings: serde_json::Value) -> Result<RdpConfig, SessionError> {
-        let cfg: RdpConfig = serde_json::from_value(settings)
+        let mut cfg: RdpConfig = serde_json::from_value(settings)
             .map_err(|e| SessionError::InvalidConfig(format!("Invalid RDP settings: {e}")))?;
         if cfg.host.is_empty() {
             return Err(SessionError::InvalidConfig(
                 "RDP host is required".to_string(),
             ));
         }
+        // `clipboard_delayed_render` is host-controlled, not a connection-editor
+        // field: stamp it from the host OS capability (#1804) so the sidecar only
+        // surfaces the delayed remote-clipboard file list where this build can bind
+        // it to the OS clipboard. Everywhere else it stays off and the eager
+        // shared-folder download (#1765) remains the behaviour, so nothing
+        // regresses on a platform without the binding.
+        cfg.clipboard_delayed_render = config::host_supports_clipboard_delayed_render();
         Ok(cfg)
     }
 }
@@ -842,6 +849,30 @@ mod tests {
         assert!(caps.view_only_capable);
         assert!(caps.supports_dynamic_resize);
         assert!(caps.supports_clipboard);
+    }
+
+    #[test]
+    fn parse_config_stamps_delayed_render_from_host_capability() {
+        // The flag is never taken from the settings JSON — it is host-controlled.
+        // Whatever the JSON says, parse_config overwrites it with the build's OS
+        // capability (#1804), so a platform without the binding never surfaces the
+        // delayed list.
+        let cfg = SidecarRdp::parse_config(serde_json::json!({
+            "host": "example.com",
+            "clipboardDelayedRender": true,
+        }))
+        .unwrap();
+        assert_eq!(
+            cfg.clipboard_delayed_render,
+            config::host_supports_clipboard_delayed_render()
+        );
+
+        // Absent from the JSON, it is still stamped from the host capability.
+        let cfg = SidecarRdp::parse_config(serde_json::json!({ "host": "example.com" })).unwrap();
+        assert_eq!(
+            cfg.clipboard_delayed_render,
+            config::host_supports_clipboard_delayed_render()
+        );
     }
 
     #[tokio::test]
