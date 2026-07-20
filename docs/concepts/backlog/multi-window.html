@@ -12,9 +12,310 @@
     <title>Multi-Window Support (concept)</title>
     <link rel="stylesheet" href="../_assets/mockup.css" />
     <link rel="stylesheet" href="../_assets/concept.css" />
+    <!-- Mockup-scoped helpers (structure only; real chrome comes from mockup.css). -->
+    <style>
+      /* Two application windows side by side. */
+      .window-row {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+      }
+      .window-row .app {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+      .window-row__arrow {
+        flex: 0 0 56px;
+        display: grid;
+        place-items: center;
+        color: var(--broadcast-accent);
+      }
+      .window-row__arrow .li {
+        width: 28px;
+        height: 28px;
+      }
+      .window-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--text-secondary);
+        margin: 0 0 6px;
+      }
+      .window-label .li {
+        width: 13px;
+        height: 13px;
+      }
+      /* Right-clicked tab + ghost (being moved out) states. */
+      .tab--context {
+        background: var(--bg-active);
+        color: var(--text-primary);
+        border-top-color: var(--broadcast-accent);
+      }
+      .tab--ghost {
+        opacity: 0.4;
+      }
+      .tab--incoming {
+        background: var(--tab-active-bg);
+        color: var(--text-primary);
+        border-top-color: var(--broadcast-accent);
+        box-shadow: inset 0 2px 0 0 var(--broadcast-accent);
+      }
+      /* Tab-bar insertion caret for an incoming tab. */
+      .tab-insert {
+        width: 2px;
+        align-self: stretch;
+        background: var(--broadcast-accent);
+      }
+      /* Context-menu submenu arrow / anchoring. */
+      .menu.context-menu {
+        width: 260px;
+      }
+      .menu__row .menu__arrow {
+        margin-left: auto;
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+      .menu__row .li {
+        width: 15px;
+        height: 15px;
+        color: var(--text-secondary);
+        flex: 0 0 auto;
+      }
+      .menu__row--new {
+        color: var(--text-primary);
+      }
+      .menu__row--new .li {
+        color: var(--text-accent);
+      }
+      .menu__row--disabled {
+        color: var(--text-disabled);
+      }
+      .menu__row--disabled .li {
+        color: var(--text-disabled);
+      }
+      .menu__sep {
+        height: 1px;
+        background: var(--border-secondary);
+        margin: 4px 0;
+      }
+      .menu__sub-label {
+        margin-left: auto;
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+      /* Empty-window call to action. */
+      .empty-state {
+        margin: auto;
+        max-width: 380px;
+        padding: 24px;
+        text-align: center;
+      }
+      .empty-state__icon {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 14px;
+        border-radius: var(--radius-lg);
+        display: grid;
+        place-items: center;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+      }
+      .empty-state__icon .li {
+        width: 28px;
+        height: 28px;
+        stroke-width: 1.5;
+      }
+      .empty-state__title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 4px;
+      }
+      .empty-state__sub {
+        color: var(--text-secondary);
+        margin: 0 0 18px;
+        font-size: 12px;
+      }
+      .empty-state__actions {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .empty-state__actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .empty-state__actions .li {
+        width: 14px;
+        height: 14px;
+      }
+      /* Graphical-tab move: canvas placeholder + reconnecting overlay. */
+      .canvas-surface {
+        flex: 1 1 auto;
+        position: relative;
+        display: grid;
+        place-items: center;
+        background:
+          repeating-linear-gradient(
+            45deg,
+            #0b0d12,
+            #0b0d12 12px,
+            #0e1017 12px,
+            #0e1017 24px
+          );
+        overflow: hidden;
+      }
+      .reconnect-overlay {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgba(6, 7, 10, 0.72);
+        backdrop-filter: blur(1px);
+      }
+      .reconnect-card {
+        text-align: center;
+        color: var(--text-secondary);
+      }
+      .reconnect-card .li {
+        width: 26px;
+        height: 26px;
+        color: var(--text-accent);
+      }
+      .reconnect-card__title {
+        margin: 10px 0 2px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .reconnect-card__sub {
+        font-size: 12px;
+        max-width: 280px;
+      }
+      .spin {
+        animation: spin 1.1s linear infinite;
+        transform-origin: center;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      /* Close-window decision dialog. */
+      .dialog {
+        width: 460px;
+        max-width: 100%;
+      }
+      .dialog__body {
+        padding: 14px;
+      }
+      .dialog__lead {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        margin: 0 0 12px;
+      }
+      .dialog__lead .li {
+        width: 22px;
+        height: 22px;
+        color: var(--color-warning);
+        flex: 0 0 auto;
+      }
+      .dialog__lead p {
+        margin: 0;
+        color: var(--text-secondary);
+      }
+      .session-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        margin-bottom: 6px;
+        background: var(--bg-tertiary);
+        font-size: 12px;
+      }
+      .session-row .li {
+        width: 15px;
+        height: 15px;
+        color: var(--text-secondary);
+        flex: 0 0 auto;
+      }
+      .session-row__name {
+        color: var(--text-primary);
+      }
+      .pill {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .pill .li {
+        width: 12px;
+        height: 12px;
+      }
+      .pill--detach {
+        color: var(--state-connected);
+        background: color-mix(in srgb, var(--state-connected) 16%, transparent);
+      }
+      .pill--detach .li {
+        color: var(--state-connected);
+      }
+      .pill--terminate {
+        color: var(--color-error);
+        background: color-mix(in srgb, var(--color-error) 16%, transparent);
+      }
+      .pill--terminate .li {
+        color: var(--color-error);
+      }
+      .btn--danger {
+        background: var(--state-disconnected);
+        border-color: var(--state-disconnected);
+        color: #fff;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .btn .li {
+        width: 14px;
+        height: 14px;
+      }
+      /* Future-enhancement drag affordance illustration. */
+      .drag-ghost {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: var(--tab-height);
+        padding: 0 12px;
+        border-radius: var(--radius-md);
+        background: var(--bg-active);
+        border: 1px dashed var(--broadcast-accent);
+        color: var(--text-primary);
+        font-size: 12px;
+        box-shadow: var(--shadow-overlay);
+      }
+      .drag-ghost .li {
+        width: 14px;
+        height: 14px;
+      }
+    </style>
   </head>
   <body class="mockup-doc">
-    <!-- Inline lucide sprite (only the symbols referenced below). -->
+    <!-- Inline lucide sprite (real lucide geometry) — union of all mockup symbols. -->
     <svg width="0" height="0" style="position: absolute" aria-hidden="true">
       <symbol id="i-network" viewBox="0 0 24 24">
         <rect x="16" y="16" width="6" height="6" rx="1" />
@@ -22,6 +323,152 @@
         <rect x="9" y="2" width="6" height="6" rx="1" />
         <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
         <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-layout-grid" viewBox="0 0 24 24">
+        <rect width="7" height="7" x="3" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="14" rx="1" />
+        <rect width="7" height="7" x="3" y="14" rx="1" />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-columns-2" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M12 3v18" />
+      </symbol>
+      <symbol id="i-rows-2" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M3 12h18" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 17 6-6-6-6" />
+        <path d="M12 19h8" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-app-window" viewBox="0 0 24 24">
+        <rect x="2" y="4" width="20" height="16" rx="2" />
+        <path d="M10 4v4" />
+        <path d="M2 8h20" />
+        <path d="M6 4v4" />
+      </symbol>
+      <symbol id="i-external-link" viewBox="0 0 24 24">
+        <path d="M15 3h6v6" />
+        <path d="M10 14 21 3" />
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      </symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="m12 5 7 7-7 7" />
+      </symbol>
+      <symbol id="i-arrow-left-right" viewBox="0 0 24 24">
+        <path d="M8 3 4 7l4 4" />
+        <path d="M4 7h16" />
+        <path d="m16 21 4-4-4-4" />
+        <path d="M20 17H4" />
+      </symbol>
+      <symbol id="i-loader" viewBox="0 0 24 24">
+        <path d="M12 2v4" />
+        <path d="m16.2 7.8 2.9-2.9" />
+        <path d="M18 12h4" />
+        <path d="m16.2 16.2 2.9 2.9" />
+        <path d="M12 18v4" />
+        <path d="m4.9 19.1 2.9-2.9" />
+        <path d="M2 12h4" />
+        <path d="m4.9 4.9 2.9 2.9" />
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-power" viewBox="0 0 24 24">
+        <path d="M12 2v10" />
+        <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
+      </symbol>
+      <symbol id="i-plug" viewBox="0 0 24 24">
+        <path d="M12 22v-5" />
+        <path d="M9 8V2" />
+        <path d="M15 8V2" />
+        <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24">
+        <path
+          d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+        />
+      </symbol>
+      <symbol id="i-file-up" viewBox="0 0 24 24">
+        <path
+          d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
+        />
+        <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+        <path d="M12 12v6" />
+        <path d="m15 15-3-3-3 3" />
+      </symbol>
+      <symbol id="i-clipboard" viewBox="0 0 24 24">
+        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      </symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24">
+        <path
+          d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"
+        />
+        <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+        <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+        <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+        <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-grip-vertical" viewBox="0 0 24 24">
+        <circle cx="9" cy="12" r="1" />
+        <circle cx="9" cy="5" r="1" />
+        <circle cx="9" cy="19" r="1" />
+        <circle cx="15" cy="12" r="1" />
+        <circle cx="15" cy="5" r="1" />
+        <circle cx="15" cy="19" r="1" />
       </symbol>
     </svg>
 
@@ -281,25 +728,614 @@ flowchart TB
       <section>
         <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
         <p>
-          The interaction design — the drag-to-tear gesture and its command fallback, the drag-between-windows
-          affordance, the "New Window" entry points, the empty-window state, and every edge-case surface — is
-          <strong>step 2</strong>. The technical constraints those mockups must respect are: (a) native
-          drag cannot cross windows with today's stack, so a command/menu path is mandatory and a drag gesture
-          is at best an enhancement; (b) graphical tabs may need a "moving…" placeholder while the framebuffer
-          repaints; (c) an empty window is a real state (a window can exist with zero tabs). See
-          <a href="#limits">Limitations</a> for the full list the UX must design around.
+          This is <strong>step 2</strong> — the interaction design, authored against the engineer's
+          constraints above. The whole design turns on one fact from
+          <a href="#limits">Limitations</a>: <strong>a tab cannot be dragged across a native window
+          boundary</strong> with today's stack (<code>@dnd-kit</code> is single-document). So the v1
+          mechanism for tearing out and moving tabs is <strong>commands and context-menu items</strong>,
+          not a live drag gesture. Everything below follows from that: the tab context menu grows a
+          <em>Move to Window</em> group, an <em>empty window</em> is a first-class state with its own
+          call-to-action, graphical (RDP/VNC) tabs move with a <em>reconnecting-view</em> placeholder,
+          and closing a window that still owns live tabs raises a <em>detach-vs-terminate</em> decision.
+          A drag-to-tear gesture appears once, at the end, clearly labelled a
+          <strong>future enhancement</strong>.
         </p>
-        <!-- MOCKUPS: to be authored by UX step (see #1806).
-             Build inline <section class="mockup-section"> blocks here using the real
-             mockup.css classes (.app, .tab, .terminal-view__toolbar, .menu, .status-bar,
-             .activity-bar__item, …) + lucide icons. Suggested screens:
-               1. Tab context menu / toolbar overflow → "Move to New Window", "Move to Window ▸ N".
-               2. Two windows side by side, a tab mid-move (source ghost + destination insertion point).
-               3. Empty-window state (no tabs) with a call to action.
-               4. Graphical (RDP/VNC) tab move: "reconnecting view…" placeholder over the canvas.
-               5. Close-window-with-live-tabs confirmation (detach vs. close). -->
-        <div class="mockup-note">
-          Placeholder — no mockups in step 1. The UX designer slots them into the block above.
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mockup</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>move-menu</code></td>
+                <td>Tab context menu with the new <em>Move to New Window</em> / <em>Move to Window ▸</em> group, and the window-picker submenu</td>
+              </tr>
+              <tr>
+                <td><code>mid-move</code></td>
+                <td>Two windows side by side: source ghost tab leaving, destination insertion point + scrollback replay</td>
+              </tr>
+              <tr>
+                <td><code>empty-window</code></td>
+                <td>A window with zero tabs and its call-to-action</td>
+              </tr>
+              <tr>
+                <td><code>graphical-move</code></td>
+                <td>An RDP/VNC tab arriving in a new window with the "reconnecting view…" placeholder over the canvas</td>
+              </tr>
+              <tr>
+                <td><code>close-decision</code></td>
+                <td>Closing a window with live tabs: the detach-vs-terminate decision surface</td>
+              </tr>
+              <tr>
+                <td><code>drag-future</code></td>
+                <td>The optional drag-to-tear affordance — a labelled future enhancement, not v1</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Core interaction model — commands, not cross-window drag</h3>
+        <p>
+          Moving a tab is a <strong>menu/command action with an explicit destination</strong>, never a
+          drag onto another window's tab bar. Every session tab exposes a <strong>Move to Window</strong>
+          group in its right-click context menu (the same Radix <code>ContextMenu</code> that today holds
+          Rename / Save to File / … — see <code>src/components/Terminal/Tab.tsx</code>):
+        </p>
+        <ul>
+          <li>
+            <strong>Move to New Window</strong> — tears the tab out into a brand-new window seeded with
+            just that tab. This is the one-click "give this its own screen" path.
+          </li>
+          <li>
+            <strong>Move to Window ▸</strong> — a submenu listing every <em>other</em> open window by
+            name and tab count, plus a <strong>New Window</strong> entry at the top (so the submenu is a
+            superset of the direct command). Picking one hands the tab to that window. The current window
+            is shown disabled ("current") so the list is unambiguous.
+          </li>
+        </ul>
+        <p>
+          Because a tab renders in <strong>exactly one window at a time</strong>, the destination is
+          brokered by the backend ownership map (<a href="#state">State &amp; Retargeting</a>): the pick
+          triggers a release-in-A → grant-to-B handshake, so there is never a window where the tab is
+          shown twice or nowhere.
+        </p>
+
+        <h3>Entry points</h3>
+        <ul>
+          <li><strong>Tab context menu</strong> — the primary surface (mockup <code>move-menu</code>).</li>
+          <li>
+            <strong>New Window</strong> — a top-level command (application menu / command palette,
+            keyboard shortcut <code>Ctrl/Cmd+Shift+N</code>) opens an empty window (mockup
+            <code>empty-window</code>). It is also the first row of the <em>Move to Window ▸</em> submenu.
+          </li>
+          <li>
+            <strong>Status-bar window affordance</strong> — when more than one window is open, the status
+            bar shows the window's name, so users can tell windows apart at a glance.
+          </li>
+        </ul>
+
+        <!-- Mockup 1: Move-to-Window context menu + submenu -->
+        <div class="mockup-section">
+          <h3>Mockup — <code>move-menu</code>: the Move-to-Window command surface</h3>
+          <div class="mockup-note">
+            Right-clicking a session tab <span class="callout">A</span> opens its context menu. The new
+            <strong>Move to Window</strong> group <span class="callout">B</span> sits just below Rename;
+            <em>Move to Window ▸</em> opens the window picker <span class="callout">C</span>. This is the
+            v1 tear-out / move mechanism — no drag required.
+          </div>
+          <div class="app" style="height: 300px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="Workspaces">
+                    <svg class="li"><use href="#i-layout-grid" /></svg>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Log Viewer">
+                    <svg class="li"><use href="#i-scroll-text" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <span class="state-dot state-dot--connected"></span> server-1
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span> server-2
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span> build
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="tab__title">server-1</span>
+                        <button class="tab__close"><svg class="li"><use href="#i-x" /></svg></button>
+                      </div>
+                      <div class="tab tab--context" title="Right-clicked">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="tab__title">server-2</span>
+                        <button class="tab__close"><svg class="li"><use href="#i-x" /></svg></button>
+                      </div>
+                      <div class="tab">
+                        <svg class="li"><use href="#i-terminal" /></svg>
+                        <span class="tab__title">build</span>
+                      </div>
+                    </div>
+                    <div class="terminal">
+                      <span class="prompt">server-1 $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"><svg class="li"><use href="#i-app-window" /></svg> Window 1</span>
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">UTF-8</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="states">
+            <div>
+              <p class="state-label">Tab context menu (Move group added)</p>
+              <div class="menu context-menu">
+                <div class="menu__row"><svg class="li"><use href="#i-pencil" /></svg> Rename</div>
+                <div class="menu__sep"></div>
+                <div class="menu__row menu__row--new">
+                  <svg class="li"><use href="#i-external-link" /></svg> Move to New Window
+                </div>
+                <div class="menu__row menu__row--new menu__row--selected">
+                  <svg class="li"><use href="#i-app-window" /></svg> Move to Window
+                  <svg class="li menu__arrow"><use href="#i-chevron-right" /></svg>
+                </div>
+                <div class="menu__sep"></div>
+                <div class="menu__row"><svg class="li"><use href="#i-file-up" /></svg> Save to File</div>
+                <div class="menu__row"><svg class="li"><use href="#i-clipboard" /></svg> Copy to Clipboard</div>
+                <div class="menu__sep"></div>
+                <div class="menu__row"><svg class="li"><use href="#i-palette" /></svg> Set Color…</div>
+              </div>
+            </div>
+            <div>
+              <p class="state-label">Move to Window ▸ submenu (window picker)</p>
+              <div class="menu context-menu">
+                <div class="menu__row menu__row--new">
+                  <svg class="li"><use href="#i-plus" /></svg> New Window
+                </div>
+                <div class="menu__sep"></div>
+                <div class="menu__row menu__row--disabled">
+                  <svg class="li"><use href="#i-app-window" /></svg> Window 1
+                  <span class="menu__sub-label">current</span>
+                </div>
+                <div class="menu__row">
+                  <svg class="li"><use href="#i-app-window" /></svg> Window 2
+                  <span class="menu__sub-label">2 tabs</span>
+                </div>
+                <div class="menu__row">
+                  <svg class="li"><use href="#i-app-window" /></svg> Window 3
+                  <span class="menu__sub-label">empty</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li><span class="callout">A</span> Right-clicked tab — highlighted (<code>tab--context</code>).</li>
+              <li><span class="callout">B</span> New <strong>Move to Window</strong> group; <em>Move to New Window</em> is the one-click tear-out.</li>
+              <li><span class="callout">C</span> Window picker — lists other windows by name + tab count; <strong>New Window</strong> on top; current window disabled.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>User journey — moving a live tab</h3>
+        <p>
+          The move is a pure <em>view</em> operation (the backend session never restarts —
+          <a href="#reparent">Session Re-parenting</a>). What the user sees: the tab vanishes from the
+          source window and reappears in the destination, its scrollback repainted from the backend
+          replay buffer. For an ordinary terminal (local / SSH / serial / Docker) this is near-instant;
+          the only visible loss is scrollback beyond the 1&nbsp;MiB backend buffer.
+        </p>
+
+        <!-- Mockup 2: two windows mid-move -->
+        <div class="mockup-section">
+          <h3>Mockup — <code>mid-move</code>: two windows during a move</h3>
+          <div class="mockup-note">
+            <strong>server-2</strong> is moving from Window 1 to Window 2. In the source it dims to a
+            ghost <span class="callout">D</span> while its view is torn down; in the destination it lands
+            at an insertion caret <span class="callout">E</span> and repaints from replayed scrollback
+            <span class="callout">F</span>. The backend PTY/SSH session never restarts.
+          </div>
+          <div class="window-row">
+            <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column">
+              <div class="window-label"><svg class="li"><use href="#i-app-window" /></svg> Window 1 — source</div>
+              <div class="app" style="height: 300px">
+                <div class="app__body">
+                  <nav class="activity-bar">
+                    <div class="activity-bar__top">
+                      <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="activity-bar__indicator"></span>
+                      </button>
+                    </div>
+                    <div class="activity-bar__bottom">
+                      <button class="activity-bar__item" title="Settings">
+                        <svg class="li"><use href="#i-settings" /></svg>
+                      </button>
+                    </div>
+                  </nav>
+                  <div class="terminal-view">
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="tab-bar">
+                          <div class="tab tab--active">
+                            <svg class="li"><use href="#i-network" /></svg>
+                            <span class="tab__title">server-1</span>
+                          </div>
+                          <div class="tab tab--ghost" title="Leaving this window">
+                            <svg class="li spin"><use href="#i-loader" /></svg>
+                            <span class="tab__title">server-2</span>
+                          </div>
+                          <div class="tab">
+                            <svg class="li"><use href="#i-terminal" /></svg>
+                            <span class="tab__title">build</span>
+                          </div>
+                        </div>
+                        <div class="terminal">
+                          <span class="prompt">server-1 $</span> uptime<span class="cursor"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item"><svg class="li"><use href="#i-app-window" /></svg> Window 1</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="window-row__arrow"><svg class="li"><use href="#i-arrow-right" /></svg></div>
+
+            <div style="flex: 1 1 0; min-width: 0; display: flex; flex-direction: column">
+              <div class="window-label"><svg class="li"><use href="#i-app-window" /></svg> Window 2 — destination</div>
+              <div class="app" style="height: 300px">
+                <div class="app__body">
+                  <nav class="activity-bar">
+                    <div class="activity-bar__top">
+                      <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="activity-bar__indicator"></span>
+                      </button>
+                    </div>
+                    <div class="activity-bar__bottom">
+                      <button class="activity-bar__item" title="Settings">
+                        <svg class="li"><use href="#i-settings" /></svg>
+                      </button>
+                    </div>
+                  </nav>
+                  <div class="terminal-view">
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="tab-bar">
+                          <div class="tab">
+                            <svg class="li"><use href="#i-scroll-text" /></svg>
+                            <span class="tab__title">logs</span>
+                          </div>
+                          <div class="tab-insert" title="Insertion point"></div>
+                          <div class="tab tab--incoming">
+                            <svg class="li"><use href="#i-network" /></svg>
+                            <span class="tab__title">server-2</span>
+                            <button class="tab__close"><svg class="li"><use href="#i-x" /></svg></button>
+                          </div>
+                        </div>
+                        <div class="terminal">
+                          <span style="color: var(--text-secondary)">⟲ restored 1 MiB scrollback</span><br />
+                          <span class="prompt">server-2 $</span> uptime<span class="cursor"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item"><svg class="li"><use href="#i-app-window" /></svg> Window 2</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li><span class="callout">D</span> Source ghost — the tab dims and shows a spinner while its xterm view is disposed.</li>
+              <li><span class="callout">E</span> Destination insertion caret — where the incoming tab lands (<code>tab--incoming</code>).</li>
+              <li><span class="callout">F</span> Scrollback replayed from the backend <code>RingBuffer</code>; history beyond 1&nbsp;MiB is truncated.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Empty window — a first-class state</h3>
+        <p>
+          A window can exist with <strong>zero tabs</strong> — right after <em>New Window</em>, or after
+          its last tab is moved or closed. Rather than an accidental blank pane, the content area shows a
+          deliberate call-to-action so the window is immediately useful.
+        </p>
+
+        <!-- Mockup 3: empty window -->
+        <div class="mockup-section">
+          <h3>Mockup — <code>empty-window</code>: the empty-window call-to-action</h3>
+          <div class="mockup-note">
+            No tab bar, no terminal — the content area holds a centred call-to-action
+            <span class="callout">G</span>. The sidebar and activity bar are still present, so a
+            connection can be launched straight into this window.
+          </div>
+          <div class="app" style="height: 320px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span> server-1
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--disconnected"></span> server-2
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="empty-state">
+                      <div class="empty-state__icon"><svg class="li"><use href="#i-app-window" /></svg></div>
+                      <p class="empty-state__title">This window is empty</p>
+                      <p class="empty-state__sub">
+                        Start a session here, or move a tab in from another window with
+                        <strong>Tab ▸ Move to Window ▸ Window 3</strong>.
+                      </p>
+                      <div class="empty-state__actions">
+                        <button class="btn btn--primary"><svg class="li"><use href="#i-plus" /></svg> New Terminal</button>
+                        <button class="btn"><svg class="li"><use href="#i-network" /></svg> Open Connection…</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"><svg class="li"><use href="#i-app-window" /></svg> Window 3</span>
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">no session</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li><span class="callout">G</span> Empty-window CTA — launch a session, or accept a moved-in tab. Closing this window while empty just closes it (no decision surface — nothing is live).</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Graphical (RDP/VNC) tabs — move with a reconnecting placeholder</h3>
+        <p>
+          A graphical session's framebuffer is <code>&lt;canvas&gt;</code> pixels in the source window's
+          memory — it cannot transfer to another JS context. The backend session survives (frames keep
+          broadcasting), but the destination canvas is blank until the next <em>full</em> frame arrives.
+          To keep this honest, the destination shows a <strong>"reconnecting view…"</strong> overlay
+          until the first frame repaints — the session is never actually disconnected, only the pixels
+          are being re-fetched. Graphical tabs therefore move <strong>command-only</strong> (never drag).
+        </p>
+
+        <!-- Mockup 4: graphical move with reconnecting placeholder -->
+        <div class="mockup-section">
+          <h3>Mockup — <code>graphical-move</code>: RDP/VNC tab arriving in a window</h3>
+          <div class="mockup-note">
+            An <strong>RDP</strong> tab <span class="callout">H</span> has just been moved here. Its
+            canvas <span class="callout">I</span> is briefly blank, so a <strong>reconnecting view…</strong>
+            overlay <span class="callout">J</span> covers it until the first full frame repaints.
+          </div>
+          <div class="app" style="height: 320px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="tab-bar">
+                      <div class="tab tab--active tab--incoming">
+                        <svg class="li"><use href="#i-monitor" /></svg>
+                        <span class="tab__title">win-server (RDP)</span>
+                        <button class="tab__close"><svg class="li"><use href="#i-x" /></svg></button>
+                      </div>
+                    </div>
+                    <div class="canvas-surface">
+                      <div class="reconnect-overlay">
+                        <div class="reconnect-card">
+                          <svg class="li spin"><use href="#i-loader" /></svg>
+                          <p class="reconnect-card__title">Reconnecting view…</p>
+                          <p class="reconnect-card__sub">
+                            The remote desktop is still connected — repainting the framebuffer in this window.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"><svg class="li"><use href="#i-app-window" /></svg> Window 2</span>
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item"><svg class="li"><use href="#i-monitor" /></svg> RDP · 1920×1080</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li><span class="callout">H</span> Moved graphical tab (lucide <code>Monitor</code>).</li>
+              <li><span class="callout">I</span> Canvas — blank/stale until the next full frame.</li>
+              <li><span class="callout">J</span> "Reconnecting view…" overlay — the session is live; only the pixels are re-fetching. A backend "request full frame on attach" hook (see <a href="#impl">Impl</a>) would shorten this to a flash.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Closing a window that owns live tabs — detach vs terminate</h3>
+        <p>
+          With one window, "close window" ≈ "quit". With several, closing a window that still owns live
+          sessions needs an explicit decision, and the rule depends on the session:
+        </p>
+        <ul>
+          <li>
+            <strong>Persistent / agent sessions detach</strong> — the backend process keeps running and
+            can be re-attached later. No data is lost; these need no confirmation on their own.
+          </li>
+          <li>
+            <strong>Non-persistent sessions (local shell, serial, one-shot SSH) would be terminated</strong>
+            — so closing must confirm, and offer to <strong>move the tabs to another window</strong>
+            instead. Moving is the safe (primary) action; terminating is destructive.
+          </li>
+          <li>
+            <strong>All-persistent → no dialog.</strong> If every owned tab detaches cleanly, the window
+            closes with just a toast ("3 sessions detached — still running"); the decision surface only
+            appears when something would actually be lost.
+          </li>
+        </ul>
+
+        <!-- Mockup 5: close-with-live-tabs decision dialog -->
+        <div class="mockup-section">
+          <h3>Mockup — <code>close-decision</code>: detach-vs-terminate on window close</h3>
+          <div class="mockup-note">
+            Closing <strong>Window 2</strong> with three live sessions. Each row shows what would happen:
+            persistent detaches <span class="callout">K</span>, non-persistent would terminate
+            <span class="callout">L</span>. The safe primary action moves the tabs elsewhere
+            <span class="callout">M</span>; terminating is the red, non-default action.
+          </div>
+          <div class="menu dialog">
+            <div class="menu__title">Close this window?</div>
+            <div class="dialog__body">
+              <div class="dialog__lead">
+                <svg class="li"><use href="#i-triangle-alert" /></svg>
+                <p>Window 2 owns 3 open sessions. Choose what happens to them before it closes.</p>
+              </div>
+              <div class="session-row">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="session-row__name">server-1</span>
+                <span style="color: var(--text-secondary)">SSH · persistent</span>
+                <span class="pill pill--detach"><svg class="li"><use href="#i-plug" /></svg> Detaches — keeps running</span>
+              </div>
+              <div class="session-row">
+                <svg class="li"><use href="#i-terminal" /></svg>
+                <span class="session-row__name">build</span>
+                <span style="color: var(--text-secondary)">local shell</span>
+                <span class="pill pill--terminate"><svg class="li"><use href="#i-power" /></svg> Would be terminated</span>
+              </div>
+              <div class="session-row">
+                <svg class="li"><use href="#i-terminal" /></svg>
+                <span class="session-row__name">/dev/ttyUSB0</span>
+                <span style="color: var(--text-secondary)">serial</span>
+                <span class="pill pill--terminate"><svg class="li"><use href="#i-power" /></svg> Would be terminated</span>
+              </div>
+            </div>
+            <div class="menu__footer" style="justify-content: flex-end">
+              <button class="btn">Cancel</button>
+              <button class="btn btn--danger"><svg class="li"><use href="#i-power" /></svg> Close &amp; end sessions</button>
+              <button class="btn btn--primary"><svg class="li"><use href="#i-arrow-right" /></svg> Move tabs to Window 1</button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li><span class="callout">K</span> Persistent/agent session — detaches automatically, keeps running.</li>
+              <li><span class="callout">L</span> Non-persistent session — would be terminated; that is what makes the dialog appear.</li>
+              <li><span class="callout">M</span> Primary action moves the live tabs to another window (safe). "Close &amp; end sessions" is destructive (red). If every session were persistent, no dialog shows at all.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Future enhancement — drag-to-tear (not v1)</h3>
+        <p>
+          A live drag gesture is the familiar way to tear out a tab, but
+          <a href="#limits">Limitation&nbsp;1</a> rules it out for v1: <code>@dnd-kit</code> cannot follow
+          the cursor across a native window boundary, and Tauri exposes no webview→webview drag. If a
+          future OS-drag-image + drop-detection approach proves viable (open research item), the gesture
+          would <em>supplement</em> — never replace — the commands above, so keyboard and menu users keep
+          a first-class path. The affordance would look like this, dropping onto an OS-level target:
+        </p>
+        <div class="mockup-section">
+          <h3>Mockup — <code>drag-future</code>: optional drag-to-tear affordance</h3>
+          <div class="mockup-note">
+            Future only. A dragged tab detaches into a floating ghost <span class="callout">N</span> that
+            can be dropped on empty desktop (→ new window) or another window's tab bar (→ move). v1 ships
+            the commands; this is a later, additive gesture.
+          </div>
+          <div style="display: flex; align-items: center; gap: 16px; padding: 12px 0">
+            <div class="drag-ghost">
+              <svg class="li"><use href="#i-grip-vertical" /></svg>
+              <svg class="li"><use href="#i-network" /></svg>
+              server-2
+            </div>
+            <svg class="li" style="width: 22px; height: 22px; color: var(--text-secondary)"><use href="#i-arrow-right" /></svg>
+            <span style="color: var(--text-secondary)">drop on desktop → new window · drop on a tab bar → move</span>
+          </div>
+          <div class="legend">
+            <ul>
+              <li><span class="callout">N</span> Floating drag ghost (<code>drag-ghost</code>) — dashed accent border marks it as detached and in-flight. <strong>Deferred; the menu commands are the shipping mechanism.</strong></li>
+            </ul>
+          </div>
         </div>
       </section>
 
