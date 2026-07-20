@@ -7,6 +7,8 @@ import {
   remoteDesktopResize,
   remoteDesktopSendInput,
   remoteDesktopSendClipboard,
+  remoteDesktopRemoteClipboardFiles,
+  remoteDesktopBindClipboardFiles,
   remoteDesktopCertDecision,
 } from "@/services/api";
 import {
@@ -16,6 +18,7 @@ import {
 } from "@/services/events";
 import type {
   GraphicalSessionState,
+  RemoteClipboardFile,
   RemoteDesktopInput,
   RemoteDesktopCertPromptPayload,
   ScaleMode,
@@ -48,6 +51,17 @@ export interface RemoteDesktopSession {
   resize: (width: number, height: number) => void;
   /** Push local clipboard text to the remote. */
   sendClipboard: (text: string) => void;
+  /**
+   * List the files the remote copied to its clipboard, surfaced for a local
+   * paste (#1804). Empty where the host has no delayed-render binding.
+   */
+  remoteClipboardFiles: () => Promise<RemoteClipboardFile[]>;
+  /**
+   * Bind the remote-copied clipboard files onto the host OS clipboard so they
+   * can be pasted into any local app (#1804). Resolves to the number bound; the
+   * bytes are fetched only on the real paste gesture.
+   */
+  bindClipboardFiles: () => Promise<number>;
   /** Manually reconnect after a failure or the auto-retry cap. */
   reconnect: () => void;
 }
@@ -210,6 +224,23 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     );
   }, []);
 
+  const remoteClipboardFiles = useCallback(async (): Promise<RemoteClipboardFile[]> => {
+    const id = sessionIdRef.current;
+    if (!id) return [];
+    try {
+      return await remoteDesktopRemoteClipboardFiles(id);
+    } catch (err) {
+      frontendLog("remote_desktop", `remote_clipboard_files failed: ${err}`);
+      return [];
+    }
+  }, []);
+
+  const bindClipboardFiles = useCallback(async (): Promise<number> => {
+    const id = sessionIdRef.current;
+    if (!id) return 0;
+    return await remoteDesktopBindClipboardFiles(id);
+  }, []);
+
   const reconnect = useCallback(() => {
     // Tear down any existing session, then re-run the connect effect.
     const id = sessionIdRef.current;
@@ -234,6 +265,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     sendInput,
     resize,
     sendClipboard,
+    remoteClipboardFiles,
+    bindClipboardFiles,
     reconnect,
   };
 }

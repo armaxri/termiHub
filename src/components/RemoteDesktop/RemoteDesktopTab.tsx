@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { FileDown, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import { remoteDesktopGetClipboard } from "@/services/api";
-import type { ScaleMode } from "@/types/remoteDesktop";
+import type { RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
 import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
@@ -34,6 +34,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const [resolution, setResolution] = useState<{ width: number; height: number } | null>(null);
   const [clipboardOpen, setClipboardOpen] = useState(false);
   const [clipboardDraft, setClipboardDraft] = useState("");
+  // Files the remote copied to its clipboard, surfaced for a local paste (#1804).
+  // Empty where the host has no delayed-render binding (non-macOS today).
+  const [clipboardFiles, setClipboardFiles] = useState<RemoteClipboardFile[]>([]);
   // The scale mode can be changed at runtime via the toolbar, overriding the
   // configured default.
   const [scaleModeOverride, setScaleModeOverride] = useState<ScaleMode | null>(null);
@@ -97,17 +100,27 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const handleToggleClipboard = useCallback(() => {
     setClipboardOpen((open) => {
       const next = !open;
-      // Pull the current remote clipboard when opening the panel.
+      // Pull the current remote clipboard text + surfaced files when opening.
       if (next && session.sessionId) {
         void remoteDesktopGetClipboard(session.sessionId)
           .then((text) => {
             if (text) setClipboardDraft(text);
           })
           .catch(() => {});
+        void session.remoteClipboardFiles().then(setClipboardFiles);
       }
       return next;
     });
-  }, [session.sessionId]);
+  }, [session]);
+
+  const handleCopyFilesToHost = useCallback(async () => {
+    const count = await session.bindClipboardFiles();
+    if (count > 0) {
+      toast.success(`${count} file${count === 1 ? "" : "s"} ready — paste into any app`);
+    } else {
+      toast.info("No remote files to paste");
+    }
+  }, [session]);
 
   // Reflect an incoming remote clipboard into the draft while the panel is open.
   useEffect(() => {
@@ -190,6 +203,29 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           <Button variant="secondary" size="sm" onClick={handleSendClipboard}>
             Send to remote
           </Button>
+          {clipboardFiles.length > 0 && (
+            <div className="rd-clipboard__files" data-testid="remote-desktop-clipboard-files">
+              <span className="rd-clipboard__files-label">Remote files</span>
+              <div className="rd-clipboard__files-list">
+                {clipboardFiles.map((f) => (
+                  <span key={f.index} className="rd-clipboard__file" title={f.name}>
+                    {f.name}
+                    {f.isDir ? "/" : ""}
+                  </span>
+                ))}
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<FileDown size={14} />}
+                onClick={handleCopyFilesToHost}
+                pendingLabel="Preparing…"
+                data-testid="remote-desktop-clipboard-copy-files"
+              >
+                Copy to clipboard
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

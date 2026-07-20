@@ -12,7 +12,7 @@ import {
   LineEnding,
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
-import type { RemoteDesktopInput } from "@/types/remoteDesktop";
+import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesktop";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
@@ -379,6 +379,36 @@ export async function remoteDesktopSendClipboard(
 /** Read the remote clipboard text, if any. */
 export async function remoteDesktopGetClipboard(sessionId: SessionId): Promise<string | null> {
   return await invoke<string | null>("remote_desktop_get_clipboard", { sessionId });
+}
+
+/**
+ * List the files the remote most recently copied to its clipboard, surfaced for a
+ * local paste with delayed rendering (#1804).
+ *
+ * Empty on any platform without an OS-clipboard delayed-render binding (the
+ * sidecar keeps eagerly downloading files into the shared folder there), or when
+ * the remote copied text / an image / nothing. The bytes are fetched only on the
+ * actual paste — see {@link remoteDesktopBindClipboardFiles}.
+ */
+export async function remoteDesktopRemoteClipboardFiles(
+  sessionId: SessionId
+): Promise<RemoteClipboardFile[]> {
+  return await invoke<RemoteClipboardFile[]>("remote_desktop_remote_clipboard_files", {
+    sessionId,
+  });
+}
+
+/**
+ * Bind the remote-copied clipboard files onto the host OS clipboard so they can be
+ * pasted into any local app (#1804). Returns the number of files bound.
+ *
+ * Installs a delayed-render promise: no bytes are fetched here — each file is
+ * streamed from the remote only when the user actually pastes. Returns `0` when
+ * the remote copied no pasteable files; rejects on a platform without a native
+ * binding.
+ */
+export async function remoteDesktopBindClipboardFiles(sessionId: SessionId): Promise<number> {
+  return await invoke<number>("remote_desktop_bind_clipboard_files", { sessionId });
 }
 
 /**
