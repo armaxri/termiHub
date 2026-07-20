@@ -3,7 +3,7 @@
 - RDP clipboard file serving now **re-advertises the host clipboard's file list
   when you copy files locally mid-session** (#1794). Previously the host-clipboard
   file list was read only at connect (or when the server re-requested it), so files
-  you copied in your file manager *after* connecting stayed invisible to the remote
+  you copied in your file manager _after_ connecting stayed invisible to the remote
   until the server asked again. The sidecar now polls the host OS clipboard's native
   file list while connected and, on a change, re-sends the CLIPRDR file offer through
   the same sandboxed serve pipeline — the file sibling of the existing text push
