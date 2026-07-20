@@ -473,6 +473,13 @@ impl GraphicalSessionManager {
     /// rendering, #1793/#1804), staging them into a sanitized, bounded temp file
     /// and returning its path. `index` must be one a prior
     /// [`Self::remote_clipboard_files`] surfaced.
+    ///
+    /// Only the platform-native OS-clipboard binding calls this (on the real paste
+    /// gesture); macOS is wired today (`macos_clipboard`), Windows/Linux are
+    /// follow-ups (#1814/#1815). Off those platforms it has no in-crate caller
+    /// yet, so the dead-code lint is suppressed there rather than deleting a method
+    /// the pending bindings need.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub async fn fetch_remote_clipboard_file(
         &self,
         session_id: &str,
