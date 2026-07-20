@@ -89,6 +89,19 @@ hex = "0.4"
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 rodio = { version = "0.20", default-features = false }
 
+# Read the host OS clipboard's native file list to bridge it to CLIPRDR (#1779):
+# the sidecar runs on the host, so it can read what the user copied in their file
+# manager and serve those real files to the remote (`host_clipboard.rs`).
+# `clipboard-files` reads `NSPasteboard` file URLs on macOS.
+#
+# Deliberately gated to **macOS only** for now: the crate's Linux path links
+# `gtk` and its Windows path links `clipboard-win`, and pulling either into the
+# Linux/Windows sidecar builds before those platform readers are wired
+# (sequenced follow-ups) would be pure cost. This lives in the workspace-EXCLUDED
+# sidecar graph, so it adds zero dependency-conflict risk to the main app (#1747).
+[target.'cfg(target_os = "macos")'.dependencies]
+clipboard-files = "0.1.2"
+
 [dev-dependencies]
 # Temp directories back the drive-redirection filesystem tests (#1757), which
 # exercise the RDPDR backend against a real folder without a live RDP server.
