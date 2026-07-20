@@ -201,4 +201,80 @@ mod tests {
         let store = RdpTrustStore::open(dir);
         assert_eq!(store.lookup("host:3389", FP_A), TrustLookup::Unknown);
     }
+
+    #[test]
+    fn entries_returns_snapshot_of_all_hosts() {
+        let store = RdpTrustStore::in_memory();
+        store.remember("a:3389", FP_A);
+        store.remember("a:3389", FP_B);
+        store.remember("b:3389", FP_A);
+        let entries = store.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries.get("a:3389").unwrap(),
+            &vec![FP_A.to_string(), FP_B.to_string()]
+        );
+        assert_eq!(entries.get("b:3389").unwrap(), &vec![FP_A.to_string()]);
+    }
+
+    #[test]
+    fn forget_fingerprint_removes_one_and_keeps_others() {
+        let store = RdpTrustStore::in_memory();
+        store.remember("a:3389", FP_A);
+        store.remember("a:3389", FP_B);
+        assert!(store.forget_fingerprint("a:3389", FP_A));
+        // The revoked key is now the changed/MITM case; the sibling still trusts.
+        assert_eq!(store.lookup("a:3389", FP_A), TrustLookup::Changed);
+        assert_eq!(store.lookup("a:3389", FP_B), TrustLookup::Trusted);
+    }
+
+    #[test]
+    fn forgetting_last_fingerprint_drops_host_and_reprompts() {
+        let store = RdpTrustStore::in_memory();
+        store.remember("a:3389", FP_A);
+        assert!(store.forget_fingerprint("a:3389", FP_A));
+        // Host is gone entirely: the next contact is first contact, not "changed".
+        assert_eq!(store.lookup("a:3389", FP_A), TrustLookup::Unknown);
+        assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn forget_fingerprint_returns_false_when_absent() {
+        let store = RdpTrustStore::in_memory();
+        store.remember("a:3389", FP_A);
+        assert!(!store.forget_fingerprint("a:3389", FP_B));
+        assert!(!store.forget_fingerprint("missing:3389", FP_A));
+        // The untouched entry is still trusted.
+        assert_eq!(store.lookup("a:3389", FP_A), TrustLookup::Trusted);
+    }
+
+    #[test]
+    fn forget_host_removes_all_fingerprints() {
+        let store = RdpTrustStore::in_memory();
+        store.remember("a:3389", FP_A);
+        store.remember("a:3389", FP_B);
+        assert!(store.forget_host("a:3389"));
+        assert_eq!(store.lookup("a:3389", FP_A), TrustLookup::Unknown);
+        // Idempotent: forgetting an already-forgotten host removes nothing.
+        assert!(!store.forget_host("a:3389"));
+    }
+
+    #[test]
+    fn revocations_persist_across_instances() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        {
+            let store = RdpTrustStore::open(dir.clone());
+            store.remember("a:3389", FP_A);
+            store.remember("a:3389", FP_B);
+            store.remember("b:3389", FP_A);
+            assert!(store.forget_fingerprint("a:3389", FP_A));
+            assert!(store.forget_host("b:3389"));
+        }
+        // A fresh instance over the same directory sees the revocations.
+        let reopened = RdpTrustStore::open(dir);
+        assert_eq!(reopened.lookup("a:3389", FP_A), TrustLookup::Changed);
+        assert_eq!(reopened.lookup("a:3389", FP_B), TrustLookup::Trusted);
+        assert_eq!(reopened.lookup("b:3389", FP_A), TrustLookup::Unknown);
+    }
 }
