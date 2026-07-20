@@ -1,0 +1,67 @@
+# termiHub vendored fork of ironrdp-rdpsnd 0.9.0.
+#
+# WHAT WAS CHANGED vs upstream (the only functional edit — see `src/client.rs`):
+# the client `wave` callback now receives the *concrete negotiated* `AudioFormat`
+# instead of a bare `format_no` index. Upstream 0.9.0 built the Client Audio
+# Formats list in `Rdpsnd::client_formats()` from a `HashSet` intersection (so its
+# order is a non-deterministic per-process `RandomState`) and then discarded it,
+# handing the client handler only `wave(format_no, ..)` — an index into a list the
+# handler can neither see nor order. With more than one advertised format that
+# index is therefore unresolvable, so a client that advertised several PCM rates
+# could not tell which rate a given `wave` buffer was in and risked playing e.g.
+# 22.05 kHz data at 44.1 kHz ("chipmunk" audio). The fork makes `Rdpsnd` remember
+# the exact `Vec<AudioFormat>` it sent (`negotiated_formats`) and changes the
+# `RdpsndClientHandler::wave` signature to `wave(&mut self, format: &AudioFormat,
+# ts, data)`, so the handler always maps a buffer to its true format. This
+# unblocks multi-format `rdpsnd` negotiation in the sidecar (#1773) without
+# waiting on an upstream release.
+#
+# UPSTREAM CHANGE THIS REPRESENTS: pass the selected `AudioFormat` to
+# `RdpsndClientHandler::wave` instead of an index into the discarded, non-
+# deterministically-ordered client-format list. Filed to be offered back to
+# Devolutions/IronRDP. Everything else (pdu.rs, server.rs, lib.rs) is byte-for-byte
+# upstream 0.9.0. The sibling `ironrdp-*` deps stay registry versions so nothing
+# else in the graph forks.
+#
+# Wired into the workspace-EXCLUDED sidecar graph via `[patch.crates-io]` in
+# `rdp-sidecar/Cargo.toml`, exactly as `vendor/vnc-rs` is patched into the main
+# app (#1714). The sidecar has its own Cargo.lock, so this fork never touches the
+# desktop app's dependency graph.
+
+[package]
+name = "ironrdp-rdpsnd"
+version = "0.9.0"
+edition = "2024"
+rust-version = "1.89"
+authors = [
+    "Devolutions Inc. <infos@devolutions.net>",
+    "Teleport <goteleport.com>",
+]
+description = "RDPSND static channel for audio output implemented as described in MS-RDPEA (termiHub vendored fork exposing the negotiated AudioFormat to wave callbacks)"
+homepage = "https://github.com/Devolutions/IronRDP"
+repository = "https://github.com/Devolutions/IronRDP"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["rdp", "remote-desktop", "network", "client", "protocol"]
+categories = ["network-programming"]
+
+[lib]
+name = "ironrdp_rdpsnd"
+path = "src/lib.rs"
+doctest = false
+test = false
+
+[features]
+default = []
+std = []
+# Internal (PRIVATE!) upstream feature used only by IronRDP's own integration
+# testsuite. Kept for byte-for-byte fidelity with server.rs; never enabled here.
+__test = ["dep:visibility"]
+
+[dependencies]
+bitflags = "2.11"
+tracing = { version = "0.1", features = ["log"] }
+ironrdp-svc = { version = "0.8" }
+ironrdp-core = { version = "0.2", features = ["alloc"] }
+ironrdp-pdu = { version = "0.9", features = ["alloc"] }
+visibility = { version = "0.1", optional = true }
