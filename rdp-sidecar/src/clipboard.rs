@@ -323,6 +323,13 @@ pub struct SidecarClipboardBackend {
     /// direct call) so tests can inject a deterministic list instead of touching
     /// the real clipboard; production wires [`read_host_clipboard_files`].
     host_clip_reader: Box<dyn Fn() -> Vec<PathBuf> + Send>,
+    /// Opt-in to serving files copied to the host OS clipboard, decoupled from the
+    /// shared folder (#1808). When set (and not view-only), host-clipboard files
+    /// are advertised and served from their real host paths without a
+    /// [`Self::download_dir`]. Set from [`RdpConfig::host_clipboard_files_enabled`].
+    /// The shared-folder fallback in [`Self::build_local_file_offer`] still needs
+    /// [`Self::download_dir`]; this flag only enables the host-clipboard source.
+    serve_host_clipboard: bool,
     /// Chunk size for streaming a received file's bytes (#1780). Defaults to
     /// [`CLIPBOARD_CHUNK_BYTES`]; a field so tests can shrink it to exercise the
     /// multi-chunk path without multi-megabyte fixtures.
@@ -421,6 +428,7 @@ impl SidecarClipboardBackend {
                 view_only,
                 offered_files: Vec::new(),
                 host_clip_reader: Box::new(host_clip_reader),
+                serve_host_clipboard: false,
                 chunk_bytes: CLIPBOARD_CHUNK_BYTES,
                 delayed_render: false,
                 remote_offer: Vec::new(),
@@ -438,6 +446,17 @@ impl SidecarClipboardBackend {
         self.delayed_render = enabled;
     }
 
+    /// Opt in to serving host OS clipboard files to the remote without a shared
+    /// folder (#1808). Set from [`RdpConfig::host_clipboard_files_enabled`] at
+    /// connect time. Decoupled from [`Self::download_dir`]: with this on, files
+    /// the user copied locally are advertised and served from their real host
+    /// paths even when no shared folder is configured. View-only suppression and
+    /// the serve bounds are unchanged — this only widens the serving gate to the
+    /// host-clipboard source.
+    pub fn set_serve_host_clipboard(&mut self, enabled: bool) {
+        self.serve_host_clipboard = enabled;
+    }
+
     /// Shrink the streaming chunk size (tests only) so the multi-chunk download
     /// path can be exercised with tiny fixtures instead of multi-megabyte files.
     #[cfg(test)]
@@ -445,32 +464,53 @@ impl SidecarClipboardBackend {
         self.chunk_bytes = chunk_bytes;
     }
 
-    /// Whether this session serves local files to the remote: file transfer is
-    /// enabled (a shared folder exists) and the session is not view-only (#1778).
+    /// Whether this session serves local files to the remote at all: not
+    /// view-only, and at least one local source is opted in — a sandboxed
+    /// **shared folder** (#1778, [`Self::download_dir`]) **or** the **host OS
+    /// clipboard** (#1808, [`Self::serve_host_clipboard`]). The two sources are
+    /// independent: host-clipboard serving needs no shared folder, so this is true
+    /// with either opt-in on. Gates the advertise, re-advertise and file-contents
+    /// serve paths; the per-source selection is applied in
+    /// [`Self::build_local_file_offer`].
     fn serves_local_files(&self) -> bool {
-        self.download_dir.is_some() && !self.view_only
+        !self.view_only && (self.download_dir.is_some() || self.serve_host_clipboard)
+    }
+
+    /// Whether the session exchanges CLIPRDR *file* formats at all — either it
+    /// receives remote files into the shared folder (#1765), or it serves
+    /// host-clipboard files to the remote (#1808). Either requires negotiating
+    /// stream-file-clip + long format names; a purely text session negotiates
+    /// none. Independent of view-only: a view-only session with a shared folder
+    /// still *receives* files, so the capability must be advertised.
+    fn uses_file_clipboard(&self) -> bool {
+        self.download_dir.is_some() || self.serve_host_clipboard
     }
 
     /// Build the local file offer, recording the index→path map used to serve
-    /// later requests. Prefers the **host OS clipboard's** file list (#1779) —
-    /// the files the user actually copied — and falls back to the sandboxed
-    /// **shared folder** (#1778) when the clipboard holds no files. Returns the
-    /// descriptors to advertise, or `None` when serving is off or neither source
-    /// offers a file (in which case the caller advertises text).
+    /// later requests. Prefers the **host OS clipboard's** file list (#1779/#1808)
+    /// — the files the user actually copied, served from their real paths and
+    /// needing no shared folder — and falls back to the sandboxed **shared
+    /// folder** (#1778) when host-clipboard serving is off or the clipboard holds
+    /// no files. Returns the descriptors to advertise, or `None` when serving is
+    /// off or neither source offers a file (in which case the caller advertises
+    /// text).
     fn build_local_file_offer(&mut self) -> Option<Vec<FileDescriptor>> {
         if !self.serves_local_files() {
             return None;
         }
-        // Host OS clipboard first: the files the user just copied, served from
-        // their real paths. Most-recent local action wins, like a native client.
-        let host_files = (self.host_clip_reader)();
-        if let Some((descriptors, offered)) = build_host_file_offer(&host_files) {
-            debug!(
-                count = offered.len(),
-                "offering host-clipboard files to the remote"
-            );
-            self.offered_files = offered;
-            return Some(descriptors);
+        // Host OS clipboard first, when opted in (#1808): the files the user just
+        // copied, served from their real paths without a shared folder. Most-recent
+        // local action wins, like a native client.
+        if self.serve_host_clipboard {
+            let host_files = (self.host_clip_reader)();
+            if let Some((descriptors, offered)) = build_host_file_offer(&host_files) {
+                debug!(
+                    count = offered.len(),
+                    "offering host-clipboard files to the remote"
+                );
+                self.offered_files = offered;
+                return Some(descriptors);
+            }
         }
         // Otherwise fall back to the sandboxed shared folder's contents (#1778),
         // recursed into a directory + file tree (#1780).
@@ -1203,11 +1243,12 @@ impl CliprdrBackend for SidecarClipboardBackend {
     }
 
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
-        if self.download_dir.is_some() {
-            // File receiving is on: negotiate stream-file-clip so the server
-            // offers file formats and services our file-contents requests, and
-            // long format names so the `FileGroupDescriptorW` format's name is
-            // exchanged (it is a named format, not a standard short id).
+        if self.uses_file_clipboard() {
+            // File receiving (#1765) or host-clipboard serving (#1808) is on:
+            // negotiate stream-file-clip so the server offers file formats and
+            // services our file-contents requests, and long format names so the
+            // `FileGroupDescriptorW` format's name is exchanged (it is a named
+            // format, not a standard short id).
             ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
                 | ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
         } else {
@@ -2302,8 +2343,9 @@ mod tests {
     // --- Host-clipboard files (#1779) ---
 
     /// A serving backend whose host-clipboard reader is stubbed to return
-    /// `paths`. The shared folder (`dir`) is separate, so tests can prove the
-    /// host clipboard wins over — or falls back to — the folder.
+    /// `paths`. Both local sources are opted in — a shared folder (`dir`) **and**
+    /// host-clipboard serving (#1808) — so tests can prove the host clipboard wins
+    /// over, or falls back to, the folder.
     fn backend_serving_with_host(
         view_only: bool,
         paths: Vec<PathBuf>,
@@ -2314,11 +2356,25 @@ mod tests {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
-        let (backend, rx) =
+        let (mut backend, rx) =
             SidecarClipboardBackend::with_host_clip_reader(Some(root), view_only, move || {
                 paths.clone()
             });
+        backend.set_serve_host_clipboard(true);
         (backend, rx, dir)
+    }
+
+    /// A backend that serves **only** the host OS clipboard (#1808): no shared
+    /// folder (`download_dir` is `None`), host-clipboard serving opted in. Proves
+    /// pasting locally-copied files into the remote needs no shared folder.
+    fn backend_host_clipboard_only(
+        view_only: bool,
+        paths: Vec<PathBuf>,
+    ) -> (SidecarClipboardBackend, Receiver<ClipboardEvent>) {
+        let (mut backend, rx) =
+            SidecarClipboardBackend::with_host_clip_reader(None, view_only, move || paths.clone());
+        backend.set_serve_host_clipboard(true);
+        (backend, rx)
     }
 
     #[test]
@@ -2489,6 +2545,96 @@ mod tests {
             }
             other => panic!("expected the shared-folder offer, got {other:?}"),
         }
+    }
+
+    // --- Host-clipboard serving decoupled from the shared folder (#1808) ---
+
+    #[test]
+    fn serves_host_clipboard_files_without_a_shared_folder() {
+        // The core of #1808: with host-clipboard serving opted in but NO shared
+        // folder configured, a locally-copied file is still advertised and served
+        // from its real host path.
+        let host_dir = tempfile::tempdir().unwrap();
+        let hosted = host_dir.path().join("local.txt");
+        std::fs::write(&hosted, b"abcdef").unwrap();
+
+        let (mut backend, rx) = backend_host_clipboard_only(false, vec![hosted]);
+        backend.on_request_format_list();
+        match next_event(&rx) {
+            ClipboardEvent::AdvertiseFiles(files) => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].name, "local.txt");
+                assert_eq!(files[0].file_size, Some(6));
+            }
+            other => panic!("expected host-clipboard AdvertiseFiles, got {other:?}"),
+        }
+        // And the bytes are served from the real path, within the serve bounds.
+        backend.on_file_contents_request(size_request(3, 0));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideFileContents(resp) => {
+                assert_eq!(resp.data_as_size().unwrap(), 6);
+            }
+            other => panic!("expected ProvideFileContents (size), got {other:?}"),
+        }
+        backend.on_file_contents_request(range_request(4, 0, 0, 6));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideFileContents(resp) => {
+                assert!(!resp.is_error());
+                assert_eq!(resp.data(), b"abcdef");
+            }
+            other => panic!("expected ProvideFileContents (range), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn host_clipboard_serving_off_without_opt_in_or_shared_folder() {
+        // No shared folder and the host-clipboard opt-in left off: nothing local
+        // is served even though the clipboard holds a file — advertise text.
+        let host_dir = tempfile::tempdir().unwrap();
+        let hosted = host_dir.path().join("local.txt");
+        std::fs::write(&hosted, b"abc").unwrap();
+        let (mut backend, rx) =
+            SidecarClipboardBackend::with_host_clip_reader(None, false, move || vec![hosted.clone()]);
+        // serve_host_clipboard defaults off.
+        backend.on_request_format_list();
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+    }
+
+    #[test]
+    fn view_only_suppresses_host_clipboard_serving_without_a_shared_folder() {
+        // View-only still wins: even with the opt-in on and files copied, nothing
+        // local is pushed to the remote.
+        let host_dir = tempfile::tempdir().unwrap();
+        let hosted = host_dir.path().join("secret.txt");
+        std::fs::write(&hosted, b"nope").unwrap();
+        let (mut backend, rx) = backend_host_clipboard_only(true, vec![hosted]);
+        backend.on_request_format_list();
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+    }
+
+    #[test]
+    fn host_clipboard_only_has_no_shared_folder_fallback() {
+        // The shared-folder fallback still requires `download_dir`: with only the
+        // host-clipboard opt-in and an empty clipboard, there is nothing to fall
+        // back to, so the offer is text.
+        let (mut backend, rx) = backend_host_clipboard_only(false, Vec::new());
+        backend.on_request_format_list();
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+    }
+
+    #[test]
+    fn host_clipboard_serving_negotiates_file_capabilities() {
+        // Serving host-clipboard files needs stream-file-clip + long format names
+        // negotiated even without a shared folder, or the server never offers file
+        // formats nor services our file-contents requests.
+        let (backend, _rx) = backend_host_clipboard_only(false, Vec::new());
+        let caps = backend.client_capabilities();
+        assert!(caps.contains(ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED));
+        assert!(caps.contains(ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES));
+        // A plain text-only session (no shared folder, no host-clipboard opt-in)
+        // negotiates none.
+        let (text_only, _rx2) = SidecarClipboardBackend::new(None, false);
+        assert!(text_only.client_capabilities().is_empty());
     }
 
     // --- Remote→host delayed rendering (#1793) ---

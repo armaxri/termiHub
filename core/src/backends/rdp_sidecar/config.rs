@@ -110,6 +110,14 @@ pub struct RdpConfig {
     /// clipboard files into it grants the remote no new local access. Off by
     /// default.
     pub clipboard_file_transfer: bool,
+    /// Opt in to advertising files copied to the **host OS clipboard** to the
+    /// remote so the user can paste them into the session (#1808). Independent of
+    /// drive redirection and the shared folder: host-clipboard files are served
+    /// from their real host paths, never the shared folder, so this needs no
+    /// [`Self::shared_folder_path`] / [`Self::drive_redirection`]. Still gated by
+    /// [`Self::view_only`] and the sidecar's serve bounds. Off by default; the
+    /// shared-folder opt-in ([`Self::clipboard_file_transfer`]) is unaffected.
+    pub paste_local_files: bool,
     /// Surface remote-copied clipboard files to the host OS clipboard with
     /// **delayed rendering** instead of eagerly downloading them into the shared
     /// folder (#1793): the sidecar sends the host only the file *list* on a
@@ -142,6 +150,7 @@ impl Default for RdpConfig {
             drive_name: String::new(),
             audio_redirection: false,
             clipboard_file_transfer: false,
+            paste_local_files: false,
             clipboard_delayed_render: false,
         }
     }
@@ -221,6 +230,18 @@ impl RdpConfig {
             return None;
         }
         self.shared_drive_root()
+    }
+
+    /// Whether the sidecar should advertise files copied to the host OS clipboard
+    /// to the remote so the user can paste them into the session (#1808).
+    ///
+    /// Decoupled from drive redirection and [`Self::clipboard_download_dir`]:
+    /// host-clipboard files are served from their real host paths, so this needs
+    /// no shared folder. View-only suppression and the sidecar's serve bounds
+    /// (8 MiB chunking; the remote only selects advertised indices) still apply —
+    /// they are enforced in the sidecar, which combines this with `view_only`.
+    pub fn host_clipboard_files_enabled(&self) -> bool {
+        self.paste_local_files
     }
 
     /// Whether the sidecar should surface remote-copied clipboard files to the
@@ -408,6 +429,20 @@ pub fn rdp_settings_schema() -> SettingsSchema {
                     FieldType::Boolean,
                 )
             },
+            SettingsField {
+                default: Some(serde_json::json!(false)),
+                description: Some(
+                    "Let files you copy on this computer be pasted into the remote session. Does \
+                     not need a shared folder — copied files are read from their real location \
+                     only when the remote pastes."
+                        .to_string(),
+                ),
+                ..field(
+                    "pasteLocalFiles",
+                    "Paste Local Files into Remote",
+                    FieldType::Boolean,
+                )
+            },
         ],
     });
 
@@ -523,6 +558,7 @@ mod tests {
             drive_name: "Docs".to_string(),
             audio_redirection: true,
             clipboard_file_transfer: true,
+            paste_local_files: true,
             clipboard_delayed_render: true,
         };
         let json = serde_json::to_value(&cfg).unwrap();
@@ -541,7 +577,53 @@ mod tests {
         assert_eq!(back.drive_label(), "Docs");
         assert!(back.audio_enabled());
         assert!(back.clipboard_file_transfer);
+        assert!(back.paste_local_files);
+        assert!(back.host_clipboard_files_enabled());
         assert!(back.clipboard_delayed_render);
+    }
+
+    #[test]
+    fn host_clipboard_files_decoupled_from_shared_folder() {
+        // Off by default.
+        assert!(!RdpConfig::default().host_clipboard_files_enabled());
+        // Enabled with no drive redirection / shared folder at all — the whole
+        // point of #1808: pasting locally-copied files does not need a shared
+        // folder, so the gate is independent of `clipboard_download_dir`.
+        let paste_only = RdpConfig {
+            paste_local_files: true,
+            ..Default::default()
+        };
+        assert!(paste_only.host_clipboard_files_enabled());
+        assert!(paste_only.clipboard_download_dir().is_none());
+        // The shared-folder opt-in does not imply host-clipboard serving, and vice
+        // versa — the two flags are independent.
+        let dir = tempfile::tempdir().unwrap();
+        let share_only = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: dir.path().to_string_lossy().into_owned(),
+            clipboard_file_transfer: true,
+            ..Default::default()
+        };
+        assert!(!share_only.host_clipboard_files_enabled());
+        assert!(share_only.clipboard_download_dir().is_some());
+    }
+
+    #[test]
+    fn schema_exposes_paste_local_files_toggle_independently() {
+        let schema = rdp_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "rdp").unwrap();
+        let field = group
+            .fields
+            .iter()
+            .find(|f| f.key == "pasteLocalFiles")
+            .expect("RDP schema must expose pasteLocalFiles");
+        assert_eq!(field.default, Some(serde_json::json!(false)));
+        // Unlike clipboardFileTransfer, it is NOT hidden behind drive redirection —
+        // it needs no shared folder, so it is always visible.
+        assert!(
+            field.visible_when.is_none(),
+            "pasteLocalFiles must be independent of drive redirection"
+        );
     }
 
     #[test]

@@ -183,6 +183,10 @@ where
     // stage again; the receiver rides back out with the connection result.
     let (mut clipboard_backend, clipboard_rx) =
         SidecarClipboardBackend::new(cfg.clipboard_download_dir(), cfg.view_only);
+    // Opt in to serving files copied to the host OS clipboard, decoupled from the
+    // shared folder (#1808): with this on, locally-copied files are advertised and
+    // served from their real host paths even without drive redirection.
+    clipboard_backend.set_serve_host_clipboard(cfg.host_clipboard_files_enabled());
     // When the host advertised delayed-render support (#1793), surface a remote
     // file copy to the host OS clipboard and fetch bytes on demand instead of
     // eagerly downloading into the shared folder.
@@ -579,18 +583,27 @@ where
     // The host-clipboard watcher (#1794) is the sibling trigger: it re-advertises
     // when the user copies **files onto the host OS clipboard** mid-session. It is
     // an independent source — either watcher can re-advertise without the other
-    // having changed — but shares the same serve gate (opt-in + not view-only), so
-    // a view-only or text-only session polls neither. Both are non-fatal to start.
+    // having changed — and, since #1808, has its own gate (the host-clipboard
+    // opt-in, not the shared folder): the shared-folder watcher needs a configured
+    // folder, the host-clipboard watcher needs the paste-local-files opt-in. A
+    // view-only session polls neither. Both are non-fatal to start.
     let (readvertise, host_clip_watch) = if cfg.view_only {
         (None, None)
     } else {
-        match cfg.clipboard_download_dir() {
-            Some(root) => (
-                crate::folder_watch::watch_shared_folder(root),
-                Some(crate::host_clipboard_watch::watch_host_clipboard()),
-            ),
-            None => (None, None),
-        }
+        // The shared-folder watcher (#1788) re-advertises when the sandboxed shared
+        // folder's contents change; it needs a configured shared folder.
+        let readvertise = cfg
+            .clipboard_download_dir()
+            .and_then(crate::folder_watch::watch_shared_folder);
+        // The host-clipboard watcher (#1794) re-advertises when the user copies
+        // files onto the host OS clipboard mid-session. It is gated on the
+        // host-clipboard opt-in (#1808), NOT the shared folder — an independent
+        // source that serves files from their real host paths, so either watcher
+        // can run without the other.
+        let host_clip_watch = cfg
+            .host_clipboard_files_enabled()
+            .then(crate::host_clipboard_watch::watch_host_clipboard);
+        (readvertise, host_clip_watch)
     };
 
     drive(
