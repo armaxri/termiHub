@@ -13,6 +13,10 @@
 //! out on stdout while applying host input read from stdin. All logging goes to
 //! stderr so it never corrupts the binary IPC stream on stdout.
 
+// Compressed rdpsnd audio decoding (#1812): gated to the same platforms as the
+// audio sink and its `symphonia` decoder dependency (macOS/Windows/Linux).
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod adpcm;
 mod audio;
 mod cert;
 mod clipboard;
