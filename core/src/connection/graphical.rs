@@ -345,6 +345,35 @@ pub struct GraphicalCapabilities {
     pub view_only_capable: bool,
 }
 
+/// Metadata for one file the remote copied to its clipboard, surfaced to the
+/// host so it can offer the file for a local paste and fetch the bytes on demand
+/// — **delayed rendering** (#1793).
+///
+/// The [`index`](Self::index) is the file's position in the remote's advertised
+/// file list; it is the opaque token the host passes back to
+/// [`GraphicalBackend::fetch_remote_clipboard_file`] to pull the bytes. The
+/// remote only ever selects an advertised index, never a path, so it can never
+/// coax the host into fetching a file it did not copy. `name`/`relative_path`
+/// are already sanitized by the backend before they are surfaced (no `..`,
+/// absolute paths, drive letters, `:`/NUL, or reserved device names), but the
+/// host re-validates them before they reach any local path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteClipboardFile {
+    /// Sanitized basename (no path separators).
+    pub name: String,
+    /// Sanitized `/`-separated directory portion within the copied collection, or
+    /// `None` for a top-level entry — lets the host rebuild a copied tree.
+    pub relative_path: Option<String>,
+    /// File size when the remote advertised it; `None` means "resolve on fetch".
+    pub size: Option<u64>,
+    /// Whether this entry is a directory (no bytes to fetch, offered only so the
+    /// host can recreate the folder).
+    pub is_dir: bool,
+    /// Position in the remote's advertised file list — the fetch token.
+    pub index: u32,
+}
+
 /// The shared graphical-session lifecycle state.
 ///
 /// Identical for every protocol: the frontend renders overlays and the tab
@@ -578,6 +607,33 @@ pub trait GraphicalBackend: Send + Sync {
 
     /// Push local clipboard text to the remote.
     async fn set_clipboard(&self, text: String) -> Result<(), SessionError>;
+
+    /// The files the remote most recently copied to its clipboard, surfaced for a
+    /// local paste (#1793). Empty when the backend does not support remote→host
+    /// file transfer, the feature is not opted in, or the remote copied no files
+    /// (it copied text, an image, or nothing). The bytes are **not** fetched here
+    /// — that is deferred to [`Self::fetch_remote_clipboard_file`], which pulls
+    /// them on the paste gesture (delayed rendering). Defaults to empty.
+    async fn remote_clipboard_files(&self) -> Vec<RemoteClipboardFile> {
+        Vec::new()
+    }
+
+    /// Fetch the bytes of one surfaced remote-clipboard file on demand (delayed
+    /// rendering, #1793), streaming them into a sanitized, bounded local staging
+    /// file and returning its path. `index` is the
+    /// [`RemoteClipboardFile::index`] of an entry a prior
+    /// [`Self::remote_clipboard_files`] surfaced — the only files a fetch can
+    /// name. Backends without remote→host file transfer return
+    /// [`SessionError::NotRunning`]. Defaults to unsupported.
+    async fn fetch_remote_clipboard_file(
+        &self,
+        index: u32,
+    ) -> Result<std::path::PathBuf, SessionError> {
+        let _ = index;
+        Err(SessionError::NotRunning(
+            "remote clipboard file transfer is not supported by this backend".to_string(),
+        ))
+    }
 
     /// Subscribe to interactive server-certificate trust prompts (#1767).
     ///

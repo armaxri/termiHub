@@ -42,7 +42,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::connection::{CursorUpdate, FrameUpdate, GraphicalState, InputEvent};
+use crate::connection::{
+    CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
+};
 
 use super::config::RdpConfig;
 
@@ -71,6 +73,20 @@ pub enum HostMessage {
     /// Push local clipboard text to the remote over the sidecar's CLIPRDR
     /// channel (#1756).
     SetClipboard(String),
+    /// Fetch the bytes of one remote-copied clipboard file on demand — the paste
+    /// gesture of the remote→host **delayed-rendering** path (#1793). `index` is
+    /// the [`RemoteClipboardFile::index`] the sidecar surfaced via
+    /// [`SidecarMessage::RemoteClipboardFiles`]; `request_id` correlates the
+    /// streamed [`SidecarMessage::ClipboardFileChunk`] responses (or a
+    /// [`SidecarMessage::ClipboardFileError`]) back to this request. The sidecar
+    /// re-drives a chunked CLIPRDR `FileContentsRequest`, so the bytes are never
+    /// buffered whole.
+    FetchClipboardFile {
+        /// Correlates the streamed chunk responses to this request.
+        request_id: u64,
+        /// Advertised index of the file to fetch (a surfaced `RemoteClipboardFile`).
+        index: u32,
+    },
     /// The host's verdict on a [`SidecarMessage::CertPrompt`] (#1767): whether to
     /// proceed with the untrusted server certificate. `remember` is consumed on
     /// the host side (it owns the persisted trust store); the sidecar only acts
@@ -98,6 +114,39 @@ pub enum SidecarMessage {
     Cursor(CursorUpdate),
     /// Remote clipboard text, decoded from the sidecar's CLIPRDR channel (#1756).
     Clipboard(String),
+    /// The remote copied files to its clipboard; this surfaces the sanitized file
+    /// **list** (names, sizes, indices) to the host so it can offer them for a
+    /// local paste without fetching any bytes yet — the remote→host
+    /// **delayed-rendering** path (#1793). The host pulls a file's bytes only on a
+    /// real paste via [`HostMessage::FetchClipboardFile`]. Only emitted when
+    /// clipboard file transfer is opted in and the host advertised delayed-render
+    /// support; otherwise the sidecar keeps eagerly downloading into the shared
+    /// folder (#1765).
+    RemoteClipboardFiles(Vec<RemoteClipboardFile>),
+    /// One streamed chunk of a remote-clipboard file the host requested via
+    /// [`HostMessage::FetchClipboardFile`] (#1793). Chunks arrive in order at
+    /// increasing `position`; `last` marks the final chunk (a zero-length `data`
+    /// with `last` set denotes an empty file). Each chunk is at most the CLIPRDR
+    /// streaming chunk size (8 MiB), so neither end buffers the whole file.
+    ClipboardFileChunk {
+        /// The [`HostMessage::FetchClipboardFile::request_id`] this chunk answers.
+        request_id: u64,
+        /// Byte offset of this chunk within the file.
+        position: u64,
+        /// The chunk's bytes (empty only for an empty final chunk).
+        data: Vec<u8>,
+        /// Whether this is the final chunk of the file.
+        last: bool,
+    },
+    /// A remote-clipboard file fetch failed (unknown/withdrawn index, a directory
+    /// index, or a CLIPRDR read error) — terminates the
+    /// [`HostMessage::FetchClipboardFile`] identified by `request_id` (#1793).
+    ClipboardFileError {
+        /// The [`HostMessage::FetchClipboardFile::request_id`] that failed.
+        request_id: u64,
+        /// Human-readable reason, for logs.
+        message: String,
+    },
     /// The server presented an untrusted certificate and the sidecar needs an
     /// interactive trust decision (#1767). The sidecar blocks the connect until
     /// the host replies with [`HostMessage::CertDecision`] (or a timeout aborts
@@ -329,6 +378,52 @@ mod tests {
         ] {
             assert_eq!(round_trip_host(decision.clone()).await, decision);
         }
+    }
+
+    #[tokio::test]
+    async fn remote_clipboard_files_round_trip() {
+        // The surfaced remote-copied file list (#1793) must survive the framed
+        // codec, including a nested relative path and an unknown-size entry.
+        let msg = SidecarMessage::RemoteClipboardFiles(vec![
+            RemoteClipboardFile {
+                name: "report.pdf".to_string(),
+                relative_path: None,
+                size: Some(1234),
+                is_dir: false,
+                index: 0,
+            },
+            RemoteClipboardFile {
+                name: "nested.txt".to_string(),
+                relative_path: Some("dir/sub".to_string()),
+                size: None,
+                is_dir: false,
+                index: 2,
+            },
+        ]);
+        assert_eq!(round_trip_sidecar(msg.clone()).await, msg);
+    }
+
+    #[tokio::test]
+    async fn fetch_clipboard_file_and_chunk_round_trip() {
+        let fetch = HostMessage::FetchClipboardFile {
+            request_id: 7,
+            index: 3,
+        };
+        assert_eq!(round_trip_host(fetch.clone()).await, fetch);
+
+        let chunk = SidecarMessage::ClipboardFileChunk {
+            request_id: 7,
+            position: 8,
+            data: vec![9, 8, 7, 6, 5],
+            last: true,
+        };
+        assert_eq!(round_trip_sidecar(chunk.clone()).await, chunk);
+
+        let err = SidecarMessage::ClipboardFileError {
+            request_id: 7,
+            message: "unknown index".to_string(),
+        };
+        assert_eq!(round_trip_sidecar(err.clone()).await, err);
     }
 
     #[tokio::test]
