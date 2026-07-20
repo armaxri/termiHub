@@ -171,3 +171,18 @@ wl-clipboard-rs = { version = "0.8", default-features = false, features = [
 # Temp directories back the drive-redirection filesystem tests (#1757), which
 # exercise the RDPDR backend against a real folder without a live RDP server.
 tempfile = "3"
+
+# Vendored fork of ironrdp-rdpsnd 0.9.0 (#1773), patched in the same way as
+# `vendor/vnc-rs` is patched into the main app (#1714). Upstream 0.9.0 hands the
+# `wave` callback only a `format_no` index into a non-deterministically-ordered,
+# then-discarded client-format list, so a handler advertising more than one audio
+# format cannot map a played buffer back to its negotiated rate (risking
+# "chipmunk" audio). The fork remembers the exact list it sent and passes the
+# concrete `AudioFormat` to `wave`, which is what makes multi-format rdpsnd
+# negotiation sound. `ironrdp` (the meta crate) depends on `ironrdp-rdpsnd = "0.9"`
+# and re-exports it as `ironrdp::rdpsnd`, so patching crates-io redirects that
+# re-export to the fork. This lives in the workspace-EXCLUDED sidecar graph with
+# its own Cargo.lock, so it never touches the desktop app's dependency graph.
+# See `vendor/ironrdp-rdpsnd/README.md` for exactly what changed vs upstream.
+[patch.crates-io]
+ironrdp-rdpsnd = { path = "vendor/ironrdp-rdpsnd" }

@@ -1,14 +1,15 @@
 //! Audio output redirection (MS-RDPEAUDIO / `rdpsnd`) for the RDP sidecar
-//! (#1764).
+//! (#1764, multi-format negotiation #1773).
 //!
 //! IronRDP's [`Rdpsnd`](ironrdp::rdpsnd::client::Rdpsnd) static virtual channel
 //! decodes the server's audio stream and drives an
 //! [`RdpsndClientHandler`](ironrdp::rdpsnd::client::RdpsndClientHandler): the
 //! handler advertises the [`AudioFormat`]s it can play via
 //! [`get_formats`](RdpsndClientHandler::get_formats), and the channel calls
-//! [`wave`](RdpsndClientHandler::wave) with each decoded audio buffer in one of
-//! those formats. [`RdpAudioBackend`] plays those buffers on a **host audio
-//! output device**, so the remote session's sound is heard locally.
+//! [`wave`](RdpsndClientHandler::wave) with each decoded audio buffer, handing us
+//! the **concrete negotiated [`AudioFormat`]** the buffer is in. [`RdpAudioBackend`]
+//! plays those buffers on a **host audio output device**, so the remote session's
+//! sound is heard locally.
 //!
 //! ## Where playback happens
 //!
@@ -18,17 +19,19 @@
 //! decoded samples over a channel; the handler only holds the `Send` sender, so
 //! nothing audio-related touches the async session future.
 //!
-//! ## Scope (v1, PCM only)
+//! ## Scope: multi-rate PCM negotiation (#1773)
 //!
-//! The handler advertises a **single** PCM format — 44.1 kHz, 16-bit, stereo —
-//! and plays `wave` PDUs in it. One format is deliberate: IronRDP 0.9's
-//! `wave(format_no, …)` reports an index into the *intersection* of the client
-//! and server format lists, which IronRDP builds from a `HashSet` (non-deterministic
-//! order) and does not expose to the handler — so with more than one advertised
-//! format the handler cannot reliably map `format_no` back to a concrete format.
-//! Advertising exactly one keeps that mapping unambiguous (`format_no` is always
-//! `0`). Multi-format negotiation, ADPCM/Opus decode, and jitter/latency tuning
-//! are follow-ups (see #1764).
+//! The handler advertises a **table** of common PCM formats (48/44.1/22.05/11.025
+//! kHz, 16-bit, mono and stereo) and plays each `wave` PDU in whichever format the
+//! server selected. This is only sound because termiHub vendors a patched
+//! `ironrdp-rdpsnd` (see `vendor/ironrdp-rdpsnd/`): upstream 0.9.0 reported only a
+//! `format_no` index into a non-deterministically-ordered, then-discarded list, so
+//! more than one advertised format could not be mapped back to a concrete rate
+//! (risking "chipmunk" audio — e.g. playing 22.05 kHz data at 44.1 kHz). The fork
+//! passes the concrete [`AudioFormat`] to [`wave`](RdpsndClientHandler::wave), so
+//! each buffer is decoded and played at its **own** channel count and sample rate;
+//! [`rodio`] resamples to the device rate. Compressed formats (ADPCM/Opus) remain
+//! a follow-up — see #1773.
 //!
 //! ## Platforms
 //!
@@ -49,12 +52,18 @@ use std::time::{Duration, Instant};
 use ironrdp::rdpsnd::client::RdpsndClientHandler;
 use ironrdp::rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
 
-/// Channels in the advertised PCM format (stereo).
-const AUDIO_CHANNELS: u16 = 2;
-/// Sample rate of the advertised PCM format, in Hz (CD quality).
-const AUDIO_SAMPLE_RATE: u32 = 44_100;
-/// Bit depth of the advertised PCM format (16-bit signed little-endian).
+/// Bit depth of the PCM formats the handler advertises (16-bit signed LE). Every
+/// advertised format is 16-bit; [`decode_wave`] rejects anything else, so a
+/// mismatched buffer is dropped rather than played at the wrong width.
 const AUDIO_BITS_PER_SAMPLE: u16 = 16;
+
+/// Sample rates advertised, in Hz. A broad-but-standard set so the intersection
+/// with a typical Windows `rdpsnd` server's table is non-empty across servers;
+/// [`rodio`] resamples whichever the server picks to the device rate.
+const ADVERTISED_SAMPLE_RATES: [u32; 4] = [48_000, 44_100, 22_050, 11_025];
+
+/// Channel counts advertised (mono and stereo).
+const ADVERTISED_CHANNELS: [u16; 2] = [2, 1];
 
 /// Target amount of audio to buffer ahead of the play head before playback
 /// starts, and to rebuild after every underrun. This small cushion is what late
@@ -71,32 +80,79 @@ const TARGET_LATENCY: Duration = Duration::from_millis(80);
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const MAX_LATENCY: Duration = Duration::from_millis(250);
 
-/// Build the single PCM [`AudioFormat`] the handler advertises. Every field must
-/// match a format the server offers verbatim (IronRDP intersects the two lists
-/// by structural equality), so the derived `nBlockAlign` / `nAvgBytesPerSec`
-/// follow the standard PCM formulas a Windows `rdpsnd` server uses.
-fn pcm_format() -> AudioFormat {
-    let block_align = AUDIO_CHANNELS * (AUDIO_BITS_PER_SAMPLE / 8);
+/// A decoded PCM buffer together with the playback parameters it must be played
+/// at. Carrying `channels`/`sample_rate` per buffer is what makes multi-format
+/// negotiation sound: the value the server negotiated travels with the samples,
+/// so nothing downstream can guess (and mis-guess) the rate.
+#[derive(Debug, Clone, PartialEq)]
+struct PcmBuffer {
+    samples: Vec<i16>,
+    channels: u16,
+    sample_rate: u32,
+}
+
+/// Build one PCM [`AudioFormat`]. Every field must match a format the server
+/// offers verbatim (IronRDP intersects the two lists by structural equality), so
+/// the derived `nBlockAlign` / `nAvgBytesPerSec` follow the standard PCM formulas
+/// a Windows `rdpsnd` server uses.
+fn pcm_format(channels: u16, sample_rate: u32) -> AudioFormat {
+    let block_align = channels * (AUDIO_BITS_PER_SAMPLE / 8);
     AudioFormat {
         format: WaveFormat::PCM,
-        n_channels: AUDIO_CHANNELS,
-        n_samples_per_sec: AUDIO_SAMPLE_RATE,
-        n_avg_bytes_per_sec: AUDIO_SAMPLE_RATE * u32::from(block_align),
+        n_channels: channels,
+        n_samples_per_sec: sample_rate,
+        n_avg_bytes_per_sec: sample_rate * u32::from(block_align),
         n_block_align: block_align,
         bits_per_sample: AUDIO_BITS_PER_SAMPLE,
         data: None,
     }
 }
 
-/// The formats the handler advertises to the server: one PCM format on platforms
-/// with a compiled audio backend, empty elsewhere (so the server streams no
-/// audio, matching the no-op behaviour).
+/// The formats the handler advertises to the server: the full PCM table on
+/// platforms with a compiled audio backend, empty elsewhere (so the server
+/// streams no audio, matching the no-op behaviour).
 fn advertised_formats() -> Vec<AudioFormat> {
-    if AudioSink::SUPPORTED {
-        vec![pcm_format()]
-    } else {
-        Vec::new()
+    if !AudioSink::SUPPORTED {
+        return Vec::new();
     }
+    let mut formats = Vec::with_capacity(ADVERTISED_SAMPLE_RATES.len() * ADVERTISED_CHANNELS.len());
+    for &rate in &ADVERTISED_SAMPLE_RATES {
+        for &channels in &ADVERTISED_CHANNELS {
+            formats.push(pcm_format(channels, rate));
+        }
+    }
+    formats
+}
+
+/// Decode a `wave` payload into a [`PcmBuffer`] using the **negotiated**
+/// [`AudioFormat`] the server selected. Only 16-bit LE PCM is supported (every
+/// advertised format is such); any other format is rejected with `None` so an
+/// unexpected buffer is dropped rather than played at the wrong rate or width.
+///
+/// The channel count and sample rate come straight from `format`, so the buffer
+/// is always played at exactly the rate it was negotiated at — this is the guard
+/// against "chipmunk" audio.
+fn decode_wave(format: &AudioFormat, data: &[u8]) -> Option<PcmBuffer> {
+    if format.format != WaveFormat::PCM || format.bits_per_sample != AUDIO_BITS_PER_SAMPLE {
+        tracing::warn!(
+            ?format.format,
+            bits = format.bits_per_sample,
+            "rdpsnd: unsupported wave format, dropping buffer"
+        );
+        return None;
+    }
+    if format.n_channels == 0 || format.n_samples_per_sec == 0 {
+        return None;
+    }
+    let samples = pcm_bytes_to_i16(data);
+    if samples.is_empty() {
+        return None;
+    }
+    Some(PcmBuffer {
+        samples,
+        channels: format.n_channels,
+        sample_rate: format.n_samples_per_sec,
+    })
 }
 
 /// Decode a little-endian 16-bit PCM byte buffer into signed samples. A trailing
@@ -117,13 +173,16 @@ fn volume_to_gain(volume: &VolumePdu) -> f32 {
     avg / f32::from(u16::MAX)
 }
 
-/// Wall-clock duration of a decoded PCM buffer at the advertised channel count
-/// and sample rate. Playback consumes exactly one frame per sample period, so
-/// this is the time the buffer will occupy on the output device.
+/// Wall-clock duration of a decoded PCM buffer at the given channel count and
+/// sample rate. Playback consumes exactly one frame per sample period, so this is
+/// the time the buffer will occupy on the output device.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-fn samples_duration(sample_count: usize) -> Duration {
-    let frames = sample_count / AUDIO_CHANNELS as usize;
-    Duration::from_nanos((frames as u64 * 1_000_000_000) / u64::from(AUDIO_SAMPLE_RATE))
+fn samples_duration(sample_count: usize, channels: u16, sample_rate: u32) -> Duration {
+    if channels == 0 || sample_rate == 0 {
+        return Duration::ZERO;
+    }
+    let frames = sample_count / channels as usize;
+    Duration::from_nanos((frames as u64 * 1_000_000_000) / u64::from(sample_rate))
 }
 
 /// A bounded jitter / latency buffer sitting in front of the [`rodio`] sink.
@@ -152,9 +211,10 @@ fn samples_duration(sample_count: usize) -> Duration {
 ///   than ~`MAX_LATENCY` of audio, and this struct itself holds at most
 ///   ~`TARGET_LATENCY`.
 ///
-/// The buffer never resamples or reshapes sample data — buffers pass through
-/// byte-for-byte in the single negotiated PCM format — so it cannot introduce
-/// pitch or rate errors.
+/// The buffer never resamples or reshapes sample data — each [`PcmBuffer`] passes
+/// through byte-for-byte in its own negotiated format, and its duration is
+/// computed from that format — so it cannot introduce pitch or rate errors even
+/// when the negotiated format changes mid-session.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 #[derive(Debug)]
 struct JitterBuffer {
@@ -163,7 +223,7 @@ struct JitterBuffer {
     /// the backlog and underrun model.
     playing_until: Option<Instant>,
     /// Buffers held while (re)building the [`TARGET_LATENCY`] cushion.
-    pending: VecDeque<Vec<i16>>,
+    pending: VecDeque<PcmBuffer>,
     /// Total duration currently held in `pending`.
     pending_duration: Duration,
     /// Whether we are accumulating the initial / post-underrun cushion.
@@ -187,10 +247,15 @@ impl JitterBuffer {
         }
     }
 
+    /// Wall-clock duration one [`PcmBuffer`] will occupy on the device.
+    fn buffer_duration(buf: &PcmBuffer) -> Duration {
+        samples_duration(buf.samples.len(), buf.channels, buf.sample_rate)
+    }
+
     /// Admit one decoded buffer, returning the buffers (if any) to hand to the
     /// sink now, in order. `now` is the current wall clock, injected so the
     /// timeline model can be unit-tested without real time.
-    fn push(&mut self, samples: Vec<i16>, now: Instant) -> Vec<Vec<i16>> {
+    fn push(&mut self, buf: PcmBuffer, now: Instant) -> Vec<PcmBuffer> {
         // Has the modelled play head reached the end of the queued audio? If we
         // were streaming, that is an underrun: drop back to prebuffering so the
         // cushion is rebuilt before playback resumes.
@@ -209,13 +274,13 @@ impl JitterBuffer {
         }
 
         if self.filling {
-            self.pending_duration += samples_duration(samples.len());
-            self.pending.push_back(samples);
+            self.pending_duration += Self::buffer_duration(&buf);
+            self.pending.push_back(buf);
             if self.pending_duration < TARGET_LATENCY {
                 return Vec::new();
             }
             // Cushion is full: release it as a batch and start the timeline now.
-            let released: Vec<Vec<i16>> = self.pending.drain(..).collect();
+            let released: Vec<PcmBuffer> = self.pending.drain(..).collect();
             self.playing_until = Some(now + self.pending_duration);
             self.pending_duration = Duration::ZERO;
             self.filling = false;
@@ -227,7 +292,7 @@ impl JitterBuffer {
             .playing_until
             .map(|until| until.saturating_duration_since(now))
             .unwrap_or(Duration::ZERO);
-        let dur = samples_duration(samples.len());
+        let dur = Self::buffer_duration(&buf);
         if backlog + dur > MAX_LATENCY {
             // Overrun: tail-drop this buffer to cap latency and queued memory.
             self.dropped += 1;
@@ -239,12 +304,12 @@ impl JitterBuffer {
         }
         let base = self.playing_until.unwrap_or(now).max(now);
         self.playing_until = Some(base + dur);
-        vec![samples]
+        vec![buf]
     }
 }
 
-/// The RDPSND client handler: advertises PCM and plays received `wave` buffers on
-/// a host output device.
+/// The RDPSND client handler: advertises a PCM format table and plays received
+/// `wave` buffers, each in its negotiated format, on a host output device.
 #[derive(Debug)]
 pub struct RdpAudioBackend {
     formats: Vec<AudioFormat>,
@@ -272,12 +337,12 @@ impl RdpsndClientHandler for RdpAudioBackend {
         &self.formats
     }
 
-    fn wave(&mut self, _format_no: usize, _ts: u32, data: Cow<'_, [u8]>) {
-        // Only one PCM format is advertised, so `format_no` is always 0 and the
-        // buffer is 16-bit LE PCM at the advertised channel/rate.
-        let samples = pcm_bytes_to_i16(&data);
-        if !samples.is_empty() {
-            self.sink.play(samples);
+    fn wave(&mut self, format: &AudioFormat, _ts: u32, data: Cow<'_, [u8]>) {
+        // `format` is the concrete format the server negotiated (thanks to the
+        // vendored ironrdp-rdpsnd fork), so the buffer is decoded and played at
+        // exactly its own channel count and sample rate — never guessed.
+        if let Some(buffer) = decode_wave(format, &data) {
+            self.sink.play(buffer);
         }
     }
 
@@ -294,13 +359,13 @@ impl RdpsndClientHandler for RdpAudioBackend {
     }
 }
 
-// --- Host playback sink: real on macOS/Windows, a no-op elsewhere. ---
+// --- Host playback sink: real on macOS/Windows/Linux, a no-op elsewhere. ---
 
 /// A command sent to the playback thread.
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 enum AudioCommand {
-    /// Queue decoded samples for playback at the advertised channel/rate.
-    Play(Vec<i16>),
+    /// Queue a decoded buffer for playback at its own channel count / sample rate.
+    Play(PcmBuffer),
     /// Set the output gain (`1.0` = unity).
     Volume(f32),
 }
@@ -333,11 +398,11 @@ impl AudioSink {
         }
     }
 
-    fn play(&self, samples: Vec<i16>) {
+    fn play(&self, buffer: PcmBuffer) {
         if let Some(tx) = &self.tx {
             // A send error means the playback thread has exited (no device); drop
             // the buffer silently rather than crashing the session.
-            let _ = tx.send(AudioCommand::Play(samples));
+            let _ = tx.send(AudioCommand::Play(buffer));
         }
     }
 
@@ -390,15 +455,17 @@ fn playback_loop(rx: &std::sync::mpsc::Receiver<AudioCommand>) {
     let mut jitter = JitterBuffer::new();
     for cmd in rx.iter() {
         match cmd {
-            AudioCommand::Play(samples) => {
+            AudioCommand::Play(buffer) => {
                 // Admit through the jitter buffer, which prebuffers a cushion,
                 // caps latency/memory (tail-drop) and rides out underruns before
-                // handing buffers to the sink.
-                for buf in jitter.push(samples, Instant::now()) {
+                // handing buffers to the sink. Each buffer plays at its own
+                // negotiated channel count / sample rate; rodio resamples to the
+                // device rate.
+                for buf in jitter.push(buffer, Instant::now()) {
                     sink.append(rodio::buffer::SamplesBuffer::new(
-                        AUDIO_CHANNELS,
-                        AUDIO_SAMPLE_RATE,
-                        buf,
+                        buf.channels,
+                        buf.sample_rate,
+                        buf.samples,
                     ));
                 }
             }
@@ -424,7 +491,7 @@ impl AudioSink {
         AudioSink
     }
 
-    fn play(&self, _samples: Vec<i16>) {}
+    fn play(&self, _buffer: PcmBuffer) {}
 
     fn set_volume(&self, _volume: &VolumePdu) {}
 
@@ -451,21 +518,41 @@ mod tests {
     }
 
     #[test]
-    fn advertised_formats_are_empty_without_a_backend() {
+    fn advertised_formats_cover_the_pcm_table() {
         // On platforms without a compiled audio backend the handler advertises
-        // nothing (so the server streams no audio); with one it advertises PCM.
-        if AudioSink::SUPPORTED {
-            assert_eq!(advertised_formats().len(), 1);
-        } else {
-            assert!(advertised_formats().is_empty());
+        // nothing (so the server streams no audio); with one it advertises the
+        // full rate x channel PCM table, all 16-bit PCM with correct derivations.
+        let formats = advertised_formats();
+        if !AudioSink::SUPPORTED {
+            assert!(formats.is_empty());
+            return;
         }
+        assert_eq!(
+            formats.len(),
+            ADVERTISED_SAMPLE_RATES.len() * ADVERTISED_CHANNELS.len()
+        );
+        for f in &formats {
+            assert_eq!(f.format, WaveFormat::PCM);
+            assert_eq!(f.bits_per_sample, 16);
+            assert!(ADVERTISED_SAMPLE_RATES.contains(&f.n_samples_per_sec));
+            assert!(ADVERTISED_CHANNELS.contains(&f.n_channels));
+            // Standard PCM derivations must match what a Windows server offers.
+            let block_align = f.n_channels * 2;
+            assert_eq!(f.n_block_align, block_align);
+            assert_eq!(
+                f.n_avg_bytes_per_sec,
+                f.n_samples_per_sec * u32::from(block_align)
+            );
+            assert!(f.data.is_none());
+        }
+        // The classic CD-quality stereo format is present.
+        assert!(formats.contains(&pcm_format(2, 44_100)));
     }
 
     #[test]
     fn pcm_format_matches_standard_cd_quality_stereo() {
-        // These exact field values must match a format the server offers, so pin
-        // the standard PCM derivations (block align 4, avg 176 400 B/s).
-        let f = pcm_format();
+        // Pin the standard PCM derivations (block align 4, avg 176 400 B/s).
+        let f = pcm_format(2, 44_100);
         assert_eq!(f.format, WaveFormat::PCM);
         assert_eq!(f.n_channels, 2);
         assert_eq!(f.n_samples_per_sec, 44_100);
@@ -473,6 +560,47 @@ mod tests {
         assert_eq!(f.n_block_align, 4);
         assert_eq!(f.n_avg_bytes_per_sec, 176_400);
         assert!(f.data.is_none());
+    }
+
+    /// The load-bearing format-correctness guard (#1773): a `wave` buffer must be
+    /// decoded at *exactly* the negotiated format's channel count and sample
+    /// rate, never a fixed assumption — otherwise a 22.05 kHz stream would play at
+    /// 44.1 kHz ("chipmunk" audio). This is the regression test for that class of
+    /// bug that multi-format negotiation introduces.
+    #[test]
+    fn decode_wave_uses_the_negotiated_rate_not_a_fixed_one() {
+        // 0x0100 = 256, 0x0200 = 512.
+        let bytes = [0x00, 0x01, 0x00, 0x02];
+
+        // A 22.05 kHz mono buffer must report 22 050 Hz / 1 channel.
+        let mono = pcm_format(1, 22_050);
+        let decoded = decode_wave(&mono, &bytes).expect("mono PCM decodes");
+        assert_eq!(decoded.sample_rate, 22_050);
+        assert_eq!(decoded.channels, 1);
+        assert_eq!(decoded.samples, vec![256, 512]);
+
+        // The same bytes under a 48 kHz stereo format report 48 000 Hz / 2 —
+        // proving the rate/channels come from the format, not the payload.
+        let stereo = pcm_format(2, 48_000);
+        let decoded = decode_wave(&stereo, &bytes).expect("stereo PCM decodes");
+        assert_eq!(decoded.sample_rate, 48_000);
+        assert_eq!(decoded.channels, 2);
+        assert_eq!(decoded.samples, vec![256, 512]);
+    }
+
+    #[test]
+    fn decode_wave_rejects_unsupported_formats() {
+        let bytes = [0x00, 0x01, 0x00, 0x02];
+        // Non-PCM (e.g. ADPCM tag) is dropped, not misplayed.
+        let mut adpcm = pcm_format(2, 44_100);
+        adpcm.format = WaveFormat::ADPCM;
+        assert!(decode_wave(&adpcm, &bytes).is_none());
+        // 8-bit PCM is not advertised, so it is rejected rather than mis-decoded.
+        let mut eight_bit = pcm_format(2, 44_100);
+        eight_bit.bits_per_sample = 8;
+        assert!(decode_wave(&eight_bit, &bytes).is_none());
+        // Empty payload yields nothing.
+        assert!(decode_wave(&pcm_format(2, 44_100), &[]).is_none());
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -497,19 +625,28 @@ mod jitter_tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    /// A silent PCM buffer occupying exactly `ms` milliseconds at the advertised
-    /// stereo 44.1 kHz format.
-    fn buf_of(ms: u64) -> Vec<i16> {
-        let frames = (u64::from(AUDIO_SAMPLE_RATE) * ms / 1000) as usize;
-        vec![0i16; frames * AUDIO_CHANNELS as usize]
+    /// A silent stereo 44.1 kHz PCM buffer occupying exactly `ms` milliseconds.
+    fn buf_of(ms: u64) -> PcmBuffer {
+        let channels = 2u16;
+        let sample_rate = 44_100u32;
+        let frames = (u64::from(sample_rate) * ms / 1000) as usize;
+        PcmBuffer {
+            samples: vec![0i16; frames * channels as usize],
+            channels,
+            sample_rate,
+        }
     }
 
     #[test]
     fn samples_duration_matches_frame_count() {
         // One second of stereo audio = sample_rate frames = 2*sample_rate samples.
-        let one_sec = AUDIO_SAMPLE_RATE as usize * AUDIO_CHANNELS as usize;
-        assert_eq!(samples_duration(one_sec), Duration::from_secs(1));
-        assert_eq!(samples_duration(0), Duration::ZERO);
+        let one_sec = 44_100 * 2;
+        assert_eq!(samples_duration(one_sec, 2, 44_100), Duration::from_secs(1));
+        // A lower rate stretches the same sample count over more time — the whole
+        // point of per-buffer rate: 22 050 Hz mono => 2x the wall-clock duration.
+        assert_eq!(samples_duration(22_050, 1, 22_050), Duration::from_secs(1));
+        assert_eq!(samples_duration(0, 2, 44_100), Duration::ZERO);
+        assert_eq!(samples_duration(100, 2, 0), Duration::ZERO);
     }
 
     #[test]
@@ -534,7 +671,10 @@ mod jitter_tests {
         // no channel/rate mangling (guards the chipmunk-audio class of bug).
         let t = Instant::now();
         let mut jb = JitterBuffer::new();
-        let payload: Vec<i16> = (0..(buf_of(100).len() as i32)).map(|i| i as i16).collect();
+        let mut payload = buf_of(100);
+        payload.samples = (0..(payload.samples.len() as i32))
+            .map(|i| i as i16)
+            .collect();
         let released = jb.push(payload.clone(), t);
         assert_eq!(released.len(), 1);
         assert_eq!(released[0], payload);
