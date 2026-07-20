@@ -130,9 +130,7 @@ impl RemoteClipboardProvider {
             ) {
                 Ok(path) => staged.push(NSString::from_str(&path.to_string_lossy())),
                 Err(e) => {
-                    tracing::warn!(
-                        "failed to fetch remote clipboard file {index} for paste: {e}"
-                    );
+                    tracing::warn!("failed to fetch remote clipboard file {index} for paste: {e}");
                 }
             }
         }

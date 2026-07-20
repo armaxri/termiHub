@@ -6,14 +6,14 @@ mod embedded_servers;
 /// subsystem (public so integration tests can drive `SftpSession` /
 /// `TransferRegistry` directly — issue #1245).
 pub mod files;
-/// Native macOS Services provider wiring the app-level "Open in termiHub"
-/// Services-menu entry (#1409). macOS-only.
-#[cfg(target_os = "macos")]
-mod macos_services;
 /// Native macOS `NSPasteboard` binding for pasting remote-copied RDP clipboard
 /// files into local apps with delayed rendering (#1804). macOS-only.
 #[cfg(target_os = "macos")]
 mod macos_clipboard;
+/// Native macOS Services provider wiring the app-level "Open in termiHub"
+/// Services-menu entry (#1409). macOS-only.
+#[cfg(target_os = "macos")]
+mod macos_services;
 mod macros;
 mod network;
 mod session;
