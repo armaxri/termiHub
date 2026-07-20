@@ -7,9 +7,19 @@ import {
   remoteDesktopResize,
   remoteDesktopSendInput,
   remoteDesktopSendClipboard,
+  remoteDesktopCertDecision,
 } from "@/services/api";
-import { onRemoteDesktopState, onRemoteDesktopClipboard } from "@/services/events";
-import type { GraphicalSessionState, RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
+import {
+  onRemoteDesktopState,
+  onRemoteDesktopClipboard,
+  onRemoteDesktopCertPrompt,
+} from "@/services/events";
+import type {
+  GraphicalSessionState,
+  RemoteDesktopInput,
+  RemoteDesktopCertPromptPayload,
+  ScaleMode,
+} from "@/types/remoteDesktop";
 import { frontendLog } from "@/utils/frontendLog";
 
 /** Everything a RemoteDesktopTab needs to drive one graphical session. */
@@ -24,6 +34,10 @@ export interface RemoteDesktopSession {
   message: string | null;
   /** Latest remote → local clipboard text (for the shared panel). */
   remoteClipboard: string | null;
+  /** Pending server-certificate trust prompt (#1767), or null when none. */
+  certPrompt: RemoteDesktopCertPromptPayload | null;
+  /** Answer the pending cert prompt: accept (once/remember) or reject. */
+  respondCert: (accept: boolean, remember: boolean) => void;
   /** Whether the session is configured view-only (input suppressed). */
   viewOnly: boolean;
   /** Configured scale mode (Fit / 1:1 / Match Window). */
@@ -56,6 +70,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [remoteClipboard, setRemoteClipboard] = useState<string | null>(null);
+  const [certPrompt, setCertPrompt] = useState<RemoteDesktopCertPromptPayload | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
 
   const sessionIdRef = useRef<string | null>(null);
@@ -146,11 +161,30 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       setRemoteClipboard(payload.text);
     }).then((un) => (disposed ? un() : unlisteners.push(un)));
 
+    void onRemoteDesktopCertPrompt((payload) => {
+      if (disposed || payload.session_id !== sessionId) return;
+      setCertPrompt(payload);
+      frontendLog(
+        "remote_desktop",
+        `cert prompt for ${payload.host} (changed=${payload.changed})`
+      );
+    }).then((un) => (disposed ? un() : unlisteners.push(un)));
+
     return () => {
       disposed = true;
       unlisteners.forEach((un) => un());
     };
   }, [sessionId]);
+
+  const respondCert = useCallback((accept: boolean, remember: boolean) => {
+    const id = sessionIdRef.current;
+    // Clear the dialog optimistically; the backend applies the verdict.
+    setCertPrompt(null);
+    if (!id) return;
+    void remoteDesktopCertDecision(id, accept, remember).catch((err) =>
+      frontendLog("remote_desktop", `cert_decision failed: ${err}`)
+    );
+  }, []);
 
   const sendInput = useCallback(
     (event: RemoteDesktopInput) => {
@@ -196,6 +230,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     reconnectAttempt,
     message,
     remoteClipboard,
+    certPrompt,
+    respondCert,
     viewOnly,
     scaleMode,
     sendInput,

@@ -381,6 +381,20 @@ export async function remoteDesktopGetClipboard(sessionId: SessionId): Promise<s
   return await invoke<string | null>("remote_desktop_get_clipboard", { sessionId });
 }
 
+/**
+ * Deliver the user's verdict for an interactive certificate-trust prompt (#1767).
+ *
+ * `accept` proceeds with the untrusted server certificate; `remember` persists
+ * its fingerprint so the host is trusted (not re-prompted) on future connects.
+ */
+export async function remoteDesktopCertDecision(
+  sessionId: SessionId,
+  accept: boolean,
+  remember: boolean
+): Promise<void> {
+  await invoke("remote_desktop_cert_decision", { sessionId, accept, remember });
+}
+
 /** Disconnect a graphical remote-desktop session. */
 export async function remoteDesktopDisconnect(sessionId: SessionId): Promise<void> {
   await invoke("remote_desktop_disconnect", { sessionId });

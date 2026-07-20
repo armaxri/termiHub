@@ -11,6 +11,7 @@ import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
 import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
+import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
 import "./RemoteDesktopTab.css";
 
 interface RemoteDesktopTabProps {
@@ -164,6 +165,8 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         onCancel={session.reconnect}
         onReconnect={session.reconnect}
       />
+
+      <RemoteDesktopCertPrompt prompt={session.certPrompt} onDecision={session.respondCert} />
 
       {clipboardOpen && (
         <div className="rd-clipboard" data-testid="remote-desktop-clipboard-panel">
