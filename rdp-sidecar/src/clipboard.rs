@@ -31,17 +31,30 @@
 //! the next channel action as a [`ClipboardEvent`], and the driver performs it
 //! (`initiate_paste` / `request_file_contents`) once it owns the active stage.
 //!
-//! **Serving local files to the remote** (local→remote paste) and bridging the
-//! host OS clipboard's native file list are deferred follow-ups; this bridge
-//! only ever *receives* files, so a view-only session — which must never push
-//! local data to the remote — is unaffected.
+//! ## Serving local files (#1778) — local→remote paste, sandboxed
+//!
+//! The reverse direction advertises the **contents of the same one shared
+//! folder** to the remote so files placed there can be pasted into the remote
+//! session. When file transfer is enabled and the session is **not** view-only,
+//! [`on_request_format_list`](SidecarClipboardBackend::on_request_format_list)
+//! offers the folder's files as a `FileGroupDescriptorW` list (the driver calls
+//! [`Cliprdr::initiate_file_copy`]); on a remote paste the server asks for each
+//! file's size/bytes and [`on_file_contents_request`](SidecarClipboardBackend::on_file_contents_request)
+//! serves them, reading **only** through the shared [`crate::sandbox`] resolver.
+//! Because a FormatList wholly replaces the previous, a text copy and a file
+//! offer are mutually exclusive — the most recent local action wins, matching a
+//! native clipboard. A view-only session never advertises or serves local
+//! files, so no local data is pushed to the remote.
+//!
+//! Bridging the **host OS clipboard's** native file list (paste anywhere, not
+//! just the shared folder) remains the deferred follow-up #1779.
 //!
 //! [`Cliprdr`]: ironrdp::cliprdr::Cliprdr
 //! [`CliprdrBackend`]: ironrdp::cliprdr::backend::CliprdrBackend
 //! [`RdpConfig::clipboard_download_dir`]: termihub_core::backends::rdp_sidecar::config::RdpConfig::clipboard_download_dir
 
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 use ironrdp::cliprdr::backend::CliprdrBackend;
@@ -81,6 +94,14 @@ pub enum ClipboardEvent {
     /// copied, as part of downloading it into the shared folder (#1765). The
     /// driver calls [`Cliprdr::request_file_contents`](ironrdp::cliprdr::Cliprdr::request_file_contents).
     RequestFileContents(FileContentsRequest),
+    /// Advertise a local file list (the sandboxed shared folder's contents) so
+    /// the remote can paste our files (#1778). The driver calls
+    /// [`Cliprdr::initiate_file_copy`](ironrdp::cliprdr::Cliprdr::initiate_file_copy).
+    AdvertiseFiles(Vec<FileDescriptor>),
+    /// Serve a size or byte range of a locally offered file the remote requested
+    /// while pasting (#1778). The driver calls
+    /// [`Cliprdr::submit_file_contents`](ironrdp::cliprdr::Cliprdr::submit_file_contents).
+    ProvideFileContents(FileContentsResponse<'static>),
 }
 
 /// Pick the best text format the remote advertised: prefer Unicode, fall back to
@@ -215,15 +236,40 @@ pub struct SidecarClipboardBackend {
     active_download: Option<ActiveDownload>,
     /// Monotonic stream-id allocator for file-contents requests.
     next_stream_id: u32,
+    /// View-only sessions never push local data to the remote, so they neither
+    /// advertise nor serve local files (#1778).
+    view_only: bool,
+    /// Files last advertised to the remote from the shared folder, indexed by
+    /// advertise order — a `FileContentsRequest`'s `index` selects one to serve
+    /// (#1778). Empty until an offer is advertised.
+    offered_files: Vec<OfferedFile>,
+}
+
+/// A local file offered to the remote over CLIPRDR (#1778). Its position in the
+/// advertised list is the `index` a [`FileContentsRequest`] references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OfferedFile {
+    /// Basename advertised to the remote.
+    name: String,
+    /// Sandboxed, canonical path inside the shared folder (from
+    /// [`crate::sandbox::resolve_in_root`]).
+    path: PathBuf,
+    /// File size at advertise time (a `SIZE` request re-stats for the current
+    /// value, falling back to this).
+    size: u64,
 }
 
 impl SidecarClipboardBackend {
     /// Create the backend and the receiver the driver drains. `download_dir` is
-    /// the (already sandboxed, canonical) folder received files land in, or
-    /// `None` to keep the bridge text-only. The backend is handed to
-    /// [`Cliprdr::new`](ironrdp::cliprdr::Cliprdr::new); the receiver stays with
-    /// the driver loop.
-    pub fn new(download_dir: Option<PathBuf>) -> (Self, std::sync::mpsc::Receiver<ClipboardEvent>) {
+    /// the (already sandboxed, canonical) shared folder received files land in
+    /// and local files are served from, or `None` to keep the bridge text-only.
+    /// `view_only` suppresses advertising/serving local files (#1778). The
+    /// backend is handed to [`Cliprdr::new`](ironrdp::cliprdr::Cliprdr::new); the
+    /// receiver stays with the driver loop.
+    pub fn new(
+        download_dir: Option<PathBuf>,
+        view_only: bool,
+    ) -> (Self, std::sync::mpsc::Receiver<ClipboardEvent>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let temp_dir = std::env::temp_dir().to_string_lossy().into_owned();
         (
@@ -235,9 +281,39 @@ impl SidecarClipboardBackend {
                 download_queue: VecDeque::new(),
                 active_download: None,
                 next_stream_id: 0,
+                view_only,
+                offered_files: Vec::new(),
             },
             rx,
         )
+    }
+
+    /// Whether this session serves local files to the remote: file transfer is
+    /// enabled (a shared folder exists) and the session is not view-only (#1778).
+    fn serves_local_files(&self) -> bool {
+        self.download_dir.is_some() && !self.view_only
+    }
+
+    /// Build the local file offer from the shared folder's current contents,
+    /// recording the index→path map used to serve later requests. Returns the
+    /// descriptors to advertise, or `None` when serving is off or the folder
+    /// holds no offerable file (in which case the caller advertises text).
+    fn build_local_file_offer(&mut self) -> Option<Vec<FileDescriptor>> {
+        if !self.serves_local_files() {
+            return None;
+        }
+        let root = self.download_dir.as_ref()?;
+        let offered = collect_offerable_files(root);
+        if offered.is_empty() {
+            self.offered_files.clear();
+            return None;
+        }
+        let descriptors = offered
+            .iter()
+            .map(|f| FileDescriptor::new(f.name.clone()).with_file_size(f.size))
+            .collect();
+        self.offered_files = offered;
+        Some(descriptors)
     }
 
     fn emit(&self, event: ClipboardEvent) {
@@ -411,6 +487,102 @@ fn range_request(stream_id: u32, index: i32, size: u64) -> FileContentsRequest {
     }
 }
 
+/// Enumerate the shared folder's top-level regular files as offerable entries,
+/// in a deterministic (name-sorted) order so an advertised index stays stable
+/// for the matching serve. Skips directories, reserved device names, unreadable
+/// entries and files larger than [`MAX_CLIPBOARD_FILE_BYTES`]; every path is
+/// re-validated through the [`crate::sandbox`] resolver (#1778). Subdirectory
+/// recursion is a follow-up.
+fn collect_offerable_files(root: &Path) -> Vec<OfferedFile> {
+    let read_dir = match std::fs::read_dir(root) {
+        Ok(rd) => rd,
+        Err(e) => {
+            warn!(error = %e, path = %root.display(), "cannot read shared folder to offer files");
+            return Vec::new();
+        }
+    };
+    let mut entries = Vec::new();
+    for entry in read_dir.flatten() {
+        // `metadata` follows symlinks, so a link is treated as its target; the
+        // sandbox resolver below rejects one whose target escapes the folder.
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.is_empty() || is_windows_device_name(&name) {
+            continue;
+        }
+        let size = meta.len();
+        if size > MAX_CLIPBOARD_FILE_BYTES {
+            warn!(size, max = MAX_CLIPBOARD_FILE_BYTES, name = %name, "not offering oversized local file");
+            continue;
+        }
+        let Some(path) = crate::sandbox::resolve_in_root(root, &name) else {
+            warn!(name = %name, "local file rejected by sandbox; not offering");
+            continue;
+        };
+        entries.push(OfferedFile { name, path, size });
+    }
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries
+}
+
+/// Build the response to a server `FileContentsRequest` against the files we
+/// advertised: a `SIZE` request yields the file's current length; a `RANGE`
+/// request yields the requested bytes (capped at [`MAX_CLIPBOARD_FILE_BYTES`],
+/// truncated at EOF). An unknown index, a missing flag or any read failure
+/// yields an error response, which the spec allows (#1778).
+fn serve_file_contents(
+    offered: &[OfferedFile],
+    request: &FileContentsRequest,
+) -> FileContentsResponse<'static> {
+    let stream_id = request.stream_id;
+    let Some(file) = usize::try_from(request.index)
+        .ok()
+        .and_then(|i| offered.get(i))
+    else {
+        warn!(
+            index = request.index,
+            "file-contents request for an unknown file index"
+        );
+        return FileContentsResponse::new_error(stream_id);
+    };
+
+    if request.flags.contains(FileContentsFlags::SIZE) {
+        // Re-stat for the current size; fall back to the advertised value.
+        let size = std::fs::metadata(&file.path)
+            .map(|m| m.len())
+            .unwrap_or(file.size);
+        return FileContentsResponse::new_size_response(stream_id, size);
+    }
+
+    if request.flags.contains(FileContentsFlags::RANGE) {
+        match read_file_range(&file.path, request.position, request.requested_size) {
+            Ok(bytes) => FileContentsResponse::new_data_response(stream_id, bytes),
+            Err(e) => {
+                warn!(error = %e, path = %file.path.display(), "failed to serve clipboard file range");
+                FileContentsResponse::new_error(stream_id)
+            }
+        }
+    } else {
+        warn!(flags = ?request.flags, "file-contents request with neither SIZE nor RANGE");
+        FileContentsResponse::new_error(stream_id)
+    }
+}
+
+/// Read up to `requested_size` bytes (capped at [`MAX_CLIPBOARD_FILE_BYTES`])
+/// from `path` starting at `position`, returning fewer bytes at EOF.
+fn read_file_range(path: &Path, position: u64, requested_size: u32) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let cap = u64::from(requested_size).min(MAX_CLIPBOARD_FILE_BYTES);
+    let mut file = std::fs::File::open(path)?;
+    file.seek(SeekFrom::Start(position))?;
+    let mut buf = Vec::new();
+    file.take(cap).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 impl AsAny for SidecarClipboardBackend {
     fn as_any(&self) -> &dyn core::any::Any {
         self
@@ -446,9 +618,15 @@ impl CliprdrBackend for SidecarClipboardBackend {
     }
 
     fn on_request_format_list(&mut self) {
-        // The initialization sequence needs us to send a format list; the driver
-        // advertises whatever the host clipboard currently holds (possibly empty).
-        self.emit(ClipboardEvent::AdvertiseLocal);
+        // The initialization sequence needs us to send a format list. When
+        // serving is enabled and the shared folder holds files, offer them so
+        // the remote can paste them (#1778); otherwise fall back to the host
+        // text clipboard (#1756). A FormatList wholly replaces the previous, so
+        // the two offers are mutually exclusive — most recent action wins.
+        match self.build_local_file_offer() {
+            Some(files) => self.emit(ClipboardEvent::AdvertiseFiles(files)),
+            None => self.emit(ClipboardEvent::AdvertiseLocal),
+        }
     }
 
     fn on_process_negotiated_capabilities(
@@ -508,14 +686,19 @@ impl CliprdrBackend for SidecarClipboardBackend {
     }
 
     fn on_file_contents_request(&mut self, request: FileContentsRequest) {
-        // Serving local files to the remote is a deferred follow-up: we never
-        // advertise a local file list, so a conforming server never asks. If one
-        // does, the channel already sent an error for an unknown list; nothing to
-        // do here.
-        trace!(
-            stream_id = request.stream_id,
-            "ignoring file-contents request (receive-only bridge)"
-        );
+        if !self.serves_local_files() {
+            // We never advertised a local file list, so a conforming server does
+            // not ask; ignore a stray request.
+            trace!(
+                stream_id = request.stream_id,
+                "ignoring file-contents request (not serving local files)"
+            );
+            return;
+        }
+        // Serve the size/bytes of the requested file from the shared folder; the
+        // driver submits the response on the channel (#1778).
+        let response = serve_file_contents(&self.offered_files, &request);
+        self.emit(ClipboardEvent::ProvideFileContents(response));
     }
 
     fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
@@ -692,7 +875,7 @@ mod tests {
 
     #[test]
     fn backend_emits_paste_on_remote_text_copy() {
-        let (mut backend, rx) = SidecarClipboardBackend::new(None);
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
         backend.on_remote_copy(&[text(ClipboardFormatId::CF_UNICODETEXT)]);
         assert_eq!(
             rx.try_recv(),
@@ -704,7 +887,7 @@ mod tests {
 
     #[test]
     fn backend_decodes_response_using_pending_format() {
-        let (mut backend, rx) = SidecarClipboardBackend::new(None);
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
         // Simulate the full remote→local sequence: remote copy → paste → data.
         backend.on_remote_copy(&[text(ClipboardFormatId::CF_UNICODETEXT)]);
         let _ = rx.try_recv(); // consume the InitiatePaste
@@ -719,14 +902,14 @@ mod tests {
 
     #[test]
     fn backend_requests_advertise_on_format_list_request() {
-        let (mut backend, rx) = SidecarClipboardBackend::new(None);
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
         backend.on_request_format_list();
         assert_eq!(rx.try_recv(), Ok(ClipboardEvent::AdvertiseLocal));
     }
 
     #[test]
     fn backend_forwards_server_data_request() {
-        let (mut backend, rx) = SidecarClipboardBackend::new(None);
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
         backend.on_format_data_request(FormatDataRequest {
             format: ClipboardFormatId::CF_UNICODETEXT,
         });
@@ -755,7 +938,7 @@ mod tests {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
-        let (backend, rx) = SidecarClipboardBackend::new(Some(root));
+        let (backend, rx) = SidecarClipboardBackend::new(Some(root), false);
         (backend, rx, dir)
     }
 
@@ -778,7 +961,7 @@ mod tests {
 
     #[test]
     fn capabilities_gate_on_download_enabled() {
-        let (text_only, _rx) = SidecarClipboardBackend::new(None);
+        let (text_only, _rx) = SidecarClipboardBackend::new(None, false);
         assert!(text_only.client_capabilities().is_empty());
 
         let (files, _rx, _dir) = backend_with_download();
@@ -803,7 +986,7 @@ mod tests {
 
     #[test]
     fn remote_file_copy_ignored_when_download_disabled() {
-        let (mut backend, rx) = SidecarClipboardBackend::new(None);
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
         // Only a file format offered; text-only bridge has nothing to fetch.
         backend.on_remote_copy(&[file_format(0xC0FE)]);
         assert!(rx.try_recv().is_err());
@@ -963,5 +1146,198 @@ mod tests {
             b"xx".to_vec(),
         ));
         assert_eq!(std::fs::read(dir.path().join("f.txt")).unwrap(), b"xx");
+    }
+
+    // --- Serving local files (#1778) ---
+
+    /// A backend that serves the shared folder to the remote, over a fresh temp
+    /// dir. `view_only` gates advertising/serving local files.
+    fn backend_serving(
+        view_only: bool,
+    ) -> (
+        SidecarClipboardBackend,
+        Receiver<ClipboardEvent>,
+        tempfile::TempDir,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let (backend, rx) = SidecarClipboardBackend::new(Some(root), view_only);
+        (backend, rx, dir)
+    }
+
+    /// Drain the next queued event, failing otherwise.
+    fn next_event(rx: &Receiver<ClipboardEvent>) -> ClipboardEvent {
+        rx.try_recv().expect("expected a queued clipboard event")
+    }
+
+    #[test]
+    fn collects_offerable_files_sorted_skipping_dirs_and_device_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("b.txt"), b"bbb").unwrap();
+        std::fs::write(root.join("a.txt"), b"a").unwrap();
+        std::fs::create_dir(root.join("subdir")).unwrap();
+
+        let offered = collect_offerable_files(&root);
+        // Directories are skipped; regular files come back name-sorted.
+        let names: Vec<_> = offered.iter().map(|f| f.name.clone()).collect();
+        assert_eq!(names, vec!["a.txt".to_string(), "b.txt".to_string()]);
+        assert_eq!(offered[0].size, 1);
+        assert_eq!(offered[1].size, 3);
+        // Every path stays inside the sandbox root.
+        assert!(offered.iter().all(|f| f.path.starts_with(&root)));
+    }
+
+    #[test]
+    fn oversized_local_file_is_not_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("ok.txt"), b"ok").unwrap();
+        let big = root.join("big.bin");
+        let f = std::fs::File::create(&big).unwrap();
+        f.set_len(MAX_CLIPBOARD_FILE_BYTES + 1).unwrap();
+
+        let names: Vec<_> = collect_offerable_files(&root)
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(names, vec!["ok.txt".to_string()]);
+    }
+
+    #[test]
+    fn advertises_local_files_when_serving_and_share_non_empty() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        std::fs::write(dir.path().join("doc.txt"), b"hello").unwrap();
+
+        backend.on_request_format_list();
+        match next_event(&rx) {
+            ClipboardEvent::AdvertiseFiles(files) => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].name, "doc.txt");
+                assert_eq!(files[0].file_size, Some(5));
+            }
+            other => panic!("expected AdvertiseFiles, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn advertises_text_when_share_is_empty() {
+        let (mut backend, rx, _dir) = backend_serving(false);
+        backend.on_request_format_list();
+        // No files to offer → fall back to the text advertisement.
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+    }
+
+    #[test]
+    fn view_only_never_advertises_local_files() {
+        let (mut backend, rx, dir) = backend_serving(true);
+        std::fs::write(dir.path().join("secret.txt"), b"nope").unwrap();
+        backend.on_request_format_list();
+        // View-only must never push local files; it falls back to text (empty).
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+    }
+
+    #[test]
+    fn serves_size_then_range_for_an_offered_file() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        std::fs::write(dir.path().join("data.txt"), b"abcdef").unwrap();
+        backend.on_request_format_list();
+        let _ = next_event(&rx); // consume AdvertiseFiles
+
+        // Server asks for the size while pasting.
+        backend.on_file_contents_request(size_request(7, 0));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideFileContents(resp) => {
+                assert_eq!(resp.stream_id(), 7);
+                assert_eq!(resp.data_as_size().unwrap(), 6);
+            }
+            other => panic!("expected ProvideFileContents (size), got {other:?}"),
+        }
+
+        // Then the bytes.
+        backend.on_file_contents_request(range_request(8, 0, 6));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideFileContents(resp) => {
+                assert_eq!(resp.stream_id(), 8);
+                assert!(!resp.is_error());
+                assert_eq!(resp.data(), b"abcdef");
+            }
+            other => panic!("expected ProvideFileContents (range), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serves_a_partial_range_from_the_middle() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        std::fs::write(dir.path().join("data.txt"), b"abcdef").unwrap();
+        backend.on_request_format_list();
+        let _ = next_event(&rx);
+
+        // Bytes [2, 5): "cde".
+        let req = FileContentsRequest {
+            stream_id: 3,
+            index: 0,
+            flags: FileContentsFlags::RANGE,
+            position: 2,
+            requested_size: 3,
+            data_id: None,
+        };
+        backend.on_file_contents_request(req);
+        match next_event(&rx) {
+            ClipboardEvent::ProvideFileContents(resp) => assert_eq!(resp.data(), b"cde"),
+            other => panic!("expected ProvideFileContents, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn range_past_eof_is_truncated() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        std::fs::write(dir.path().join("data.txt"), b"abc").unwrap();
+        backend.on_request_format_list();
+        let _ = next_event(&rx);
+
+        // Ask for more than the file holds → returns only what exists.
+        backend.on_file_contents_request(range_request(1, 0, 999));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideFileContents(resp) => {
+                assert!(!resp.is_error());
+                assert_eq!(resp.data(), b"abc");
+            }
+            other => panic!("expected ProvideFileContents, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_index_yields_an_error_response() {
+        let (mut backend, rx, dir) = backend_serving(false);
+        std::fs::write(dir.path().join("only.txt"), b"x").unwrap();
+        backend.on_request_format_list();
+        let _ = next_event(&rx);
+
+        // Index 5 was never offered.
+        backend.on_file_contents_request(size_request(9, 5));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideFileContents(resp) => {
+                assert!(resp.is_error());
+                assert_eq!(resp.stream_id(), 9);
+            }
+            other => panic!("expected an error ProvideFileContents, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn view_only_ignores_a_file_contents_request() {
+        let (mut backend, rx, dir) = backend_serving(true);
+        std::fs::write(dir.path().join("secret.txt"), b"nope").unwrap();
+        // Even a stray request serves nothing in a view-only session.
+        backend.on_file_contents_request(range_request(1, 0, 4));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn text_only_bridge_ignores_a_file_contents_request() {
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
+        backend.on_file_contents_request(range_request(1, 0, 4));
+        assert!(rx.try_recv().is_err());
     }
 }

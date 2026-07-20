@@ -182,7 +182,7 @@ where
     // callbacks into `ClipboardEvent`s the driver drains once it owns the active
     // stage again; the receiver rides back out with the connection result.
     let (clipboard_backend, clipboard_rx) =
-        SidecarClipboardBackend::new(cfg.clipboard_download_dir());
+        SidecarClipboardBackend::new(cfg.clipboard_download_dir(), cfg.view_only);
     // Register the Display Control Virtual Channel (MS-RDPEDISP) so the session
     // can request dynamic resolution changes (#1755). It rides the drdynvc
     // static channel; the capabilities callback needs to send nothing, the
@@ -960,6 +960,35 @@ where
                         .context("cliprdr request_file_contents failed")?,
                     None => {
                         warn!("cliprdr channel unavailable; cannot request file contents");
+                        continue;
+                    }
+                };
+                write_cliprdr_messages(stage, transport, messages).await?;
+            }
+            ClipboardEvent::AdvertiseFiles(files) => {
+                // Offer the shared folder's files to the remote so it can paste
+                // them (#1778). A server that never negotiated file transfer
+                // makes this fail — log and carry on rather than tearing down the
+                // session.
+                match stage.get_svc_processor_mut::<CliprdrClient>() {
+                    Some(cliprdr) => match cliprdr.initiate_file_copy(files) {
+                        Ok(messages) => write_cliprdr_messages(stage, transport, messages).await?,
+                        Err(e) => {
+                            warn!(error = %e, "cliprdr initiate_file_copy failed; not offering local files")
+                        }
+                    },
+                    None => warn!("cliprdr channel unavailable; cannot advertise local files"),
+                }
+            }
+            ClipboardEvent::ProvideFileContents(response) => {
+                // Serve a size/byte range of a locally offered file the remote is
+                // pasting (#1778).
+                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
+                    Some(cliprdr) => cliprdr
+                        .submit_file_contents(response)
+                        .context("cliprdr submit_file_contents failed")?,
+                    None => {
+                        warn!("cliprdr channel unavailable; cannot serve file contents");
                         continue;
                     }
                 };
