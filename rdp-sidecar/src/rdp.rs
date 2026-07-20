@@ -181,8 +181,12 @@ where
     // remote copies into the shared folder (#1765). The backend translates server
     // callbacks into `ClipboardEvent`s the driver drains once it owns the active
     // stage again; the receiver rides back out with the connection result.
-    let (clipboard_backend, clipboard_rx) =
+    let (mut clipboard_backend, clipboard_rx) =
         SidecarClipboardBackend::new(cfg.clipboard_download_dir(), cfg.view_only);
+    // When the host advertised delayed-render support (#1793), surface a remote
+    // file copy to the host OS clipboard and fetch bytes on demand instead of
+    // eagerly downloading into the shared folder.
+    clipboard_backend.set_delayed_render(cfg.clipboard_delayed_render_enabled());
     // Register the Display Control Virtual Channel (MS-RDPEDISP) so the session
     // can request dynamic resolution changes (#1755). It rides the drdynvc
     // static channel; the capabilities callback needs to send nothing, the
@@ -344,7 +348,8 @@ where
             HostMessage::Connect(_)
             | HostMessage::Input(_)
             | HostMessage::Resize { .. }
-            | HostMessage::SetClipboard(_) => {
+            | HostMessage::SetClipboard(_)
+            | HostMessage::FetchClipboardFile { .. } => {
                 debug!("ignoring a host message received while awaiting the cert decision");
             }
         }
@@ -734,6 +739,31 @@ async fn drive<R, W>(
                             break;
                         }
                     }
+                    HostMessage::FetchClipboardFile { request_id, index } => {
+                        // The host is pasting a remote-copied file locally: drive
+                        // the on-demand, chunked CLIPRDR fetch through the backend
+                        // (#1793). The backend queues the channel actions as
+                        // ClipboardEvents, drained just below.
+                        if let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() {
+                            if let Some(backend) =
+                                cliprdr.downcast_backend_mut::<SidecarClipboardBackend>()
+                            {
+                                backend.fetch_remote_file(request_id, index);
+                            }
+                        }
+                        if drain_clipboard_events(
+                            &clipboard_rx,
+                            &mut stage,
+                            &mut writer,
+                            ipc_out,
+                            local_clipboard.as_deref(),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
                     HostMessage::Disconnect => break,
                     // A duplicate Connect is ignored.
                     other => debug!(?other, "rdp sidecar ignored host message"),
@@ -1058,6 +1088,51 @@ where
                     }
                 };
                 write_cliprdr_messages(stage, transport, messages).await?;
+            }
+            ClipboardEvent::SurfaceRemoteFiles(files) => {
+                // Delayed rendering (#1793): hand the host the sanitized file
+                // list so it can offer them for a local paste; no bytes yet.
+                debug!(
+                    count = files.len(),
+                    "surfacing remote clipboard files to host"
+                );
+                write_message(ipc_out, &SidecarMessage::RemoteClipboardFiles(files))
+                    .await
+                    .context("failed to surface remote clipboard files to host")?;
+            }
+            ClipboardEvent::ProvideRemoteFileChunk {
+                request_id,
+                position,
+                data,
+                last,
+            } => {
+                // Stream one chunk of a fetched remote file back to the host
+                // (#1793); the host writes it out incrementally.
+                write_message(
+                    ipc_out,
+                    &SidecarMessage::ClipboardFileChunk {
+                        request_id,
+                        position,
+                        data,
+                        last,
+                    },
+                )
+                .await
+                .context("failed to forward remote clipboard file chunk to host")?;
+            }
+            ClipboardEvent::RemoteFileError {
+                request_id,
+                message,
+            } => {
+                write_message(
+                    ipc_out,
+                    &SidecarMessage::ClipboardFileError {
+                        request_id,
+                        message,
+                    },
+                )
+                .await
+                .context("failed to forward remote clipboard file error to host")?;
             }
         }
     }

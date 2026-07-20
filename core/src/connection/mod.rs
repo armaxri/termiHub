@@ -21,7 +21,7 @@ pub mod validation;
 pub use graphical::{
     shared_field_base, AuthKind, CertPrompt, CertPromptReceiver, CursorReceiver, CursorShape,
     CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
-    GraphicalState, InputEvent, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
+    GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
 };
 pub use registry::{ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry};
 pub use schema::*;

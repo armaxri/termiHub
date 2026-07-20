@@ -46,8 +46,10 @@ pub mod protocol;
 
 pub use config::rdp_settings_schema;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -59,7 +61,7 @@ use tracing::{debug, warn};
 use crate::connection::{
     AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ConnectionType, CursorReceiver,
     FrameReceiver, GraphicalBackend, GraphicalCapabilities, InputEvent, OutputReceiver,
-    SettingsSchema,
+    RemoteClipboardFile, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -120,11 +122,85 @@ pub fn resolve_helper_binary() -> PathBuf {
     PathBuf::from(HELPER_BIN_NAME)
 }
 
+/// Wrap a message as a [`SessionError::Io`] (its inner type is a
+/// [`std::io::Error`], so a plain string needs boxing).
+fn io_error(message: impl Into<String>) -> SessionError {
+    SessionError::Io(std::io::Error::other(message.into()))
+}
+
+/// Validate a remote-supplied basename before it becomes a host temp-file name
+/// (#1793) — defence in depth over the sidecar's own sanitisation. Rejects an
+/// empty name, `.`/`..`, and anything carrying a path separator, drive-letter
+/// colon or NUL, so a hostile name can never escape the per-fetch staging
+/// directory. Returns the name unchanged when it is safe.
+fn sanitize_leaf(name: &str) -> Option<&str> {
+    if name.is_empty() || name == "." || name == ".." {
+        return None;
+    }
+    if name.contains(['/', '\\', '\0', ':']) {
+        return None;
+    }
+    Some(name)
+}
+
+/// Build the staging path a fetched clipboard file's bytes are written to
+/// (#1793): a per-fetch subdirectory of the OS temp dir holding the sanitized
+/// basename. A fresh directory per `request_id` means two files with the same
+/// name never collide, and the sanitized leaf cannot escape it.
+fn staged_path_for(meta: &RemoteClipboardFile, request_id: u64) -> Result<PathBuf, SessionError> {
+    let name = sanitize_leaf(&meta.name)
+        .ok_or_else(|| io_error(format!("unsafe clipboard file name {:?}", meta.name)))?;
+    let dir = std::env::temp_dir().join(format!(
+        "termihub-rdp-clip-{}-{}",
+        std::process::id(),
+        request_id
+    ));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| io_error(format!("failed to create clipboard staging dir: {e}")))?;
+    Ok(dir.join(name))
+}
+
+/// Removes an in-flight fetch's channel registration when the
+/// `fetch_remote_clipboard_file` call returns, however it returns — so a
+/// cancelled or failed fetch never leaks its slot in [`SidecarShared::fetches`].
+struct FetchGuard {
+    shared: Arc<SidecarShared>,
+    request_id: u64,
+}
+
+impl Drop for FetchGuard {
+    fn drop(&mut self) {
+        if let Ok(mut fetches) = self.shared.fetches.lock() {
+            fetches.remove(&self.request_id);
+        }
+    }
+}
+
+/// One event of an in-flight remote-clipboard file fetch (#1793), routed from the
+/// reader task to the `fetch_remote_clipboard_file` caller by `request_id`.
+#[derive(Debug)]
+enum FetchEvent {
+    /// One streamed chunk; `last` marks the final one.
+    Chunk {
+        position: u64,
+        data: Vec<u8>,
+        last: bool,
+    },
+    /// The fetch failed (unknown/withdrawn index, remote read error).
+    Error(String),
+}
+
 /// Shared, interior-mutable state touched by the reader task and the
 /// `GraphicalBackend` command methods.
 struct SidecarShared {
     /// Latest remote clipboard text, surfaced via `get_clipboard`.
     clipboard: Mutex<String>,
+    /// The files the remote most recently copied, surfaced for a local paste
+    /// (delayed rendering, #1793). Replaced wholesale on each remote copy.
+    remote_clipboard_files: Mutex<Vec<RemoteClipboardFile>>,
+    /// In-flight file fetches keyed by request id: the reader task forwards each
+    /// [`FetchEvent`] to the waiting `fetch_remote_clipboard_file` call (#1793).
+    fetches: StdMutex<HashMap<u64, mpsc::UnboundedSender<FetchEvent>>>,
     /// Suppress input when the session is view-only.
     view_only: bool,
 }
@@ -134,6 +210,9 @@ struct SidecarRuntime {
     /// Messages flow to the sidecar's stdin over this channel (via the writer task).
     to_sidecar: mpsc::Sender<HostMessage>,
     shared: Arc<SidecarShared>,
+    /// Monotonic id allocator correlating a `FetchClipboardFile` to its streamed
+    /// chunk responses (#1793).
+    next_fetch_id: AtomicU64,
     cancel: CancellationToken,
 }
 
@@ -217,6 +296,40 @@ async fn run_reader<R>(
                     }
                     Ok(SidecarMessage::Clipboard(text)) => {
                         *shared.clipboard.lock().await = text;
+                    }
+                    Ok(SidecarMessage::RemoteClipboardFiles(files)) => {
+                        // The remote copied files; surface the list for a local
+                        // paste (#1793). Bytes are fetched later, on demand.
+                        debug!(count = files.len(), "remote clipboard file list surfaced");
+                        *shared.remote_clipboard_files.lock().await = files;
+                    }
+                    Ok(SidecarMessage::ClipboardFileChunk {
+                        request_id,
+                        position,
+                        data,
+                        last,
+                    }) => {
+                        // Route the chunk to the waiting fetch; a dropped receiver
+                        // (caller gave up) just discards it.
+                        if let Ok(fetches) = shared.fetches.lock() {
+                            if let Some(tx) = fetches.get(&request_id) {
+                                let _ = tx.send(FetchEvent::Chunk {
+                                    position,
+                                    data,
+                                    last,
+                                });
+                            }
+                        }
+                    }
+                    Ok(SidecarMessage::ClipboardFileError {
+                        request_id,
+                        message,
+                    }) => {
+                        if let Ok(fetches) = shared.fetches.lock() {
+                            if let Some(tx) = fetches.get(&request_id) {
+                                let _ = tx.send(FetchEvent::Error(message));
+                            }
+                        }
                     }
                     Ok(SidecarMessage::CertPrompt {
                         fingerprint,
@@ -398,6 +511,8 @@ impl ConnectionType for SidecarRdp {
 
         let shared = Arc::new(SidecarShared {
             clipboard: Mutex::new(String::new()),
+            remote_clipboard_files: Mutex::new(Vec::new()),
+            fetches: StdMutex::new(HashMap::new()),
             view_only,
         });
         let cancel = CancellationToken::new();
@@ -424,6 +539,7 @@ impl ConnectionType for SidecarRdp {
         self.runtime = Some(Arc::new(SidecarRuntime {
             to_sidecar,
             shared,
+            next_fetch_id: AtomicU64::new(1),
             cancel,
         }));
         Ok(())
@@ -564,6 +680,114 @@ impl GraphicalBackend for SidecarRdp {
         Ok(())
     }
 
+    async fn remote_clipboard_files(&self) -> Vec<RemoteClipboardFile> {
+        let Some(rt) = &self.runtime else {
+            return Vec::new();
+        };
+        rt.shared.remote_clipboard_files.lock().await.clone()
+    }
+
+    async fn fetch_remote_clipboard_file(&self, index: u32) -> Result<PathBuf, SessionError> {
+        let rt = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| SessionError::NotRunning("rdp not connected".to_string()))?;
+
+        // The file must be one the sidecar surfaced (#1793): the remote can only
+        // ever serve an advertised index, and its name is already sanitized.
+        let meta = {
+            let files = rt.shared.remote_clipboard_files.lock().await;
+            files
+                .iter()
+                .find(|f| f.index == index)
+                .cloned()
+                .ok_or_else(|| {
+                    SessionError::InvalidConfig(format!("unknown clipboard file index {index}"))
+                })?
+        };
+        if meta.is_dir {
+            return Err(SessionError::InvalidConfig(format!(
+                "clipboard entry {index} is a directory"
+            )));
+        }
+
+        // Register a channel for this fetch before asking, so no chunk can race in
+        // ahead of us.
+        let request_id = rt.next_fetch_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, mut rx) = mpsc::unbounded_channel::<FetchEvent>();
+        rt.shared
+            .fetches
+            .lock()
+            .map_err(|_| SessionError::NotRunning("rdp session state poisoned".to_string()))?
+            .insert(request_id, tx);
+
+        // Ensure the registration is removed however we leave this function.
+        let _guard = FetchGuard {
+            shared: rt.shared.clone(),
+            request_id,
+        };
+
+        rt.to_sidecar
+            .send(HostMessage::FetchClipboardFile { request_id, index })
+            .await
+            .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))?;
+
+        // Stage the bytes into a sanitized, per-fetch temp file, writing each
+        // chunk straight to disk so memory stays bounded regardless of file size.
+        // `std::fs` (not `tokio::fs`) matches the sidecar's own file handling and
+        // avoids requiring tokio's `fs` feature, which core is built without when
+        // it is a dependency of the sidecar; each write is at most one 8 MiB chunk.
+        use std::io::Write;
+        let staged = staged_path_for(&meta, request_id)?;
+        let mut file = std::fs::File::create(&staged)
+            .map_err(|e| io_error(format!("failed to stage clipboard file: {e}")))?;
+        let cap = meta.size; // advertised size; extra bytes beyond it are refused
+        let mut written: u64 = 0;
+        loop {
+            match rx.recv().await {
+                Some(FetchEvent::Chunk {
+                    position,
+                    data,
+                    last,
+                }) => {
+                    // Chunks must arrive in order and stay within the advertised
+                    // size (a lying remote cannot make us write unboundedly).
+                    if position != written {
+                        return Err(io_error(format!(
+                            "clipboard file chunk out of order (expected {written}, got {position})"
+                        )));
+                    }
+                    if let Some(max) = cap {
+                        if written.saturating_add(data.len() as u64) > max {
+                            return Err(io_error(
+                                "clipboard file exceeded its advertised size".to_string(),
+                            ));
+                        }
+                    }
+                    file.write_all(&data)
+                        .map_err(|e| io_error(format!("failed to stage chunk: {e}")))?;
+                    written += data.len() as u64;
+                    if last {
+                        file.flush()
+                            .map_err(|e| io_error(format!("failed to flush stage: {e}")))?;
+                        return Ok(staged);
+                    }
+                }
+                Some(FetchEvent::Error(message)) => {
+                    return Err(io_error(format!(
+                        "remote clipboard file fetch failed: {message}"
+                    )));
+                }
+                // The reader task ended (session torn down) before the final chunk.
+                None => {
+                    return Err(SessionError::NotRunning(
+                        "rdp session ended during clipboard fetch".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
     fn subscribe_cert_prompts(&self) -> Option<CertPromptReceiver> {
         self.cert_prompt_rx.lock().ok().and_then(|mut g| g.take())
     }
@@ -672,6 +896,8 @@ mod tests {
     fn test_shared() -> Arc<SidecarShared> {
         Arc::new(SidecarShared {
             clipboard: Mutex::new(String::new()),
+            remote_clipboard_files: Mutex::new(Vec::new()),
+            fetches: StdMutex::new(HashMap::new()),
             view_only: false,
         })
     }
@@ -892,5 +1118,163 @@ mod tests {
         assert!(cancel.is_cancelled());
         // Consume state variant to keep the import used across cfgs.
         let _ = SidecarMessage::State(GraphicalState::AuthFailed);
+    }
+
+    // --- Remote→host delayed rendering (#1793) ---
+
+    #[tokio::test]
+    async fn reader_stores_surfaced_remote_clipboard_files() {
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _f) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _c) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _ce) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = test_shared();
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            cancel.clone(),
+        ));
+
+        let files = vec![RemoteClipboardFile {
+            name: "report.pdf".to_string(),
+            relative_path: None,
+            size: Some(10),
+            is_dir: false,
+            index: 0,
+        }];
+        write_message(
+            &mut sidecar_stdout,
+            &SidecarMessage::RemoteClipboardFiles(files.clone()),
+        )
+        .await
+        .unwrap();
+
+        drop(sidecar_stdout);
+        let _ = reader.await;
+        assert_eq!(*shared.remote_clipboard_files.lock().await, files);
+    }
+
+    /// The full host round-trip: `fetch_remote_clipboard_file` sends a
+    /// `FetchClipboardFile`, a fake sidecar streams the bytes back, and the reader
+    /// routes them into a sanitized, bounded staging file whose contents match.
+    #[tokio::test]
+    async fn fetch_remote_clipboard_file_stages_streamed_bytes() {
+        let (host_write, mut sidecar_stdin) = tokio::io::duplex(1024 * 1024);
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _f) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _c) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _ce) = mpsc::channel(CHANNEL_DEPTH);
+        let (to_sidecar, sidecar_rx) = mpsc::channel(CHANNEL_DEPTH);
+
+        let shared = Arc::new(SidecarShared {
+            clipboard: Mutex::new(String::new()),
+            remote_clipboard_files: Mutex::new(vec![RemoteClipboardFile {
+                name: "hello.txt".to_string(),
+                relative_path: None,
+                size: Some(5),
+                is_dir: false,
+                index: 0,
+            }]),
+            fetches: StdMutex::new(HashMap::new()),
+            view_only: false,
+        });
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            cancel.clone(),
+        ));
+        let writer = tokio::spawn(run_writer(host_write, sidecar_rx, cancel.clone()));
+
+        // A fake sidecar: on the fetch request, stream the file back in two chunks.
+        let fake = tokio::spawn(async move {
+            let msg = read_message::<_, HostMessage>(&mut sidecar_stdin)
+                .await
+                .expect("fetch request");
+            let HostMessage::FetchClipboardFile { request_id, index } = msg else {
+                panic!("expected FetchClipboardFile, got {msg:?}");
+            };
+            assert_eq!(index, 0);
+            for (position, data, last) in
+                [(0u64, b"hel".to_vec(), false), (3u64, b"lo".to_vec(), true)]
+            {
+                write_message(
+                    &mut sidecar_stdout,
+                    &SidecarMessage::ClipboardFileChunk {
+                        request_id,
+                        position,
+                        data,
+                        last,
+                    },
+                )
+                .await
+                .unwrap();
+            }
+            // Keep stdout open until the test tears down.
+            sidecar_stdout
+        });
+
+        let rdp = SidecarRdp {
+            runtime: Some(Arc::new(SidecarRuntime {
+                to_sidecar,
+                shared: shared.clone(),
+                next_fetch_id: AtomicU64::new(1),
+                cancel: cancel.clone(),
+            })),
+            frame_rx: StdMutex::new(None),
+            cursor_rx: StdMutex::new(None),
+            cert_prompt_rx: StdMutex::new(None),
+            tasks: Vec::new(),
+        };
+
+        let staged = rdp
+            .fetch_remote_clipboard_file(0)
+            .await
+            .expect("fetch should stage the file");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"hello");
+        // The staged file keeps the sanitized basename.
+        assert_eq!(staged.file_name().unwrap().to_str().unwrap(), "hello.txt");
+        // The fetch registration was cleaned up.
+        assert!(shared.fetches.lock().unwrap().is_empty());
+
+        // Clean up the per-fetch staging directory.
+        if let Some(parent) = staged.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+        cancel.cancel();
+        let _ = reader.await;
+        let _ = writer.await;
+        let _ = fake.await;
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_an_unknown_index_without_touching_the_sidecar() {
+        // No runtime files surfaced → an unknown index fails fast as InvalidConfig,
+        // and (with no runtime) a disconnected backend reports NotRunning.
+        let disconnected = SidecarRdp::new();
+        assert!(disconnected.remote_clipboard_files().await.is_empty());
+        assert!(matches!(
+            disconnected.fetch_remote_clipboard_file(0).await,
+            Err(SessionError::NotRunning(_))
+        ));
+    }
+
+    #[test]
+    fn sanitize_leaf_rejects_separators_and_traversal() {
+        assert_eq!(sanitize_leaf("ok.txt"), Some("ok.txt"));
+        assert!(sanitize_leaf("").is_none());
+        assert!(sanitize_leaf("..").is_none());
+        assert!(sanitize_leaf(".").is_none());
+        assert!(sanitize_leaf("a/b").is_none());
+        assert!(sanitize_leaf("a\\b").is_none());
+        assert!(sanitize_leaf("C:evil").is_none());
+        assert!(sanitize_leaf("nul\0byte").is_none());
     }
 }

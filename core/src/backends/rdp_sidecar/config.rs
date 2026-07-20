@@ -110,6 +110,17 @@ pub struct RdpConfig {
     /// clipboard files into it grants the remote no new local access. Off by
     /// default.
     pub clipboard_file_transfer: bool,
+    /// Surface remote-copied clipboard files to the host OS clipboard with
+    /// **delayed rendering** instead of eagerly downloading them into the shared
+    /// folder (#1793): the sidecar sends the host only the file *list* on a
+    /// remote copy and streams a file's bytes over CLIPRDR on demand when the
+    /// user actually pastes locally. Off by default — a host that cannot bind its
+    /// OS clipboard's delayed-render hook leaves this unset and keeps the eager
+    /// [`Self::clipboard_file_transfer`] shared-folder path as the fallback. Set
+    /// by the host process, not the connection editor: it reflects a host OS
+    /// capability, not a user preference, so it is not part of
+    /// [`rdp_settings_schema`].
+    pub clipboard_delayed_render: bool,
 }
 
 impl Default for RdpConfig {
@@ -131,6 +142,7 @@ impl Default for RdpConfig {
             drive_name: String::new(),
             audio_redirection: false,
             clipboard_file_transfer: false,
+            clipboard_delayed_render: false,
         }
     }
 }
@@ -209,6 +221,17 @@ impl RdpConfig {
             return None;
         }
         self.shared_drive_root()
+    }
+
+    /// Whether the sidecar should surface remote-copied clipboard files to the
+    /// host for delayed rendering rather than eagerly downloading them (#1793).
+    ///
+    /// Only meaningful when clipboard file transfer is opted in
+    /// ([`Self::clipboard_download_dir`] resolves): with no shared folder there is
+    /// nothing to fall back to, and the whole file path stays off. Gating both on
+    /// the same opt-in keeps the "one opted-in folder" guarantee in one place.
+    pub fn clipboard_delayed_render_enabled(&self) -> bool {
+        self.clipboard_delayed_render && self.clipboard_download_dir().is_some()
     }
 
     /// The user-visible label for the redirected drive, defaulting to `termiHub`
@@ -500,6 +523,7 @@ mod tests {
             drive_name: "Docs".to_string(),
             audio_redirection: true,
             clipboard_file_transfer: true,
+            clipboard_delayed_render: true,
         };
         let json = serde_json::to_value(&cfg).unwrap();
         let back: RdpConfig = serde_json::from_value(json).unwrap();
@@ -517,6 +541,47 @@ mod tests {
         assert_eq!(back.drive_label(), "Docs");
         assert!(back.audio_enabled());
         assert!(back.clipboard_file_transfer);
+        assert!(back.clipboard_delayed_render);
+    }
+
+    #[test]
+    fn delayed_render_requires_opt_in_and_shared_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().into_owned();
+        // Fully opted into file transfer with a valid folder and the flag on.
+        let on = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: path.clone(),
+            clipboard_file_transfer: true,
+            clipboard_delayed_render: true,
+            ..Default::default()
+        };
+        assert!(on.clipboard_delayed_render_enabled());
+        // Flag on but file transfer off → no fallback folder, so the whole path
+        // stays off.
+        let no_transfer = RdpConfig {
+            drive_redirection: true,
+            shared_folder_path: path,
+            clipboard_file_transfer: false,
+            clipboard_delayed_render: true,
+            ..Default::default()
+        };
+        assert!(!no_transfer.clipboard_delayed_render_enabled());
+        // Default is off.
+        assert!(!RdpConfig::default().clipboard_delayed_render_enabled());
+    }
+
+    #[test]
+    fn delayed_render_is_not_a_schema_field() {
+        // It reflects a host OS capability set by the host process, not a user
+        // preference — so it must not appear in the connection editor schema.
+        let schema = rdp_settings_schema();
+        let has_field = schema
+            .groups
+            .iter()
+            .flat_map(|g| &g.fields)
+            .any(|f| f.key == "clipboardDelayedRender");
+        assert!(!has_field, "delayed-render must not be a schema field");
     }
 
     #[test]
