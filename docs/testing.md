@@ -1040,10 +1040,13 @@ module, but the live PDU exchange needs a real server:
 2. **Receive (#1765):** copy one or more files in the remote session (Explorer →
    Ctrl+C). **Expected:** the files appear in the local shared folder. Oversized
    files are skipped; colliding names are deduplicated (`file (1).txt`).
-3. **Serve (#1778):** place a file in the local shared folder, then in the remote
-   session paste into a folder (Ctrl+V). **Expected:** the file's contents arrive
-   on the remote intact. Only files directly in the shared folder are offered
-   (subfolders are not yet recursed).
+3. **Serve (#1778):** with a file already in the local shared folder **before
+   connecting**, paste into a folder in the remote session (Ctrl+V).
+   **Expected:** the file's contents arrive on the remote intact. Only files
+   directly in the shared folder are offered (subfolders are not yet recursed).
+   Note: the offer is sent when the clipboard format list is first exchanged, so
+   files dropped into the folder *after* connecting are not re-advertised until
+   the offer is re-sent — dynamic re-advertising is a follow-up (#1788).
 4. **Security:** confirm nothing outside the shared folder is ever served — the
    remote can only paste files that are in that one folder.
 5. **View-only:** reconnect with **View Only** enabled and a file in the shared
