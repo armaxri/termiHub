@@ -670,6 +670,8 @@ pub fn run() {
             commands::remote_desktop::remote_desktop_get_clipboard,
             commands::remote_desktop::remote_desktop_cert_decision,
             commands::remote_desktop::remote_desktop_disconnect,
+            commands::remote_desktop::rdp_trust_list,
+            commands::remote_desktop::rdp_trust_forget,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::cancel_connecting,
