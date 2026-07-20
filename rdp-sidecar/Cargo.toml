@@ -78,13 +78,15 @@ hex = "0.4"
 # through its `Sink`. `default-features = false` drops the file-format decoders
 # (symphonia/flac/vorbis/…) we do not use, keeping only the playback core.
 #
-# Target-gated to macOS/Windows: `cpal`'s Linux backend links ALSA
-# (`libasound2-dev`), which the bundle CI does not install when it cross-builds
-# the sidecar, and which is out of this change's lane to add. Gating the crate
-# off for Linux keeps the Linux sidecar build unaffected; Linux audio is a
-# tracked follow-up. This lives in the workspace-EXCLUDED sidecar graph, so it
-# adds zero dependency-conflict risk to the main app (#1747).
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# Target-gated to macOS/Windows/Linux — the three platforms the bundle CI builds
+# the sidecar for. `cpal`'s Linux backend links ALSA (`libasound2-dev`), which
+# the bundle CI installs on its native `ubuntu` / `ubuntu-24.04-arm` sidecar
+# legs (#1772); at runtime it dynamically loads `libasound.so.2`, which every
+# desktop Linux ships. The gate stays explicit (rather than unconditional) so an
+# exotic target `cpal` cannot build for degrades to the no-op sink in audio.rs
+# instead of failing to compile. This lives in the workspace-EXCLUDED sidecar
+# graph, so it adds zero dependency-conflict risk to the main app (#1747).
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 rodio = { version = "0.20", default-features = false }
 
 [dev-dependencies]

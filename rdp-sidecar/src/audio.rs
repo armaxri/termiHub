@@ -32,12 +32,13 @@
 //!
 //! ## Platforms
 //!
-//! Audible playback is compiled for **macOS and Windows** only. The Linux audio
-//! backends ([`cpal`]/ALSA, which [`rodio`] links) need `libasound2-dev` present
-//! when the sidecar is built, which the bundle CI does not yet install; until
-//! that lands, the Linux build omits the audio crate entirely (advertising no
-//! formats, so the server streams nothing) rather than fail to compile. Tracked
-//! as the #1764 Linux follow-up.
+//! Audible playback is compiled for **macOS, Windows and Linux** — the three
+//! platforms the bundle CI builds the sidecar for. On Linux [`rodio`] uses
+//! [`cpal`]'s ALSA backend, which links `libasound2-dev` at build time (the
+//! bundle CI installs it on its native `ubuntu` sidecar legs, #1772) and loads
+//! `libasound.so.2` at runtime — present on every desktop Linux. Any other
+//! target `cpal` cannot build for degrades to the no-op sink below (advertising
+//! no formats, so the server streams nothing) rather than failing to compile.
 
 use std::borrow::Cow;
 
@@ -91,7 +92,7 @@ fn pcm_bytes_to_i16(bytes: &[u8]) -> Vec<i16> {
 /// Map an [`RDPSND` volume PDU](VolumePdu) (per-channel `0..=0xFFFF`) to a
 /// linear [`rodio`] gain where `1.0` is unity. Averages the two channels since
 /// the sink applies a single scalar gain.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn volume_to_gain(volume: &VolumePdu) -> f32 {
     let avg = (u32::from(volume.volume_left) + u32::from(volume.volume_right)) as f32 / 2.0;
     avg / f32::from(u16::MAX)
@@ -151,7 +152,7 @@ impl RdpsndClientHandler for RdpAudioBackend {
 // --- Host playback sink: real on macOS/Windows, a no-op elsewhere. ---
 
 /// A command sent to the playback thread.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 enum AudioCommand {
     /// Queue decoded samples for playback at the advertised channel/rate.
     Play(Vec<i16>),
@@ -164,14 +165,14 @@ enum AudioCommand {
 /// The thread owns the `!Send` output stream and sink; this handle keeps only the
 /// `Send` command sender, so the RDP session future stays `Send`-agnostic and no
 /// audio object migrates across worker threads.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 #[derive(Debug)]
 struct AudioSink {
     tx: Option<std::sync::mpsc::Sender<AudioCommand>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 impl AudioSink {
     const SUPPORTED: bool = true;
 
@@ -211,7 +212,7 @@ impl AudioSink {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 impl Drop for AudioSink {
     fn drop(&mut self) {
         self.close();
@@ -222,7 +223,7 @@ impl Drop for AudioSink {
 /// PCM buffer through a [`rodio`] sink until the sender is dropped. Opening the
 /// device can fail (headless host, no audio hardware); on failure the loop simply
 /// drains and discards commands so the session keeps running without sound.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn playback_loop(rx: &std::sync::mpsc::Receiver<AudioCommand>) {
     let (_stream, handle) = match rodio::OutputStream::try_default() {
         Ok(pair) => pair,
@@ -257,13 +258,14 @@ fn playback_loop(rx: &std::sync::mpsc::Receiver<AudioCommand>) {
     tracing::debug!("rdpsnd: audio playback thread stopped");
 }
 
-/// No-op sink for platforms without a compiled audio backend (currently Linux —
-/// see the module docs). Advertises no formats, so the server never streams.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+/// No-op sink for platforms without a compiled audio backend (any target other
+/// than macOS/Windows/Linux — see the module docs). Advertises no formats, so
+/// the server never streams.
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 #[derive(Debug)]
 struct AudioSink;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 impl AudioSink {
     const SUPPORTED: bool = false;
 
@@ -322,7 +324,7 @@ mod tests {
         assert!(f.data.is_none());
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     #[test]
     fn volume_pdu_maps_to_unity_gain_at_max() {
         let full = VolumePdu {
