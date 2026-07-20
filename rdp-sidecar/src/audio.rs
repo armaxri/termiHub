@@ -41,6 +41,10 @@
 //! no formats, so the server streams nothing) rather than failing to compile.
 
 use std::borrow::Cow;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use std::collections::VecDeque;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use std::time::{Duration, Instant};
 
 use ironrdp::rdpsnd::client::RdpsndClientHandler;
 use ironrdp::rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
@@ -51,6 +55,21 @@ const AUDIO_CHANNELS: u16 = 2;
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
 /// Bit depth of the advertised PCM format (16-bit signed little-endian).
 const AUDIO_BITS_PER_SAMPLE: u16 = 16;
+
+/// Target amount of audio to buffer ahead of the play head before playback
+/// starts, and to rebuild after every underrun. This small cushion is what late
+/// or bursty `wave` PDUs draw down instead of starving the output device, so
+/// network jitter no longer causes audible dropouts (#1774). Kept modest so it
+/// does not add perceptible latency beyond this window.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+const TARGET_LATENCY: Duration = Duration::from_millis(80);
+
+/// Hard cap on how far ahead of the play head audio may be queued. Once a buffer
+/// would push the queue past this, it is dropped (tail-drop) — so a bursty
+/// server can grow neither playback latency nor the sink's queued memory without
+/// bound. Bounds total added latency to at most this window plus one buffer.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+const MAX_LATENCY: Duration = Duration::from_millis(250);
 
 /// Build the single PCM [`AudioFormat`] the handler advertises. Every field must
 /// match a format the server offers verbatim (IronRDP intersects the two lists
@@ -96,6 +115,132 @@ fn pcm_bytes_to_i16(bytes: &[u8]) -> Vec<i16> {
 fn volume_to_gain(volume: &VolumePdu) -> f32 {
     let avg = (u32::from(volume.volume_left) + u32::from(volume.volume_right)) as f32 / 2.0;
     avg / f32::from(u16::MAX)
+}
+
+/// Wall-clock duration of a decoded PCM buffer at the advertised channel count
+/// and sample rate. Playback consumes exactly one frame per sample period, so
+/// this is the time the buffer will occupy on the output device.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn samples_duration(sample_count: usize) -> Duration {
+    let frames = sample_count / AUDIO_CHANNELS as usize;
+    Duration::from_nanos((frames as u64 * 1_000_000_000) / u64::from(AUDIO_SAMPLE_RATE))
+}
+
+/// A bounded jitter / latency buffer sitting in front of the [`rodio`] sink.
+///
+/// RDP servers pace audio roughly in real time, but network jitter delivers
+/// `wave` PDUs in late bursts. Feeding each buffer straight to the sink as it
+/// arrives therefore either starves the device (audible dropouts) or, on a
+/// burst, queues buffers faster than they drain and grows playback latency —
+/// and the sink's queued memory — without bound (#1774).
+///
+/// This buffer smooths both ends against a model of the playback timeline
+/// ([`playing_until`](Self::playing_until) is the instant the queued audio runs
+/// out):
+///
+/// * **Prebuffer.** At start, and after every underrun, incoming buffers are
+///   held until [`TARGET_LATENCY`] of audio has accumulated, then released
+///   together. That cushion is what late frames draw down instead of the device
+///   starving.
+/// * **Underrun.** When the modelled play head reaches the end of the queued
+///   audio the cushion is empty; the buffer re-enters the prebuffer state and
+///   rebuilds it. The device plays silence in the gap — no glitch and no
+///   busy-spin, since the playback thread simply blocks for the next PDU.
+/// * **Overrun.** When releasing a buffer would push the queued audio past
+///   [`MAX_LATENCY`] ahead of the play head, that buffer is dropped (tail-drop).
+///   This is what bounds both latency and memory: the sink is never handed more
+///   than ~`MAX_LATENCY` of audio, and this struct itself holds at most
+///   ~`TARGET_LATENCY`.
+///
+/// The buffer never resamples or reshapes sample data — buffers pass through
+/// byte-for-byte in the single negotiated PCM format — so it cannot introduce
+/// pitch or rate errors.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+#[derive(Debug)]
+struct JitterBuffer {
+    /// Instant at which all audio released to the sink so far finishes playing.
+    /// `None` until the first release and whenever the queue has drained; drives
+    /// the backlog and underrun model.
+    playing_until: Option<Instant>,
+    /// Buffers held while (re)building the [`TARGET_LATENCY`] cushion.
+    pending: VecDeque<Vec<i16>>,
+    /// Total duration currently held in `pending`.
+    pending_duration: Duration,
+    /// Whether we are accumulating the initial / post-underrun cushion.
+    filling: bool,
+    /// Count of buffers tail-dropped for overrun (diagnostics).
+    dropped: u64,
+    /// Count of underruns observed (diagnostics).
+    underruns: u64,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+impl JitterBuffer {
+    fn new() -> Self {
+        Self {
+            playing_until: None,
+            pending: VecDeque::new(),
+            pending_duration: Duration::ZERO,
+            filling: true,
+            dropped: 0,
+            underruns: 0,
+        }
+    }
+
+    /// Admit one decoded buffer, returning the buffers (if any) to hand to the
+    /// sink now, in order. `now` is the current wall clock, injected so the
+    /// timeline model can be unit-tested without real time.
+    fn push(&mut self, samples: Vec<i16>, now: Instant) -> Vec<Vec<i16>> {
+        // Has the modelled play head reached the end of the queued audio? If we
+        // were streaming, that is an underrun: drop back to prebuffering so the
+        // cushion is rebuilt before playback resumes.
+        if let Some(until) = self.playing_until {
+            if until <= now {
+                if !self.filling {
+                    self.underruns += 1;
+                    self.filling = true;
+                    tracing::debug!(
+                        underruns = self.underruns,
+                        "rdpsnd: audio underrun, rebuilding jitter buffer"
+                    );
+                }
+                self.playing_until = None;
+            }
+        }
+
+        if self.filling {
+            self.pending_duration += samples_duration(samples.len());
+            self.pending.push_back(samples);
+            if self.pending_duration < TARGET_LATENCY {
+                return Vec::new();
+            }
+            // Cushion is full: release it as a batch and start the timeline now.
+            let released: Vec<Vec<i16>> = self.pending.drain(..).collect();
+            self.playing_until = Some(now + self.pending_duration);
+            self.pending_duration = Duration::ZERO;
+            self.filling = false;
+            return released;
+        }
+
+        // Steady state: `playing_until` is Some and in the future.
+        let backlog = self
+            .playing_until
+            .map(|until| until.saturating_duration_since(now))
+            .unwrap_or(Duration::ZERO);
+        let dur = samples_duration(samples.len());
+        if backlog + dur > MAX_LATENCY {
+            // Overrun: tail-drop this buffer to cap latency and queued memory.
+            self.dropped += 1;
+            tracing::trace!(
+                dropped = self.dropped,
+                "rdpsnd: jitter buffer full, dropping buffer to cap latency"
+            );
+            return Vec::new();
+        }
+        let base = self.playing_until.unwrap_or(now).max(now);
+        self.playing_until = Some(base + dur);
+        vec![samples]
+    }
 }
 
 /// The RDPSND client handler: advertises PCM and plays received `wave` buffers on
@@ -242,14 +387,20 @@ fn playback_loop(rx: &std::sync::mpsc::Receiver<AudioCommand>) {
         }
     };
     tracing::debug!("rdpsnd: audio playback thread started");
+    let mut jitter = JitterBuffer::new();
     for cmd in rx.iter() {
         match cmd {
             AudioCommand::Play(samples) => {
-                sink.append(rodio::buffer::SamplesBuffer::new(
-                    AUDIO_CHANNELS,
-                    AUDIO_SAMPLE_RATE,
-                    samples,
-                ));
+                // Admit through the jitter buffer, which prebuffers a cushion,
+                // caps latency/memory (tail-drop) and rides out underruns before
+                // handing buffers to the sink.
+                for buf in jitter.push(samples, Instant::now()) {
+                    sink.append(rodio::buffer::SamplesBuffer::new(
+                        AUDIO_CHANNELS,
+                        AUDIO_SAMPLE_RATE,
+                        buf,
+                    ));
+                }
             }
             AudioCommand::Volume(gain) => sink.set_volume(gain),
         }
@@ -337,5 +488,95 @@ mod tests {
             volume_right: 0,
         };
         assert_eq!(volume_to_gain(&silent), 0.0);
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+#[cfg(test)]
+mod jitter_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A silent PCM buffer occupying exactly `ms` milliseconds at the advertised
+    /// stereo 44.1 kHz format.
+    fn buf_of(ms: u64) -> Vec<i16> {
+        let frames = (u64::from(AUDIO_SAMPLE_RATE) * ms / 1000) as usize;
+        vec![0i16; frames * AUDIO_CHANNELS as usize]
+    }
+
+    #[test]
+    fn samples_duration_matches_frame_count() {
+        // One second of stereo audio = sample_rate frames = 2*sample_rate samples.
+        let one_sec = AUDIO_SAMPLE_RATE as usize * AUDIO_CHANNELS as usize;
+        assert_eq!(samples_duration(one_sec), Duration::from_secs(1));
+        assert_eq!(samples_duration(0), Duration::ZERO);
+    }
+
+    #[test]
+    fn prebuffers_to_target_before_releasing() {
+        // Buffers below TARGET_LATENCY are held; the one that crosses the target
+        // releases the whole accumulated cushion at once — nothing plays early.
+        let t = Instant::now();
+        let mut jb = JitterBuffer::new();
+        assert!(jb.push(buf_of(20), t).is_empty()); // 20ms held
+        assert!(jb.push(buf_of(20), t).is_empty()); // 40ms held
+        assert!(jb.push(buf_of(20), t).is_empty()); // 60ms held
+        let released = jb.push(buf_of(20), t); // 80ms == target -> release 4
+        assert_eq!(released.len(), 4);
+        assert!(!jb.filling);
+        // The play head is exactly TARGET_LATENCY ahead of `now`.
+        assert_eq!(jb.playing_until, Some(t + TARGET_LATENCY));
+    }
+
+    #[test]
+    fn passes_samples_through_without_reshaping() {
+        // A ≥target buffer releases immediately and byte-for-byte: no resample,
+        // no channel/rate mangling (guards the chipmunk-audio class of bug).
+        let t = Instant::now();
+        let mut jb = JitterBuffer::new();
+        let payload: Vec<i16> = (0..(buf_of(100).len() as i32)).map(|i| i as i16).collect();
+        let released = jb.push(payload.clone(), t);
+        assert_eq!(released.len(), 1);
+        assert_eq!(released[0], payload);
+    }
+
+    #[test]
+    fn underrun_reenters_prebuffering() {
+        let t = Instant::now();
+        let mut jb = JitterBuffer::new();
+        // Reach steady state: cushion released, play head TARGET_LATENCY ahead.
+        assert_eq!(jb.push(buf_of(80), t).len(), 1);
+        assert!(!jb.filling);
+        // Advance the clock well past the queued audio -> the play head drained.
+        let out = jb.push(buf_of(20), t + Duration::from_millis(500));
+        assert!(out.is_empty()); // held again while the cushion rebuilds
+        assert!(jb.filling);
+        assert_eq!(jb.underruns, 1);
+    }
+
+    #[test]
+    fn overrun_is_bounded_and_drops_tail() {
+        // With the clock frozen, a flood cannot grow the queue past MAX_LATENCY:
+        // once full, further buffers are tail-dropped, so both latency and the
+        // memory handed to the sink stay bounded.
+        let t = Instant::now();
+        let mut jb = JitterBuffer::new();
+        assert_eq!(jb.push(buf_of(80), t).len(), 1); // steady state, 80ms queued
+
+        let mut appended = 0usize;
+        for _ in 0..1000 {
+            if !jb.push(buf_of(20), t).is_empty() {
+                appended += 1;
+            }
+        }
+        assert!(jb.dropped > 0, "a frozen-clock flood must drop buffers");
+        // Accepted audio is capped: queue never exceeds MAX_LATENCY ahead.
+        let backlog = jb.playing_until.unwrap() - t;
+        assert!(
+            backlog <= MAX_LATENCY,
+            "backlog {backlog:?} exceeded cap {MAX_LATENCY:?}"
+        );
+        // Total accepted (initial cushion + steady-state) fits the window.
+        assert!((appended + 1) as u32 * 20 <= MAX_LATENCY.as_millis() as u32 + 20);
     }
 }
