@@ -88,6 +88,7 @@ use ironrdp::cliprdr::pdu::{
     FileDescriptor, FormatDataRequest, FormatDataResponse, LockDataId,
 };
 use ironrdp::core::AsAny;
+use termihub_core::connection::RemoteClipboardFile;
 use tracing::{debug, trace, warn};
 
 use crate::host_clipboard::read_host_clipboard_files;
@@ -129,6 +130,32 @@ pub enum ClipboardEvent {
     /// while pasting (#1778). The driver calls
     /// [`Cliprdr::submit_file_contents`](ironrdp::cliprdr::Cliprdr::submit_file_contents).
     ProvideFileContents(FileContentsResponse<'static>),
+    /// The remote copied files and delayed rendering is on: surface the sanitized
+    /// file **list** to the host (over IPC) so it can offer them for a local paste
+    /// without fetching any bytes yet (#1793). The driver forwards it as
+    /// [`SidecarMessage::RemoteClipboardFiles`](termihub_core::backends::rdp_sidecar::protocol::SidecarMessage::RemoteClipboardFiles).
+    SurfaceRemoteFiles(Vec<RemoteClipboardFile>),
+    /// One streamed chunk of a remote-clipboard file the host asked for by index
+    /// (#1793): the driver forwards it as
+    /// [`SidecarMessage::ClipboardFileChunk`](termihub_core::backends::rdp_sidecar::protocol::SidecarMessage::ClipboardFileChunk).
+    ProvideRemoteFileChunk {
+        /// Correlates to the host's `FetchClipboardFile` request.
+        request_id: u64,
+        /// Byte offset of this chunk within the file.
+        position: u64,
+        /// The chunk's bytes (empty only for an empty final chunk).
+        data: Vec<u8>,
+        /// Whether this is the final chunk.
+        last: bool,
+    },
+    /// A host file-fetch failed; the driver forwards it as
+    /// [`SidecarMessage::ClipboardFileError`](termihub_core::backends::rdp_sidecar::protocol::SidecarMessage::ClipboardFileError) (#1793).
+    RemoteFileError {
+        /// Correlates to the host's `FetchClipboardFile` request.
+        request_id: u64,
+        /// Human-readable reason.
+        message: String,
+    },
 }
 
 /// Pick the best text format the remote advertised: prefer Unicode, fall back to
@@ -230,15 +257,29 @@ enum DownloadPhase {
     Range,
 }
 
-/// The single in-flight file download, keyed by the stream id we assigned. A
+/// Where an in-flight file transfer's bytes go: eagerly onto disk in the shared
+/// folder (#1765), or streamed back to the host for a delayed-render paste
+/// (#1793). The two never interleave — an eager download runs only when delayed
+/// rendering is off, and a host fetch only when it is on — so a single in-flight
+/// slot serves both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TransferDest {
+    /// Eager download: write each chunk into this sandboxed shared-folder path.
+    Disk(PathBuf),
+    /// Delayed render: forward each chunk to the host for this fetch request.
+    Host { request_id: u64 },
+}
+
+/// The single in-flight file transfer, keyed by the stream id we assigned. A
 /// large file is fetched over several `RANGE` requests; `position`/`total` track
-/// how far the streaming write has progressed so each chunk lands at the right
-/// offset and the transfer stops at EOF (#1780).
+/// how far the streaming transfer has progressed so each chunk lands at the right
+/// offset and it stops at EOF (#1780). `dest` decides whether a chunk is written
+/// to disk or streamed to the host (#1793).
 #[derive(Debug, Clone)]
 struct ActiveDownload {
     stream_id: u32,
     index: i32,
-    dest: PathBuf,
+    dest: TransferDest,
     phase: DownloadPhase,
     /// Byte offset the next `RANGE` chunk is written at (0 during a `SIZE` phase).
     position: u64,
@@ -286,6 +327,16 @@ pub struct SidecarClipboardBackend {
     /// [`CLIPBOARD_CHUNK_BYTES`]; a field so tests can shrink it to exercise the
     /// multi-chunk path without multi-megabyte fixtures.
     chunk_bytes: u64,
+    /// When `true`, a remote file copy is **surfaced** to the host as a file list
+    /// (delayed rendering, #1793) instead of eagerly downloaded into the shared
+    /// folder (#1765). Set from [`RdpConfig::clipboard_delayed_render_enabled`].
+    delayed_render: bool,
+    /// The sanitized file list last surfaced to the host in delayed-render mode
+    /// (#1793). A [`Self::fetch_remote_file`] may only name an `index` present
+    /// here, so the remote can never coax a fetch of a file it did not advertise.
+    /// Empty until a remote copy is surfaced; carries each entry's advertised size
+    /// and directory flag.
+    remote_offer: Vec<RemoteClipboardFile>,
 }
 
 impl std::fmt::Debug for SidecarClipboardBackend {
@@ -301,6 +352,8 @@ impl std::fmt::Debug for SidecarClipboardBackend {
             .field("view_only", &self.view_only)
             .field("offered_files", &self.offered_files)
             .field("chunk_bytes", &self.chunk_bytes)
+            .field("delayed_render", &self.delayed_render)
+            .field("remote_offer", &self.remote_offer)
             .finish_non_exhaustive()
     }
 }
@@ -369,9 +422,20 @@ impl SidecarClipboardBackend {
                 offered_files: Vec::new(),
                 host_clip_reader: Box::new(host_clip_reader),
                 chunk_bytes: CLIPBOARD_CHUNK_BYTES,
+                delayed_render: false,
+                remote_offer: Vec::new(),
             },
             rx,
         )
+    }
+
+    /// Enable (or disable) remote→host delayed rendering (#1793). When on, a
+    /// remote file copy surfaces its file list to the host rather than eagerly
+    /// downloading it into the shared folder; the host then fetches a file's
+    /// bytes on demand via [`Self::fetch_remote_file`]. Set from
+    /// [`RdpConfig::clipboard_delayed_render_enabled`] at connect time.
+    pub fn set_delayed_render(&mut self, enabled: bool) {
+        self.delayed_render = enabled;
     }
 
     /// Shrink the streaming chunk size (tests only) so the multi-chunk download
@@ -445,6 +509,19 @@ impl SidecarClipboardBackend {
     fn emit(&self, event: ClipboardEvent) {
         if self.tx.send(event).is_err() {
             debug!("clipboard event receiver dropped; sidecar shutting down");
+        }
+    }
+
+    /// Terminate an in-flight host fetch (#1793): clear the in-flight slot and
+    /// tell the host the fetch failed, so its paste never hangs on a request the
+    /// remote refused or could not answer.
+    fn finish_host_fetch(&mut self, request_id: u64, result: Result<(), String>) {
+        self.active_download = None;
+        if let Err(message) = result {
+            self.emit(ClipboardEvent::RemoteFileError {
+                request_id,
+                message,
+            });
         }
     }
 
@@ -542,7 +619,11 @@ impl SidecarClipboardBackend {
                 }
                 Some(size) => {
                     // Size known: stream it, starting with the first chunk.
-                    self.begin_range_download(planned.index, planned.dest, size);
+                    self.begin_range_download(
+                        planned.index,
+                        TransferDest::Disk(planned.dest),
+                        size,
+                    );
                     return;
                 }
                 None => {
@@ -551,7 +632,7 @@ impl SidecarClipboardBackend {
                     self.active_download = Some(ActiveDownload {
                         stream_id,
                         index: planned.index,
-                        dest: planned.dest,
+                        dest: TransferDest::Disk(planned.dest),
                         phase: DownloadPhase::Size,
                         position: 0,
                         total: 0,
@@ -567,10 +648,11 @@ impl SidecarClipboardBackend {
     }
 
     /// Begin (or, from [`Self::start_next_download`], restart) a chunked byte
-    /// download of a known-size file: request the first [`Self::chunk_bytes`]
+    /// transfer of a known-size file: request the first [`Self::chunk_bytes`]
     /// range and record the transfer so [`Self::on_file_contents_response`]
-    /// continues it chunk by chunk until EOF (#1780).
-    fn begin_range_download(&mut self, index: i32, dest: PathBuf, total: u64) {
+    /// continues it chunk by chunk until EOF (#1780). `dest` routes each chunk to
+    /// disk (eager download) or the host (delayed render, #1793).
+    fn begin_range_download(&mut self, index: i32, dest: TransferDest, total: u64) {
         let stream_id = self.allocate_stream_id();
         let want = total.min(self.chunk_bytes);
         self.active_download = Some(ActiveDownload {
@@ -585,6 +667,124 @@ impl SidecarClipboardBackend {
             stream_id, index, 0, want,
         )));
     }
+
+    /// Fetch one remote-clipboard file's bytes on demand — the paste gesture of
+    /// the delayed-render path (#1793). Validates `index` against the sanitized
+    /// [`Self::remote_offer`] the host was shown (so the remote can only ever
+    /// serve a file it advertised), then drives the same chunked CLIPRDR
+    /// `FileContentsRequest` machinery as an eager download, but streams each
+    /// chunk back to the host instead of writing it to disk. Any failure emits a
+    /// [`ClipboardEvent::RemoteFileError`] so the host's fetch always terminates.
+    ///
+    /// Serves one fetch at a time: a request arriving while another is in flight
+    /// is rejected (the host paces its fetches), which keeps the single-in-flight
+    /// memory bound and stream-id bookkeeping trivial.
+    pub fn fetch_remote_file(&mut self, request_id: u64, index: u32) {
+        if !self.delayed_render || self.download_dir.is_none() {
+            self.emit(ClipboardEvent::RemoteFileError {
+                request_id,
+                message: "remote clipboard file transfer is not enabled".to_string(),
+            });
+            return;
+        }
+        let Some(meta) = self.remote_offer.iter().find(|f| f.index == index) else {
+            self.emit(ClipboardEvent::RemoteFileError {
+                request_id,
+                message: format!("unknown clipboard file index {index}"),
+            });
+            return;
+        };
+        if meta.is_dir {
+            self.emit(ClipboardEvent::RemoteFileError {
+                request_id,
+                message: format!("clipboard entry {index} is a directory"),
+            });
+            return;
+        }
+        if self.active_download.is_some() {
+            self.emit(ClipboardEvent::RemoteFileError {
+                request_id,
+                message: "another clipboard fetch is already in progress".to_string(),
+            });
+            return;
+        }
+        let size = meta.size;
+        // The advertised list index is the CLIPRDR file-list index the server
+        // keys a `FileContentsRequest` on.
+        let Ok(idx) = i32::try_from(index) else {
+            self.emit(ClipboardEvent::RemoteFileError {
+                request_id,
+                message: format!("clipboard file index {index} out of range"),
+            });
+            return;
+        };
+        let dest = TransferDest::Host { request_id };
+        match size {
+            Some(0) => {
+                // Known-empty file: no range to request; hand the host an empty
+                // final chunk so its fetch completes.
+                self.emit(ClipboardEvent::ProvideRemoteFileChunk {
+                    request_id,
+                    position: 0,
+                    data: Vec::new(),
+                    last: true,
+                });
+            }
+            Some(total) => self.begin_range_download(idx, dest, total),
+            None => {
+                // Size unknown: ask for it first, then the bytes.
+                let stream_id = self.allocate_stream_id();
+                self.active_download = Some(ActiveDownload {
+                    stream_id,
+                    index: idx,
+                    dest,
+                    phase: DownloadPhase::Size,
+                    position: 0,
+                    total: 0,
+                });
+                self.emit(ClipboardEvent::RequestFileContents(size_request(
+                    stream_id, idx,
+                )));
+            }
+        }
+    }
+}
+
+/// Sanitize one remote file descriptor into the metadata surfaced to the host
+/// (#1793), or `None` when its path is unusable/hostile. The descriptor's
+/// `relative_path\name` is split into components, each of which must be a plain
+/// name — no `.`/`..`, no drive letter or `:`/NUL, no reserved Windows device
+/// name — so nothing that reaches the host clipboard or a host temp path can
+/// escape a directory or name a device. The returned `index` is the descriptor's
+/// position in the remote file list, which a later `FileContentsRequest` keys on.
+fn sanitize_descriptor(file: &FileDescriptor, index: usize) -> Option<RemoteClipboardFile> {
+    let rel = descriptor_rel_path(file)?;
+    let mut parts: Vec<String> = Vec::new();
+    for component in rel.split(['\\', '/']) {
+        if component.is_empty() {
+            continue;
+        }
+        if component == "." || component == ".." {
+            return None;
+        }
+        if component.contains('\0') || component.contains(':') {
+            return None;
+        }
+        if is_windows_device_name(component) {
+            return None;
+        }
+        parts.push(component.to_string());
+    }
+    let name = parts.pop()?;
+    let relative_path = (!parts.is_empty()).then(|| parts.join("/"));
+    let index = u32::try_from(index).ok()?;
+    Some(RemoteClipboardFile {
+        name,
+        relative_path,
+        size: file.file_size,
+        is_dir: descriptor_is_dir(file),
+        index,
+    })
 }
 
 /// Build a deduplicated basename: `file.txt`, then `file (1).txt`, … keeping the
@@ -1081,6 +1281,24 @@ impl CliprdrBackend for SidecarClipboardBackend {
         if self.download_dir.is_none() {
             return;
         }
+        if self.delayed_render {
+            // Delayed rendering: surface the sanitized list to the host and fetch
+            // bytes only when it later pastes (#1793) — do not download eagerly.
+            self.download_queue.clear();
+            self.active_download = None;
+            let offer: Vec<RemoteClipboardFile> = files
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| sanitize_descriptor(f, i))
+                .collect();
+            debug!(
+                count = offer.len(),
+                "surfacing remote clipboard file list to host (delayed render)"
+            );
+            self.remote_offer = offer.clone();
+            self.emit(ClipboardEvent::SurfaceRemoteFiles(offer));
+            return;
+        }
         self.download_queue = self.plan_downloads(files);
         debug!(
             count = self.download_queue.len(),
@@ -1121,54 +1339,101 @@ impl CliprdrBackend for SidecarClipboardBackend {
         let active = active.clone();
 
         if response.is_error() {
-            warn!(path = %active.dest.display(), "remote returned an error for a clipboard file; skipping");
-            self.start_next_download();
+            match &active.dest {
+                TransferDest::Disk(dest) => {
+                    warn!(path = %dest.display(), "remote returned an error for a clipboard file; skipping");
+                    self.start_next_download();
+                }
+                TransferDest::Host { request_id } => {
+                    warn!(request_id, "remote returned an error for a fetched clipboard file");
+                    self.finish_host_fetch(*request_id, Err("remote refused the file".to_string()));
+                }
+            }
             return;
         }
 
         match active.phase {
             DownloadPhase::Size => match response.data_as_size() {
-                Ok(0) => {
-                    if let Err(e) = std::fs::write(&active.dest, []) {
-                        warn!(error = %e, path = %active.dest.display(), "failed to create empty clipboard file");
+                Ok(0) => match &active.dest {
+                    TransferDest::Disk(dest) => {
+                        if let Err(e) = std::fs::write(dest, []) {
+                            warn!(error = %e, path = %dest.display(), "failed to create empty clipboard file");
+                        }
+                        self.start_next_download();
                     }
-                    self.start_next_download();
-                }
+                    TransferDest::Host { request_id } => {
+                        let request_id = *request_id;
+                        self.active_download = None;
+                        self.emit(ClipboardEvent::ProvideRemoteFileChunk {
+                            request_id,
+                            position: 0,
+                            data: Vec::new(),
+                            last: true,
+                        });
+                    }
+                },
                 Ok(size) => {
-                    // Size resolved: stream the bytes, chunked, on the same file.
+                    // Size resolved: stream the bytes, chunked, to the same dest.
                     self.begin_range_download(active.index, active.dest, size);
                 }
-                Err(e) => {
-                    warn!(error = %e, "malformed file size response; skipping file");
-                    self.start_next_download();
-                }
+                Err(e) => match &active.dest {
+                    TransferDest::Disk(_) => {
+                        warn!(error = %e, "malformed file size response; skipping file");
+                        self.start_next_download();
+                    }
+                    TransferDest::Host { request_id } => {
+                        warn!(error = %e, "malformed file size response for a host fetch");
+                        self.finish_host_fetch(
+                            *request_id,
+                            Err("malformed file size response".to_string()),
+                        );
+                    }
+                },
             },
             DownloadPhase::Range => {
                 let chunk = response.data();
-                if let Err(e) = write_chunk(&active.dest, active.position, chunk) {
-                    warn!(error = %e, path = %active.dest.display(), "failed to write clipboard file chunk; skipping file");
-                    self.start_next_download();
-                    return;
-                }
                 let written = active.position + chunk.len() as u64;
                 // Stop at EOF: either we reached the advertised total, or the
                 // remote returned a short/empty chunk (all it had left).
-                if chunk.is_empty() || written >= active.total {
-                    if written < active.total {
-                        warn!(
-                            got = written,
-                            expected = active.total,
-                            path = %active.dest.display(),
-                            "clipboard file ended before its advertised size; wrote a partial file"
-                        );
-                    } else {
-                        debug!(
-                            path = %active.dest.display(),
-                            bytes = written,
-                            "saved clipboard file into the shared folder"
-                        );
+                let last = chunk.is_empty() || written >= active.total;
+                match &active.dest {
+                    TransferDest::Disk(dest) => {
+                        if let Err(e) = write_chunk(dest, active.position, chunk) {
+                            warn!(error = %e, path = %dest.display(), "failed to write clipboard file chunk; skipping file");
+                            self.start_next_download();
+                            return;
+                        }
                     }
-                    self.start_next_download();
+                    TransferDest::Host { request_id } => {
+                        // Stream the chunk to the host; it never buffers whole.
+                        self.emit(ClipboardEvent::ProvideRemoteFileChunk {
+                            request_id: *request_id,
+                            position: active.position,
+                            data: chunk.to_vec(),
+                            last,
+                        });
+                    }
+                }
+                if last {
+                    match &active.dest {
+                        TransferDest::Disk(dest) => {
+                            if written < active.total {
+                                warn!(
+                                    got = written,
+                                    expected = active.total,
+                                    path = %dest.display(),
+                                    "clipboard file ended before its advertised size; wrote a partial file"
+                                );
+                            } else {
+                                debug!(path = %dest.display(), bytes = written, "saved clipboard file into the shared folder");
+                            }
+                            self.start_next_download();
+                        }
+                        TransferDest::Host { request_id } => {
+                            debug!(request_id, bytes = written, "streamed fetched clipboard file to host");
+                            self.active_download = None;
+                        }
+                    }
                 } else {
                     // More to fetch: request the next chunk from where we stopped.
                     let stream_id = self.allocate_stream_id();
