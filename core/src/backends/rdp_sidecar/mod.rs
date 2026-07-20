@@ -855,7 +855,10 @@ mod tests {
         .await
         .unwrap();
 
-        let prompt = cert_rx.recv().await.expect("cert prompt must reach the manager");
+        let prompt = cert_rx
+            .recv()
+            .await
+            .expect("cert prompt must reach the manager");
         assert_eq!(prompt.fingerprint, "sha256:AB:CD");
         assert_eq!(prompt.subject.as_deref(), Some("CN=host"));
 

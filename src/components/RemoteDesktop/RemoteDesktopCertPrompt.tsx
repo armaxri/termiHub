@@ -107,8 +107,8 @@ export function RemoteDesktopCertPrompt({ prompt, onDecision }: RemoteDesktopCer
             </dd>
           </dl>
           <p className="rd-cert__hint">
-            Verify the fingerprint matches the one your server administrator reports.
-            &ldquo;Accept for host&rdquo; remembers it so you are not asked again.
+            Verify the fingerprint matches the one your server administrator reports. &ldquo;Accept
+            for host&rdquo; remembers it so you are not asked again.
           </p>
         </div>
       )}

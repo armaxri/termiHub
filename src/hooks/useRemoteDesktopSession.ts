@@ -164,10 +164,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     void onRemoteDesktopCertPrompt((payload) => {
       if (disposed || payload.session_id !== sessionId) return;
       setCertPrompt(payload);
-      frontendLog(
-        "remote_desktop",
-        `cert prompt for ${payload.host} (changed=${payload.changed})`
-      );
+      frontendLog("remote_desktop", `cert prompt for ${payload.host} (changed=${payload.changed})`);
     }).then((un) => (disposed ? un() : unlisteners.push(un)));
 
     return () => {

@@ -544,17 +544,17 @@ where
 
     let (result, framed, connector_config, clipboard_rx) =
         match connect_session(&cfg, ipc_in, ipc_out).await {
-        Ok(v) => v,
-        Err(e) => {
-            let state = if is_auth_error(&format!("{e:#}")) {
-                GraphicalState::AuthFailed
-            } else {
-                GraphicalState::ConnectFailed
-            };
-            let _ = write_message(ipc_out, &SidecarMessage::State(state)).await;
-            return Err(e);
-        }
-    };
+            Ok(v) => v,
+            Err(e) => {
+                let state = if is_auth_error(&format!("{e:#}")) {
+                    GraphicalState::AuthFailed
+                } else {
+                    GraphicalState::ConnectFailed
+                };
+                let _ = write_message(ipc_out, &SidecarMessage::State(state)).await;
+                return Err(e);
+            }
+        };
 
     write_message(ipc_out, &SidecarMessage::State(GraphicalState::Active))
         .await
@@ -1076,8 +1076,12 @@ mod tests {
         });
 
         // Host reads the prompt, then replies "accept".
-        let prompt = read_message::<_, SidecarMessage>(&mut host_in).await.unwrap();
-        assert!(matches!(prompt, SidecarMessage::CertPrompt { fingerprint, .. } if fingerprint == "sha256:AA:BB"));
+        let prompt = read_message::<_, SidecarMessage>(&mut host_in)
+            .await
+            .unwrap();
+        assert!(
+            matches!(prompt, SidecarMessage::CertPrompt { fingerprint, .. } if fingerprint == "sha256:AA:BB")
+        );
         write_message(
             &mut host_out,
             &HostMessage::CertDecision {
@@ -1088,7 +1092,10 @@ mod tests {
         .await
         .unwrap();
 
-        sidecar.await.unwrap().expect("accept must let the connect proceed");
+        sidecar
+            .await
+            .unwrap()
+            .expect("accept must let the connect proceed");
     }
 
     /// A `reject` decision must abort the connect.
@@ -1101,7 +1108,9 @@ mod tests {
             prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:CC").await
         });
 
-        let _ = read_message::<_, SidecarMessage>(&mut host_in).await.unwrap();
+        let _ = read_message::<_, SidecarMessage>(&mut host_in)
+            .await
+            .unwrap();
         write_message(
             &mut host_out,
             &HostMessage::CertDecision {
@@ -1127,7 +1136,9 @@ mod tests {
             prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:DD").await
         });
 
-        let _ = read_message::<_, SidecarMessage>(&mut host_in).await.unwrap();
+        let _ = read_message::<_, SidecarMessage>(&mut host_in)
+            .await
+            .unwrap();
         // A stray pointer event from the live canvas, then the decision.
         write_message(
             &mut host_out,
